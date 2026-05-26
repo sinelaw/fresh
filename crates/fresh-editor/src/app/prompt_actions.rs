@@ -68,7 +68,7 @@ impl Editor {
                 let resolved_path = if expanded_path.is_absolute() {
                     normalize_path(&expanded_path)
                 } else {
-                    normalize_path(&self.working_dir.join(&expanded_path))
+                    normalize_path(&self.working_dir().join(&expanded_path))
                 };
 
                 self.open_file_with_jump(resolved_path, line, column);
@@ -85,7 +85,7 @@ impl Editor {
                 let resolved_path = if expanded_path.is_absolute() {
                     normalize_path(&expanded_path)
                 } else {
-                    normalize_path(&self.working_dir.join(&expanded_path))
+                    normalize_path(&self.working_dir().join(&expanded_path))
                 };
 
                 if resolved_path.is_dir() {
@@ -207,28 +207,21 @@ impl Editor {
             }
             PromptType::LiveGrep => {
                 // Confirm navigates to the selected suggestion's
-                // file:line:col. Suggestions for LiveGrep prompts pack
-                // location info into the suggestion text using the
-                // standard "path:line:col" format used elsewhere
-                // (parse_path_line_col).
+                // file:line:col. `confirm_prompt` has already resolved
+                // `input` to the selected suggestion's `value` (which
+                // packs the location in the standard "path:line:col"
+                // format), so parse it directly. (The prompt itself has
+                // been taken by `confirm_prompt` and can no longer be
+                // read here — relying on `self.prompt` made Resume open
+                // the raw query as a file path.)
                 use crate::input::quick_open::parse_path_line_col;
-                let target = if let Some(idx) = selected_index {
-                    self.active_window()
-                        .prompt
-                        .as_ref()
-                        .and_then(|p| p.suggestions.get(idx))
-                        .map(|s| s.value.clone().unwrap_or_else(|| s.text.clone()))
-                        .unwrap_or_else(|| input.clone())
-                } else {
-                    input.clone()
-                };
-                let (path_str, line, column) = parse_path_line_col(&target);
+                let (path_str, line, column) = parse_path_line_col(&input);
                 if !path_str.is_empty() {
                     let expanded = expand_tilde(&path_str);
                     let resolved = if expanded.is_absolute() {
                         normalize_path(&expanded)
                     } else {
-                        normalize_path(&self.working_dir.join(&expanded))
+                        normalize_path(&self.working_dir().join(&expanded))
                     };
                     self.open_file_with_jump(resolved, line, column);
                 }
@@ -691,7 +684,7 @@ impl Editor {
         let full_path = if expanded_path.is_absolute() {
             normalize_path(&expanded_path)
         } else {
-            normalize_path(&self.working_dir.join(&expanded_path))
+            normalize_path(&self.working_dir().join(&expanded_path))
         };
 
         self.save_file_as_with_checks(full_path);
@@ -724,7 +717,7 @@ impl Editor {
         if let Some(parent) = full_path.parent() {
             if !parent.as_os_str().is_empty() && !self.authority.filesystem.exists(parent) {
                 let dir_name = parent
-                    .strip_prefix(&self.working_dir)
+                    .strip_prefix(self.working_dir())
                     .unwrap_or(parent)
                     .display()
                     .to_string();
@@ -763,7 +756,7 @@ impl Editor {
                 let metadata = BufferMetadata::with_file(
                     full_path.clone(),
                     &full_path,
-                    &self.working_dir,
+                    self.working_dir(),
                     self.authority.path_translation.as_ref(),
                 );
                 let active_buffer = self.active_buffer();
@@ -1019,7 +1012,8 @@ impl Editor {
             tracing::warn!("Failed to create config directory: {}", e);
             return;
         }
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save rulers to config: {}", e);
         }
@@ -1665,7 +1659,7 @@ impl Editor {
                 let full_path = if expanded_path.is_absolute() {
                     expanded_path
                 } else {
-                    self.working_dir.join(&expanded_path)
+                    self.working_dir().join(&expanded_path)
                 };
                 self.open_file_with_jump(full_path, line, column);
                 PromptResult::Done

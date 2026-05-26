@@ -166,3 +166,43 @@ fn anti_select_to_paragraph_up_at_start_dropping_action_yields_check_err() {
          with no selection; the (7, 0) range expectation must NOT match"
     );
 }
+
+#[test]
+fn migrated_move_to_paragraph_down_from_first_line() {
+    assert_buffer_scenario(BufferScenario {
+        description: "MoveToParagraphDown from line 1 moves to empty line without selecting".into(),
+        initial_text:
+            "paragraph 1 line 1\nparagraph 1 line 2\n\nparagraph 2 line 1\nparagraph 2 line 2\n"
+                .into(),
+        actions: vec![Action::MoveLineStart, Action::MoveToParagraphDown],
+        expected_text:
+            "paragraph 1 line 1\nparagraph 1 line 2\n\nparagraph 2 line 1\nparagraph 2 line 2\n"
+                .into(),
+        // Cursor at the empty-line position (38), no selection.
+        expected_primary: CursorExpect::at(38),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn migrated_move_to_paragraph_up_from_paragraph_2() {
+    assert_buffer_scenario(BufferScenario {
+        description: "MoveToParagraphUp from paragraph 2 moves to empty line without selecting"
+            .into(),
+        initial_text:
+            "paragraph 1 line 1\nparagraph 1 line 2\n\nparagraph 2 line 1\nparagraph 2 line 2\n"
+                .into(),
+        actions: vec![
+            Action::MoveDown,
+            Action::MoveDown,
+            Action::MoveDown,
+            Action::MoveToParagraphUp,
+        ],
+        expected_text:
+            "paragraph 1 line 1\nparagraph 1 line 2\n\nparagraph 2 line 1\nparagraph 2 line 2\n"
+                .into(),
+        // Cursor at the empty-line position (38), no selection.
+        expected_primary: CursorExpect::at(38),
+        ..Default::default()
+    });
+}

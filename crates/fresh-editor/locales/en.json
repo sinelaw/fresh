@@ -287,6 +287,8 @@
   "action.select_theme": "Select theme",
   "action.select_to_paragraph_down": "Select to next empty line",
   "action.select_to_paragraph_up": "Select to previous empty line",
+  "action.move_to_paragraph_down": "Move to next empty line",
+  "action.move_to_paragraph_up": "Move to previous empty line",
   "action.select_up": "Select up",
   "action.select_word": "Select word under cursor",
   "action.select_word_end": "Select to word end",

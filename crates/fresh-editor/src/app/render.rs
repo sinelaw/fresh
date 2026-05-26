@@ -1536,7 +1536,7 @@ impl Editor {
                     _ => None,
                 })
                 .unwrap_or(1);
-            let path = self.working_dir.display().to_string();
+            let path = self.working_dir().display().to_string();
             let triggers = self.workspace_trust_markers.join(", ");
             let secondary_label = if self.workspace_trust_prompt_cancellable {
                 "Cancel (Esc)".to_string()
@@ -2162,32 +2162,39 @@ impl Editor {
     fn prepare_overlay_preview(&mut self) {
         use crate::input::quick_open::parse_path_line_col;
 
-        let (path_str, line, col) = {
-            let Some(prompt) = self.active_window().prompt.as_ref() else {
+        let parsed = {
+            self.active_window()
+                .prompt
+                .as_ref()
+                .and_then(|prompt| {
+                    let idx = prompt.selected_suggestion?;
+                    prompt.suggestions.get(idx)
+                })
+                .map(|s| {
+                    // Suggestions emitted by the Finder library use `value`
+                    // as an opaque index; the parseable label lives in
+                    // `text`. Resume-replay is the inverse: `value` carries
+                    // the full path:line:col triple.
+                    let from_text = parse_path_line_col(&s.text);
+                    if !from_text.0.is_empty() && from_text.1.is_some() {
+                        from_text
+                    } else if let Some(v) = s.value.as_deref() {
+                        parse_path_line_col(v)
+                    } else {
+                        from_text
+                    }
+                })
+        };
+        // No selectable result (empty list, no selection, or an
+        // unparseable entry): blank the preview so the previous match's
+        // content doesn't linger after the result list clears.
+        let (path_str, line, col) = match parsed {
+            Some((path, line, col)) if !path.is_empty() => (path, line, col),
+            _ => {
+                self.blank_overlay_preview();
                 return;
-            };
-            let Some(idx) = prompt.selected_suggestion else {
-                return;
-            };
-            let Some(s) = prompt.suggestions.get(idx) else {
-                return;
-            };
-            // Suggestions emitted by the Finder library use `value` as
-            // an opaque index; the parseable label lives in `text`.
-            // Resume-replay is the inverse: `value` carries the full
-            // path:line:col triple.
-            let from_text = parse_path_line_col(&s.text);
-            if !from_text.0.is_empty() && from_text.1.is_some() {
-                from_text
-            } else if let Some(v) = s.value.as_deref() {
-                parse_path_line_col(v)
-            } else {
-                from_text
             }
         };
-        if path_str.is_empty() {
-            return;
-        }
         let line = line.unwrap_or(1).saturating_sub(1);
         let col = col.unwrap_or(1).saturating_sub(1);
 
@@ -2196,7 +2203,7 @@ impl Editor {
         let abs_path = if path_buf.is_absolute() {
             path_buf
         } else {
-            self.working_dir.join(&path_buf)
+            self.working_dir().join(&path_buf)
         };
         // Canonicalize for buffer-dedup parity with open_file_no_focus.
         let abs_path = self
@@ -2366,6 +2373,7 @@ impl Editor {
                     buffer_id,
                     view_state,
                     loaded_buffers,
+                    blanked: false,
                 });
         } else {
             // Pre-compute hidden flag (immutable borrow on self.windows)
@@ -2378,6 +2386,12 @@ impl Editor {
             if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
                 if state.buffer_id != buffer_id {
                     state.view_state.switch_buffer(buffer_id);
+                    // Keep the struct's `buffer_id` in lockstep with the
+                    // view-state's active buffer: the renderer looks up the
+                    // buffer to draw via this field, so a stale value here
+                    // renders the *previous* file's text at the new file's
+                    // scroll offset (wrong content, or blank past EOF).
+                    state.buffer_id = buffer_id;
                     if hidden_from_tabs {
                         state.loaded_buffers.insert(buffer_id);
                     }
@@ -2419,7 +2433,30 @@ impl Editor {
             .unwrap_or(line_start);
         if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
             state.view_state.cursors.primary_mut().position = byte_offset;
+            // Force line wrapping on for the preview regardless of the
+            // global `editor.line_wrap` setting (and of a switched-in
+            // buffer's fresh default): the preview pane has no horizontal
+            // scroll affordance, so without wrapping a match deep in a long
+            // line scrolls the start of the line off-screen and the context
+            // is unreadable. Wrapping also moots horizontal scroll, so reset
+            // it to the left edge. `view_state` derefs to the active
+            // buffer's `BufferViewState`, so this targets the buffer that's
+            // actually rendered.
+            state.view_state.viewport.line_wrap_enabled = true;
+            state.view_state.viewport.left_column = 0;
+            state.view_state.viewport.horizontal_scroll_offset = 0;
             state.view_state.viewport.top_byte = top_byte;
+            // We have a live target: ensure the pane is shown.
+            state.blanked = false;
+        }
+    }
+
+    /// Blank the Live Grep preview pane: it renders just its frame until
+    /// the next selectable result. Keeps `overlay_preview_state` (and its
+    /// `loaded_buffers` cleanup tracking) intact.
+    fn blank_overlay_preview(&mut self) {
+        if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
+            state.blanked = true;
         }
     }
 
@@ -2867,6 +2904,12 @@ impl Editor {
                 let Some(preview_state) = __win.overlay_preview_state.as_mut() else {
                     return;
                 };
+                // Blanked: the current query has no selectable result, so
+                // leave the framed pane empty rather than rendering a stale
+                // match.
+                if preview_state.blanked {
+                    return;
+                }
                 preview_state
                     .view_state
                     .viewport
@@ -3416,7 +3459,7 @@ impl Editor {
         if !self.config.editor.set_window_title {
             return;
         }
-        let project_name = self.working_dir.file_name().and_then(|s| s.to_str());
+        let project_name = self.working_dir().file_name().and_then(|s| s.to_str());
         let new_title =
             crate::services::terminal_title::build_window_title(display_name, project_name);
         if self.last_window_title.as_deref() == Some(new_title.as_str()) {
@@ -3493,7 +3536,7 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays) =
+        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays, scroll_regions) =
             match self.floating_widget_panel.as_ref() {
                 Some(fwp) => (
                     fwp.width_pct,
@@ -3502,6 +3545,7 @@ impl Editor {
                     fwp.focus_cursor,
                     fwp.embeds.clone(),
                     fwp.overlays.clone(),
+                    fwp.scroll_regions.clone(),
                 ),
                 None => return,
             };
@@ -3595,6 +3639,51 @@ impl Editor {
         }
         self.preview_window_id = saved_preview;
 
+        // Paint a draggable scrollbar over the rightmost column of each
+        // overflowing list, reusing the canonical `render_scrollbar` /
+        // `ScrollbarState` (same path as the keybinding editor &
+        // settings dialog). Record each track's screen rect + state so
+        // the mouse handlers can hit-test press/drag against it.
+        let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
+        {
+            use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+            let colors = ScrollbarColors::from_theme(&theme);
+            for region in &scroll_regions {
+                // Scrollbar column = right edge of the list's column,
+                // clamped inside the panel. Height = visible rows,
+                // clamped to the panel bottom.
+                let sb_x = inner
+                    .x
+                    .saturating_add(region.col_in_row as u16)
+                    .saturating_add((region.width_cols.saturating_sub(1)) as u16)
+                    .min(inner.x + inner.width.saturating_sub(1));
+                let sb_y = inner.y.saturating_add(region.buffer_row as u16);
+                if sb_y >= inner.y + inner.height {
+                    continue;
+                }
+                let max_h = inner.y + inner.height - sb_y;
+                let sb_h = (region.height_rows as u16).min(max_h);
+                if sb_h == 0 {
+                    continue;
+                }
+                let sb_rect = ratatui::layout::Rect {
+                    x: sb_x,
+                    y: sb_y,
+                    width: 1,
+                    height: sb_h,
+                };
+                let state = ScrollbarState::new(region.total, region.visible, region.scroll);
+                render_scrollbar(frame, sb_rect, &state, &colors);
+                scrollbar_tracks.push(super::WidgetScrollbarTrack {
+                    list_key: region.list_key.clone(),
+                    rect: sb_rect,
+                    total: region.total,
+                    visible: region.visible,
+                    scroll: region.scroll,
+                });
+            }
+        }
+
         // Paint overlay rows AFTER the main entries + embeds. Each
         // overlay row sits on top of whatever's at its
         // `buffer_row` (the row it would have occupied if it
@@ -3654,6 +3743,7 @@ impl Editor {
 
         if let Some(fwp) = self.floating_widget_panel.as_mut() {
             fwp.last_inner_rect = Some(inner);
+            fwp.scrollbar_tracks = scrollbar_tracks;
         }
     }
 

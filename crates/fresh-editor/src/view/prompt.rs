@@ -242,6 +242,13 @@ pub struct Prompt {
     /// session_preview delegate region was already provided by
     /// Primitive #1 — `editor.previewWindowInRect`).
     pub footer: Vec<fresh_core::api::StyledText>,
+    /// Undo history for the input field: `(input, cursor_pos)` snapshots
+    /// captured before each text mutation. Ctrl+Z pops from here. Kept
+    /// local to the prompt so undo edits the query box rather than the
+    /// underlying (modal-inaccessible) buffer.
+    undo_stack: Vec<(String, usize)>,
+    /// Redo counterpart to `undo_stack`. Cleared on any fresh mutation.
+    redo_stack: Vec<(String, usize)>,
 }
 
 /// Maximum number of suggestion rows shown at once. Mirrors the cap used by
@@ -267,6 +274,8 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -299,6 +308,8 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -350,6 +361,8 @@ impl Prompt {
             overlay: false,
             title: Vec::new(),
             footer: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -373,8 +386,57 @@ impl Prompt {
         }
     }
 
+    /// Capture the current `(input, cursor_pos)` for undo, and drop any
+    /// redo history. Call at the start of every text-mutating operation.
+    /// No-ops if the input is unchanged from the most recent snapshot so
+    /// repeated no-op edits don't bloat the stack.
+    fn push_undo_snapshot(&mut self) {
+        if self
+            .undo_stack
+            .last()
+            .is_some_and(|(text, _)| *text == self.input)
+        {
+            return;
+        }
+        // Bound the history so a very long editing session can't grow it
+        // without limit.
+        const MAX_UNDO: usize = 500;
+        if self.undo_stack.len() >= MAX_UNDO {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push((self.input.clone(), self.cursor_pos));
+        self.redo_stack.clear();
+    }
+
+    /// Undo the last input edit. Returns true if the input changed.
+    pub fn undo_input(&mut self) -> bool {
+        if let Some((text, cursor)) = self.undo_stack.pop() {
+            self.redo_stack.push((self.input.clone(), self.cursor_pos));
+            self.input = text;
+            self.cursor_pos = cursor.min(self.input.len());
+            self.selection_anchor = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Redo the last undone input edit. Returns true if the input changed.
+    pub fn redo_input(&mut self) -> bool {
+        if let Some((text, cursor)) = self.redo_stack.pop() {
+            self.undo_stack.push((self.input.clone(), self.cursor_pos));
+            self.input = text;
+            self.cursor_pos = cursor.min(self.input.len());
+            self.selection_anchor = None;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Insert a character at the cursor position
     pub fn insert_char(&mut self, ch: char) {
+        self.push_undo_snapshot();
         self.input.insert(self.cursor_pos, ch);
         self.cursor_pos += ch.len_utf8();
     }
@@ -386,6 +448,7 @@ impl Prompt {
     /// tone mark without removing the base consonant.
     pub fn backspace(&mut self) {
         if self.cursor_pos > 0 {
+            self.push_undo_snapshot();
             // Find the previous character (code point) boundary, not grapheme boundary
             // This allows layer-by-layer deletion of combining marks
             let prev_boundary = self.input[..self.cursor_pos]
@@ -403,6 +466,7 @@ impl Prompt {
     /// Deletes the entire grapheme cluster, handling combining characters properly.
     pub fn delete(&mut self) {
         if self.cursor_pos < self.input.len() {
+            self.push_undo_snapshot();
             let next_boundary = grapheme::next_grapheme_boundary(&self.input, self.cursor_pos);
             self.input.drain(self.cursor_pos..next_boundary);
         }
@@ -435,6 +499,7 @@ impl Prompt {
     /// assert_eq!(prompt.cursor_pos, 12); // At end
     /// ```
     pub fn set_input(&mut self, text: String) {
+        self.push_undo_snapshot();
         self.cursor_pos = text.len();
         self.input = text;
         self.clear_selection();
@@ -603,6 +668,7 @@ impl Prompt {
     pub fn delete_word_forward(&mut self) {
         let word_end = find_word_end_bytes(self.input.as_bytes(), self.cursor_pos);
         if word_end > self.cursor_pos {
+            self.push_undo_snapshot();
             self.input.drain(self.cursor_pos..word_end);
             // Cursor stays at same position
         }
@@ -626,6 +692,7 @@ impl Prompt {
     pub fn delete_word_backward(&mut self) {
         let word_start = find_word_start_bytes(self.input.as_bytes(), self.cursor_pos);
         if word_start < self.cursor_pos {
+            self.push_undo_snapshot();
             self.input.drain(word_start..self.cursor_pos);
             self.cursor_pos = word_start;
         }
@@ -647,6 +714,7 @@ impl Prompt {
     /// ```
     pub fn delete_to_end(&mut self) {
         if self.cursor_pos < self.input.len() {
+            self.push_undo_snapshot();
             self.input.truncate(self.cursor_pos);
         }
     }
@@ -742,6 +810,7 @@ impl Prompt {
     /// Delete the current selection and return the deleted text
     pub fn delete_selection(&mut self) -> Option<String> {
         if let Some((start, end)) = self.selection_range() {
+            self.push_undo_snapshot();
             let deleted = self.input[start..end].to_string();
             self.input.drain(start..end);
             self.cursor_pos = start;

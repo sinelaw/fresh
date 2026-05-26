@@ -188,12 +188,15 @@ pub(crate) fn read_persisted_windows_env(
 ///      project, but this one has sessions of its own."
 ///   3. Else `None` — the caller boots a clean base window at `cwd`.
 ///
-/// A window "belongs to" `cwd` when its `project_path` (preferred for
-/// orchestrator sessions, which always carry one) or its `root`
-/// (legacy / non-orchestrator windows) equals `cwd` after
-/// canonicalization. The previous base (id 1) is eligible too — if it
-/// was the user's last-used window in this cwd, reopening it is just a
-/// clean editor at the cwd.
+/// A window "belongs to" `cwd` when its **`root`** — the directory the
+/// window actually opens in — equals `cwd` after canonicalization. We
+/// match on `root`, NOT `project_path`: an orchestrator worktree session
+/// carries `project_path == <parent project>` but `root == <worktree>`,
+/// so matching on `project_path` would resurrect a worktree-rooted window
+/// when the user launched in the project dir (issue #2056). `project_path`
+/// stays purely as orchestrator-dialog grouping metadata. The previous
+/// base (id 1) is eligible too — if it was the user's last-used window in
+/// this cwd, reopening it is just a clean editor at the cwd.
 pub(crate) fn pick_active_window_for_cwd<'a>(
     env: Option<&'a PersistedWindows>,
     cwd: &Path,
@@ -213,8 +216,7 @@ pub(crate) fn pick_active_window_for_cwd<'a>(
 }
 
 fn window_matches_cwd(w: &PersistedWindow, cwd: &Path) -> bool {
-    let candidate = w.project_path.as_deref().unwrap_or(&w.root);
-    paths_equal(candidate, cwd)
+    paths_equal(&w.root, cwd)
 }
 
 fn paths_equal(a: &Path, b: &Path) -> bool {

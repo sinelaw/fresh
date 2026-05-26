@@ -705,7 +705,7 @@ impl Editor {
         };
 
         let path_str = if relative {
-            path.strip_prefix(&self.working_dir)
+            path.strip_prefix(self.working_dir())
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .into_owned()

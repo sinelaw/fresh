@@ -256,6 +256,49 @@ impl WidgetRegistry {
         }
     }
 
+    /// Host-driven scroll of a `List` widget (e.g. a scrollbar drag).
+    /// Sets the list's `scroll_offset` and, when the list has a live
+    /// selection, clamps `selected_index` into the new visible window
+    /// `[scroll, scroll + visible)` so the next render's
+    /// ensure-selected-visible doesn't snap the thumb back.
+    ///
+    /// Returns the post-clamp `selected_index` when the list has a
+    /// selection that moved (so the caller can notify the plugin to
+    /// keep its own selection mirror + preview in sync), else `None`.
+    pub fn set_list_scroll(
+        &mut self,
+        panel_id: PanelId,
+        list_key: &str,
+        scroll_offset: u32,
+        visible: u32,
+    ) -> Option<i32> {
+        let state = self.panels.get_mut(&panel_id)?;
+        let WidgetInstanceState::List {
+            scroll_offset: so,
+            selected_index,
+        } = state.instance_states.get_mut(list_key)?
+        else {
+            return None;
+        };
+        *so = scroll_offset;
+        if *selected_index < 0 || visible == 0 {
+            return None;
+        }
+        let prev = *selected_index;
+        let lo = scroll_offset as i32;
+        let hi = (scroll_offset + visible).saturating_sub(1) as i32;
+        if *selected_index < lo {
+            *selected_index = lo;
+        } else if *selected_index > hi {
+            *selected_index = hi;
+        }
+        if *selected_index != prev {
+            Some(*selected_index)
+        } else {
+            None
+        }
+    }
+
     /// Update side-effects (hits, instance_states, focus_key, tabbable)
     /// without taking ownership of the spec. Used by `rerender_widget_panel`
     /// after an in-place spec mutation: the spec in the registry is already
@@ -426,6 +469,70 @@ mod tests {
         assert!(reg.hit_test(BufferId(0), 0, 100).is_none());
         assert!(reg.hit_test(BufferId(0), 1, 0).is_none(), "wrong row");
         assert!(reg.hit_test(BufferId(99), 0, 0).is_none(), "wrong buffer");
+    }
+
+    fn mount_with_list(reg: &mut WidgetRegistry, scroll: u32, sel: i32) {
+        let mut states = HashMap::new();
+        states.insert(
+            "lst".to_string(),
+            WidgetInstanceState::List {
+                scroll_offset: scroll,
+                selected_index: sel,
+            },
+        );
+        reg.mount(
+            7,
+            BufferId(0),
+            empty_spec(),
+            Vec::new(),
+            states,
+            String::new(),
+            Vec::new(),
+        );
+    }
+
+    fn list_state(reg: &WidgetRegistry) -> (u32, i32) {
+        match reg.instance_states(7).unwrap().get("lst").unwrap() {
+            WidgetInstanceState::List {
+                scroll_offset,
+                selected_index,
+            } => (*scroll_offset, *selected_index),
+            _ => panic!("not a list"),
+        }
+    }
+
+    #[test]
+    fn set_list_scroll_sets_offset_and_clamps_selection_into_view() {
+        // Selection (row 2) is above the dragged-to window [10, 18);
+        // it should clamp up to the new top (10) and report the move.
+        let mut reg = WidgetRegistry::new();
+        mount_with_list(&mut reg, 0, 2);
+        let moved = reg.set_list_scroll(7, "lst", 10, 8);
+        assert_eq!(moved, Some(10));
+        assert_eq!(list_state(&reg), (10, 10));
+    }
+
+    #[test]
+    fn set_list_scroll_leaves_in_view_selection_untouched() {
+        // Selection already inside the new window — offset updates,
+        // selection stays, and no move is reported (no plugin sync
+        // needed).
+        let mut reg = WidgetRegistry::new();
+        mount_with_list(&mut reg, 0, 12);
+        let moved = reg.set_list_scroll(7, "lst", 10, 8); // window [10,18)
+        assert_eq!(moved, None);
+        assert_eq!(list_state(&reg), (10, 12));
+    }
+
+    #[test]
+    fn set_list_scroll_ignores_selectionless_list() {
+        // A display-only list (selected_index < 0) just scrolls; no
+        // selection clamp, no reported move.
+        let mut reg = WidgetRegistry::new();
+        mount_with_list(&mut reg, 0, -1);
+        let moved = reg.set_list_scroll(7, "lst", 5, 8);
+        assert_eq!(moved, None);
+        assert_eq!(list_state(&reg), (5, -1));
     }
 
     #[test]

@@ -124,7 +124,7 @@ impl Editor {
         // single Window.
 
         snapshot.clipboard = self.clipboard.get_internal().to_string();
-        snapshot.working_dir = self.working_dir.clone();
+        snapshot.working_dir = self.working_dir().to_path_buf();
 
         // Total terminal dimensions (full screen, not the active
         // split's viewport). Plugins read this via `getScreenSize()`
@@ -955,7 +955,7 @@ impl Editor {
                         .env_provider
                         .set(snippet, dir.map(std::path::PathBuf::from));
                     // Re-evaluate already-running tooling under the new env.
-                    self.request_restart(self.working_dir.clone());
+                    self.request_restart(self.working_dir().to_path_buf());
                 } else {
                     self.active_window_mut().status_message =
                         Some("Workspace not trusted — cannot activate environment".to_string());
@@ -966,7 +966,7 @@ impl Editor {
                 let was_active = self.authority.env_provider.is_active();
                 self.authority.env_provider.clear();
                 if was_active {
-                    self.request_restart(self.working_dir.clone());
+                    self.request_restart(self.working_dir().to_path_buf());
                 }
             }
 
@@ -3710,6 +3710,7 @@ impl Editor {
         let entries = out_pieces.entries;
         let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
+        let scroll_regions = out_pieces.scroll_regions;
         if self
             .widget_registry
             .update_side_effects(
@@ -3731,6 +3732,7 @@ impl Editor {
                     fwp.focus_cursor = focus_cursor;
                     fwp.embeds = embeds;
                     fwp.overlays = overlays;
+                    fwp.scroll_regions = scroll_regions;
                 }
             }
             return;
@@ -5595,6 +5597,10 @@ impl Editor {
             focus_cursor: None,
             embeds: Vec::new(),
             overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
             last_inner_rect: None,
         });
         let prev = std::collections::HashMap::new();
@@ -5605,6 +5611,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
+        let scroll_regions = out.scroll_regions;
         self.widget_registry.mount(
             panel_id,
             FLOATING_PANEL_BUFFER_ID,
@@ -5619,6 +5626,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
+            fwp.scroll_regions = scroll_regions;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5655,6 +5663,7 @@ impl Editor {
         let entries = out.entries;
         let embeds = out.embeds;
         let overlays = out.overlays;
+        let scroll_regions = out.scroll_regions;
         if self
             .widget_registry
             .update(
@@ -5678,6 +5687,7 @@ impl Editor {
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
             fwp.overlays = overlays;
+            fwp.scroll_regions = scroll_regions;
         }
     }
 

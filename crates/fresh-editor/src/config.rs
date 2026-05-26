@@ -3924,6 +3924,31 @@ impl Config {
         );
 
         languages.insert(
+            "c3".to_string(),
+            LanguageConfig {
+                extensions: vec!["c3".to_string(), "c3i".to_string(), "c3t".to_string()],
+                filenames: vec![],
+                grammar: "c3".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        languages.insert(
             "java".to_string(),
             LanguageConfig {
                 extensions: vec!["java".to_string()],
@@ -5733,6 +5758,26 @@ impl Config {
                 only_features: None,
                 except_features: None,
                 root_markers: Default::default(),
+            }]),
+        );
+
+        // c3lsp - C3 Language Server (https://github.com/pherrymason/c3-lsp)
+        // Install from releases or build from source
+        lsp.insert(
+            "c3".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "c3lsp".to_string(),
+                args: vec![],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["project.json".to_string(), ".git".to_string()],
             }]),
         );
 

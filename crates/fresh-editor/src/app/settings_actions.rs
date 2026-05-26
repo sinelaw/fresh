@@ -38,7 +38,7 @@ impl Editor {
             Ok(mut state) => {
                 // Load layer sources to show where each setting value comes from
                 let resolver =
-                    ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+                    ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
                 if let Ok(sources) = resolver.get_layer_sources() {
                     state.set_layer_sources(sources);
                 }
@@ -109,7 +109,7 @@ impl Editor {
         self.set_config(new_config.clone());
 
         // Refresh cached raw user config for plugins
-        self.set_user_config_raw(Config::read_user_config_raw(&self.working_dir));
+        self.set_user_config_raw(Config::read_user_config_raw(self.working_dir()));
 
         // Apply runtime changes
         if old_theme != self.config.theme {
@@ -260,7 +260,8 @@ impl Editor {
         }
 
         // Save ONLY the changes to disk (preserves external edits to the config file)
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
 
         let layer_name = match target_layer {
             ConfigLayer::User => "User",
@@ -299,7 +300,8 @@ impl Editor {
             }
         }
 
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
 
         let path = match layer {
             ConfigLayer::User => resolver.user_config_path(),

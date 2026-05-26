@@ -171,6 +171,8 @@
   "action.move_page_down": "Vai alla pagina successiva",
   "action.move_page_up": "Vai alla pagina precedente",
   "action.move_right": "Sposta cursore a destra",
+  "action.move_to_paragraph_down": "Sposta fino alla prossima riga vuota",
+  "action.move_to_paragraph_up": "Sposta fino alla riga vuota precedente",
   "action.move_up": "Sposta cursore su",
   "action.move_word_end": "Vai a fine parola",
   "action.move_word_left": "Sposta parola a sinistra",

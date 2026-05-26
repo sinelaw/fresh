@@ -7,6 +7,7 @@ export default defineConfig({
   base: "/docs/",
   srcDir: ".",
   outDir: "../dist/docs",
+  srcExclude: ["internal/**"],
 
   head: [["link", { rel: "icon", href: "/docs/logo.svg" }]],
 
@@ -115,88 +116,6 @@ export default defineConfig({
           { text: "Architecture", link: "/architecture" },
           { text: "WASM Compatibility", link: "/wasm" },
           { text: "QuickJS Migration", link: "/quickjs" },
-          {
-            text: "Internal",
-            collapsed: true,
-            items: [
-              {
-                text: "Configuration",
-                collapsed: true,
-                items: [
-                  { text: "Config Editor Design", link: "/internal/config-editor-design" },
-                  { text: "Settings Modified Indicator", link: "/internal/settings-modified-indicator-design" },
-                ],
-              },
-              {
-                text: "Plugins",
-                collapsed: true,
-                items: [
-                  { text: "Plugin Marketplace", link: "/internal/plugin-marketplace-design" },
-                  { text: "Plugin Usability", link: "/internal/plugin-usability-review" },
-                ],
-              },
-              {
-                text: "Themes",
-                collapsed: true,
-                items: [
-                  { text: "Theme Consolidation", link: "/internal/theme-consolidation-plan" },
-                  { text: "Theme Usability", link: "/internal/theme-usability-improvements" },
-                ],
-              },
-              {
-                text: "UI/Input",
-                collapsed: true,
-                items: [
-                  { text: "Input Calibration", link: "/internal/input-calibration-wizard" },
-                  { text: "Event Dispatch", link: "/internal/event-dispatch-architecture" },
-                ],
-              },
-              {
-                text: "View/Rendering",
-                collapsed: true,
-                items: [
-                  { text: "Diff View", link: "/internal/diff-view" },
-                  { text: "Markdown", link: "/internal/markdown" },
-                  { text: "Scroll Sync", link: "/internal/scroll-sync-design" },
-                  { text: "Visual Layout", link: "/internal/visual-layout-unification" },
-                ],
-              },
-              {
-                text: "Terminal",
-                collapsed: true,
-                items: [
-                  { text: "Terminal Design", link: "/internal/terminal" },
-                  { text: "I/O Separation", link: "/internal/io-separation-plan" },
-                ],
-              },
-              {
-                text: "Remote",
-                collapsed: true,
-                items: [
-                  { text: "SSH Remote Editing Design", link: "/internal/ssh-remote-editing-design" },
-                ],
-              },
-              {
-                text: "Design Docs",
-                collapsed: true,
-                items: [
-                  { text: "Finder Abstraction", link: "/internal/finder-abstraction" },
-                  { text: "Search Next Occurrence", link: "/internal/search-next-occurrence" },
-                ],
-              },
-              {
-                text: "Core/System",
-                collapsed: true,
-                items: [
-                  { text: "Design Decisions", link: "/internal/design-decisions" },
-                  { text: "Testing Guide", link: "/internal/testing" },
-                  { text: "Code Review", link: "/internal/code-review" },
-                  { text: "Unicode Width", link: "/internal/unicode-width" },
-                  { text: "Readme", link: "/internal/README" },
-                ],
-              },
-            ],
-          },
           {
             text: "Visual Regression Tests",
             collapsed: true,

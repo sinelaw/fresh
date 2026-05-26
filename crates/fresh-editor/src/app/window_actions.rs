@@ -42,6 +42,7 @@ impl crate::app::Editor {
             plugin_manager: std::sync::Arc::clone(&self.plugin_manager),
             theme: std::sync::Arc::clone(&self.theme),
             event_broadcaster: self.event_broadcaster.clone(),
+            recovery_service: std::sync::Arc::clone(&self.recovery_service),
         }
     }
 
@@ -146,7 +147,6 @@ impl crate::app::Editor {
         // directly.
         let previous_id = self.active_window;
         self.active_window = id;
-        self.working_dir = root.clone();
 
         let spawn_result = {
             let target = self
@@ -174,9 +174,6 @@ impl crate::app::Editor {
                 // out of PTYs, ...).
                 self.windows.remove(&id);
                 self.active_window = previous_id;
-                if let Some(prev) = self.windows.get(&previous_id) {
-                    self.working_dir = prev.root.clone();
-                }
                 return Err(e);
             }
         };
@@ -264,19 +261,16 @@ impl crate::app::Editor {
 
         let previous_id = self.active_window;
 
-        // Snapshot the new root before mutating fields that borrow
-        // self.windows.
-        let new_root = self.windows[&id].root.clone();
-
         // For a never-activated incoming window, allocate a fresh
         // seed buffer + SplitManager rooted at it. The state is
         // installed into the incoming window's `buffers` map after
         // the active pointer moves.
         let fresh_layout = self.build_fresh_layout_if_needed(id);
 
-        // Pointer write — that's the whole switch.
+        // Pointer write — that's the whole switch. `working_dir()`
+        // derives from the active window's root, so moving the pointer
+        // is all it takes (no separate working_dir to sync).
         self.active_window = id;
-        self.working_dir = new_root;
 
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach

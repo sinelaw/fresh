@@ -2633,7 +2633,7 @@ impl Editor {
         }
 
         // Collect all project files via FileSystem trait (works for both local and remote)
-        let cwd = self.working_dir.clone();
+        let cwd = self.working_dir().to_path_buf();
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
         if let Err(e) =
@@ -2821,7 +2821,7 @@ impl Editor {
 
         let filesystem = self.authority.filesystem.clone();
         let filesystem_walker = self.authority.filesystem.clone();
-        let cwd = self.working_dir.clone();
+        let cwd = self.working_dir().to_path_buf();
         let query_len = pattern.len();
 
         let Some(runtime) = &self.tokio_runtime else {

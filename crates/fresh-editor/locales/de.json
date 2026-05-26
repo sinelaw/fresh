@@ -171,6 +171,8 @@
   "action.move_page_down": "Seite nach unten bewegen",
   "action.move_page_up": "Seite nach oben bewegen",
   "action.move_right": "Cursor nach rechts bewegen",
+  "action.move_to_paragraph_down": "Zur nächsten leeren Zeile bewegen",
+  "action.move_to_paragraph_up": "Zur vorherigen leeren Zeile bewegen",
   "action.move_up": "Cursor nach oben bewegen",
   "action.move_word_end": "Zum Wortende bewegen",
   "action.move_word_left": "Wort nach links bewegen",

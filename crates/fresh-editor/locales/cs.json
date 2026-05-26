@@ -171,6 +171,8 @@
   "action.move_page_down": "Přesunout o stránku dolů",
   "action.move_page_up": "Přesunout o stránku nahoru",
   "action.move_right": "Přesunout kurzor vpravo",
+  "action.move_to_paragraph_down": "Přesunout na další prázdný řádek",
+  "action.move_to_paragraph_up": "Přesunout na předchozí prázdný řádek",
   "action.move_up": "Přesunout kurzor nahoru",
   "action.move_word_end": "Přesunout na konec slova",
   "action.move_word_left": "Přesunout o slovo vlevo",

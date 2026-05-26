@@ -109,7 +109,6 @@ pub(super) struct EditorParts {
     pub(super) config_cached_json: Arc<serde_json::Value>,
     pub(super) user_config_raw: Arc<serde_json::Value>,
     pub(super) dir_context: DirectoryContext,
-    pub(super) working_dir: PathBuf,
 
     // Themes
     pub(super) theme: Arc<RwLock<crate::view::theme::Theme>>,
@@ -151,7 +150,7 @@ pub(super) struct EditorParts {
     pub(super) command_registry: Arc<RwLock<CommandRegistry>>,
     pub(super) quick_open_registry: QuickOpenRegistry,
     pub(super) plugin_manager: Arc<RwLock<PluginManager>>,
-    pub(super) recovery_service: RecoveryService,
+    pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
     pub(super) key_translator: crate::input::key_translator::KeyTranslator,
     pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
@@ -210,7 +209,6 @@ impl Editor {
             authority: parts.authority,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
-            working_dir: parts.working_dir,
             windows: parts.windows,
             active_window: parts.active_window,
             next_window_id: parts.next_window_id,
@@ -1051,6 +1049,31 @@ impl Editor {
         let local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(crate::model::filesystem::StdFileSystem);
 
+        // Hot-exit recovery service, shared (Arc<Mutex>) into every
+        // `Window` via `WindowResources` so per-window restore/auto-save
+        // can reach it without an active-window flip.
+        let recovery_service = {
+            let recovery_config = RecoveryConfig {
+                enabled: recovery_enabled,
+                ..RecoveryConfig::default()
+            };
+            // Default to a CWD-scoped recovery directory so each working
+            // directory keeps its own hot-exit recovery files. If this
+            // editor is later promoted to session mode, `set_session_name`
+            // re-creates the service with `RecoveryScope::Session`.
+            // Issue #1550: without per-CWD scoping, opening Fresh in a
+            // second folder would clobber the first folder's unsaved
+            // unnamed buffers on shutdown.
+            let scope = crate::services::recovery::RecoveryScope::Standalone {
+                working_dir: working_dir.clone(),
+            };
+            std::sync::Arc::new(std::sync::Mutex::new(RecoveryService::with_scope(
+                recovery_config,
+                &dir_context.recovery_dir(),
+                &scope,
+            )))
+        };
+
         // Build the resource bundle every `Window` gets a clone of. The
         // base window receives one clone here; subsequent windows
         // (created via `Editor::create_window_at` or first-dive seeding
@@ -1074,6 +1097,7 @@ impl Editor {
             plugin_manager: Arc::clone(&plugin_manager),
             theme: Arc::clone(&theme),
             event_broadcaster: event_broadcaster.clone(),
+            recovery_service: Arc::clone(&recovery_service),
         };
 
         // Build the active window — the one that holds the seed
@@ -1139,11 +1163,30 @@ impl Editor {
         // exactly like a freshly created window.
         let mut windows = HashMap::new();
         if let Some(ref env) = persisted_env {
+            // The active window came from a real pick when `picked_active`
+            // is `Some` — its persisted entry must NOT also become a shell.
+            // When the pick found nothing we synthesized a clean base at
+            // `WindowId(1)` (the base is always id 1); a global
+            // `windows.json` may already hold a *different* project's id-1
+            // base, which would collide. Re-id that collider onto a fresh
+            // id so it survives as an inactive shell instead of being
+            // shadowed/dropped (issue #2056 cross-project case).
+            let active_came_from_pick = picked_active.is_some();
+            let mut next_fresh_id = env
+                .next_id
+                .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
+                .max(active_window_id.0 + 1);
             for ps in &env.windows {
-                let id = fresh_core::WindowId(ps.id);
-                if id == active_window_id {
+                if active_came_from_pick && ps.id == active_window_id.0 {
                     continue;
                 }
+                let id = if ps.id == active_window_id.0 {
+                    let fresh = fresh_core::WindowId(next_fresh_id);
+                    next_fresh_id += 1;
+                    fresh
+                } else {
+                    fresh_core::WindowId(ps.id)
+                };
                 let resources = crate::app::window_resources::WindowResources {
                     config: Arc::clone(&config_arc),
                     grammar_registry: Arc::clone(&grammar_registry),
@@ -1162,6 +1205,7 @@ impl Editor {
                     plugin_manager: Arc::clone(&plugin_manager),
                     theme: Arc::clone(&theme),
                     event_broadcaster: event_broadcaster.clone(),
+                    recovery_service: Arc::clone(&recovery_service),
                 };
                 let mut shell = crate::app::window::Window::new(
                     id,
@@ -1188,24 +1232,6 @@ impl Editor {
             .map(|env| env.next_id.max(max_existing + 1))
             .unwrap_or(2);
 
-        let recovery_service = {
-            let recovery_config = RecoveryConfig {
-                enabled: recovery_enabled,
-                ..RecoveryConfig::default()
-            };
-            // Default to a CWD-scoped recovery directory so each working
-            // directory keeps its own hot-exit recovery files. If this
-            // editor is later promoted to session mode, `set_session_name`
-            // re-creates the service with `RecoveryScope::Session`.
-            // Issue #1550: without per-CWD scoping, opening Fresh in a
-            // second folder would clobber the first folder's unsaved
-            // unnamed buffers on shutdown.
-            let scope = crate::services::recovery::RecoveryScope::Standalone {
-                working_dir: working_dir.clone(),
-            };
-            RecoveryService::with_scope(recovery_config, &dir_context.recovery_dir(), &scope)
-        };
-
         let key_translator = crate::input::key_translator::KeyTranslator::load_from_config_dir(
             &dir_context.config_dir,
         )
@@ -1227,7 +1253,6 @@ impl Editor {
             config_cached_json,
             user_config_raw: Arc::new(user_config_raw),
             dir_context: dir_context.clone(),
-            working_dir: working_dir.clone(),
             theme,
             theme_registry,
             theme_cache,

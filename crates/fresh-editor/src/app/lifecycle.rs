@@ -59,10 +59,13 @@ impl Editor {
                 name: session_name.clone(),
             };
             let recovery_config = RecoveryConfig {
-                enabled: self.recovery_service.is_enabled(),
+                enabled: self.recovery_service.lock().unwrap().is_enabled(),
                 ..RecoveryConfig::default()
             };
-            self.recovery_service =
+            // Replace the shared service's contents in place — the
+            // `Arc<Mutex>` is cloned into every window, so we must not
+            // swap the `Arc` itself (that would desync the windows).
+            *self.recovery_service.lock().unwrap() =
                 RecoveryService::with_scope(recovery_config, &base_recovery_dir, &scope);
         }
         self.session_name = name;

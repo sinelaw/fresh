@@ -84,7 +84,6 @@ On macOS and some linux distros (Bazzite/Bluefin/Aurora):
 > **Note:** On macOS, see [macOS Terminal Tips](https://getfresh.dev/docs/configuration/keyboard#macos-terminal-tips) for recommended terminal configuration.
 
 ```bash
-brew tap sinelaw/fresh
 brew install fresh-editor
 ```
 

@@ -260,7 +260,7 @@ impl Editor {
                 self.authority.path_translation.as_ref(),
             );
             let display_name =
-                super::BufferMetadata::display_name_for_path(&new_path, &self.working_dir);
+                super::BufferMetadata::display_name_for_path(&new_path, self.working_dir());
             if let Some(metadata) = self.active_window_mut().buffer_metadata.get_mut(&id) {
                 metadata.kind = super::BufferKind::File {
                     path: new_path.clone(),

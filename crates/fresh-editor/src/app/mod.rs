@@ -589,19 +589,12 @@ pub struct Editor {
     /// Menu configuration (built-in menus with i18n support)
     menus: crate::config::MenuConfig,
 
-    /// Working directory for file explorer (set at initialization).
-    ///
-    /// During the Session migration this field still backs every
-    /// existing read site. New code should prefer
-    /// `self.active_window().root` so the eventual swap to a real
-    /// active-session pointer is a no-op for the call site. See
-    /// `docs/internal/orchestrator-sessions-design.md` Step 1.
-    working_dir: PathBuf,
-
-    /// All editor sessions, keyed by id. Initially holds exactly one
-    /// session (`WindowId(1)`, the "base") rooted at `working_dir`.
-    /// Step 1 of the migration adds the abstraction without yet
-    /// allowing more than one entry.
+    /// All editor sessions, keyed by id. The active window's `root` is
+    /// the editor's working directory — see `working_dir()`, which
+    /// derives it. There is deliberately no separate `working_dir`
+    /// field: it cannot drift out of sync with the active window
+    /// (issue #2056). Holds exactly one session (`WindowId(1)`, the
+    /// "base") until the orchestrator adds more.
     pub(crate) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
 
     /// Id of the currently active session. Always `WindowId(1)` for
@@ -746,8 +739,11 @@ pub struct Editor {
     /// Cached layout for file browser (for mouse hit testing)
     // `file_browser_layout` moved onto `Window`.
 
-    /// Recovery service for auto-recovery-save and crash recovery
-    recovery_service: RecoveryService,
+    /// Recovery service for auto-recovery-save and crash recovery.
+    /// `Arc<Mutex>` because it is shared into every `Window` via
+    /// `WindowResources` so per-window restore / auto-save can reach it
+    /// without an active-window flip.
+    recovery_service: std::sync::Arc<std::sync::Mutex<RecoveryService>>,
 
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,
@@ -970,9 +966,33 @@ pub(crate) struct FloatingWidgetState {
     /// widget without reflowing the rest of the panel when
     /// they show or hide.
     pub overlays: Vec<crate::widgets::OverlayRow>,
+    /// Scrollable `List` widgets that overflowed, with the geometry
+    /// the draw pass uses to paint a scrollbar. Refreshed on every
+    /// render alongside `entries`/`embeds`.
+    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
+    /// Screen-space scrollbar tracks computed at the last draw — used
+    /// by the mouse hit-test to start/continue a scrollbar drag. One
+    /// per overflowing list.
+    pub scrollbar_tracks: Vec<WidgetScrollbarTrack>,
+    /// Shared press/drag/release state for the panel's list
+    /// scrollbars (the canonical `ScrollbarMouse`).
+    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
+    /// `list_key` of the scrollbar currently being drag-scrolled.
+    pub scrollbar_drag_key: Option<String>,
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
+}
+
+/// A list scrollbar's screen rect + scroll state, captured at draw
+/// time so mouse press/drag can hit-test and drive `ScrollbarMouse`.
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetScrollbarTrack {
+    pub list_key: String,
+    pub rect: ratatui::layout::Rect,
+    pub total: usize,
+    pub visible: usize,
+    pub scroll: usize,
 }
 
 /// A file that should be opened after the TUI starts
@@ -1010,7 +1030,7 @@ impl Editor {
         let resolved = if input_path.is_absolute() {
             input_path.to_path_buf()
         } else {
-            self.working_dir.join(input_path)
+            self.working_dir().join(input_path)
         };
 
         let canonical = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());

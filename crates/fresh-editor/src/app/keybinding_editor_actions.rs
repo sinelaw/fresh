@@ -108,7 +108,7 @@ impl Editor {
 
         let resolver = crate::config_io::ConfigResolver::new(
             self.dir_context.clone(),
-            self.working_dir.clone(),
+            self.working_dir().to_path_buf(),
         );
 
         match resolver.save_changes_to_layer(

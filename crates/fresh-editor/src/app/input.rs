@@ -918,7 +918,7 @@ impl Editor {
         // Re-evaluate all authority-routed processes (LSP, terminals, …)
         // under the new level by rebuilding around the same authority.
         if changed {
-            self.request_restart(self.working_dir.clone());
+            self.request_restart(self.working_dir().to_path_buf());
         }
     }
 
@@ -989,7 +989,7 @@ impl Editor {
                     .file_path()
                     .map(|p| {
                         // Make path relative to working_dir if possible
-                        p.strip_prefix(&self.working_dir)
+                        p.strip_prefix(self.working_dir())
                             .unwrap_or(p)
                             .to_string_lossy()
                             .to_string()
@@ -1772,7 +1772,7 @@ impl Editor {
                     .ansi_background_path
                     .as_ref()
                     .and_then(|p| {
-                        p.strip_prefix(&self.working_dir)
+                        p.strip_prefix(self.working_dir())
                             .ok()
                             .map(|rel| rel.to_string_lossy().to_string())
                     })

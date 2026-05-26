@@ -1,0 +1,215 @@
+%YAML 1.2
+---
+# C3 syntax highlighting for Fresh editor
+# Based on the C3 language reference: https://c3-lang.org/
+name: C3
+file_extensions:
+  - c3
+  - c3i
+  - c3t
+scope: source.c3
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+  type_identifier: '[A-Z][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: compile-time
+    - include: builtins
+    - include: attributes
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: module-paths
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    # Doc contract comments <* ... *>
+    - match: '<\*'
+      scope: punctuation.definition.comment.begin.c3
+      push:
+        - meta_scope: comment.block.documentation.c3
+        - match: '\*>'
+          scope: punctuation.definition.comment.end.c3
+          pop: true
+    # Nested block comments
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.c3
+      push:
+        - meta_scope: comment.block.c3
+        - match: '/\*'
+          push:
+            - match: '\*/'
+              pop: true
+            - match: '.'
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.c3
+          pop: true
+    # Line comments
+    - match: '//.*$'
+      scope: comment.line.double-slash.c3
+
+  strings:
+    # Raw strings (backtick-delimited)
+    - match: '`'
+      scope: punctuation.definition.string.begin.c3
+      push:
+        - meta_scope: string.quoted.other.raw.c3
+        - match: '`'
+          scope: punctuation.definition.string.end.c3
+          pop: true
+    # Regular strings
+    - match: '"'
+      scope: punctuation.definition.string.begin.c3
+      push:
+        - meta_scope: string.quoted.double.c3
+        - match: '"'
+          scope: punctuation.definition.string.end.c3
+          pop: true
+        - include: string-escapes
+
+  string-escapes:
+    - match: '\\[abefnrtv0\\''"]'
+      scope: constant.character.escape.c3
+    - match: '\\x[0-9a-fA-F]{2}'
+      scope: constant.character.escape.hex.c3
+    - match: '\\u[0-9a-fA-F]{4}'
+      scope: constant.character.escape.unicode.c3
+    - match: '\\U[0-9a-fA-F]{8}'
+      scope: constant.character.escape.unicode.c3
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.c3
+      push:
+        - meta_scope: string.quoted.single.c3
+        - match: "'"
+          scope: punctuation.definition.string.end.c3
+          pop: true
+        - match: '\\[abefnrtv0\\''"]'
+          scope: constant.character.escape.c3
+        - match: '\\x[0-9a-fA-F]{2}'
+          scope: constant.character.escape.hex.c3
+        - match: '\\u[0-9a-fA-F]{4}'
+          scope: constant.character.escape.unicode.c3
+
+  numbers:
+    # Hexadecimal float
+    - match: '\b0x[0-9a-fA-F_]+(\.[0-9a-fA-F_]+)?[pP][+-]?[0-9_]+\b'
+      scope: constant.numeric.float.hex.c3
+    # Hexadecimal integer
+    - match: '\b0x[0-9a-fA-F_]+(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|uint|int|long|ulong)?\b'
+      scope: constant.numeric.hex.c3
+    # Binary
+    - match: '\b0b[01_]+\b'
+      scope: constant.numeric.binary.c3
+    # Octal
+    - match: '\b0o[0-7_]+\b'
+      scope: constant.numeric.octal.c3
+    # Float
+    - match: '\b[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?(f16|f32|f64|f128|f)?\b'
+      scope: constant.numeric.float.c3
+    # Integer with exponent
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+\b'
+      scope: constant.numeric.float.c3
+    # Integer
+    - match: '\b[0-9][0-9_]*(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|uint|int|long|ulong)?\b'
+      scope: constant.numeric.integer.c3
+
+  compile-time:
+    # Compile-time builtins ($$name)
+    - match: '\$\${{identifier}}'
+      scope: support.function.builtin.c3
+    # Compile-time directives and macros ($name)
+    - match: '\${{identifier}}'
+      scope: keyword.control.directive.c3
+
+  builtins:
+    # Compile-time / builtin variables ($CONST style handled above)
+    - match: '\bassert\b'
+      scope: support.function.builtin.c3
+
+  attributes:
+    # Attributes (@name)
+    - match: '@{{identifier}}'
+      scope: storage.modifier.attribute.c3
+
+  keywords:
+    # Control flow
+    - match: '\b(if|else|switch|case|default|while|do|for|foreach|foreach_r|break|continue|return|nextcase|defer)\b'
+      scope: keyword.control.c3
+    # Error / optional handling
+    - match: '\b(try|catch|assert)\b'
+      scope: keyword.control.exception.c3
+    # Declaration
+    - match: '\b(fn|macro|const|static|extern|inline|tlocal|var)\b'
+      scope: keyword.declaration.c3
+    # Type definition
+    - match: '\b(struct|union|enum|bitstruct|fault|distinct|def|alias|typedef|interface)\b'
+      scope: keyword.declaration.type.c3
+    # Module system
+    - match: '\b(module|import)\b'
+      scope: keyword.other.module.c3
+    # Other
+    - match: '\b(asm)\b'
+      scope: keyword.other.c3
+
+  types:
+    # Signed integer types
+    - match: '\b(ichar|short|int|long|int128|iptr|isz)\b'
+      scope: storage.type.c3
+    # Unsigned integer types
+    - match: '\b(char|ushort|uint|ulong|uint128|uptr|usz)\b'
+      scope: storage.type.c3
+    # Floating point types
+    - match: '\b(float16|bfloat16|float|double|float128)\b'
+      scope: storage.type.c3
+    # Other primitive types
+    - match: '\b(void|bool|any|anyfault|typeid)\b'
+      scope: storage.type.c3
+    # User-defined types (capitalized identifiers)
+    - match: '\b{{type_identifier}}\b'
+      scope: storage.type.user.c3
+
+  constants:
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.c3
+
+  module-paths:
+    # Module path qualifier (foo::bar)
+    - match: '\b{{identifier}}(?=::)'
+      scope: entity.name.namespace.c3
+
+  functions:
+    # Function / macro call
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.c3
+
+  operators:
+    - match: '(\+\+|--)'
+      scope: keyword.operator.arithmetic.c3
+    - match: '(\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=)'
+      scope: keyword.operator.assignment.c3
+    - match: '(==|!=|<=|>=|<|>)'
+      scope: keyword.operator.comparison.c3
+    - match: '(&&|\|\||!)'
+      scope: keyword.operator.logical.c3
+    - match: '(<<|>>|&|\||\^|~)'
+      scope: keyword.operator.bitwise.c3
+    - match: '(\+|-|\*|/|%)'
+      scope: keyword.operator.arithmetic.c3
+    - match: '(\.\.\.|\.\.|\?\?|\?|=)'
+      scope: keyword.operator.c3
+
+  punctuation:
+    - match: '(::|;|,|:|\.)'
+      scope: punctuation.separator.c3
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.c3

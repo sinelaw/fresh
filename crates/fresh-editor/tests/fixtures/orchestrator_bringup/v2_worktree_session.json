@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "active": 2,
+  "next_id": 3,
+  "windows": [
+    {
+      "id": 1,
+      "label": "project",
+      "root": "__PROJECT__",
+      "plugin_state": {}
+    },
+    {
+      "id": 2,
+      "label": "anna-katharine-green_hand-and-ring",
+      "root": "__WORKTREE__",
+      "project_path": "__PROJECT__",
+      "plugin_state": {
+        "orchestrator": {
+          "shared_worktree": false,
+          "project_path": "__PROJECT__"
+        }
+      }
+    }
+  ]
+}

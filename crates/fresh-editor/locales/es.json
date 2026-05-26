@@ -171,6 +171,8 @@
   "action.move_page_down": "Mover página abajo",
   "action.move_page_up": "Mover página arriba",
   "action.move_right": "Mover cursor a la derecha",
+  "action.move_to_paragraph_down": "Mover hasta la siguiente línea vacía",
+  "action.move_to_paragraph_up": "Mover hasta la línea vacía anterior",
   "action.move_up": "Mover cursor arriba",
   "action.move_word_end": "Mover al final de palabra",
   "action.move_word_left": "Mover palabra a la izquierda",

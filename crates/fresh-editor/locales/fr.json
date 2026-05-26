@@ -171,6 +171,8 @@
   "action.move_page_down": "Page suivante",
   "action.move_page_up": "Page précédente",
   "action.move_right": "Déplacer le curseur vers la droite",
+  "action.move_to_paragraph_down": "Déplacer jusqu'à la ligne vide suivante",
+  "action.move_to_paragraph_up": "Déplacer jusqu'à la ligne vide précédente",
   "action.move_up": "Déplacer le curseur vers le haut",
   "action.move_word_end": "Aller à la fin du mot",
   "action.move_word_left": "Déplacer d'un mot vers la gauche",

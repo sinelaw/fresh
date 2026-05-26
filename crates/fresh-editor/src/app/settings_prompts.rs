@@ -535,7 +535,8 @@ impl Editor {
         // Save the theme using explicit changes to avoid the issue where
         // changing to the default theme doesn't persist (because save_to_layer
         // computes delta vs defaults and sees no difference).
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         let config_path = resolver.user_config_path();
         tracing::info!(
             "Saving theme '{}' to user config at {}",
@@ -667,7 +668,8 @@ impl Editor {
         }
 
         // Save the config using the resolver
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save keybinding map to config: {}", e);
         }
@@ -815,7 +817,8 @@ impl Editor {
         }
 
         // Save the config using the resolver
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save cursor style to config: {}", e);
         }
@@ -930,7 +933,8 @@ impl Editor {
         }
 
         // Save the config using the resolver
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         if let Err(e) = resolver.save_to_layer(&self.config, ConfigLayer::User) {
             tracing::warn!("Failed to save locale to config: {}", e);
         }

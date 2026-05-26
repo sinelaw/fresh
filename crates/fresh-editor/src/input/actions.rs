@@ -56,6 +56,33 @@ fn content_len_without_line_ending(content: &str) -> usize {
     content.trim_end_matches(LINE_ENDING_CHARS).len()
 }
 
+fn find_paragraph_up(buffer: &mut Buffer, pos: usize, estimated_line_length: usize) -> usize {
+    let mut iter = buffer.line_iterator(pos, estimated_line_length);
+    let mut found_pos = None;
+    while let Some((line_start, line_content)) = iter.prev() {
+        let trimmed = line_content.trim_end_matches(['\n', '\r']);
+        if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
+            found_pos = Some(line_start);
+            break;
+        }
+    }
+    found_pos.unwrap_or(0)
+}
+
+fn find_paragraph_down(buffer: &mut Buffer, pos: usize, estimated_line_length: usize) -> usize {
+    let mut iter = buffer.line_iterator(pos, estimated_line_length);
+    iter.next_line();
+    let mut found_pos = None;
+    while let Some((line_start, line_content)) = iter.next_line() {
+        let trimmed = line_content.trim_end_matches(['\n', '\r']);
+        if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
+            found_pos = Some(line_start);
+            break;
+        }
+    }
+    found_pos.unwrap_or(buffer.len())
+}
+
 /// Adjust position after moving left in CRLF mode.
 /// If we land on \n that's preceded by \r, skip back to the \r.
 /// This ensures the cursor never sits between \r and \n.
@@ -2216,36 +2243,25 @@ pub fn action_to_events(
 
         Action::SelectToParagraphUp => {
             select_each_cursor(cursors, &mut events, |c| {
-                let mut iter = state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length);
-                let mut found_pos = None;
-                while let Some((line_start, line_content)) = iter.prev() {
-                    let trimmed = line_content.trim_end_matches(['\n', '\r']);
-                    if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
-                        found_pos = Some(line_start);
-                        break;
-                    }
-                }
-                found_pos.unwrap_or(0)
+                find_paragraph_up(&mut state.buffer, c.position, estimated_line_length)
             });
         }
 
         Action::SelectToParagraphDown => {
             select_each_cursor(cursors, &mut events, |c| {
-                let mut iter = state
-                    .buffer
-                    .line_iterator(c.position, estimated_line_length);
-                iter.next_line();
-                let mut found_pos = None;
-                while let Some((line_start, line_content)) = iter.next_line() {
-                    let trimmed = line_content.trim_end_matches(['\n', '\r']);
-                    if trimmed.is_empty() || trimmed.chars().all(char::is_whitespace) {
-                        found_pos = Some(line_start);
-                        break;
-                    }
-                }
-                found_pos.unwrap_or(state.buffer.len())
+                find_paragraph_down(&mut state.buffer, c.position, estimated_line_length)
+            });
+        }
+
+        Action::MoveToParagraphUp => {
+            move_each_cursor(cursors, &mut events, |c| {
+                find_paragraph_up(&mut state.buffer, c.position, estimated_line_length)
+            });
+        }
+
+        Action::MoveToParagraphDown => {
+            move_each_cursor(cursors, &mut events, |c| {
+                find_paragraph_down(&mut state.buffer, c.position, estimated_line_length)
             });
         }
 

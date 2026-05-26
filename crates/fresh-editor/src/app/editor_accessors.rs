@@ -422,7 +422,7 @@ impl Editor {
         self.pending_authority = Some(authority);
         // Re-open the same working directory; `main.rs` picks up the
         // pending authority from the old editor just before dropping it.
-        self.request_restart(self.working_dir.clone());
+        self.request_restart(self.working_dir().to_path_buf());
     }
 
     /// Restore the default local authority. Same destructive-restart
@@ -502,10 +502,12 @@ impl Editor {
         &self.authority
     }
 
-    /// The editor's current working directory.  This is the project
-    /// root; individual buffers may live elsewhere.
+    /// The editor's current working directory — the active window's
+    /// project root. Derived, not stored: there is no separate
+    /// `working_dir` field that could drift out of sync with the active
+    /// window (issue #2056). Individual buffers may live elsewhere.
     pub fn working_dir(&self) -> &std::path::Path {
-        &self.working_dir
+        &self.active_window().root
     }
 
     /// The currently active `Session`. Always `WindowId(1)` until

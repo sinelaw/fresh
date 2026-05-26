@@ -145,6 +145,7 @@ impl InputHandler for Prompt {
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::Plugin { .. }
                                     | crate::view::prompt::PromptType::QuickOpen
+                                    | crate::view::prompt::PromptType::LiveGrep
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
@@ -189,6 +190,7 @@ impl InputHandler for Prompt {
                                 self.prompt_type,
                                 crate::view::prompt::PromptType::Plugin { .. }
                                     | crate::view::prompt::PromptType::QuickOpen
+                                    | crate::view::prompt::PromptType::LiveGrep
                             );
                         if should_sync {
                             if let Some(suggestion) = self.suggestions.get(new_selected) {
@@ -320,6 +322,23 @@ impl Prompt {
                 // Delete to end of line
                 self.delete_to_end();
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                InputResult::Consumed
+            }
+            'z' => {
+                // Undo the last input edit. Operates on the prompt's own
+                // history so undo edits the query box, not the underlying
+                // (modal-inaccessible) buffer. Consumed unconditionally so
+                // it never falls through to the global buffer undo.
+                if self.undo_input() {
+                    ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                }
+                InputResult::Consumed
+            }
+            'y' => {
+                // Redo the last undone input edit.
+                if self.redo_input() {
+                    ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                }
                 InputResult::Consumed
             }
             // Pass through other Ctrl+key combinations to global keybindings (e.g., Ctrl+P to toggle Quick Open)

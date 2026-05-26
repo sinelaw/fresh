@@ -171,6 +171,8 @@
   "action.move_page_down": "ページダウン",
   "action.move_page_up": "ページアップ",
   "action.move_right": "カーソルを右へ移動",
+  "action.move_to_paragraph_down": "次の空行まで移動",
+  "action.move_to_paragraph_up": "前の空行まで移動",
   "action.move_up": "カーソルを上へ移動",
   "action.move_word_end": "単語末尾へ移動",
   "action.move_word_left": "左の単語へ移動",

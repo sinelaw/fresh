@@ -1482,9 +1482,31 @@ impl Editor {
         // many plugins (e.g. git_statusbar) re-publish the same value on
         // every `render_start` hook, which would otherwise create a
         // render → hook → ack → render feedback loop at ~13Hz forever.
+        //
+        // The remaining `=> false` arms are side-effecting commands that
+        // never touch the rendered buffer: scheduling a timer, spawning
+        // processes / HTTP, watching paths, and writing plugin-private
+        // state. Any *visual* result they eventually produce arrives as its
+        // own command (overlay, virtual text, status value, …) and is
+        // counted then. Treating these as visual forced a redraw on every
+        // debounce tick — e.g. live_diff's 75ms `editor.delay()` recompute
+        // repainted the screen twice per keystroke with no change. Invisible
+        // on a fast terminal, but real lag over a serial console (#2100).
+        use fresh_core::api::PluginCommand as Pc;
         let has_visual_commands = commands.iter().any(|c| match c {
-            fresh_core::api::PluginCommand::HookCompleted { .. } => false,
-            fresh_core::api::PluginCommand::SetStatusBarValue {
+            Pc::HookCompleted { .. }
+            | Pc::Delay { .. }
+            | Pc::SpawnProcess { .. }
+            | Pc::SpawnBackgroundProcess { .. }
+            | Pc::KillBackgroundProcess { .. }
+            | Pc::SpawnProcessWait { .. }
+            | Pc::HttpFetch { .. }
+            | Pc::WatchPath { .. }
+            | Pc::UnwatchPath { .. }
+            | Pc::SetGlobalState { .. }
+            | Pc::SetWindowState { .. }
+            | Pc::SetViewState { .. } => false,
+            Pc::SetStatusBarValue {
                 buffer_id,
                 key,
                 value,

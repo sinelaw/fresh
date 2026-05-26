@@ -25,8 +25,6 @@
 //! - `clipboard: Clipboard` — owned value; pending Tier-2 migration
 //! - `mode_registry: ModeRegistry` — owned value; pending wrap
 //! - `quick_open_registry: QuickOpenRegistry` — owned value; pending wrap
-//! - `recovery_service: RecoveryService` — owned value; needs `Arc`
-//!   wrapping when `recovery_actions.rs` migrates
 //! - `event_broadcaster: EventBroadcaster` — owned value; needs check
 //! - `plugin_manager: PluginManager` — needs `Arc<Mutex<…>>` wrapping
 //!   when the first hook-firing handler migrates to `impl Window`
@@ -185,4 +183,10 @@ pub struct WindowResources {
 
     /// Editor-wide event broadcaster (cloneable, Arc inside).
     pub event_broadcaster: crate::model::control_event::EventBroadcaster,
+
+    /// Hot-exit / crash recovery service. `Arc<Mutex>` because it carries
+    /// mutable session state (`session_started`, per-buffer save times)
+    /// and is shared by every window — per-window restore and auto-save
+    /// reach it directly (no active-window flip).
+    pub recovery_service: Arc<std::sync::Mutex<crate::services::recovery::RecoveryService>>,
 }

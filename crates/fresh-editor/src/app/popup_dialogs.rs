@@ -985,7 +985,7 @@ impl Editor {
         // is suppressed. The manual `Workspace: Set Trust Level` command and
         // the enforcement core are untouched, so this is a one-line revert.
         let store = crate::services::workspace_trust::TrustStore::for_project_dir(
-            &self.dir_context.project_state_dir(&self.working_dir),
+            &self.dir_context.project_state_dir(self.working_dir()),
         );
         if store.is_decided() {
             return; // respect a decision the user already recorded
@@ -1009,7 +1009,7 @@ impl Editor {
         self.workspace_trust_prompt_cancellable = cancellable;
         self.workspace_trust_scroll = 0;
         self.workspace_trust_markers =
-            crate::services::workspace_trust::executable_content_markers(&self.working_dir);
+            crate::services::workspace_trust::executable_content_markers(self.working_dir());
 
         // Don't stack a second copy if one is already up. The prompt lives on
         // the editor-level (global) stack so it renders regardless of which

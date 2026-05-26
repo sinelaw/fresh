@@ -171,6 +171,8 @@
   "action.move_page_down": "페이지 아래로 이동",
   "action.move_page_up": "페이지 위로 이동",
   "action.move_right": "커서 오른쪽으로 이동",
+  "action.move_to_paragraph_down": "다음 빈 줄까지 이동",
+  "action.move_to_paragraph_up": "이전 빈 줄까지 이동",
   "action.move_up": "커서 위로 이동",
   "action.move_word_end": "단어 끝으로 이동",
   "action.move_word_left": "단어 왼쪽으로 이동",

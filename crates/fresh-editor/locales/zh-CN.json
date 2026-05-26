@@ -171,6 +171,8 @@
   "action.move_page_down": "向下翻页",
   "action.move_page_up": "向上翻页",
   "action.move_right": "光标向右移动",
+  "action.move_to_paragraph_down": "移动到下一个空行",
+  "action.move_to_paragraph_up": "移动到上一个空行",
   "action.move_up": "光标向上移动",
   "action.move_word_end": "移动到单词末尾",
   "action.move_word_left": "向左移动一个单词",

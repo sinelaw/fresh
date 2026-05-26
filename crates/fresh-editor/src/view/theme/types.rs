@@ -1924,99 +1924,135 @@ impl Theme {
 
         match section {
             "editor" => match field {
+                "after_eof_bg" => Some(self.after_eof_bg),
                 "bg" => Some(self.editor_bg),
-                "fg" => Some(self.editor_fg),
-                "cursor" => Some(self.cursor),
-                "inactive_cursor" => Some(self.inactive_cursor),
-                "selection_bg" => Some(self.selection_bg),
                 "current_line_bg" => Some(self.current_line_bg),
-                "line_number_fg" => Some(self.line_number_fg),
-                "line_number_bg" => Some(self.line_number_bg),
+                "cursor" => Some(self.cursor),
                 "diff_add_bg" => Some(self.diff_add_bg),
-                "diff_remove_bg" => Some(self.diff_remove_bg),
-                "diff_modify_bg" => Some(self.diff_modify_bg),
                 "diff_add_collision_fg" => self.diff_add_collision_fg,
-                "diff_remove_collision_fg" => self.diff_remove_collision_fg,
+                "diff_add_highlight_bg" => Some(self.diff_add_highlight_bg),
+                "diff_modify_bg" => Some(self.diff_modify_bg),
                 "diff_modify_collision_fg" => self.diff_modify_collision_fg,
+                "diff_remove_bg" => Some(self.diff_remove_bg),
+                "diff_remove_collision_fg" => self.diff_remove_collision_fg,
+                "diff_remove_highlight_bg" => Some(self.diff_remove_highlight_bg),
+                "fg" => Some(self.editor_fg),
+                "inactive_cursor" => Some(self.inactive_cursor),
+                "line_number_bg" => Some(self.line_number_bg),
+                "line_number_fg" => Some(self.line_number_fg),
                 "ruler_bg" => Some(self.ruler_bg),
+                "selection_bg" => Some(self.selection_bg),
                 "whitespace_indicator_fg" => Some(self.whitespace_indicator_fg),
                 _ => None,
             },
             "ui" => match field {
-                "tab_active_fg" => Some(self.tab_active_fg),
-                "tab_active_bg" => Some(self.tab_active_bg),
-                "tab_inactive_fg" => Some(self.tab_inactive_fg),
-                "tab_inactive_bg" => Some(self.tab_inactive_bg),
-                "status_bar_fg" => Some(self.status_bar_fg),
-                "status_bar_bg" => Some(self.status_bar_bg),
-                "status_palette_fg" => Some(self.status_palette_fg),
-                "status_palette_bg" => Some(self.status_palette_bg),
-                "status_lsp_on_fg" => Some(self.status_lsp_on_fg),
-                "status_lsp_on_bg" => Some(self.status_lsp_on_bg),
-                "status_lsp_actionable_fg" => Some(self.status_lsp_actionable_fg),
-                "status_lsp_actionable_bg" => Some(self.status_lsp_actionable_bg),
-                "prompt_fg" => Some(self.prompt_fg),
-                "prompt_bg" => Some(self.prompt_bg),
-                "prompt_selection_fg" => Some(self.prompt_selection_fg),
-                "prompt_selection_bg" => Some(self.prompt_selection_bg),
+                "compose_margin_bg" => Some(self.compose_margin_bg),
+                "file_status_added_fg" => Some(self.file_status_added_fg),
+                "file_status_conflicted_fg" => Some(self.file_status_conflicted_fg),
+                "file_status_deleted_fg" => Some(self.file_status_deleted_fg),
+                "file_status_modified_fg" => Some(self.file_status_modified_fg),
+                "file_status_renamed_fg" => Some(self.file_status_renamed_fg),
+                "file_status_untracked_fg" => Some(self.file_status_untracked_fg),
+                "help_bg" => Some(self.help_bg),
+                "help_fg" => Some(self.help_fg),
+                "help_indicator_bg" => Some(self.help_indicator_bg),
+                "help_indicator_fg" => Some(self.help_indicator_fg),
+                "help_key_fg" => Some(self.help_key_fg),
+                "help_separator_fg" => Some(self.help_separator_fg),
+                "inline_code_bg" => Some(self.inline_code_bg),
+                "menu_active_bg" => Some(self.menu_active_bg),
+                "menu_active_fg" => Some(self.menu_active_fg),
+                "menu_bg" => Some(self.menu_bg),
+                "menu_border_fg" => Some(self.menu_border_fg),
+                "menu_disabled_bg" => Some(self.menu_disabled_bg),
+                "menu_disabled_fg" => Some(self.menu_disabled_fg),
+                "menu_dropdown_bg" => Some(self.menu_dropdown_bg),
+                "menu_dropdown_fg" => Some(self.menu_dropdown_fg),
+                "menu_fg" => Some(self.menu_fg),
+                "menu_highlight_bg" => Some(self.menu_highlight_bg),
+                "menu_highlight_fg" => Some(self.menu_highlight_fg),
+                "menu_hover_bg" => Some(self.menu_hover_bg),
+                "menu_hover_fg" => Some(self.menu_hover_fg),
+                "menu_separator_fg" => Some(self.menu_separator_fg),
                 "popup_bg" => Some(self.popup_bg),
                 "popup_border_fg" => Some(self.popup_border_fg),
                 "popup_selection_bg" => Some(self.popup_selection_bg),
                 "popup_selection_fg" => Some(self.popup_selection_fg),
                 "popup_text_fg" => Some(self.popup_text_fg),
-                "text_input_selection_bg" => Some(self.text_input_selection_bg),
-                "menu_bg" => Some(self.menu_bg),
-                "menu_fg" => Some(self.menu_fg),
-                "menu_active_bg" => Some(self.menu_active_bg),
-                "menu_active_fg" => Some(self.menu_active_fg),
-                "menu_disabled_fg" => Some(self.menu_disabled_fg),
-                "menu_disabled_bg" => Some(self.menu_disabled_bg),
-                "help_bg" => Some(self.help_bg),
-                "help_fg" => Some(self.help_fg),
-                "help_key_fg" => Some(self.help_key_fg),
-                "split_separator_fg" => Some(self.split_separator_fg),
-                "scrollbar_track_fg" => Some(self.scrollbar_track_fg),
+                "prompt_bg" => Some(self.prompt_bg),
+                "prompt_fg" => Some(self.prompt_fg),
+                "prompt_selection_bg" => Some(self.prompt_selection_bg),
+                "prompt_selection_fg" => Some(self.prompt_selection_fg),
                 "scrollbar_thumb_fg" => Some(self.scrollbar_thumb_fg),
-                "scrollbar_track_hover_fg" => Some(self.scrollbar_track_hover_fg),
                 "scrollbar_thumb_hover_fg" => Some(self.scrollbar_thumb_hover_fg),
+                "scrollbar_track_fg" => Some(self.scrollbar_track_fg),
+                "scrollbar_track_hover_fg" => Some(self.scrollbar_track_hover_fg),
                 "semantic_highlight_bg" => Some(self.semantic_highlight_bg),
-                "file_status_added_fg" => Some(self.file_status_added_fg),
-                "file_status_modified_fg" => Some(self.file_status_modified_fg),
-                "file_status_deleted_fg" => Some(self.file_status_deleted_fg),
-                "file_status_renamed_fg" => Some(self.file_status_renamed_fg),
-                "file_status_untracked_fg" => Some(self.file_status_untracked_fg),
-                "file_status_conflicted_fg" => Some(self.file_status_conflicted_fg),
+                "settings_selected_bg" => Some(self.settings_selected_bg),
+                "settings_selected_fg" => Some(self.settings_selected_fg),
+                "split_separator_fg" => Some(self.split_separator_fg),
+                "split_separator_hover_fg" => Some(self.split_separator_hover_fg),
+                "status_bar_bg" => Some(self.status_bar_bg),
+                "status_bar_fg" => Some(self.status_bar_fg),
+                "status_error_indicator_bg" => Some(self.status_error_indicator_bg),
+                "status_error_indicator_fg" => Some(self.status_error_indicator_fg),
+                "status_error_indicator_hover_bg" => Some(self.status_error_indicator_hover_bg),
+                "status_error_indicator_hover_fg" => Some(self.status_error_indicator_hover_fg),
+                "status_lsp_actionable_bg" => Some(self.status_lsp_actionable_bg),
+                "status_lsp_actionable_fg" => Some(self.status_lsp_actionable_fg),
+                "status_lsp_on_bg" => Some(self.status_lsp_on_bg),
+                "status_lsp_on_fg" => Some(self.status_lsp_on_fg),
+                "status_palette_bg" => Some(self.status_palette_bg),
+                "status_palette_fg" => Some(self.status_palette_fg),
+                "status_warning_indicator_bg" => Some(self.status_warning_indicator_bg),
+                "status_warning_indicator_fg" => Some(self.status_warning_indicator_fg),
+                "status_warning_indicator_hover_bg" => Some(self.status_warning_indicator_hover_bg),
+                "status_warning_indicator_hover_fg" => Some(self.status_warning_indicator_hover_fg),
+                "suggestion_bg" => Some(self.suggestion_bg),
+                "suggestion_selected_bg" => Some(self.suggestion_selected_bg),
+                "tab_active_bg" => Some(self.tab_active_bg),
+                "tab_active_fg" => Some(self.tab_active_fg),
+                "tab_close_hover_fg" => Some(self.tab_close_hover_fg),
+                "tab_drop_zone_bg" => Some(self.tab_drop_zone_bg),
+                "tab_drop_zone_border" => Some(self.tab_drop_zone_border),
+                "tab_hover_bg" => Some(self.tab_hover_bg),
+                "tab_inactive_bg" => Some(self.tab_inactive_bg),
+                "tab_inactive_fg" => Some(self.tab_inactive_fg),
+                "tab_separator_bg" => Some(self.tab_separator_bg),
+                "terminal_bg" => Some(self.terminal_bg),
+                "terminal_fg" => Some(self.terminal_fg),
+                "text_input_selection_bg" => Some(self.text_input_selection_bg),
                 _ => None,
             },
             "syntax" => match field {
-                "keyword" => Some(self.syntax_keyword),
-                "string" => Some(self.syntax_string),
                 "comment" => Some(self.syntax_comment),
-                "function" => Some(self.syntax_function),
-                "type" => Some(self.syntax_type),
-                "variable" => Some(self.syntax_variable),
                 "constant" => Some(self.syntax_constant),
+                "function" => Some(self.syntax_function),
+                "keyword" => Some(self.syntax_keyword),
                 "operator" => Some(self.syntax_operator),
                 "punctuation_bracket" => Some(self.syntax_punctuation_bracket),
                 "punctuation_delimiter" => Some(self.syntax_punctuation_delimiter),
+                "string" => Some(self.syntax_string),
+                "type" => Some(self.syntax_type),
+                "variable" => Some(self.syntax_variable),
                 _ => None,
             },
             "diagnostic" => match field {
-                "error_fg" => Some(self.diagnostic_error_fg),
                 "error_bg" => Some(self.diagnostic_error_bg),
-                "warning_fg" => Some(self.diagnostic_warning_fg),
-                "warning_bg" => Some(self.diagnostic_warning_bg),
-                "info_fg" => Some(self.diagnostic_info_fg),
-                "info_bg" => Some(self.diagnostic_info_bg),
-                "hint_fg" => Some(self.diagnostic_hint_fg),
+                "error_fg" => Some(self.diagnostic_error_fg),
                 "hint_bg" => Some(self.diagnostic_hint_bg),
+                "hint_fg" => Some(self.diagnostic_hint_fg),
+                "info_bg" => Some(self.diagnostic_info_bg),
+                "info_fg" => Some(self.diagnostic_info_fg),
+                "warning_bg" => Some(self.diagnostic_warning_bg),
+                "warning_fg" => Some(self.diagnostic_warning_fg),
                 _ => None,
             },
             "search" => match field {
-                "match_bg" => Some(self.search_match_bg),
-                "match_fg" => Some(self.search_match_fg),
                 "label_bg" => Some(self.search_label_bg),
                 "label_fg" => Some(self.search_label_fg),
+                "match_bg" => Some(self.search_match_bg),
+                "match_fg" => Some(self.search_match_fg),
                 _ => None,
             },
             _ => None,
@@ -2053,6 +2089,9 @@ impl Theme {
                 "diff_modify_collision_fg" => self.diff_modify_collision_fg.as_mut(),
                 "ruler_bg" => Some(&mut self.ruler_bg),
                 "whitespace_indicator_fg" => Some(&mut self.whitespace_indicator_fg),
+                "diff_add_highlight_bg" => Some(&mut self.diff_add_highlight_bg),
+                "diff_remove_highlight_bg" => Some(&mut self.diff_remove_highlight_bg),
+                "after_eof_bg" => Some(&mut self.after_eof_bg),
                 _ => None,
             },
             "ui" => match field {
@@ -2099,6 +2138,47 @@ impl Theme {
                 "file_status_renamed_fg" => Some(&mut self.file_status_renamed_fg),
                 "file_status_untracked_fg" => Some(&mut self.file_status_untracked_fg),
                 "file_status_conflicted_fg" => Some(&mut self.file_status_conflicted_fg),
+                "menu_dropdown_bg" => Some(&mut self.menu_dropdown_bg),
+                "menu_dropdown_fg" => Some(&mut self.menu_dropdown_fg),
+                "menu_highlight_bg" => Some(&mut self.menu_highlight_bg),
+                "menu_highlight_fg" => Some(&mut self.menu_highlight_fg),
+                "menu_border_fg" => Some(&mut self.menu_border_fg),
+                "menu_separator_fg" => Some(&mut self.menu_separator_fg),
+                "menu_hover_bg" => Some(&mut self.menu_hover_bg),
+                "menu_hover_fg" => Some(&mut self.menu_hover_fg),
+                "tab_separator_bg" => Some(&mut self.tab_separator_bg),
+                "tab_close_hover_fg" => Some(&mut self.tab_close_hover_fg),
+                "tab_hover_bg" => Some(&mut self.tab_hover_bg),
+                "inline_code_bg" => Some(&mut self.inline_code_bg),
+                "split_separator_hover_fg" => Some(&mut self.split_separator_hover_fg),
+                "compose_margin_bg" => Some(&mut self.compose_margin_bg),
+                "terminal_bg" => Some(&mut self.terminal_bg),
+                "terminal_fg" => Some(&mut self.terminal_fg),
+                "status_warning_indicator_bg" => Some(&mut self.status_warning_indicator_bg),
+                "status_warning_indicator_fg" => Some(&mut self.status_warning_indicator_fg),
+                "status_error_indicator_bg" => Some(&mut self.status_error_indicator_bg),
+                "status_error_indicator_fg" => Some(&mut self.status_error_indicator_fg),
+                "status_warning_indicator_hover_bg" => {
+                    Some(&mut self.status_warning_indicator_hover_bg)
+                }
+                "status_warning_indicator_hover_fg" => {
+                    Some(&mut self.status_warning_indicator_hover_fg)
+                }
+                "status_error_indicator_hover_bg" => {
+                    Some(&mut self.status_error_indicator_hover_bg)
+                }
+                "status_error_indicator_hover_fg" => {
+                    Some(&mut self.status_error_indicator_hover_fg)
+                }
+                "tab_drop_zone_bg" => Some(&mut self.tab_drop_zone_bg),
+                "tab_drop_zone_border" => Some(&mut self.tab_drop_zone_border),
+                "settings_selected_bg" => Some(&mut self.settings_selected_bg),
+                "settings_selected_fg" => Some(&mut self.settings_selected_fg),
+                "suggestion_bg" => Some(&mut self.suggestion_bg),
+                "suggestion_selected_bg" => Some(&mut self.suggestion_selected_bg),
+                "help_separator_fg" => Some(&mut self.help_separator_fg),
+                "help_indicator_fg" => Some(&mut self.help_indicator_fg),
+                "help_indicator_bg" => Some(&mut self.help_indicator_bg),
                 _ => None,
             },
             "syntax" => match field {
@@ -2616,6 +2696,155 @@ mod tests {
             assert!(
                 theme.resolve_theme_key_mut(key).is_some(),
                 "mutator missing key {key}"
+            );
+        }
+    }
+
+    /// The set of `(section, field)` color keys that the theme's JSON
+    /// surface — and therefore the plugin schema — exposes. Derived by
+    /// taking a fully resolved builtin back to a `ThemeFile`, so every
+    /// optional color slot is materialized as `Some`. Non-color leaves
+    /// (text-attribute modifiers, `name`/`extends`) are filtered by shape.
+    ///
+    /// This is the single authority the resolvers/conversions are checked
+    /// against: there is no hand-maintained key list to drift.
+    fn schema_color_keys() -> Vec<(String, String)> {
+        let theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        let file: ThemeFile = theme.into();
+        let value = serde_json::to_value(&file).expect("ThemeFile serializes");
+        let obj = value.as_object().expect("ThemeFile is a JSON object");
+
+        let mut keys = Vec::new();
+        for section in ["editor", "ui", "search", "diagnostic", "syntax"] {
+            let fields = obj
+                .get(section)
+                .and_then(|v| v.as_object())
+                .unwrap_or_else(|| panic!("section `{section}` missing from serialized ThemeFile"));
+            for (field, val) in fields {
+                if is_color_leaf(val) {
+                    keys.push((section.to_string(), field.clone()));
+                }
+            }
+        }
+        assert!(
+            keys.len() >= 100,
+            "expected the theme to expose at least ~100 color keys, found {} — \
+             has the serialization shape changed?",
+            keys.len()
+        );
+        keys
+    }
+
+    /// A `ColorDef` JSON leaf is either a named-color string or an
+    /// `[r, g, b]` array of three numbers. Text-attribute modifiers
+    /// serialize as arrays of *strings*, so this excludes them.
+    fn is_color_leaf(v: &serde_json::Value) -> bool {
+        v.is_string()
+            || v.as_array()
+                .is_some_and(|a| a.len() == 3 && a.iter().all(serde_json::Value::is_number))
+    }
+
+    /// Distinct, round-trip-stable sentinel color for index `i`. Always an
+    /// RGB triple, which `ColorDef` passes through unchanged (only the named
+    /// `Color` variants get folded into `ColorDef::Named`).
+    fn sentinel(i: usize) -> Color {
+        Color::Rgb((i >> 8) as u8, (i & 0xff) as u8, 0x5a)
+    }
+
+    #[test]
+    fn every_exposed_color_key_resolves_in_both_directions() {
+        // Every color the JSON/schema surface exposes must be addressable by
+        // BOTH resolvers, under the SAME section it appears in. A key the
+        // schema advertises but a resolver drops is silently un-overridable
+        // (the drift bug behind #2079): plugin overrides and theme-JSON loads
+        // both go through `resolve_theme_key_mut`, the inspector through
+        // `resolve_theme_key`.
+        let mut theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+        let mut missing_reader = Vec::new();
+        let mut missing_mutator = Vec::new();
+        for (section, field) in schema_color_keys() {
+            let key = format!("{section}.{field}");
+            if theme.resolve_theme_key(&key).is_none() {
+                missing_reader.push(key.clone());
+            }
+            if theme.resolve_theme_key_mut(&key).is_none() {
+                missing_mutator.push(key);
+            }
+        }
+        assert!(
+            missing_reader.is_empty() && missing_mutator.is_empty(),
+            "theme color keys exposed by the JSON schema but dropped by a resolver:\n  \
+             resolve_theme_key:     {missing_reader:?}\n  \
+             resolve_theme_key_mut: {missing_mutator:?}"
+        );
+    }
+
+    #[test]
+    fn color_keys_round_trip_through_the_same_field_and_section() {
+        // Assign every exposed key a distinct color, then push it all the way
+        // around the loop and back, checking the value lands in the same slot
+        // at every hop:
+        //   write    via resolve_theme_key_mut   (string key   -> Theme field)
+        //   read     via resolve_theme_key        (Theme field  -> string key)
+        //   serialize via From<Theme> for ThemeFile (Theme field -> section.field)
+        //   reload   via from_json                 (section.field -> Theme field)
+        // If field name OR section disagree between any of these four paths, a
+        // sentinel lands in the wrong field and an assert fires — this is what
+        // pins names and categories together in all directions.
+        let keys = schema_color_keys();
+        let mut theme = Theme::load_builtin(THEME_DARK).expect("dark builtin");
+
+        let pairs: Vec<(String, Color)> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (s, f))| (format!("{s}.{f}"), sentinel(i)))
+            .collect();
+        let applied = theme.override_colors(pairs.iter().map(|(k, c)| (k.as_str(), *c)));
+        assert_eq!(
+            applied,
+            keys.len(),
+            "override_colors should write every exposed key via resolve_theme_key_mut"
+        );
+
+        // reader agrees with mutator on which field each key addresses.
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let key = format!("{s}.{f}");
+            assert_eq!(
+                theme.resolve_theme_key(&key),
+                Some(sentinel(i)),
+                "reader and mutator disagree on the field `{key}` addresses"
+            );
+        }
+
+        // reverse conversion serializes each sentinel back under the SAME
+        // section.field — proves field name + category wiring in From<Theme>.
+        let file: ThemeFile = theme.into();
+        let value = serde_json::to_value(&file).expect("ThemeFile serializes");
+        let obj = value.as_object().expect("ThemeFile is a JSON object");
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let leaf = obj
+                .get(s)
+                .and_then(|sec| sec.get(f))
+                .unwrap_or_else(|| panic!("`{s}.{f}` vanished from serialized ThemeFile"));
+            let color: Color = serde_json::from_value::<ColorDef>(leaf.clone())
+                .expect("color leaf parses as ColorDef")
+                .into();
+            assert_eq!(
+                color,
+                sentinel(i),
+                "`{s}.{f}` serialized back to the wrong field or section"
+            );
+        }
+
+        // forward conversion (from_json) routes each section.field leaf back to
+        // the field the reader reads — proves From<ThemeFile> for Theme wiring.
+        let reloaded = Theme::from_json(&value.to_string()).expect("from_json round-trips");
+        for (i, (s, f)) in keys.iter().enumerate() {
+            let key = format!("{s}.{f}");
+            assert_eq!(
+                reloaded.resolve_theme_key(&key),
+                Some(sentinel(i)),
+                "`{key}` did not survive ThemeFile -> JSON -> from_json"
             );
         }
     }

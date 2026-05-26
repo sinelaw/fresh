@@ -294,7 +294,8 @@ impl Editor {
         }
 
         let config_path = self.dir_context.config_path();
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
 
         // Save the config to user layer
         match resolver.save_to_layer(&self.config, ConfigLayer::User) {
@@ -339,7 +340,8 @@ impl Editor {
             .create_dir_all(&self.dir_context.config_dir)
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         resolver
             .save_to_layer(&self.config, ConfigLayer::User)
             .map_err(|e| format!("Failed to save config: {}", e))
@@ -354,11 +356,11 @@ impl Editor {
         let old_theme = self.config.theme.clone();
         self.set_config(Config::load_with_layers(
             &self.dir_context,
-            &self.working_dir,
+            self.working_dir(),
         ));
 
         // Refresh cached raw user config for plugins
-        self.set_user_config_raw(Config::read_user_config_raw(&self.working_dir));
+        self.set_user_config_raw(Config::read_user_config_raw(self.working_dir()));
 
         // Apply theme change if needed
         if old_theme != self.config.theme {
@@ -404,7 +406,7 @@ impl Editor {
         }
 
         // Emit event so plugins know config changed
-        let config_path = Config::find_config_path(&self.working_dir);
+        let config_path = Config::find_config_path(self.working_dir());
         self.emit_event(
             "config_changed",
             serde_json::json!({
@@ -454,7 +456,8 @@ impl Editor {
     /// Used when toggling settings via menu/command palette so that
     /// the change is saved immediately (matching the settings UI behavior).
     pub(super) fn persist_config_change(&self, json_pointer: &str, value: serde_json::Value) {
-        let resolver = ConfigResolver::new(self.dir_context.clone(), self.working_dir.clone());
+        let resolver =
+            ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
         let changes = std::collections::HashMap::from([(json_pointer.to_string(), value)]);
         let deletions = std::collections::HashSet::new();
         if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, ConfigLayer::User) {

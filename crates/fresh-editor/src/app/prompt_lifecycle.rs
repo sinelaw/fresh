@@ -185,7 +185,7 @@ impl Editor {
         };
 
         QuickOpenContext {
-            cwd: self.working_dir.display().to_string(),
+            cwd: self.working_dir().display().to_string(),
             open_buffers,
             active_buffer_id: self.active_buffer().0,
             active_buffer_path: self
@@ -416,14 +416,14 @@ impl Editor {
                 .get_terminal_id(buffer_id)
                 .and_then(|tid| self.active_window().terminal_manager.get(tid))
                 .and_then(|handle| handle.cwd())
-                .unwrap_or_else(|| self.working_dir.clone())
+                .unwrap_or_else(|| self.working_dir().to_path_buf())
         } else {
             self.active_state()
                 .buffer
                 .file_path()
                 .and_then(|path| path.parent())
                 .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.working_dir.clone())
+                .unwrap_or_else(|| self.working_dir().to_path_buf())
         };
 
         // Create the file open state with config-based show_hidden setting
@@ -445,7 +445,7 @@ impl Editor {
     /// directory and triggers async directory loading.
     pub(super) fn init_folder_open_state(&mut self) {
         // Start from the current working directory
-        let initial_dir = self.working_dir.clone();
+        let initial_dir = self.working_dir().to_path_buf();
 
         // Create the file open state with config-based show_hidden setting
         let show_hidden = self.config.file_browser.show_hidden;
@@ -900,6 +900,13 @@ impl Editor {
                     | PromptType::SetEncoding
                     | PromptType::SetLineEnding
                     | PromptType::Plugin { .. }
+                    // Resume re-opens Live Grep as a core-driven
+                    // PromptType::LiveGrep whose suggestions carry the
+                    // match location in `value`. Resolve to the selected
+                    // suggestion's value here, while the prompt still
+                    // exists — the confirm handler runs after the prompt
+                    // is taken and can no longer look it up.
+                    | PromptType::LiveGrep
             ) {
                 // Use the selected suggestion if any
                 if let Some(selected_idx) = prompt.selected_suggestion {

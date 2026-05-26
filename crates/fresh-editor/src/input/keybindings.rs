@@ -341,6 +341,8 @@ pub enum Action {
     MoveLineEnd,
     MoveLineUp,
     MoveLineDown,
+    MoveToParagraphUp,
+    MoveToParagraphDown,
     MovePageUp,
     MovePageDown,
     MoveDocumentStart,
@@ -880,6 +882,8 @@ impl Action {
             "move_page_down" => MovePageDown,
             "move_document_start" => MoveDocumentStart,
             "move_document_end" => MoveDocumentEnd,
+            "move_to_paragraph_up" => MoveToParagraphUp,
+            "move_to_paragraph_down" => MoveToParagraphDown,
 
             "select_left" => SelectLeft,
             "select_right" => SelectRight,
@@ -1331,6 +1335,8 @@ impl Action {
                 | Action::MovePageDown
                 | Action::MoveDocumentStart
                 | Action::MoveDocumentEnd
+                | Action::MoveToParagraphUp
+                | Action::MoveToParagraphDown
                 // Selection actions
                 | Action::SelectLeft
                 | Action::SelectRight
@@ -2274,6 +2280,8 @@ impl KeybindingResolver {
             Action::SelectDown => t!("action.select_down"),
             Action::SelectToParagraphUp => t!("action.select_to_paragraph_up"),
             Action::SelectToParagraphDown => t!("action.select_to_paragraph_down"),
+            Action::MoveToParagraphUp => t!("action.move_to_paragraph_up"),
+            Action::MoveToParagraphDown => t!("action.move_to_paragraph_down"),
             Action::SelectWordLeft => t!("action.select_word_left"),
             Action::SelectWordRight => t!("action.select_word_right"),
             Action::SelectWordEnd => t!("action.select_word_end"),
