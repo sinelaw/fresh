@@ -196,7 +196,7 @@ impl Editor {
                 .zip(match_lengths.iter())
             {
                 let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-                let overlay = crate::view::overlay::Overlay::with_namespace(
+                let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
                     &mut state.marker_list,
                     pos..(pos + len),
                     crate::view::overlay::OverlayFace::Style {
@@ -310,7 +310,7 @@ impl Editor {
 
         for (pos, len) in &viewport_matches {
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            let overlay = crate::view::overlay::Overlay::with_namespace(
+            let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
                 &mut state.marker_list,
                 *pos..(*pos + *len),
                 crate::view::overlay::OverlayFace::Style {

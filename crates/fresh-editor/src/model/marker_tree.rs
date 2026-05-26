@@ -45,6 +45,17 @@ pub struct Marker {
     pub id: MarkerId,
     pub interval: Interval,
     pub marker_type: MarkerType,
+    /// Insertion gravity at the marker's exact position.
+    /// - `true` (right gravity, default): text inserted exactly at the marker
+    ///   position pushes the marker forward (the marker moves after the text).
+    /// - `false` (left gravity): text inserted exactly at the marker position
+    ///   leaves it in place (the marker stays before the text).
+    ///
+    /// Only matters for insertions landing on the marker's own position;
+    /// insertions strictly before always shift it, insertions strictly after
+    /// never do. Used to keep search-match highlights from growing when text
+    /// is typed immediately after a match (issue #2053).
+    pub right_gravity: bool,
 }
 
 /// A Strong pointer to a tree node (child/sibling/map reference)
@@ -166,9 +177,23 @@ impl IntervalTree {
         self.insert_with_type(start, end, MarkerType::Position)
     }
 
+    /// Inserts a new left-gravity marker interval: text inserted exactly at the
+    /// marker's position leaves it in place rather than pushing it forward.
+    /// Performance: O(log n)
+    pub fn insert_left_gravity(&mut self, start: u64, end: u64) -> MarkerId {
+        self.insert_full(start, end, MarkerType::Position, false)
+    }
+
     /// Insert a marker with a specific ID and type (for set_position).
     /// The caller must ensure the ID is not already in use.
-    fn insert_with_id(&mut self, id: MarkerId, start: u64, end: u64, marker_type: MarkerType) {
+    fn insert_with_id(
+        &mut self,
+        id: MarkerId,
+        start: u64,
+        end: u64,
+        marker_type: MarkerType,
+        right_gravity: bool,
+    ) {
         debug_assert!(
             id < self.next_id,
             "insert_with_id: id {} must be < next_id {}",
@@ -184,6 +209,7 @@ impl IntervalTree {
             id,
             interval: Interval { start, end },
             marker_type,
+            right_gravity,
         };
 
         let new_node = Node::new(marker.clone(), Weak::new());
@@ -191,14 +217,26 @@ impl IntervalTree {
         self.marker_map.insert(id, new_node);
     }
 
-    /// Insert a marker with a specific type
+    /// Insert a marker with a specific type (right gravity).
     pub fn insert_with_type(&mut self, start: u64, end: u64, marker_type: MarkerType) -> MarkerId {
+        self.insert_full(start, end, marker_type, true)
+    }
+
+    /// Insert a marker with a specific type and gravity.
+    fn insert_full(
+        &mut self,
+        start: u64,
+        end: u64,
+        marker_type: MarkerType,
+        right_gravity: bool,
+    ) -> MarkerId {
         let id = self.next_id;
         self.next_id += 1;
         let marker = Marker {
             id,
             interval: Interval { start, end },
             marker_type,
+            right_gravity,
         };
 
         let new_node = Node::new(marker.clone(), Weak::new());
@@ -272,9 +310,9 @@ impl IntervalTree {
     /// Returns false if the marker doesn't exist.
     /// Performance: O(log n)
     pub fn set_position(&mut self, id: MarkerId, new_start: u64, new_end: u64) -> bool {
-        // Get the marker's type before deleting
-        let marker_type = match self.get_marker(id) {
-            Some(m) => m.marker_type,
+        // Get the marker's type and gravity before deleting
+        let (marker_type, right_gravity) = match self.get_marker(id) {
+            Some(m) => (m.marker_type, m.right_gravity),
             None => return false,
         };
 
@@ -284,7 +322,7 @@ impl IntervalTree {
         }
 
         // Reinsert with same ID
-        self.insert_with_id(id, new_start, new_end, marker_type);
+        self.insert_with_id(id, new_start, new_end, marker_type, right_gravity);
         true
     }
 
@@ -501,29 +539,41 @@ impl IntervalTree {
 
         let mut node = node_rc.borrow_mut();
         let start = node.marker.interval.start;
+        // Left-gravity markers stay put when text is inserted exactly at their
+        // position (the insertion goes after them); right-gravity markers (the
+        // default) are pushed forward. Gravity only changes behaviour for
+        // insertions (delta > 0) landing exactly on the boundary.
+        let left_gravity = !node.marker.right_gravity;
 
         if pos <= start {
             // CASE 1: Edit is at or before this node's start.
             // This node and everything to its right must be shifted.
 
+            // Whether this node's own start should shift. A left-gravity marker
+            // does NOT move when the insertion lands exactly on it.
+            let stay_put = left_gravity && delta > 0 && pos == start;
+
             // 1. Shift the current node's start position directly, clamping at `pos` if needed.
-            if delta < 0 {
-                node.marker.interval.start = (start as i64 + delta).max(pos as i64) as u64;
-            } else {
-                node.marker.interval.start = (start as i64 + delta) as u64;
+            if !stay_put {
+                if delta < 0 {
+                    node.marker.interval.start = (start as i64 + delta).max(pos as i64) as u64;
+                } else {
+                    node.marker.interval.start = (start as i64 + delta) as u64;
+                }
             }
 
             // 2. Handle the right subtree.
-            // For insertions (delta > 0): can use lazy propagation since all nodes shift uniformly
-            // For deletions (delta < 0): must recurse to provide position-aware clamping
-            if delta < 0 {
-                // Deletion: recurse immediately so nodes can clamp to `pos`
+            // For insertions strictly before this node's start, every node to
+            // the right has start > pos and shifts uniformly, so lazy
+            // propagation is safe and efficient. When the insertion lands
+            // exactly on this node's start (pos == start), the right subtree may
+            // contain other markers also sitting at `pos` whose gravity must be
+            // respected individually, so recurse instead of shifting them all.
+            // Deletions always recurse so nodes can clamp to `pos`.
+            if delta < 0 || pos == start {
                 Self::adjust_recursive(&mut node.right, pos, delta);
-            } else {
-                // Insertion: lazy propagation is safe and efficient
-                if let Some(ref right) = node.right {
-                    right.borrow_mut().lazy_delta += delta;
-                }
+            } else if let Some(ref right) = node.right {
+                right.borrow_mut().lazy_delta += delta;
             }
 
             // 3. Recurse left, as it may contain markers spanning the edit pos.
@@ -536,11 +586,18 @@ impl IntervalTree {
             Self::adjust_recursive(&mut node.right, pos, delta);
         }
 
-        // Always handle the interval span case (where end >= pos)
-        if node.marker.interval.end >= pos {
-            node.marker.interval.end = (node.marker.interval.end as i64 + delta)
-                .max(node.marker.interval.start as i64)
-                as u64;
+        // Handle the interval span case (where the edit falls inside [start, end]).
+        // A left-gravity marker's end stays put for an insertion landing exactly
+        // on it, matching its start behaviour above.
+        let end = node.marker.interval.end;
+        let shift_end = if left_gravity && delta > 0 {
+            end > pos
+        } else {
+            end >= pos
+        };
+        if shift_end {
+            node.marker.interval.end =
+                (end as i64 + delta).max(node.marker.interval.start as i64) as u64;
         }
 
         drop(node);
@@ -664,6 +721,92 @@ mod tests {
     fn get_pos(tree: &IntervalTree, id: MarkerId) -> (u64, u64) {
         tree.get_position(id)
             .unwrap_or_else(|| panic!("Marker ID {} not found.", id))
+    }
+
+    // --- Insertion gravity (issue #2053) ---
+
+    #[test]
+    fn test_left_gravity_marker_stays_on_insert_at_position() {
+        // A left-gravity point marker models the end of a fixed-width
+        // highlight (e.g. a search match). Inserting text exactly at its
+        // position must NOT move it, so the highlight does not grow.
+        let mut tree = IntervalTree::new();
+        let m = tree.insert_left_gravity(3, 3);
+
+        // Insert 4 bytes immediately at the marker.
+        tree.adjust_for_edit(3, 4);
+
+        assert_eq!(
+            get_pos(&tree, m),
+            (3, 3),
+            "left-gravity marker must stay put when text is inserted at its position"
+        );
+    }
+
+    #[test]
+    fn test_right_gravity_marker_moves_on_insert_at_position() {
+        // The default (right gravity) point marker moves forward when text is
+        // inserted exactly at its position.
+        let mut tree = IntervalTree::new();
+        let m = tree.insert(3, 3);
+
+        tree.adjust_for_edit(3, 4);
+
+        assert_eq!(get_pos(&tree, m), (7, 7));
+    }
+
+    #[test]
+    fn test_left_gravity_marker_still_shifts_on_insert_before() {
+        // Left gravity only changes the exact-boundary case; insertions
+        // strictly before the marker still shift it.
+        let mut tree = IntervalTree::new();
+        let m = tree.insert_left_gravity(5, 5);
+
+        tree.adjust_for_edit(2, 3);
+
+        assert_eq!(get_pos(&tree, m), (8, 8));
+    }
+
+    #[test]
+    fn test_search_match_does_not_grow_on_adjacent_insert() {
+        // Reproduces #2053 at the marker level: a match highlight spanning
+        // [0, 3) is modelled by a right-gravity start marker at 0 and a
+        // left-gravity end marker at 3. Typing immediately after the match
+        // (at position 3) must leave both markers anchored to the match.
+        let mut tree = IntervalTree::new();
+        let start = tree.insert(0, 0);
+        let end = tree.insert_left_gravity(3, 3);
+
+        // User types "X" right after the match.
+        tree.adjust_for_edit(3, 1);
+
+        assert_eq!(get_pos(&tree, start), (0, 0));
+        assert_eq!(
+            get_pos(&tree, end),
+            (3, 3),
+            "highlight end must not extend over text typed after the match"
+        );
+    }
+
+    #[test]
+    fn test_adjacent_matches_keep_independent_gravity_at_shared_boundary() {
+        // Two adjacent matches (e.g. searching "ab" in "abab") share a
+        // boundary at position 2: the first match's left-gravity end and the
+        // second match's right-gravity start both sit at 2. Inserting there
+        // must keep the first match fixed while the second match shifts.
+        let mut tree = IntervalTree::new();
+        let m1_start = tree.insert(0, 0);
+        let m1_end = tree.insert_left_gravity(2, 2);
+        let m2_start = tree.insert(2, 2);
+        let m2_end = tree.insert_left_gravity(4, 4);
+
+        // Insert 3 bytes exactly at the shared boundary.
+        tree.adjust_for_edit(2, 3);
+
+        assert_eq!(get_pos(&tree, m1_start), (0, 0));
+        assert_eq!(get_pos(&tree, m1_end), (2, 2), "first match must not grow");
+        assert_eq!(get_pos(&tree, m2_start), (5, 5), "second match shifts");
+        assert_eq!(get_pos(&tree, m2_end), (7, 7));
     }
 
     #[test]

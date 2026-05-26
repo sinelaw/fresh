@@ -2640,7 +2640,7 @@ impl Window {
             let absolute_pos = visible_start + mat.start();
             let match_len = mat.end() - mat.start();
             let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
-            let overlay = crate::view::overlay::Overlay::with_namespace(
+            let overlay = crate::view::overlay::Overlay::with_namespace_fixed_end(
                 &mut state.marker_list,
                 absolute_pos..(absolute_pos + match_len),
                 crate::view::overlay::OverlayFace::Style {

@@ -299,6 +299,65 @@ fn test_incremental_search_highlighting() {
     assert!(screen.contains("test line three"));
 }
 
+/// Regression test for issue #2053: a committed search highlight must not
+/// extend over text that is typed immediately after a match.
+#[test]
+fn test_search_highlight_does_not_extend_on_adjacent_insert() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "abc def ghi\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Search for "def" and commit, leaving a persistent highlight on the match.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("def").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Locate the highlighted match on screen. The cursor lands on the match
+    // start, so the highlighted background of the last match character is our
+    // reference color.
+    let (col, row) = harness
+        .find_text_on_screen("def")
+        .expect("match text should be visible");
+    let match_bg = harness
+        .get_cell_style(col + 2, row)
+        .and_then(|s| s.bg)
+        .expect("matched char should have a highlight background");
+
+    // Move just past the match and type a character.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+
+    // The typed character must sit immediately after the match...
+    assert_eq!(
+        harness.get_cell(col + 3, row).as_deref(),
+        Some("X"),
+        "typed character should render right after the match"
+    );
+    // ...and must NOT inherit the search-match highlight.
+    let typed_bg = harness.get_cell_style(col + 3, row).and_then(|s| s.bg);
+    assert_ne!(
+        typed_bg,
+        Some(match_bg),
+        "search highlight must not extend over text typed after the match"
+    );
+}
+
 /// Test that search highlighting only applies to visible viewport
 #[test]
 fn test_search_highlighting_visible_only() {

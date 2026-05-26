@@ -206,6 +206,36 @@ impl Overlay {
         overlay
     }
 
+    /// Like [`with_namespace`], but the end marker uses left gravity so the
+    /// overlay does not grow when text is inserted immediately after it.
+    ///
+    /// Used for search-match highlights, which must stay anchored to the matched
+    /// text and not absorb adjacent typing (issue #2053).
+    ///
+    /// [`with_namespace`]: Overlay::with_namespace
+    pub fn with_namespace_fixed_end(
+        marker_list: &mut MarkerList,
+        range: Range<usize>,
+        face: OverlayFace,
+        namespace: OverlayNamespace,
+    ) -> Self {
+        let start_marker = marker_list.create(range.start, true); // left affinity
+        let end_marker = marker_list.create_left_gravity(range.end);
+
+        Self {
+            handle: OverlayHandle::new(),
+            namespace: Some(namespace),
+            start_marker,
+            end_marker,
+            face,
+            priority: 0,
+            message: None,
+            extend_to_line_end: false,
+            url: None,
+            theme_key: None,
+        }
+    }
+
     /// Create an overlay with a specific priority
     pub fn with_priority(
         marker_list: &mut MarkerList,

@@ -93,6 +93,20 @@ impl MarkerList {
         id
     }
 
+    /// Create a new left-gravity point marker at the given position.
+    ///
+    /// Unlike [`create`], text inserted exactly at the marker's position leaves
+    /// it in place instead of pushing it forward. Used as the end marker of a
+    /// fixed-width highlight (e.g. a search match) so the highlight does not
+    /// grow when text is typed immediately after it.
+    pub fn create_left_gravity(&mut self, position: usize) -> MarkerId {
+        let pos = position as u64;
+        let tree_id = self.tree.insert_left_gravity(pos, pos);
+        let id = MarkerId(tree_id);
+        self._affinity_map.insert(id, true);
+        id
+    }
+
     /// Delete a marker
     pub fn delete(&mut self, id: MarkerId) {
         self.tree.delete(id.0);
@@ -678,11 +692,18 @@ mod tests {
                 unique_positions.sort_unstable();
                 unique_positions.dedup();
 
-                // Shadow: Vec<(MarkerId, Option<usize>)>. None means deleted.
-                let mut shadow: Vec<(MarkerId, Option<usize>)> = Vec::new();
+                // Shadow: Vec<(MarkerId, Option<usize>, right_gravity)>.
+                // None means deleted. Half the markers are created left-gravity
+                // (issue #2053) so the model also covers the sticky-end path.
+                let mut shadow: Vec<(MarkerId, Option<usize>, bool)> = Vec::new();
                 for (i, &p) in unique_positions.iter().enumerate() {
-                    let id = list.create(p, i % 2 == 0);
-                    shadow.push((id, Some(p)));
+                    let right_gravity = i % 2 == 0;
+                    let id = if right_gravity {
+                        list.create(p, i % 2 == 0)
+                    } else {
+                        list.create_left_gravity(p)
+                    };
+                    shadow.push((id, Some(p), right_gravity));
                 }
 
                 // Delete some markers (by shadow index modulo len).
@@ -691,7 +712,7 @@ mod tests {
                         break;
                     }
                     let i = idx % shadow.len();
-                    if let (id, Some(_)) = shadow[i] {
+                    if let (id, Some(_), _) = shadow[i] {
                         list.delete(id);
                         shadow[i].1 = None;
                     }
@@ -702,9 +723,18 @@ mod tests {
                     match op {
                         EditOp::Insert { position, length } => {
                             list.adjust_for_insert(position, length);
-                            for (_id, pos) in shadow.iter_mut() {
+                            for (_id, pos, right_gravity) in shadow.iter_mut() {
                                 if let Some(p) = pos {
-                                    if *p >= position {
+                                    // Right-gravity markers shift when the
+                                    // insertion is at or before them; left-gravity
+                                    // markers only shift for insertions strictly
+                                    // before, staying put at the exact boundary.
+                                    let shifts = if *right_gravity {
+                                        *p >= position
+                                    } else {
+                                        *p > position
+                                    };
+                                    if shifts {
                                         *p += length;
                                     }
                                 }
@@ -715,13 +745,14 @@ mod tests {
                                 continue;
                             }
                             list.adjust_for_delete(position, length);
-                            for (_id, pos) in shadow.iter_mut() {
+                            for (_id, pos, _right_gravity) in shadow.iter_mut() {
                                 if let Some(p) = pos {
                                     // Markers inside the deleted range
                                     // clamp to the deletion start in
                                     // MarkerList's semantics (see
                                     // adjust_recursive's `.max(pos)`),
                                     // so mirror that in the shadow.
+                                    // Gravity does not affect deletions.
                                     if *p >= position + length {
                                         *p -= length;
                                     } else if *p > position {
@@ -734,7 +765,7 @@ mod tests {
 
                     // Every live marker's tree position must match its
                     // shadow position after every operation.
-                    for (id, shadow_pos) in &shadow {
+                    for (id, shadow_pos, _right_gravity) in &shadow {
                         match shadow_pos {
                             Some(expected) => {
                                 let actual = list.get_position(*id);
