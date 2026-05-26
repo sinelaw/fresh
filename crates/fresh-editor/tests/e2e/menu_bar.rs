@@ -575,6 +575,43 @@ fn test_copy_with_formatting_submenu_activates_on_enter() {
     );
 }
 
+/// Regression test for #2118: when a submenu opens, its first item should be
+/// inline with the selected parent item (on the same screen row), not one row
+/// below it (which is where it lands if the submenu's top border is aligned
+/// with the parent item instead of the item itself).
+#[test]
+fn test_submenu_first_item_aligns_with_parent_item() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.render().unwrap();
+
+    // Open the View menu, which contains the static "Terminal" submenu.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Locate the "Terminal" submenu parent item before opening it. At this
+    // point "Open Terminal" is not yet on screen, so this matches the parent.
+    let (term_col, parent_row) = harness
+        .find_text_on_screen("Terminal")
+        .expect("View menu should contain the Terminal submenu item");
+
+    // Hover over the parent item to open its submenu.
+    harness.mouse_move(term_col, parent_row).unwrap();
+
+    // The submenu's first item ("Open Terminal") must render on the same row
+    // as the parent item it was opened from.
+    let (_, first_item_row) = harness
+        .find_text_on_screen("Open Terminal")
+        .expect("Terminal submenu should show its first item 'Open Terminal'");
+
+    assert_eq!(
+        first_item_row, parent_row,
+        "Submenu's first item should be inline with the parent item row {}, but was on row {}",
+        parent_row, first_item_row
+    );
+}
+
 /// Test that Cut and Copy menu items are disabled when there's no selection
 #[test]
 fn test_cut_copy_disabled_without_selection() {

@@ -708,7 +708,11 @@ impl MenuRenderer {
                     current_x = dropdown_rect
                         .x
                         .saturating_add(dropdown_rect.width.saturating_sub(1));
-                    current_y = dropdown_rect.y.saturating_add(submenu_idx as u16 + 1); // +1 for border
+                    // Align the submenu's first item with the parent item it was
+                    // opened from. Items render at `dropdown_rect.y + 1 + idx`
+                    // (the `+ 1` skips the top border), so the submenu's top
+                    // border sits one row above the parent item's row.
+                    current_y = dropdown_rect.y.saturating_add(submenu_idx as u16);
 
                     // Adjust if submenu would go off screen to the right - flip to left side
                     let next_width = Self::calculate_dropdown_width(items);
