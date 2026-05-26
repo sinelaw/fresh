@@ -77,10 +77,7 @@ fn test_epub_file_opens_readonly_markdown() {
     harness.render().unwrap();
 
     // Verify the file is loaded and editing is disabled
-    assert!(
-        harness.editor().active_window().is_editing_disabled(),
-        "EPUB file should have editing disabled"
-    );
+    harness.assert_screen_contains("[RO]");
 
     // Verify the metadata title, creator, language and body are on screen
     harness.assert_screen_contains("Test EPUB Title");

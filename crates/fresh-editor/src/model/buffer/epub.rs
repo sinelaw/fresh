@@ -71,14 +71,28 @@ pub fn extract_epub_text(bytes: &[u8]) -> anyhow::Result<String> {
             format!("Chapter {}", i + 1)
         };
         
-        full_text.push_str(&format!("## {}\n\n", title));
-        
         if let Some(html_content) = doc.get_current_str() {
             // Convert HTML to human-readable plain text
             let text = from_read(html_content.0.as_bytes(), 100)
                 .unwrap_or_else(|_| "[Error converting HTML content]".to_string());
+            
+            // If the HTML already starts with the title (often in an h1), avoid doubling it
+            let first_line = text.lines().next().unwrap_or("").trim();
+            let is_duplicate = if first_line.starts_with("# ") {
+                let h1_title = first_line.trim_start_matches('#').trim();
+                h1_title.to_lowercase() == title.to_lowercase()
+            } else {
+                first_line.to_lowercase() == title.to_lowercase()
+            };
+
+            if !is_duplicate {
+                full_text.push_str(&format!("## {}\n\n", title));
+            }
+
             full_text.push_str(&text);
             full_text.push_str("\n\n");
+        } else {
+            full_text.push_str(&format!("## {}\n\n", title));
         }
         
         if i + 1 < spine_len {

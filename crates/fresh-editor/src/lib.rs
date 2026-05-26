@@ -3,6 +3,8 @@
 // Editor library - exposes all core modules for testing
 
 pub mod i18n;
+#[cfg(test)]
+mod debug_i18n;
 
 // Initialize i18n with empty directory (no compile-time code generation)
 // All translations are provided by the runtime backend
