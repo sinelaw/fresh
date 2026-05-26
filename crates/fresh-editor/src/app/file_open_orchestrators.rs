@@ -212,19 +212,17 @@ impl Editor {
         // Create new buffer with specified encoding
         let buffer_id = self.alloc_buffer_id();
 
-        // Load buffer with the specified encoding (use canonical path for I/O)
-        let buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
-            path,
-            path.extension(),
-            self.grammar_registry.catalog().len(),
-        );
+        let file_exists = self.authority.filesystem.exists(path);
+
         let mut state = if file_exists {
-            // Load from canonical path (for I/O and dedup), detect language from
-            // display path (for glob pattern matching against user-visible names).
-            let buffer = crate::model::buffer::Buffer::load_from_file(
-                &canonical_path,
-                self.config.editor.large_file_threshold_bytes as usize,
+            // Load buffer with the specified encoding (use canonical path for I/O)
+            let buffer = crate::model::buffer::Buffer::load_from_file_with_encoding(
+                path,
+                encoding,
                 Arc::clone(&self.authority.filesystem),
+                crate::model::buffer::BufferConfig {
+                    estimated_line_length: self.config.editor.estimated_line_length,
+                },
             )?;
             let first_line = buffer.first_line_lossy();
             let detected = if is_epub {
@@ -232,7 +230,8 @@ impl Editor {
                     "Markdown",
                     &self.grammar_registry,
                     &self.config.languages,
-                ).unwrap_or_else(crate::primitives::detected_language::DetectedLanguage::plain_text)
+                )
+                .unwrap_or_else(crate::primitives::detected_language::DetectedLanguage::plain_text)
             } else {
                 crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
                     &display_path,
@@ -258,10 +257,13 @@ impl Editor {
         if is_binary || is_epub {
             // Make binary or EPUB buffers read-only
             state.editing_disabled = true;
-            tracing::info!("Detected read-only file (binary: {}, EPUB: {}): {}", is_binary, is_epub, path.display());
+            tracing::info!(
+                "Detected read-only file (binary: {}, EPUB: {}): {}",
+                is_binary,
+                is_epub,
+                path.display()
+            );
         }
-
-        let mut state = EditorState::from_buffer_with_language(buffer, detected);
 
         state
             .margins
@@ -276,7 +278,7 @@ impl Editor {
             .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        let metadata = super::types::BufferMetadata::with_file(
+        let mut metadata = super::types::BufferMetadata::with_file(
             path.to_path_buf(),
             &display_path,
             self.working_dir(),

@@ -1,30 +1,33 @@
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
+use std::io::Write;
 use tempfile::TempDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
-use std::io::Write;
-use crossterm::event::{KeyCode, KeyModifiers};
 
 fn create_mock_epub(temp_dir: &TempDir) -> std::path::PathBuf {
     let epub_path = temp_dir.path().join("test_book.epub");
     let file = std::fs::File::create(&epub_path).unwrap();
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     zip.start_file("mimetype", options).unwrap();
     zip.write_all(b"application/epub+zip").unwrap();
 
     zip.start_file("META-INF/container.xml", options).unwrap();
-    zip.write_all(br#"<?xml version="1.0"?>
+    zip.write_all(
+        br#"<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>"#).unwrap();
+</container>"#,
+    )
+    .unwrap();
 
     zip.start_file("OEBPS/content.opf", options).unwrap();
-    zip.write_all(br#"<?xml version="1.0" encoding="utf-8"?>
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Test EPUB Title</dc:title>
@@ -38,10 +41,13 @@ fn create_mock_epub(temp_dir: &TempDir) -> std::path::PathBuf {
   <spine toc="ncx">
     <itemref idref="chapter1"/>
   </spine>
-</package>"#).unwrap();
+</package>"#,
+    )
+    .unwrap();
 
     zip.start_file("OEBPS/toc.ncx", options).unwrap();
-    zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <navMap>
@@ -50,10 +56,13 @@ fn create_mock_epub(temp_dir: &TempDir) -> std::path::PathBuf {
       <content src="chapter1.xhtml"/>
     </navPoint>
   </navMap>
-</ncx>"#).unwrap();
+</ncx>"#,
+    )
+    .unwrap();
 
     zip.start_file("OEBPS/chapter1.xhtml", options).unwrap();
-    zip.write_all(br#"<?xml version="1.0" encoding="utf-8"?>
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>Chapter 1</title></head>
@@ -61,7 +70,9 @@ fn create_mock_epub(temp_dir: &TempDir) -> std::path::PathBuf {
   <h1>Chapter One Content</h1>
   <p>This is paragraph text in the EPUB chapter.</p>
 </body>
-</html>"#).unwrap();
+</html>"#,
+    )
+    .unwrap();
 
     zip.finish().unwrap();
     epub_path

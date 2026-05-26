@@ -19,12 +19,12 @@ use std::sync::Arc;
 // Re-export Encoding for backward compatibility
 pub use encoding::Encoding;
 
+pub mod epub;
 pub mod file_kind;
 pub mod format;
 pub mod persistence;
 pub mod save;
 pub mod search;
-pub mod epub;
 pub use file_kind::BufferFileKind;
 pub use format::{BufferFormat, LineEnding};
 pub use persistence::Persistence;
@@ -427,7 +427,6 @@ impl TextBuffer {
         buffer.format.set_default_encoding(Encoding::Utf8);
         Ok(buffer)
     }
-
 
     /// Load a text buffer from a file with a specific encoding (no auto-detection).
     pub fn load_from_file_with_encoding<P: AsRef<Path>>(
