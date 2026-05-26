@@ -978,7 +978,18 @@ async function recompute(bufferId: number): Promise<void> {
     }
 
     const length = editor.getBufferLength(bufferId);
-    const newText = await editor.getBufferText(bufferId, 0, length);
+    let newText: string;
+    try {
+      newText = await editor.getBufferText(bufferId, 0, length);
+    } catch (e) {
+      // The buffer can close between the awaits above (the git `show`
+      // for the reference is slow) and this fetch — e.g. the user
+      // closes the file, or an external process churns it while it's
+      // open. `buffer_closed` deletes our state, so if it's gone the
+      // recompute is moot: bail quietly instead of logging an error.
+      if (!states.has(bufferId)) return;
+      throw e;
+    }
 
     // Skip 1: same buffer text as last recompute. `lines_changed` fires
     // on viewport scrolls (cursor up/down past the visible area), and

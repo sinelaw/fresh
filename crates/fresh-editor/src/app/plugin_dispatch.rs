@@ -809,7 +809,12 @@ impl Editor {
                 if let Err(e) =
                     self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
                 {
-                    tracing::warn!("Failed to set statusbar value: {}", e);
+                    // Plugins compute the value asynchronously off a lagging
+                    // state snapshot, then publish to the buffer that was
+                    // active when they started. If that buffer closed in the
+                    // meantime the value is simply discarded — an expected,
+                    // benign race, not a misuse worth warning about.
+                    tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
                 }
             }
             PluginCommand::UnregisterCommand { name } => {
@@ -1657,7 +1662,10 @@ impl Editor {
         }
     }
 
-    /// Get text from a buffer range (for vi mode yank operations)
+    /// Get text from a buffer range (for vi mode yank operations).
+    ///
+    /// See [`clamp_buffer_text_range`] for why the requested range is
+    /// clamped rather than rejected.
     fn handle_get_buffer_text(
         &mut self,
         buffer_id: BufferId,
@@ -1672,16 +1680,15 @@ impl Editor {
             .expect("active window present")
             .get_mut(&buffer_id)
         {
-            // Get text from the buffer using the mutable get_text_range method
-            let len = state.buffer.len();
-            if start <= end && end <= len {
-                Ok(state.get_text_range(start, end))
-            } else {
-                Err(format!(
-                    "Invalid range {}..{} for buffer of length {}",
-                    start, end, len
-                ))
-            }
+            // Plugins derive `end` from a snapshot length (see
+            // `get_buffer_length`) that lags the live buffer, so when the
+            // buffer shrinks between the length read and this fetch — e.g.
+            // concurrent edits from the editor and an external process
+            // rewriting the file on disk — the requested end can briefly
+            // exceed the live length. Clamp to the current bounds and return
+            // what's there; the plugin recomputes on the next change event.
+            let (start, end) = clamp_buffer_text_range(start, end, state.buffer.len());
+            Ok(state.get_text_range(start, end))
         } else {
             Err(format!("Buffer {:?} not found", buffer_id))
         };
@@ -6042,6 +6049,22 @@ impl Editor {
     }
 }
 
+/// Clamp a plugin-requested `[start, end)` text range to a buffer's live
+/// length.
+///
+/// `getBufferText` callers size `end` from `getBufferLength`, which reads a
+/// state snapshot that lags the authoritative buffer. When the buffer shrinks
+/// in between (concurrent editor + external-process edits), the requested end
+/// briefly exceeds the live length. Returning the available text is the right
+/// behaviour — the plugin recomputes on the next change event — so clamp
+/// instead of rejecting. `start` is pinned to `end` so an over-large start
+/// yields an empty range rather than `start > end`.
+fn clamp_buffer_text_range(start: usize, end: usize, len: usize) -> (usize, usize) {
+    let end = end.min(len);
+    let start = start.min(end);
+    (start, end)
+}
+
 #[cfg(test)]
 mod tests {
     //! Focused tests for the SpawnHostProcess kill mechanism.
@@ -6177,6 +6200,30 @@ mod tests {
             // non-Unix builds.
             let _ = pid;
         }
+    }
+
+    use super::clamp_buffer_text_range;
+
+    #[test]
+    fn clamp_text_range_passes_through_in_bounds() {
+        assert_eq!(clamp_buffer_text_range(0, 165, 165), (0, 165));
+        assert_eq!(clamp_buffer_text_range(10, 50, 165), (10, 50));
+    }
+
+    /// The reported regression: `getBufferLength` returned a snapshot
+    /// length one byte ahead of the live buffer (the file was shrinking
+    /// under concurrent editor + external edits), so `getBufferText`
+    /// requested `0..len+1`. Pre-fix this produced "Invalid range
+    /// 0..165003 for buffer of length 165002"; now the end clamps down.
+    #[test]
+    fn clamp_text_range_clamps_stale_end_past_buffer() {
+        assert_eq!(clamp_buffer_text_range(0, 165_003, 165_002), (0, 165_002));
+    }
+
+    #[test]
+    fn clamp_text_range_pins_overlarge_start_to_empty() {
+        // start beyond the live length must not yield start > end.
+        assert_eq!(clamp_buffer_text_range(200, 250, 165), (165, 165));
     }
 }
 
