@@ -151,12 +151,11 @@ impl Editor {
     /// Capture the active window into a `Workspace`.
     ///
     /// Delegates the per-window snapshot to `Window::capture_workspace`
-    /// (rooted at the window's own `root`) and injects the editor-global
-    /// `plugin_global_state`, which the window cannot see.
+    /// (rooted at the window's own `root`). Editor-global
+    /// `plugin_global_state` is intentionally NOT embedded here — it
+    /// persists once to the global `orchestrator/state/` store.
     pub fn capture_workspace(&self) -> Workspace {
-        let mut ws = self.active_window().capture_workspace();
-        ws.plugin_global_state = self.plugin_global_state.clone();
-        ws
+        self.active_window().capture_workspace()
     }
 
     /// Save the current (active) window's workspace to disk. Thin
@@ -363,8 +362,7 @@ impl Editor {
         win.sync_terminal_backing_files();
         win.save_all_global_file_states();
 
-        let mut workspace = win.capture_workspace();
-        workspace.plugin_global_state = self.plugin_global_state.clone();
+        let workspace = win.capture_workspace();
 
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
@@ -428,13 +426,11 @@ impl Editor {
 
         // Editor-global config overrides (the shared `Config`).
         self.restore_config_overrides(&workspace.config_overrides);
-        if !workspace.plugin_global_state.is_empty() {
-            tracing::debug!(
-                "Restoring plugin global state for {} plugins",
-                workspace.plugin_global_state.len()
-            );
-            self.plugin_global_state = workspace.plugin_global_state.clone();
-        }
+        // Editor-global plugin state is NOT taken from per-window
+        // workspace files: it has a single canonical home in the
+        // global `orchestrator/state/` store, loaded once at boot.
+        // Applying a per-window copy here was what let a background
+        // window's stale snapshot clobber the live editor-global state.
 
         let populated = self
             .windows
