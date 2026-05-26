@@ -471,13 +471,18 @@ impl crate::app::Editor {
 
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
-    /// to a different session first. Refuses to close the base
-    /// session (`WindowId(1)`) — that's the editor's anchor.
+    /// to a different session first. Refuses to close the *last*
+    /// remaining window — the editor must always host at least one.
+    ///
+    /// There is no special "base" window any more: id 1 is just the
+    /// window the editor launched into, closable like any other once
+    /// another window exists. The real invariant is "≥1 window", not
+    /// "id 1 lives forever".
     ///
     /// Returns `true` on success, `false` on rejection.
     pub fn close_window(&mut self, id: WindowId) -> bool {
-        if id == WindowId(1) {
-            tracing::warn!("close_window: refusing to close the base session (id 1)");
+        if self.windows.len() <= 1 {
+            tracing::warn!("close_window: refusing to close the last remaining window (id {id})");
             return false;
         }
         if id == self.active_window {

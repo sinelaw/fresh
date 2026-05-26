@@ -650,7 +650,7 @@ function sessionsColumnHeader(): WidgetSpec {
 }
 
 // Build one rendered list-item row for `id`:
-//   `[ ] ` <name + BASE/⇄ badges + on-disk tag>   <project basename>
+//   `[ ] ` <name + on-disk tag>   <project basename>
 // The active session's name renders bold; discovered (on-disk,
 // unopened) worktrees render dim with a `· on-disk` tag instead of a
 // glyph. The project column is filled only for sessions that don't
@@ -661,7 +661,6 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
     return styledRow([{ text: "(unknown)" }]);
   }
   const isActive = id === activeId;
-  const isBase = id === 1;
   const isDiscovered = !!s.discovered;
   const isChecked = openDialog?.selectedIds.has(id) ?? false;
 
@@ -686,17 +685,9 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
         : undefined,
     },
   ];
-  // Visible width of the NAME column so far (label + badges), used
+  // Visible width of the NAME column so far (label + tags), used
   // to pad out to LIST_NAME_W before the PROJECT column.
   let nameWidth = s.label.length;
-  if (isBase) {
-    entries.push({ text: " BASE", style: { fg: "ui.help_key_fg", bold: true } });
-    nameWidth += 5;
-  }
-  if (s.sharedWorktree || countSiblingsAtRoot(s.root) > 1) {
-    entries.push({ text: " ⇄", style: { fg: "ui.menu_disabled_fg" } });
-    nameWidth += 2;
-  }
   if (isDiscovered) {
     entries.push({
       text: " · on-disk",
@@ -737,13 +728,7 @@ function buildPreviewEntries(
   }
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
-  const isBase = s.id === 1;
   const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
-  // Count siblings sharing the same `root`. The set includes
-  // `s` itself; `> 1` means at least one other session lives at
-  // the same path (shared-worktree mode, or two sessions
-  // explicitly aimed at the same directory).
-  const sharedCount = countSiblingsAtRoot(s.root);
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: stateText,
@@ -754,40 +739,13 @@ function buildPreviewEntries(
     { text: "  " },
     { text: ageString(s.createdAt), style: { fg: "ui.menu_disabled_fg" } },
   ];
-  if (isBase) {
-    // BASE badge in the preview — the long-form counterpart to
-    // the list-row badge, with an inline explanation so the user
-    // doesn't have to wonder why Stop / Archive / Delete are
-    // greyed out.
+  if (!s.discovered && !ownsWorktree(s)) {
+    // In-place / launch session: runs inside a real checkout, owns no
+    // dedicated worktree. Surfaced so the user knows Archive doesn't
+    // apply (Delete just forgets it, leaving the directory untouched).
     headerEntries.push(
       { text: "  " },
-      {
-        text: "BASE",
-        style: { fg: "ui.help_key_fg", bold: true },
-      },
-      { text: " — editor session", style: { fg: "ui.menu_disabled_fg", italic: true } },
-    );
-  }
-  if (sharedCount > 1) {
-    headerEntries.push(
-      { text: "  " },
-      {
-        text: `SHARED ×${sharedCount}`,
-        style: { fg: "ui.status_error_indicator_fg", bold: true },
-      },
-    );
-  } else if (s.sharedWorktree) {
-    // Single-session shared-worktree mode (the user opted out of
-    // a dedicated worktree even though no second session is on
-    // this root yet). Still worth surfacing so the user knows
-    // why Archive / Delete refuse to run a `git worktree
-    // remove` here.
-    headerEntries.push(
-      { text: "  " },
-      {
-        text: "SHARED",
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      },
+      { text: "in-place", style: { fg: "ui.menu_disabled_fg", italic: true } },
     );
   }
   return [
@@ -798,16 +756,15 @@ function buildPreviewEntries(
   ];
 }
 
-/// Return the number of orchestrator sessions whose `root`
-/// equals `root`. Used to surface "SHARED ×N" in the preview
-/// pane and to refuse Archive / Delete on a shared root
-/// while another session still lives there.
-function countSiblingsAtRoot(root: string): number {
-  let n = 0;
-  for (const s of orchestratorSessions.values()) {
-    if (s.root === root) n += 1;
-  }
-  return n;
+// A session "owns" a removable git worktree when it was created as a
+// dedicated `git worktree add` (project path set, not a shared/in-place
+// root) or was discovered on disk via `git worktree list`. Only these
+// have a worktree to `git worktree remove`/`move`. The launch session
+// (the dir the editor was started in) and in-place sessions run inside
+// a real checkout, so Archive (which moves the worktree) doesn't apply
+// and Delete simply forgets the session without touching the directory.
+function ownsWorktree(s: AgentSession): boolean {
+  return !!s.discovered || (!!s.projectPath && !s.sharedWorktree);
 }
 
 // =============================================================================
@@ -856,11 +813,15 @@ function selectedSessions(): number[] {
 function bulkEligible(action: BulkAction, id: number): boolean {
   const s = orchestratorSessions.get(id);
   if (!s) return false;
-  if (id === 1) return false;
-  if (action === "stop") return !s.discovered && id > 0;
-  if (s.discovered) return true;
-  const sharesRoot = countSiblingsAtRoot(s.root) > 1 || s.sharedWorktree;
-  return !sharesRoot;
+  // Stop kills the agent process group — only meaningful for a live
+  // session that actually spawned one (never the launch session, which
+  // has no agent terminal, so signalling it can't touch the editor).
+  if (action === "stop") return !s.discovered && id > 0 && !!s.terminalId;
+  // Delete forgets any session. When it owns a worktree the worktree is
+  // removed too; otherwise (launch/in-place) it's just dropped.
+  if (action === "delete") return id > 0 || !!s.discovered;
+  // Archive moves the worktree to the graveyard, so it needs one.
+  return ownsWorktree(s);
 }
 
 function eligibleSelected(action: BulkAction): number[] {
@@ -1050,17 +1011,16 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // same conditions that `stopSelectedSession`, `enterConfirm`,
   // and the lifecycle handlers already check internally.
   //
-  //  * Stop: refused on the base session (id 1).
-  //  * Archive / Delete: also refused on the base session, plus
-  //    when this session shares its worktree with the project
-  //    root (no `git worktree` entry to remove) or shares a root
-  //    with other live sessions (would yank disk out from
-  //    under them).
-  const isBase = s.id === 1;
-  const siblings = countSiblingsAtRoot(s.root);
-  const sharesRoot = siblings > 1 || s.sharedWorktree;
-  const stopDisabled = isBase;
-  const lifecycleDisabled = isBase || sharesRoot;
+  //  * Stop: only a live session with an agent terminal can be
+  //    stopped (the launch session has none).
+  //  * Archive: needs an owned worktree to move to the graveyard.
+  //  * Delete: always available — it forgets the session, removing the
+  //    worktree only when one is owned (otherwise the directory is left
+  //    untouched).
+  const hasWorktree = ownsWorktree(s);
+  const stopDisabled = s.discovered || !s.terminalId;
+  const archiveDisabled = !hasWorktree;
+  const deleteDisabled = false;
   const buttonRow = row(
     button("Visit", { intent: "primary", key: "visit" }),
     spacer(2),
@@ -1069,12 +1029,12 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
     spacer(2),
     button("Stop", { key: "stop", disabled: stopDisabled }),
     spacer(2),
-    button("Archive", { key: "archive", disabled: lifecycleDisabled }),
+    button("Archive", { key: "archive", disabled: archiveDisabled }),
     spacer(2),
     button("Delete", {
       intent: "danger",
       key: "delete",
-      disabled: lifecycleDisabled,
+      disabled: deleteDisabled,
     }),
   );
   const embedWidget = windowEmbed({
@@ -1091,13 +1051,12 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
         embedWidget,
       )
     : col(buttonRow, spacer(0), embedWidget);
-  // Surface BASE in the preview section label so it's always visible
-  // (the list-row badge gets truncated at 25% column width). The
-  // base session is the editor process itself — closing or moving
-  // its worktree would close the editor / break the user's current
-  // tree, so Stop / Archive / Delete refuse against it.
-  const sectionLabel = isBase
-    ? `${s.label}  —  BASE (editor session)`
+  // Surface the launch session in the preview label so it's always
+  // visible (the list-row badge gets truncated at 25% column width).
+  // It's the dir the editor was started in — informational only; it's
+  // deletable like any other session once another window exists.
+  const sectionLabel = s.id === 1
+    ? `${s.label}  —  launch session`
     : s.label;
   return labeledSection({
     label: sectionLabel,
@@ -1270,14 +1229,9 @@ function buildBulkPane(): WidgetSpec {
   const items: TextPropertyEntry[] = sel.map((id) => {
     const ss = orchestratorSessions.get(id)!;
     const rowParts: StyledSegment[] = [{ text: `  ${ss.label}` }];
-    if (id === 1) {
+    if (!ss.discovered && !ownsWorktree(ss)) {
       rowParts.push({
-        text: "  · base (protected)",
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      });
-    } else if (!ss.discovered && (countSiblingsAtRoot(ss.root) > 1 || ss.sharedWorktree)) {
-      rowParts.push({
-        text: "  · shared worktree",
+        text: "  · in-place (forgotten, not removed)",
         style: { fg: "ui.menu_disabled_fg", italic: true },
       });
     } else if (ss.discovered) {
@@ -1686,7 +1640,7 @@ function closeOpenDialog(): void {
 // live window).
 function stopOne(id: number): boolean {
   const s = orchestratorSessions.get(id);
-  if (!s || id <= 0 || id === 1 || s.discovered) return false;
+  if (!s || id <= 0 || s.discovered || !s.terminalId) return false;
   editor.signalWindow(id, "SIGTERM");
   // SIGKILL fallback for agents that ignore SIGTERM. The host's
   // signalWindow is idempotent on already-exited process groups, so
@@ -1809,7 +1763,12 @@ interface LifecycleResult {
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  if (id === 1) return { ok: false, err: "cannot archive the base session" };
+  // Archive moves the worktree to the graveyard — only sessions that
+  // own one can be archived. A launch/in-place session has no separate
+  // worktree, so there's nothing to move; use Delete to forget it.
+  if (!ownsWorktree(s)) {
+    return { ok: false, err: "no worktree to archive — use Delete to forget this session" };
+  }
   const repoRoot = await worktreeRepoRoot(s);
   if (!repoRoot) return { ok: false, err: "not a git repository" };
 
@@ -1820,7 +1779,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
-    editor.signalWindow(id, "SIGKILL");
+    if (s.terminalId) editor.signalWindow(id, "SIGKILL");
     editor.closeWindow(id);
     // Brief settle so the filesystem reflects the pty's exit before
     // we move the worktree out from under it.
@@ -2072,52 +2031,60 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
   };
 }
 
-// Delete a single session: stop processes (SIGKILL), close the
-// editor session, then `git worktree remove --force` to drop the
-// worktree from disk. If the session was archived (manifest entry
-// exists), the manifest entry is dropped too. Handles discovered
-// on-disk worktrees (no window to close). No recovery after this
-// point. Does NOT trigger sync — the caller batches it.
+// Delete a single session: close the editor session, then — only when
+// the session owns a worktree — `git worktree remove --force` to drop
+// it from disk (and prune any archive-manifest entry). A launch or
+// in-place session owns no worktree, so Delete just forgets it: the
+// window closes and the directory is left untouched (a fresh session
+// can always be opened there again). Handles discovered on-disk
+// worktrees (no window to close). Does NOT trigger sync — the caller
+// batches it.
 async function deleteOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  if (id === 1) return { ok: false, err: "cannot delete the base session" };
-  const repoRoot = await worktreeRepoRoot(s);
-  if (!repoRoot) return { ok: false, err: "not a git repository" };
+  const removable = ownsWorktree(s);
 
   if (!s.discovered && id > 0) {
-    // close_window refuses to close the active window, so swap away.
+    // close_window refuses to close the active (and the last) window,
+    // so swap away first. SIGKILL only when there's an agent terminal —
+    // a launch/in-place session has none, and signalling it must never
+    // touch the editor itself.
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
-    editor.signalWindow(id, "SIGKILL");
+    if (s.terminalId) editor.signalWindow(id, "SIGKILL");
     editor.closeWindow(id);
-    await editor.delay(250);
+    if (removable) await editor.delay(250);
   }
 
-  // `--force` because the worktree may have unstaged changes the user
-  // explicitly chose to discard via the confirm step.
-  const removeRes = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "worktree", "remove", "--force", s.root],
-    repoRoot,
-  );
-  if (removeRes.exit_code !== 0) {
-    return {
-      ok: false,
-      err: lastNonEmptyLine(removeRes.stderr) || "worktree remove failed",
-      repoRoot,
-    };
-  }
+  let repoRoot: string | undefined;
+  if (removable) {
+    const rr = await worktreeRepoRoot(s);
+    if (!rr) return { ok: false, err: "not a git repository" };
+    repoRoot = rr;
+    // `--force` because the worktree may have unstaged changes the user
+    // explicitly chose to discard via the confirm step.
+    const removeRes = await spawnCollect(
+      "git",
+      ["-C", rr, "worktree", "remove", "--force", s.root],
+      rr,
+    );
+    if (removeRes.exit_code !== 0) {
+      return {
+        ok: false,
+        err: lastNonEmptyLine(removeRes.stderr) || "worktree remove failed",
+        repoRoot,
+      };
+    }
 
-  // Drop the matching manifest entry too, in case the session was
-  // already archived (delete-from-archived is the natural way to drop
-  // dormant sessions).
-  const manifest = loadArchiveManifest(repoRoot);
-  const before = manifest.sessions.length;
-  manifest.sessions = manifest.sessions.filter((e) => e.label !== s.label);
-  if (manifest.sessions.length !== before) {
-    saveArchiveManifest(repoRoot, manifest);
+    // Drop the matching manifest entry too, in case the session was
+    // already archived (delete-from-archived drops dormant sessions).
+    const manifest = loadArchiveManifest(rr);
+    const before = manifest.sessions.length;
+    manifest.sessions = manifest.sessions.filter((e) => e.label !== s.label);
+    if (manifest.sessions.length !== before) {
+      saveArchiveManifest(rr, manifest);
+    }
   }
 
   if (s.discovered) {
@@ -3904,36 +3871,20 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   if (!openDialog || !openPanel) return;
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
-  // Refuse Archive / Delete on a shared root while other
-  // sessions still live there. Both actions either move
-  // (`git worktree move`) or remove (`git worktree remove`)
-  // the on-disk path — doing that under another running
-  // session would yank the rug out from under it. Stop is
-  // fine: it only signals THIS session's process group, no
-  // disk operation.
-  if (action === "archive" || action === "delete") {
+  // Archive moves the worktree to the graveyard, so it only applies to
+  // a session that owns one. A launch/in-place session runs inside a
+  // real checkout with no `git worktree` entry — Archive would have
+  // nothing to move (and must never rm-rf the user's actual project).
+  // Delete is always fine: it forgets the session and removes the
+  // worktree only when one is owned.
+  if (action === "archive") {
     const session = orchestratorSessions.get(id);
-    if (session) {
-      const siblings = countSiblingsAtRoot(session.root);
-      if (siblings > 1) {
-        setDialogError(
-          `cannot ${action} session [${id}] ${session.label} — ${siblings - 1} other session(s) share this worktree; close them first`,
-        );
-        refreshOpenDialog();
-        return;
-      }
-      if (session.sharedWorktree) {
-        // Single-session shared-worktree mode: there's no
-        // `git worktree` entry to remove for this session.
-        // Block both lifecycle actions so we don't run
-        // `git worktree remove` against a non-worktree path
-        // and rm-rf the user's actual project directory.
-        setDialogError(
-          `cannot ${action} session [${id}] ${session.label} — session shares its working tree with the project root; close it via the editor instead`,
-        );
-        refreshOpenDialog();
-        return;
-      }
+    if (session && !ownsWorktree(session)) {
+      setDialogError(
+        `cannot archive session [${id}] ${session.label} — it has no dedicated worktree; use Delete to forget it`,
+      );
+      refreshOpenDialog();
+      return;
     }
   }
   openDialog.pendingConfirm = { action, ids: [id] };
@@ -4256,10 +4207,6 @@ function killSelected(): void {
   const id = ids[Math.max(0, Math.min(openDialog.selectedIndex, ids.length - 1))];
   if (id <= 0) {
     editor.setStatus("Orchestrator: select a session row first");
-    return;
-  }
-  if (id === 1) {
-    editor.setStatus("Orchestrator: cannot kill the base session");
     return;
   }
   if (id === editor.activeWindow()) {
