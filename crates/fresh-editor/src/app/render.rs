@@ -3937,14 +3937,22 @@ fn paint_text_property_entry(
         // `popup_selection_bg` (the highlight on the completion
         // popup's selected candidate) — `Style::bg` is a
         // replacement, not a merge.
-        let resolved = Editor::resolve_overlay_style(opts, theme);
+        let mut resolved = Editor::resolve_overlay_style(opts, theme);
+        // Fill in the suggestion surface's fg/bg when the style didn't
+        // supply its own — `suggestion_fg` is the foreground partner for
+        // `suggestion_bg`. Without an fg default, unstyled toolbar text
+        // (toggle labels, "save matches") fell through to the terminal's
+        // default foreground, which is unreadable on light themes.
+        if resolved.fg.is_none() {
+            resolved = resolved.fg(theme.suggestion_fg);
+        }
         if resolved.bg.is_none() {
             resolved.bg(base_bg)
         } else {
             resolved
         }
     } else {
-        Style::default().bg(base_bg)
+        Style::default().fg(theme.suggestion_fg).bg(base_bg)
     };
 
     // Split the line at inline-overlay byte boundaries so each

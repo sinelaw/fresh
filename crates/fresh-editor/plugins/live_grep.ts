@@ -314,7 +314,7 @@ function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
   // an atomic group of `toggle + accelerator` — so the wrapping parent never
   // splits a label from its `Alt+…` hint across lines.
   const prefix = (text: string): WidgetSpec =>
-    raw([styledRow([{ text, style: { fg: "ui.popup_border_fg" } }])]);
+    raw([styledRow([{ text, style: { fg: "ui.suggestion_fg" } }])]);
 
   const sources: WidgetSpec[] = [spacer(1), prefix(editor.t("label.search_in"))];
   SCOPES.forEach((s) => {
@@ -355,13 +355,14 @@ function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
 function buildMetaRow(provider: LiveGrepProvider | null): WidgetSpec | null {
   const hintStyle = { fg: "ui.help_key_fg" };
   const sepStyle = { fg: "ui.popup_border_fg" };
+  const labelStyle = { fg: "ui.suggestion_fg" };
   const parts: WidgetSpec[] = [];
 
   // Provider button — only when a file-backed scope is on (irrelevant when
   // searching only buffers/terminals/diagnostics). The button is keyed
   // "provider"; activating it (click / Space / Alt+P) cycles the backend.
   if (provider && (scopeEnabled.files || scopeEnabled.ignored)) {
-    parts.push(raw([styledRow([{ text: "Provider: ", style: sepStyle }])]));
+    parts.push(raw([styledRow([{ text: "Provider: ", style: labelStyle }])]));
     parts.push(button(provider.name, { key: "provider" }));
     const pAccel = editor.getKeybindingLabel("cycle_live_grep_provider", "prompt");
     if (pAccel) {
