@@ -286,6 +286,8 @@ const DEPENDENCY_TYPES: &[&str] = &[
     // Streaming-search pull handle (referenced via ts_raw on beginSearch)
     "SearchTakeResult",
     "SearchHandle",
+    // Replace result (referenced via ts_raw on replaceInFile)
+    "ReplaceResult",
 ];
 
 /// Collect TypeScript type declarations based on referenced types from proc macro
