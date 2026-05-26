@@ -502,7 +502,13 @@ impl Editor {
         let targets: Vec<fresh_core::WindowId> = self
             .windows
             .iter()
-            .filter(|(_, w)| w.buffers.splits().is_some())
+            // Never overwrite a window we never materialized: it still
+            // holds only its empty seed layout, while its on-disk
+            // workspace is the authoritative copy. Saving the seed would
+            // clobber the real file (issue: lazy restore + per-dir save).
+            .filter(|(id, w)| {
+                w.buffers.splits().is_some() && !self.materialize_pending.contains(id)
+            })
             .map(|(id, _)| *id)
             .collect();
 
