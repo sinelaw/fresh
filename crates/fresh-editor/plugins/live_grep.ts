@@ -802,13 +802,24 @@ async function searchTerminals(query: string, limit: number): Promise<GrepMatch[
  *  Scoped to *modified* buffers on purpose: unmodified buffers are
  *  already covered by the on-disk file scan, so this surfaces exactly
  *  the unsaved edits a disk grep would miss, without double-reporting. */
-async function searchOpenBuffers(query: string, limit: number): Promise<GrepMatch[]> {
+async function searchOpenBuffers(
+  query: string,
+  limit: number,
+  includeUnmodified: boolean,
+): Promise<GrepMatch[]> {
   if (limit <= 0) return [];
   const out: GrepMatch[] = [];
   const matchCol = buildLineMatcher(query);
   for (const b of editor.listBuffers()) {
     if (out.length >= limit) break;
-    if (b.is_virtual || !b.path || !b.modified) continue;
+    // Virtual buffers (terminals, panels) and bufferless/unnamed buffers
+    // have no on-disk file to navigate to. When the file scan is also
+    // running, restrict to *modified* buffers so saved buffers aren't
+    // double-reported (the disk grep already covers them); when buffers is
+    // the only file-backed scope, search every open buffer so the user
+    // actually finds matches.
+    if (b.is_virtual || !b.path) continue;
+    if (!includeUnmodified && !b.modified) continue;
     if (b.length > MAX_BUFFER_SCAN_BYTES) continue;
     let text: string;
     try {
@@ -907,7 +918,8 @@ async function search(query: string): Promise<GrepMatch[]> {
   }
 
   if (scopeEnabled.buffers && remaining() > 0) {
-    results.push(...await searchOpenBuffers(query, remaining()));
+    const filesActive = scopeEnabled.files || scopeEnabled.ignored;
+    results.push(...await searchOpenBuffers(query, remaining(), !filesActive));
   }
 
   if (scopeEnabled.terminals && remaining() > 0) {

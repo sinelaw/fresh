@@ -122,6 +122,77 @@ fn test_live_grep_git_grep_flow_finds_match_in_repo() {
     );
 }
 
+/// The Buffers scope must find matches in *open* buffers, including
+/// unmodified ones, when it is the only file-backed scope active. The
+/// buffer scan is otherwise restricted to modified buffers (the disk grep
+/// covers saved ones) — but with Files off, that restriction left a
+/// buffers-only search finding nothing for content plainly in an open
+/// buffer. This drives the real plugin path (no subprocess: the buffer
+/// scan is pure JS over `listBuffers`/`getBufferText`).
+#[test]
+#[ignore = "flaky test - plugin-driven overlay search times out intermittently"]
+fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let token = "BUF_SCOPE_TOKEN_7c1d";
+    let target = project_root.join("notes.txt");
+    fs::write(&target, format!("alpha\n{token} here\nomega\n")).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    // Open the file but make no edits — it's an *unmodified* buffer.
+    harness.open_file(&target).unwrap();
+    harness.render().unwrap();
+
+    // Open palette → invoke "Live Grep".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep (Find").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+
+    // Narrow to Buffers only: turn off Files (Alt+L) and Terminals (Alt+T),
+    // leaving the default-on Buffers scope as the sole file-backed source.
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text(token).unwrap();
+
+    // The unmodified open buffer must surface, badged `[buf]`.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("notes.txt") && s.contains("[buf]")
+        })
+        .unwrap();
+}
+
 /// Test Live Grep plugin - basic search and preview functionality
 #[test]
 #[ignore = "flaky test - times out intermittently"]
