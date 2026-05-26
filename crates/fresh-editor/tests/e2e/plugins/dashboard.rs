@@ -7,9 +7,28 @@
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 use std::path::PathBuf;
+
+/// Config that opts the dashboard back into auto-open.
+///
+/// `autoOpen` defaults to `false` (the dashboard no longer pops on
+/// startup), so tests that exercise the ambient open path must enable it
+/// explicitly via the same `plugins.dashboard.settings` channel a user
+/// would use in `config.json` / the Settings UI.
+fn config_with_dashboard_autoopen() -> Config {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "dashboard".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "autoOpen": true }),
+        },
+    );
+    config
+}
 
 /// Build a harness rooted at a scratch working directory that contains
 /// the real `dashboard` plugin (copied from the repo). The plugin loads
@@ -32,9 +51,13 @@ fn harness_with_dashboard_plugin_and_plugins_dir() -> (EditorTestHarness, tempfi
     copy_plugin(&plugins_dir, "dashboard");
     copy_plugin_lib(&plugins_dir);
 
-    let harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), working_dir)
-            .expect("harness");
+    let harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config_with_dashboard_autoopen(),
+        working_dir,
+    )
+    .expect("harness");
     (harness, temp, plugins_dir)
 }
 
@@ -175,9 +198,13 @@ if (dash) {
     // scan and won't re-scan on its own.
     drop(harness);
     let working_dir = plugins_dir.parent().unwrap().to_path_buf();
-    harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), working_dir)
-            .expect("harness");
+    harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config_with_dashboard_autoopen(),
+        working_dir,
+    )
+    .expect("harness");
 
     harness.editor_mut().fire_ready_hook();
 
@@ -322,9 +349,13 @@ fn keyboard_navigation_moves_focus_highlight() {
     // once when it constructed the first harness.
     drop(_harness_unused);
     let working_dir = plugins_dir.parent().unwrap().to_path_buf();
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 40, Config::default(), working_dir)
-            .expect("harness");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config_with_dashboard_autoopen(),
+        working_dir,
+    )
+    .expect("harness");
 
     harness.editor_mut().fire_ready_hook();
 
