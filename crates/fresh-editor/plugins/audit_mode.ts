@@ -537,7 +537,12 @@ function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'unt
                 };
                 hunks.push(currentHunk);
             }
-        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' '))) {
+        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ') || line.startsWith('\\'))) {
+            // Keep the "\ No newline at end of file" marker (starts with
+            // a backslash) so buildHunkPatch can reproduce the exact
+            // end-of-file newline state; without it git refuses to apply
+            // the reconstructed patch (e.g. discarding a hunk that adds an
+            // unterminated final line).
             if (!line.startsWith('---') && !line.startsWith('+++')) {
                  currentHunk.lines.push(line);
             }
@@ -921,6 +926,21 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
         // Diff content lines with word-level highlighting for adjacent -/+ pairs
         for (let li = 0; li < hunk.lines.length; li++) {
             const line = hunk.lines[li];
+            if (line[0] === '\\') {
+                // "\ No newline at end of file": informational marker, not a
+                // real line. Render it dim with no line numbers and don't
+                // advance the line counters. It still occupies exactly one
+                // row so hunk.lines stays 1:1 with displayed rows (which
+                // selectionLineRange relies on).
+                lines.push({
+                    text: line, type: 'context',
+                    hunkId: hunk.id, file: hunk.file,
+                    lineType: 'context', oldLine: undefined, newLine: undefined,
+                    lineContent: line,
+                    style: { fg: STYLE_LINE_NUM_FG },
+                });
+                continue;
+            }
             const nextLine = hunk.lines[li + 1];
             const prefix = line[0];
             const lineType: 'add' | 'remove' | 'context' =
@@ -2209,20 +2229,32 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
     const filtered: string[] = [];
     let oldCount = 0;
     let newCount = 0;
+    // Whether the preceding diff line produced output. A trailing
+    // "\ No newline at end of file" marker annotates the line just above
+    // it, so it is only meaningful when that line was kept.
+    let lastEmitted = false;
 
     for (let i = 0; i < hunk.lines.length; i++) {
         const line = hunk.lines[i];
         const ch = line[0];
+        if (ch === '\\') {
+            // "\ No newline at end of file": travels with its annotated
+            // line and never counts toward the @@ line totals.
+            if (lastEmitted) filtered.push(line);
+            continue;
+        }
         const inRange = !lineRange || (i >= lineRange.start && i <= lineRange.end);
         if (ch === '+') {
             if (inRange) {
                 filtered.push(line);
                 newCount++;
+                lastEmitted = true;
             } else {
                 // An out-of-range '+' line means: this addition isn't being
                 // applied, so it shouldn't appear in either side. Drop it
                 // entirely (don't convert to context — there's nothing to
                 // match in the source file).
+                lastEmitted = false;
             }
         } else if (ch === '-') {
             if (inRange) {
@@ -2235,10 +2267,12 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
                 oldCount++;
                 newCount++;
             }
+            lastEmitted = true;
         } else {
             filtered.push(line);
             oldCount++;
             newCount++;
+            lastEmitted = true;
         }
     }
 

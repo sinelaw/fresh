@@ -1906,3 +1906,84 @@ fn test_issue2036_range_refresh_explains_working_tree_excluded() {
         })
         .unwrap();
 }
+
+/// Issue #2117: discarding a hunk whose change adds an *unterminated* final
+/// line (no trailing newline) failed with "patch does not apply". The
+/// reconstructed patch dropped git's "\ No newline at end of file" marker, so
+/// `git apply --reverse` refused it even though the equivalent `git diff |
+/// git apply --reverse` succeeds. With the marker preserved the discard
+/// succeeds and the working tree is restored.
+#[test]
+fn test_issue2117_discard_hunk_with_no_trailing_newline() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Commit a file that ends with a newline.
+    let original = "alpha\nbeta\ngamma\n";
+    let notes = repo.create_file("notes.txt", original);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Working-tree change: append a final line WITHOUT a trailing newline,
+    // which git renders with a "\ No newline at end of file" marker.
+    fs::write(&notes, "alpha\nbeta\ngamma\nNO_NEWLINE_LINE").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&notes).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("NO_NEWLINE_LINE"))
+        .unwrap();
+
+    open_review_diff(&mut harness);
+
+    // Focus the diff panel and land the cursor on the hunk (not the file
+    // header) so `d` performs a *hunk*-level discard — the path that builds
+    // and reverse-applies a patch.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+
+    // `d` opens the confirmation prompt; Enter accepts the default
+    // ("Discard hunk").
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+    }
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Patch failed") && !screen.contains("does not apply"),
+        "Issue #2117: discarding a hunk that adds an unterminated final line \
+         must not fail with a patch error. Screen:\n{}",
+        screen
+    );
+
+    // The discard must actually revert the working tree on disk.
+    let after = fs::read_to_string(&notes).unwrap();
+    assert_eq!(
+        after, original,
+        "Issue #2117: discarding the hunk should restore the committed \
+         content (removing the unterminated added line)."
+    );
+}
