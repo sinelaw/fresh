@@ -222,6 +222,7 @@ impl Editor {
             key_translator: parts.key_translator,
 
             // Trivial defaults (no external dependencies):
+            materialize_pending: std::collections::HashSet::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
             pending_grammar_callbacks: Vec::new(),
@@ -1326,6 +1327,18 @@ impl Editor {
                 }
             }
         }
+
+        // Lazy materialization: every non-active window keeps only its
+        // empty seed layout for now and is restored from disk on first
+        // dive/preview (see `materialize_window`). Only the foreground
+        // (CLI-dir) window is restored eagerly, by the caller's
+        // `try_restore_workspace`.
+        editor.materialize_pending = editor
+            .windows
+            .keys()
+            .copied()
+            .filter(|id| *id != editor.active_window)
+            .collect();
 
         #[cfg(feature = "plugins")]
         {

@@ -2010,6 +2010,12 @@ impl Editor {
             return;
         };
 
+        // Lazy materialization: a previewed session whose workspace
+        // hasn't been restored yet gets restored on its first preview
+        // frame, so the embed paints real content. No-op once
+        // materialized (cleared from `materialize_pending`).
+        self.materialize_window(sid);
+
         // Terminal grid → buffer text "sync" was previously a
         // multi-step append/reload/truncate dance that mutated the
         // backing file on every preview-render frame just to make

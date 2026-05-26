@@ -792,11 +792,13 @@ fn handle_first_run_setup(
                 tracing::warn!("Failed to restore workspace: {}", e);
             }
         }
-        // Each Orchestrator session lives in its own worktree and therefore
-        // gets its own per-dir workspace file. Restoring them here means
-        // their buffers/splits paint in the Orchestrator preview immediately
-        // — no need to dive into a session just to populate it.
-        editor.restore_inactive_window_workspaces();
+        // Inactive windows are NOT restored here: only the foreground
+        // (CLI-dir) window is materialized eagerly above. Every other
+        // discovered session keeps its empty seed layout and is
+        // restored from its own per-dir workspace file lazily, on first
+        // dive or preview (see `Editor::materialize_window`). This makes
+        // startup build exactly one window — deterministic and cheap
+        // regardless of how many sessions exist.
     } else {
         if !workspace_enabled {
             tracing::info!("Skipping workspace restore: --no-restore was specified");

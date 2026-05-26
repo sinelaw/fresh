@@ -601,6 +601,14 @@ pub struct Editor {
     /// now; multi-session support arrives in a follow-up commit.
     pub(crate) active_window: fresh_core::WindowId,
 
+    /// Windows whose persisted workspace (files/splits) has not yet
+    /// been restored from disk. Startup materializes only the
+    /// foreground (CLI-dir) window eagerly; every other discovered
+    /// session is seeded with an empty layout and listed here, then
+    /// restored lazily on first dive or preview via
+    /// `materialize_window`.
+    pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
+
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
     /// not free its id (per design, ids are stable within a process).

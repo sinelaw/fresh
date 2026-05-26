@@ -526,40 +526,41 @@ impl Editor {
         }
     }
 
-    /// Restore workspaces for every persisted window that isn't the
-    /// already-restored active one, each from its own `root`.
+    /// Restore window `id`'s persisted workspace from disk the first
+    /// time it's dived into or previewed — the lazy counterpart to the
+    /// active window's eager `try_restore_workspace`. Idempotent: the
+    /// id is cleared from `materialize_pending` up front, so a missing
+    /// or corrupt workspace doesn't retry every frame.
     ///
-    /// `plugin_global_state` is editor-wide and would otherwise be
-    /// clobbered by the last window we touch, so we snapshot it once and
-    /// restore it after the loop — the active window's restore (run
-    /// before this) is the one whose plugin state we keep.
-    ///
-    /// Best-effort: per-window failures are logged but don't stop the
-    /// loop, so one corrupt workspace file can't blank the others.
-    pub fn restore_inactive_window_workspaces(&mut self) {
-        let active = self.active_window;
-        let saved_plugin_state = self.plugin_global_state.clone();
-
-        let targets: Vec<fresh_core::WindowId> = self
-            .windows
-            .keys()
-            .copied()
-            .filter(|id| *id != active)
-            .collect();
-
-        for id in targets {
-            match self.restore_workspace_for(id) {
-                Ok(true) => tracing::debug!("Restored workspace for inactive window {id}"),
-                Ok(false) => tracing::trace!(
-                    "No persisted workspace for inactive window {id}; seed layout kept"
-                ),
-                Err(e) => {
-                    tracing::warn!("Failed to restore workspace for inactive window {id}: {e}")
-                }
-            }
+    /// `plugin_global_state` is editor-wide; a background window's
+    /// stale copy must not clobber the live one, so it's snapshotted
+    /// and restored around the per-window restore (the active window's
+    /// state, applied at startup, is the one we keep).
+    pub(crate) fn materialize_window(&mut self, id: fresh_core::WindowId) {
+        if !self.materialize_pending.remove(&id) {
+            return;
         }
-
+        let saved_plugin_state = self.plugin_global_state.clone();
+        match self.restore_workspace_for(id) {
+            Ok(true) => tracing::debug!("Materialized window {id} from workspace"),
+            Ok(false) => {
+                tracing::trace!("No persisted workspace for window {id}; empty seed kept")
+            }
+            Err(e) => tracing::warn!("Failed to materialize window {id}: {e}"),
+        }
         self.plugin_global_state = saved_plugin_state;
+    }
+
+    /// Eagerly materialize every not-yet-restored window. Production
+    /// startup is lazy (per-window restore on first dive/preview); this
+    /// is for callers that need all windows populated up front — chiefly
+    /// the orchestrator bring-up render tests, which assert every
+    /// restored session paints.
+    pub fn restore_inactive_window_workspaces(&mut self) {
+        let pending: Vec<fresh_core::WindowId> = self.materialize_pending.iter().copied().collect();
+        for id in pending {
+            self.materialize_window(id);
+        }
     }
 }
 

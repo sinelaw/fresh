@@ -278,10 +278,16 @@ impl crate::app::Editor {
 
         let previous_id = self.active_window;
 
+        // Lazy materialization: if this window's saved workspace hasn't
+        // been restored yet, restore it now (before seeding) so the
+        // dive lands on real content rather than an empty buffer.
+        self.materialize_window(id);
+
         // For a never-activated incoming window, allocate a fresh
         // seed buffer + SplitManager rooted at it. The state is
         // installed into the incoming window's `buffers` map after
-        // the active pointer moves.
+        // the active pointer moves. After a successful materialize the
+        // window already has splits, so this is a no-op.
         let fresh_layout = self.build_fresh_layout_if_needed(id);
 
         // Pointer write — that's the whole switch. `working_dir()`
