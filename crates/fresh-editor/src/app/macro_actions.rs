@@ -121,6 +121,14 @@ impl Editor {
         }
 
         self.active_window_mut().macros.begin_play();
+        // Bracket the replay so the whole macro is a single undo unit: one Undo
+        // reverts the entire playback (and one Redo re-applies it) rather than
+        // one event per replayed write action. The group is opened and closed
+        // on the same buffer's log even if the macro switches buffers mid-replay.
+        let group_buffer = self.active_buffer();
+        if let Some(log) = self.active_window_mut().event_logs.get_mut(&group_buffer) {
+            log.begin_undo_group();
+        }
         let action_count = actions.len();
         let width = self.active_chrome().last_frame_width;
         let height = self.active_chrome().last_frame_height;
@@ -129,6 +137,9 @@ impl Editor {
                 tracing::warn!("Macro action failed: {}", e);
             }
             self.recompute_layout(width, height);
+        }
+        if let Some(log) = self.active_window_mut().event_logs.get_mut(&group_buffer) {
+            log.end_undo_group();
         }
         self.active_window_mut().macros.end_play();
 

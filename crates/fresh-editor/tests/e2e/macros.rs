@@ -411,24 +411,21 @@ fn test_macro_playback_is_undoable() {
         screen
     );
 
-    // Now undo - should undo the entire macro playback
+    // Now undo - macro playback is a single undo unit (#2062), so ONE undo
+    // must remove the entire replayed "abc" in one step.
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    // After one undo, the second "abc" should be gone
-    // (If macro playback is properly grouped, one undo removes all macro actions)
+    // After one undo exactly the recorded "abc" remains (the replayed one is
+    // gone wholesale — not just its last char).
     let screen_after_undo = harness.screen_to_string();
     let abc_count_after = screen_after_undo.matches("abc").count();
-
-    // We expect at most 1 "abc" after undo (the original one typed during recording)
-    // Note: The first "abc" was typed during recording, so it has its own undo entry
-    assert!(
-        abc_count_after < abc_count,
-        "Undo should have removed macro playback. Before: {} 'abc', after: {}. Screen:\n{}",
-        abc_count,
-        abc_count_after,
-        screen_after_undo
+    assert_eq!(
+        abc_count_after, 1,
+        "One undo should remove the whole macro replay, leaving exactly the recorded 'abc'. \
+         Before: {} 'abc', after: {}. Screen:\n{}",
+        abc_count, abc_count_after, screen_after_undo
     );
 }

@@ -568,6 +568,13 @@ pub struct LogEntry {
     /// to their exact original positions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub displaced_markers: Vec<(u64, usize)>,
+
+    /// Undo-group id. Entries sharing the same id are undone/redone as a
+    /// single atomic unit (e.g. a whole macro replay). `None` means the entry
+    /// stands on its own. Runtime-only — not persisted, so reloaded logs fall
+    /// back to per-entry undo.
+    #[serde(skip)]
+    pub group_id: Option<u64>,
 }
 
 impl LogEntry {
@@ -580,6 +587,7 @@ impl LogEntry {
                 .as_millis() as u64,
             description: None,
             displaced_markers: Vec::new(),
+            group_id: None,
         }
     }
 
@@ -624,6 +632,16 @@ pub struct EventLog {
     /// Index at which the buffer was last saved (for tracking modified status)
     /// When current_index equals saved_at_index, the buffer is not modified
     saved_at_index: Option<usize>,
+
+    /// Monotonic allocator for undo-group ids.
+    next_group_id: u64,
+
+    /// Id tagged onto appended entries while an undo group is open.
+    current_group: Option<u64>,
+
+    /// Nesting depth of open undo groups. The group is closed (and a fresh id
+    /// allocated for the next group) only when this returns to zero.
+    group_depth: u32,
 }
 
 impl EventLog {
@@ -637,6 +655,30 @@ impl EventLog {
             #[cfg(feature = "runtime")]
             stream_file: None,
             saved_at_index: Some(0), // New buffer starts at "saved" state (index 0)
+            next_group_id: 0,
+            current_group: None,
+            group_depth: 0,
+        }
+    }
+
+    /// Open an undo group. All write actions appended until the matching
+    /// [`Self::end_undo_group`] are reverted/reapplied together as one unit.
+    /// Nestable: only the outermost begin/end pair establishes the group.
+    pub fn begin_undo_group(&mut self) {
+        if self.group_depth == 0 {
+            self.current_group = Some(self.next_group_id);
+            self.next_group_id += 1;
+        }
+        self.group_depth += 1;
+    }
+
+    /// Close the undo group opened by [`Self::begin_undo_group`].
+    pub fn end_undo_group(&mut self) {
+        if self.group_depth > 0 {
+            self.group_depth -= 1;
+            if self.group_depth == 0 {
+                self.current_group = None;
+            }
         }
     }
 
@@ -799,7 +841,8 @@ impl EventLog {
             }
         }
 
-        let entry = LogEntry::new(event);
+        let mut entry = LogEntry::new(event);
+        entry.group_id = self.current_group;
         self.entries.push(entry);
         self.current_index = self.entries.len();
 
@@ -854,20 +897,36 @@ impl EventLog {
     pub fn undo(&mut self) -> Vec<(Event, Vec<(u64, usize)>)> {
         let mut inverse_events = Vec::new();
         let mut found_write_action = false;
+        // Group id of the write action that opened this undo unit, if any.
+        // While set, the walk keeps consuming entries belonging to the same
+        // group so a whole grouped edit (e.g. a macro replay) reverts at once.
+        let mut group: Option<u64> = None;
 
-        // Keep moving backward until we find a write action
-        while self.can_undo() && !found_write_action {
-            self.current_index -= 1;
-            let entry = &self.entries[self.current_index];
+        while self.can_undo() {
+            let idx = self.current_index - 1;
+            let is_write = self.entries[idx].event.is_write_action();
+            let entry_group = self.entries[idx].group_id;
 
-            // Check if this is a write action - we'll stop after processing it
-            if entry.event.is_write_action() {
+            if found_write_action {
+                match group {
+                    // Ungrouped edit: stop after the first write action.
+                    None => break,
+                    // Grouped edit: stop at the first entry outside the group.
+                    Some(g) if entry_group != Some(g) => break,
+                    Some(_) => {}
+                }
+            }
+
+            self.current_index = idx;
+
+            if is_write && !found_write_action {
                 found_write_action = true;
+                group = entry_group;
             }
 
             // Try to get the inverse of this event
-            if let Some(inverse) = entry.event.inverse() {
-                inverse_events.push((inverse, entry.displaced_markers.clone()));
+            if let Some(inverse) = self.entries[idx].event.inverse() {
+                inverse_events.push((inverse, self.entries[idx].displaced_markers.clone()));
             }
             // If no inverse exists (like MoveCursor), we just skip it
         }
@@ -881,25 +940,33 @@ impl EventLog {
     pub fn redo(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         let mut found_write_action = false;
+        // Mirror of `undo`'s grouping: once a grouped write action is reached,
+        // keep reapplying entries from the same group as one unit.
+        let mut group: Option<u64> = None;
 
         // Keep moving forward to collect write action and subsequent readonly events
         while self.can_redo() {
-            let event = self.entries[self.current_index].event.clone();
+            let idx = self.current_index;
+            let is_write = self.entries[idx].event.is_write_action();
+            let entry_group = self.entries[idx].group_id;
 
             // If we've already found a write action and this is another write action, stop
-            if found_write_action && event.is_write_action() {
-                // Don't include this event, it's the next write action
-                break;
+            // (unless it belongs to the same open undo group).
+            if found_write_action && is_write {
+                match group {
+                    None => break,
+                    Some(g) if entry_group != Some(g) => break,
+                    Some(_) => {}
+                }
             }
 
-            self.current_index += 1;
-
-            // Mark if we found a write action
-            if event.is_write_action() {
+            if is_write && !found_write_action {
                 found_write_action = true;
+                group = entry_group;
             }
 
-            events.push(event);
+            events.push(self.entries[idx].event.clone());
+            self.current_index = idx + 1;
         }
 
         events
@@ -1242,6 +1309,108 @@ mod tests {
             !redo_events.is_empty(),
             "Redo should return events after navigation"
         );
+    }
+
+    #[test]
+    fn test_undo_group_reverts_and_reapplies_atomically() {
+        // Three grouped inserts (e.g. a macro replay) collapse into one
+        // undo/redo unit (#2062).
+        let mut log = EventLog::new();
+
+        log.begin_undo_group();
+        for (i, ch) in ['a', 'b', 'c'].into_iter().enumerate() {
+            log.append(Event::Insert {
+                position: i,
+                text: ch.to_string(),
+                cursor_id: CursorId(0),
+            });
+        }
+        log.end_undo_group();
+        assert_eq!(log.current_index(), 3);
+
+        // One undo reverts the whole group.
+        let undo_events = log.undo();
+        assert_eq!(undo_events.len(), 3, "all three inserts revert in one undo");
+        assert_eq!(log.current_index(), 0);
+        assert!(!log.can_undo());
+
+        // One redo reapplies the whole group.
+        let redo_events = log.redo();
+        assert_eq!(
+            redo_events.len(),
+            3,
+            "all three inserts reapply in one redo"
+        );
+        assert_eq!(log.current_index(), 3);
+        assert!(!log.can_redo());
+    }
+
+    #[test]
+    fn test_ungrouped_edit_after_group_undoes_separately() {
+        // A standalone write after a group must NOT merge with it: the first
+        // undo reverts only the standalone edit, the second reverts the group.
+        let mut log = EventLog::new();
+
+        log.begin_undo_group();
+        log.append(Event::Insert {
+            position: 0,
+            text: "ab".to_string(),
+            cursor_id: CursorId(0),
+        });
+        log.append(Event::Insert {
+            position: 2,
+            text: "cd".to_string(),
+            cursor_id: CursorId(0),
+        });
+        log.end_undo_group();
+
+        // Standalone insert (not in any group).
+        log.append(Event::Insert {
+            position: 4,
+            text: "Z".to_string(),
+            cursor_id: CursorId(0),
+        });
+        assert_eq!(log.current_index(), 3);
+
+        // First undo: only the standalone "Z".
+        let first = log.undo();
+        assert_eq!(first.len(), 1);
+        assert_eq!(log.current_index(), 2);
+
+        // Second undo: the whole group ("ab" + "cd").
+        let second = log.undo();
+        assert_eq!(second.len(), 2);
+        assert_eq!(log.current_index(), 0);
+    }
+
+    #[test]
+    fn test_consecutive_groups_undo_independently() {
+        // Two back-to-back groups get distinct ids and undo as separate units.
+        let mut log = EventLog::new();
+
+        for _ in 0..2 {
+            log.begin_undo_group();
+            log.append(Event::Insert {
+                position: 0,
+                text: "xy".to_string(),
+                cursor_id: CursorId(0),
+            });
+            log.append(Event::Insert {
+                position: 2,
+                text: "zw".to_string(),
+                cursor_id: CursorId(0),
+            });
+            log.end_undo_group();
+        }
+        assert_eq!(log.current_index(), 4);
+
+        let first = log.undo();
+        assert_eq!(first.len(), 2, "second group reverts on its own");
+        assert_eq!(log.current_index(), 2);
+
+        let second = log.undo();
+        assert_eq!(second.len(), 2, "first group reverts on its own");
+        assert_eq!(log.current_index(), 0);
     }
 
     #[test]

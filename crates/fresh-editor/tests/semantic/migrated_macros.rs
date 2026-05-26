@@ -39,29 +39,13 @@
 //! | `test_macro_move_line_end_uses_current_line_length`  | `migrated_macro_move_line_end_uses_current_line_length`                           |
 //! | `test_macro_playback_is_undoable`                    | `migrated_macro_playback_appends_replay`                                          |
 //!
-//! Note on `test_macro_playback_is_undoable`: the e2e test was
-//! NAMED for atomic undo and its inline comment said "If macro
-//! playback is properly grouped, one undo removes all macro
-//! actions" — i.e. the intended behaviour is that an entire
-//! macro replay collapses into a SINGLE undo unit. Its assertion
-//! was nonetheless weak (`abc_count_after < abc_count`, "at least
-//! some of the playback is undone"), which the per-char behaviour
-//! happens to satisfy.
-//!
-//! The current production behaviour (`play_macro` in
-//! `app/macro_actions.rs`) is per-char: the replay loop forwards
-//! each recorded action to `handle_action` with no undo-group /
-//! BulkEdit bracketing, so each replayed `InsertChar` lands as
-//! its own event-log entry and `EventLog::undo` (which stops at
-//! the first write action — see `model/event.rs`) reverts exactly
-//! one char per Undo. A 3-char replay therefore needs 3 Undos.
-//!
-//! This is the OPPOSITE of the intended atomic-undo semantics the
-//! original test name and comment describe — see
-//! FIXME(#2062) below. We pin the **observed** (defective)
-//! granularity so the regression is documented and so a future
-//! grouping FIX is loud (it will require updating sub-scenarios
-//! B/C below), not silent.
+//! Note on `test_macro_playback_is_undoable`: macro replay is a
+//! SINGLE undo unit (#2062). The `play_macro` loop in
+//! `app/macro_actions.rs` brackets the replay with
+//! `EventLog::begin_undo_group` / `end_undo_group`, so every
+//! replayed write action shares one undo-group id and
+//! `EventLog::undo` / `redo` (see `model/event.rs`) revert/reapply
+//! the whole replay atomically — one Undo, not one-per-char.
 
 use crate::common::scenario::buffer_scenario::{
     assert_buffer_scenario, BufferScenario, CursorExpect,
@@ -303,33 +287,17 @@ fn migrated_macro_move_line_end_uses_current_line_length() {
 // 5. Macro playback granularity (was: "is undoable")
 // ─────────────────────────────────────────────────────────────────────
 
-/// Original: `test_macro_playback_is_undoable`. Renamed away
-/// from `_is_undoable` because that name implies the *intended*
-/// atomic-undo semantics (one Undo reverts the whole replay),
-/// which production does NOT implement.
+/// Original: `test_macro_playback_is_undoable`.
 ///
-/// The e2e test asserted only that the post-undo `abc` count was
-/// *less than* the post-replay count — i.e. "at least some" of
-/// the replay was undone — but its name and inline comment ("If
-/// macro playback is properly grouped, one undo removes all macro
-/// actions") document the intended single-undo-unit behaviour.
-/// The actual production granularity is per-char: each replayed
-/// `InsertChar` lands as its own undo unit, so 3 Ctrl+Z's are
-/// needed to undo the replayed "abc".
+/// Macro replay is a single undo unit (#2062): one Undo reverts
+/// the whole replay, and one Redo re-applies it. The `play_macro`
+/// loop in `app/macro_actions.rs` brackets the replay with
+/// `EventLog::begin_undo_group` / `end_undo_group`, tagging every
+/// replayed write action with one undo-group id so `EventLog::undo`
+/// / `redo` treat them atomically.
 ///
-/// FIXME(#2062): macro replay should be a single undo unit. The
-/// `play_macro` loop in `app/macro_actions.rs` forwards each
-/// recorded action through `handle_action` with no undo-group /
-/// BulkEdit bracketing, so undo is per-char instead of atomic.
-/// Sub-scenarios B and C below pin the *current defective*
-/// per-char granularity; when the bug is fixed, B should leave
-/// "abc\n" (a single Undo reverting the whole replay) and C
-/// becomes redundant.
-///
-/// We pin both the playback-appends-replay claim and the
-/// per-char undo granularity in a single scenario so the
-/// regression is documented and a future grouping FIX is loud
-/// rather than silent.
+/// Sub-scenario A pins playback-appends-replay; B pins the
+/// single-Undo revert; C pins that Redo restores the whole replay.
 #[test]
 fn migrated_macro_playback_appends_replay() {
     // Sub-scenario A: post-playback the buffer is "abc\nabc".
@@ -350,12 +318,15 @@ fn migrated_macro_playback_appends_replay() {
         ..Default::default()
     });
 
-    // Sub-scenario B: one Undo removes one replayed char (per-char granularity).
-    // FIXME(#2062): macro replay should be a single undo unit — after the
-    // grouping fix this single Undo should revert the WHOLE replay, leaving
-    // "abc\n" (not "abc\nab").
+    // Sub-scenario B: macro replay is a single undo unit (#2062). One Undo
+    // reverts the WHOLE replayed "abc", leaving "abc\n" — not "abc\nab".
+    // The `play_macro` loop in `app/macro_actions.rs` brackets the replay with
+    // `EventLog::begin_undo_group` / `end_undo_group`, so every replayed write
+    // action shares one undo-group id and `EventLog::undo` reverts them all at
+    // once.
     assert_buffer_scenario(BufferScenario {
-        description: "First Undo after macro replay removes the last replayed char only".into(),
+        description: "One Undo after macro replay reverts the entire replay (single undo unit)"
+            .into(),
         initial_text: String::new(),
         actions: vec![
             Action::ToggleMacroRecording('0'),
@@ -365,35 +336,31 @@ fn migrated_macro_playback_appends_replay() {
             Action::ToggleMacroRecording('0'),
             Action::InsertNewline,
             Action::PlayLastMacro,
-            Action::Undo,
-        ],
-        expected_text: "abc\nab".into(),
-        expected_primary: CursorExpect::at("abc\nab".len()),
-        ..Default::default()
-    });
-
-    // Sub-scenario C: three Undos drain the rest of the replay,
-    // leaving only the recording + the newline.
-    // FIXME(#2062): this scenario only exists because replay is per-char;
-    // once macro replay is a single undo unit, one Undo (sub-scenario B)
-    // suffices and this becomes redundant.
-    assert_buffer_scenario(BufferScenario {
-        description: "Three Undos after macro replay leave the original recording + newline".into(),
-        initial_text: String::new(),
-        actions: vec![
-            Action::ToggleMacroRecording('0'),
-            Action::InsertChar('a'),
-            Action::InsertChar('b'),
-            Action::InsertChar('c'),
-            Action::ToggleMacroRecording('0'),
-            Action::InsertNewline,
-            Action::PlayLastMacro,
-            Action::Undo,
-            Action::Undo,
             Action::Undo,
         ],
         expected_text: "abc\n".into(),
         expected_primary: CursorExpect::at("abc\n".len()),
+        ..Default::default()
+    });
+
+    // Sub-scenario C: Redo after the atomic Undo re-applies the whole replay,
+    // restoring "abc\nabc" in one step.
+    assert_buffer_scenario(BufferScenario {
+        description: "Redo after the atomic Undo re-applies the entire macro replay".into(),
+        initial_text: String::new(),
+        actions: vec![
+            Action::ToggleMacroRecording('0'),
+            Action::InsertChar('a'),
+            Action::InsertChar('b'),
+            Action::InsertChar('c'),
+            Action::ToggleMacroRecording('0'),
+            Action::InsertNewline,
+            Action::PlayLastMacro,
+            Action::Undo,
+            Action::Redo,
+        ],
+        expected_text: "abc\nabc".into(),
+        expected_primary: CursorExpect::at("abc\nabc".len()),
         ..Default::default()
     });
 }

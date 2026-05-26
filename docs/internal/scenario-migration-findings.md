@@ -211,32 +211,28 @@ non-obvious. Pinned in
 `migrated_multicursor_extras::migrated_add_cursor_next_match_with_*_selection`
 (case 3).
 
-## 13. Macro playback is per-action, not grouped as a single undo unit
+## 13. Macro playback is a single undo unit (FIXED, #2062)
 
 **Source:** `tests/e2e/macros.rs::test_macro_playback_is_undoable`.
 **Observation:** The e2e test was NAMED `test_macro_playback_is_undoable`
 and its inline comment said "If macro playback is properly
 grouped, one undo removes all macro actions" — i.e. the intended
 behaviour is that a whole macro replay collapses into a SINGLE
-undo unit. Its assertion was nonetheless weak
-(`abc_count_after < abc_count`, "at least some of the playback is
-undone"), which the per-char behaviour happens to satisfy. The
-current production behaviour in
-`crates/fresh-editor/src/app/macro_actions.rs::play_macro` is
-that each replayed action is forwarded to `handle_action` in a
-plain loop with no `BulkEdit` / undo-group wrapper, so each
-replayed `InsertChar` lands as its own event-log entry.
-`EventLog::undo` (`model/event.rs`) stops at the first write
-action, so one Undo reverts exactly one char. A 3-char macro
-replay therefore takes 3 Undos to fully revert.
-**Assessment:** This is a BUG — the actual per-char granularity
-is the OPPOSITE of the atomic-undo semantics the original test
-name and comment describe. Tracked as FIXME(#2062): macro replay
-should be wrapped as a single undo unit. The current defective
-behaviour is pinned (documented, not endorsed) in
+undo unit. Originally `play_macro` forwarded each replayed action
+to `handle_action` in a plain loop with no undo-group wrapper, so
+each replayed `InsertChar` landed as its own event-log entry and
+`EventLog::undo` (which stops at the first write action) reverted
+exactly one char per Undo — a 3-char replay took 3 Undos.
+**Resolution (#2062):** `EventLog` now supports undo groups
+(`begin_undo_group` / `end_undo_group`); appended entries are
+tagged with a group id and `EventLog::undo` / `redo` revert/reapply
+a whole group at once. `play_macro` brackets its replay loop with
+these calls, so a macro replay is reverted (and reapplied) in a
+single Undo/Redo. Pinned by
 `migrated_macros::migrated_macro_playback_appends_replay`
-sub-scenarios B and C so the eventual fix is loud rather than
-silent.
+(sub-scenario B = one Undo reverts the whole replay, C = one Redo
+restores it) and the `EventLog` unit tests
+`test_undo_group_*` in `model/event.rs`.
 
 ---
 
