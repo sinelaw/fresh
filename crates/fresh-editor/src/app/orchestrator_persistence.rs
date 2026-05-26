@@ -146,30 +146,170 @@ pub(crate) fn read_persisted_windows_env(
     data_dir: &Path,
     _working_dir: &Path,
 ) -> Option<PersistedWindows> {
-    // Trigger migration if the global file doesn't yet exist
-    // and we find at least one legacy per-cwd file.
+    // Legacy v1 (per-cwd) → windows.json, if any survive. windows.json
+    // is itself legacy now; the next step folds it into the per-dir
+    // workspace files and retires it.
     let global_p = global_windows_path(data_dir);
     if !filesystem.exists(&global_p) {
         migrate_legacy_windows(filesystem, data_dir);
     }
-    if !filesystem.exists(&global_p) {
+    migrate_windows_json_into_workspaces(filesystem, data_dir);
+
+    // The per-dir workspace cache is the session registry now: one
+    // session per directory, discovered from disk. GC dead entries and
+    // build a window per survivor.
+    let windows = discover_sessions(filesystem, data_dir);
+    if windows.is_empty() {
         return None;
     }
-    match filesystem.read_file(&global_p) {
-        Ok(bytes) => match serde_json::from_slice::<PersistedWindows>(&bytes) {
-            Ok(mut env) => {
-                dedup_windows_by_root(&mut env);
-                Some(env)
-            }
-            Err(e) => {
-                tracing::warn!("orchestrator persistence: failed to parse {global_p:?}: {e}");
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!("orchestrator persistence: failed to read {global_p:?}: {e}");
-            None
+    let next_id = windows.iter().map(|w| w.id).max().unwrap_or(0) + 1;
+    // `active` is decided downstream by the launch cwd
+    // (`pick_active_window_for_cwd`); 0 means "no stored hint", so the
+    // cwd-match branch governs which session is foregrounded.
+    let mut env = PersistedWindows {
+        version: CURRENT_VERSION,
+        active: 0,
+        next_id,
+        windows,
+    };
+    dedup_windows_by_root(&mut env);
+    Some(env)
+}
+
+fn workspaces_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("workspaces")
+}
+
+/// Per-dir workspace file path for `root` under `data_dir` — mirrors
+/// `crate::workspace::get_workspace_path` but honours the passed data
+/// dir rather than the process-global one.
+fn workspace_file_for(data_dir: &Path, root: &Path) -> PathBuf {
+    let filename = format!(
+        "{}.json",
+        crate::workspace::encode_path_for_filename(&canonical_key(root))
+    );
+    workspaces_dir(data_dir).join(filename)
+}
+
+fn basename_label(root: &Path) -> String {
+    root.file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| root.to_string_lossy().into_owned())
+}
+
+/// One session per existing directory: scan the workspace-file cache,
+/// garbage-collect entries whose directory no longer exists, and return
+/// one `PersistedWindow` per survivor. Ids are assigned by sorted
+/// canonical root so they stay stable across runs for a stable dir set.
+fn discover_sessions(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
+) -> Vec<PersistedWindow> {
+    type SessionState = HashMap<String, HashMap<String, serde_json::Value>>;
+    let dir = workspaces_dir(data_dir);
+    let entries = match filesystem.read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut found: Vec<(PathBuf, String, SessionState)> = Vec::new();
+    for entry in entries {
+        let p = &entry.path;
+        if !entry.name.ends_with(".json") || entry.name.ends_with(".tmp") {
+            continue;
         }
+        let Ok(bytes) = filesystem.read_file(p) else {
+            continue;
+        };
+        let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let Some(root) = val.get("working_dir").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let root = PathBuf::from(root);
+        // GC: the directory is gone — drop the stale cache file.
+        if !filesystem.is_dir(&root).unwrap_or(false) {
+            let _ = filesystem.remove_file(p);
+            continue;
+        }
+        let label = val
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| basename_label(&root));
+        let plugin_state: SessionState = val
+            .get("session_plugin_state")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        found.push((root, label, plugin_state));
+    }
+    found.sort_by(|a, b| canonical_key(&a.0).cmp(&canonical_key(&b.0)));
+    found
+        .into_iter()
+        .enumerate()
+        .map(|(i, (root, label, plugin_state))| {
+            let (project_path, shared_worktree) = read_orch_session_meta(&plugin_state);
+            PersistedWindow {
+                id: (i as u64) + 1,
+                label,
+                root,
+                project_path,
+                shared_worktree,
+                plugin_state,
+            }
+        })
+        .collect()
+}
+
+/// Fold legacy `windows.json` session metadata (label + per-session
+/// plugin state) into the per-dir workspace files, then retire the
+/// file. After this the workspace cache is the sole registry. Only
+/// existing workspace files are backfilled; entries with no workspace
+/// file are dropped (they carried no buffer content to restore). No-op
+/// once `windows.json` is gone.
+fn migrate_windows_json_into_workspaces(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
+) {
+    let global_p = global_windows_path(data_dir);
+    if !filesystem.exists(&global_p) {
+        return;
+    }
+    let Ok(bytes) = filesystem.read_file(&global_p) else {
+        return;
+    };
+    let Ok(env) = serde_json::from_slice::<PersistedWindows>(&bytes) else {
+        return; // leave an unparseable file in place rather than lose it
+    };
+    for w in &env.windows {
+        let ws_path = workspace_file_for(data_dir, &w.root);
+        if !filesystem.exists(&ws_path) {
+            continue;
+        }
+        let Ok(wbytes) = filesystem.read_file(&ws_path) else {
+            continue;
+        };
+        let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&wbytes) else {
+            continue;
+        };
+        if let Some(obj) = val.as_object_mut() {
+            obj.entry("label")
+                .or_insert_with(|| serde_json::Value::String(w.label.clone()));
+            if !obj.contains_key("session_plugin_state") && !w.plugin_state.is_empty() {
+                if let Ok(ps) = serde_json::to_value(&w.plugin_state) {
+                    obj.insert("session_plugin_state".into(), ps);
+                }
+            }
+        }
+        if let Ok(out) = serde_json::to_vec_pretty(&val) {
+            let _ = filesystem.write_file(&ws_path, &out);
+        }
+    }
+    // Retire windows.json (keep a .bak so a downgrade isn't one-way).
+    let bak = global_p.with_extension("json.retired.bak");
+    if filesystem.rename(&global_p, &bak).is_err() {
+        let _ = filesystem.remove_file(&global_p);
     }
 }
 
@@ -632,94 +772,12 @@ impl Editor {
             return;
         }
 
-        // Read the existing on-disk windows.json (if any) so we
-        // merge in sessions belonging to OTHER projects rather
-        // than clobbering them. Single-user but multi-project
-        // safety: another editor instance might have written
-        // sessions for a different project_path while we were
-        // running.
-        let existing: Option<PersistedWindows> = {
-            let p = global_windows_path(&data_dir);
-            if self.authority.filesystem.exists(&p) {
-                match self.authority.filesystem.read_file(&p) {
-                    Ok(bytes) => serde_json::from_slice::<PersistedWindows>(&bytes).ok(),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
-        };
-        let our_ids: std::collections::HashSet<u64> = self.windows.keys().map(|id| id.0).collect();
-
-        // Our process's sessions, snapshotted from runtime state.
-        let mut windows: Vec<PersistedWindow> = self
-            .windows
-            .values()
-            .map(|s| {
-                // project_path / shared_worktree live in
-                // plugin_state under "orchestrator". Read them
-                // back if the orchestrator plugin set them
-                // (post-Phase 5 sessions); fall back to None /
-                // false for sessions created before the schema
-                // bump or by external paths.
-                let (project_path, shared_worktree) = read_orch_session_meta(&s.plugin_state);
-                PersistedWindow {
-                    id: s.id.0,
-                    label: s.label.clone(),
-                    root: s.root.clone(),
-                    project_path,
-                    shared_worktree,
-                    plugin_state: s.plugin_state.clone(),
-                }
-            })
-            .collect();
-
-        // Splice in other-process sessions from the existing
-        // file (anything whose id we don't currently own).
-        if let Some(env) = existing {
-            for w in env.windows.into_iter() {
-                if !our_ids.contains(&w.id) {
-                    windows.push(w);
-                }
-            }
-        }
-        // Stable on-disk order — `HashMap` iteration order would
-        // make the file diff differently every quit, producing
-        // noisy diffs for anyone inspecting the persisted state.
-        windows.sort_by_key(|s| s.id);
-        let mut envelope = PersistedWindows {
-            version: CURRENT_VERSION,
-            active: self.active_window.0,
-            next_id: self.next_window_id,
-            windows,
-        };
-        // One session per directory: never persist two entries that
-        // resolve to the same canonical root (a spliced other-process
-        // session can collide with one of ours).
-        dedup_windows_by_root(&mut envelope);
-        match serde_json::to_vec_pretty(&envelope) {
-            Ok(bytes) => {
-                let path = global_windows_path(&data_dir);
-                // Atomic rename to avoid a torn write if two
-                // editor processes happen to quit at the same
-                // moment. The `.tmp` file is in the same dir so
-                // `rename` is an atomic syscall on every
-                // filesystem we support.
-                let tmp = path.with_extension("json.tmp");
-                if let Err(e) = self.authority.filesystem.write_file(&tmp, &bytes) {
-                    tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
-                    return;
-                }
-                if let Err(e) = self.authority.filesystem.rename(&tmp, &path) {
-                    tracing::warn!(
-                        "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!("orchestrator persistence: failed to serialise sessions: {e}");
-            }
-        }
+        // Sessions are no longer written to a central windows.json:
+        // each window's identity (label, per-session plugin_state) is
+        // persisted in its own per-dir workspace file by
+        // `save_all_windows_workspaces` (called just before this on
+        // quit), and the session list is rediscovered from those files
+        // at boot. Only editor-global plugin state is written here.
 
         // Plugin global state — one file per plugin. Single
         // global directory now (no per-cwd split), so two

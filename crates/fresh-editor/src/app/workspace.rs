@@ -2163,6 +2163,10 @@ impl crate::app::window::Window {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            // Session identity (windows.json is gone — the per-dir
+            // workspace file is the sole record).
+            label: Some(self.label.clone()),
+            session_plugin_state: self.plugin_state.clone(),
         }
     }
 }

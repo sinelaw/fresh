@@ -100,6 +100,21 @@ pub struct Workspace {
 
     /// Timestamp when workspace was saved (Unix epoch seconds)
     pub saved_at: u64,
+
+    /// Display label for this session (orchestrator). Defaults to the
+    /// root basename when absent. Since windows.json was dropped, the
+    /// per-dir workspace file is the sole session record, so the label
+    /// lives here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+
+    /// Per-session plugin state (the window's own `plugin_state`,
+    /// carrying e.g. the orchestrator's `project_path` /
+    /// `shared_worktree`). Distinct from `plugin_global_state` (which
+    /// is editor-wide and lives in the global store). Persisted here so
+    /// session identity survives across restarts without windows.json.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub session_plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 /// Reference to a persisted unnamed buffer (content stored in recovery files)
@@ -954,6 +969,8 @@ impl Workspace {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            label: None,
+            session_plugin_state: HashMap::new(),
         }
     }
 
