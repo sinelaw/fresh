@@ -580,12 +580,25 @@ impl Editor {
     /// and closes any buffers we loaded purely for preview (buffers
     /// the user already had open are left untouched).
     pub(crate) fn cleanup_overlay_preview(&mut self) {
-        let to_close: Vec<crate::model::event::BufferId> =
+        let (to_close, last_buffer): (Vec<crate::model::event::BufferId>, _) =
             if let Some(state) = self.active_window_mut().overlay_preview_state.take() {
-                state.loaded_buffers.into_iter().collect()
+                let last = state.buffer_id;
+                (state.loaded_buffers.into_iter().collect(), Some(last))
             } else {
-                Vec::new()
+                (Vec::new(), None)
             };
+        // Scrub the preview's search-match overlays from the last buffer it
+        // pointed at. Redundant for preview-loaded buffers (closed below),
+        // but essential for buffers the user already had open so the
+        // highlights don't outlive the overlay.
+        if let Some(last) = last_buffer {
+            let ns = crate::view::overlay::OverlayNamespace::from_string(
+                "overlay-preview-search".to_string(),
+            );
+            if let Some(state) = self.active_window_mut().buffers.get_mut(&last) {
+                state.overlays.clear_namespace(&ns, &mut state.marker_list);
+            }
+        }
         for buffer_id in to_close {
             // close_buffer is the user-facing close (errors on
             // unsaved changes). Preview-loaded buffers are read-only

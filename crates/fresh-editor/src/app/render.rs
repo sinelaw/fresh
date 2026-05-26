@@ -2337,6 +2337,16 @@ impl Editor {
             buffer_id
         };
 
+        // The buffer (if any) the preview pointed at on the previous
+        // frame. When the selection moves to a result in a *different*
+        // file we must drop our search-match overlays from the old
+        // buffer (see the highlight refresh below).
+        let prev_preview_buffer = self
+            .active_window()
+            .overlay_preview_state
+            .as_ref()
+            .map(|s| s.buffer_id);
+
         // Build (or update) the standalone preview state. Held off
         // `split_view_states` so cross-cutting iteration never touches
         // it.
@@ -2404,7 +2414,7 @@ impl Editor {
             }
         }
 
-        // Set the cursor to the match position and centre the line.
+        // Set the cursor to the match position and centre it vertically.
         let byte_offset = self
             .buffers()
             .get(&buffer_id)
@@ -2413,53 +2423,133 @@ impl Editor {
                     .position_to_offset(crate::model::piece_tree::Position { line, column: col })
             })
             .unwrap_or(0);
-        let line_start = self
-            .buffers()
-            .get(&buffer_id)
-            .and_then(|s| s.buffer.line_start_offset(line))
-            .unwrap_or(byte_offset);
-        // Compute top_byte BEFORE taking the mutable borrow on
-        // overlay_preview_state to keep the borrows disjoint.
-        let h_for_preview = self
-            .active_window_mut()
-            .overlay_preview_state
+
+        // The overlay preview is used exclusively by the Live Grep
+        // floating overlay, so the prompt input IS the search query.
+        // Highlight every occurrence in the visible region — previously
+        // the match was only reachable via the (hidden) cursor, which is
+        // near-invisible against the preview chrome. Capture the query and
+        // theme colours before the window borrow below.
+        let query = self
+            .active_window()
+            .prompt
             .as_ref()
-            .map(|s| s.view_state.viewport.height.max(1) as usize)
-            .unwrap_or(1);
-        let half = h_for_preview / 2;
-        let target_top_line = line.saturating_sub(half);
-        let top_byte = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-            .and_then(|s| s.buffer.line_start_offset(target_top_line))
-            .unwrap_or(line_start);
-        if let Some(state) = self.active_window_mut().overlay_preview_state.as_mut() {
-            state.view_state.cursors.primary_mut().position = byte_offset;
-            // Force line wrapping on for the preview regardless of the
-            // global `editor.line_wrap` setting (and of a switched-in
-            // buffer's fresh default): the preview pane has no horizontal
-            // scroll affordance, so without wrapping a match deep in a long
-            // line scrolls the start of the line off-screen and the context
-            // is unreadable. Wrapping also moots horizontal scroll, so reset
-            // it to the left edge. `view_state` derefs to the active
-            // buffer's `BufferViewState`, so this targets the buffer that's
-            // actually rendered.
-            state.view_state.viewport.line_wrap_enabled = true;
-            // Recentre the viewport only when the selected match changed
-            // (issue #2119). Re-seeding every frame would undo a mouse-wheel
-            // scroll of the preview; gating on `centered_byte` preserves the
-            // user's scroll while still recentering on a new selection.
-            if state.centered_byte != Some(byte_offset) {
-                state.view_state.viewport.left_column = 0;
-                state.view_state.viewport.horizontal_scroll_offset = 0;
-                state.view_state.viewport.top_byte = top_byte;
-                state.centered_byte = Some(byte_offset);
+            .map(|p| p.input.clone())
+            .unwrap_or_default();
+        let (search_fg, search_bg) = {
+            let theme = self.theme.read().unwrap();
+            (theme.search_match_fg, theme.search_match_bg)
+        };
+        // Live Grep defaults to regex with smart-case (case-insensitive
+        // unless the query carries an uppercase letter) — mirror that so
+        // the highlight tracks what the search actually matched. A query
+        // that isn't valid regex falls back to a literal match.
+        let preview_regex = if query.is_empty() {
+            None
+        } else {
+            let case_insensitive = !query.chars().any(|c| c.is_uppercase());
+            regex::RegexBuilder::new(&query)
+                .case_insensitive(case_insensitive)
+                .build()
+                .or_else(|_| {
+                    regex::RegexBuilder::new(&regex::escape(&query))
+                        .case_insensitive(case_insensitive)
+                        .build()
+                })
+                .ok()
+        };
+        let preview_ns = crate::view::overlay::OverlayNamespace::from_string(
+            "overlay-preview-search".to_string(),
+        );
+
+        let active_id = self.active_window;
+        if let Some(win) = self.windows.get_mut(&active_id) {
+            // `buffers` and `overlay_preview_state` are distinct fields, so
+            // these mutable borrows are disjoint.
+            let preview_buffer = win.buffers.get_mut(&buffer_id);
+            let preview_state = win.overlay_preview_state.as_mut();
+            if let (Some(state), Some(pstate)) = (preview_buffer, preview_state) {
+                pstate.view_state.cursors.primary_mut().position = byte_offset;
+                // Force line wrapping on for the preview regardless of the
+                // global `editor.line_wrap` setting (and of a switched-in
+                // buffer's fresh default): the preview pane has no
+                // horizontal scroll affordance, so without wrapping a match
+                // deep in a long line scrolls off-screen. Wrapping moots
+                // horizontal scroll, so reset it to the left edge.
+                // `view_state` derefs to the active buffer's
+                // `BufferViewState`, so this targets the rendered buffer.
+                pstate.view_state.viewport.line_wrap_enabled = true;
+                // Recentre only when the selected match changed (issue
+                // #2119) so a mouse-wheel scroll of the preview is
+                // preserved; `center_on_position` counts real visual rows so
+                // a match deep in a wrapped doc still lands mid-pane.
+                if pstate.centered_byte != Some(byte_offset) {
+                    pstate.view_state.viewport.left_column = 0;
+                    pstate.view_state.viewport.horizontal_scroll_offset = 0;
+                    pstate
+                        .view_state
+                        .viewport
+                        .center_on_position(&mut state.buffer, byte_offset);
+                    pstate.centered_byte = Some(byte_offset);
+                }
+                // We have a live target: ensure the pane is shown.
+                pstate.blanked = false;
+
+                // Rebuild the search-match overlays for the now-visible
+                // region. Cleared + re-added every frame (cheap; bounded
+                // to the viewport) so they track scrolling and edits, the
+                // same contract `Window::update_search_highlights` uses.
+                state
+                    .overlays
+                    .clear_namespace(&preview_ns, &mut state.marker_list);
+                if let Some(re) = &preview_regex {
+                    let visible_start = pstate.view_state.viewport.top_byte;
+                    let visible_rows = pstate.view_state.viewport.height as usize;
+                    let mut visible_end = visible_start;
+                    {
+                        let mut iter = state.buffer.line_iterator(visible_start, 80);
+                        for _ in 0..visible_rows {
+                            if let Some((line_start, line_content)) = iter.next_line() {
+                                visible_end = line_start + line_content.len();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    visible_end = visible_end.min(state.buffer.len());
+                    let visible_text = state.get_text_range(visible_start, visible_end);
+                    for mat in re.find_iter(&visible_text) {
+                        if mat.start() == mat.end() {
+                            continue;
+                        }
+                        let absolute_pos = visible_start + mat.start();
+                        let match_len = mat.end() - mat.start();
+                        let style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+                        let overlay = crate::view::overlay::Overlay::with_namespace(
+                            &mut state.marker_list,
+                            absolute_pos..(absolute_pos + match_len),
+                            crate::view::overlay::OverlayFace::Style { style },
+                            preview_ns.clone(),
+                        )
+                        .with_priority_value(10);
+                        state.overlays.add(overlay);
+                    }
+                }
             }
-            // We have a live target: ensure the pane is shown.
-            state.blanked = false;
+
+            // The selection jumped to a result in a different file: scrub
+            // our overlays from the previously-previewed buffer. Matters
+            // only for buffers the user already had open — preview-loaded
+            // buffers are closed wholesale on overlay teardown.
+            if let Some(prev) = prev_preview_buffer {
+                if prev != buffer_id {
+                    if let Some(prev_state) = win.buffers.get_mut(&prev) {
+                        prev_state
+                            .overlays
+                            .clear_namespace(&preview_ns, &mut prev_state.marker_list);
+                    }
+                }
+            }
         }
     }
 

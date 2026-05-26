@@ -583,6 +583,75 @@ impl Viewport {
         }
     }
 
+    /// Vertically center the viewport on `position`.
+    ///
+    /// In wrap mode this centers the *visual row* containing `position`,
+    /// not its logical line: wrapped lines above the target (and a target
+    /// buried deep inside one long wrapped line) are counted in real
+    /// visual rows so the match lands mid-pane. Centering by logical line
+    /// (the naive `line - height/2`) drifts badly in heavily-wrapped files
+    /// because each logical line above can occupy many rows.
+    ///
+    /// Soft breaks / virtual lines are assumed absent (the Live Grep
+    /// preview's only caller loads plain file buffers), so an empty slice
+    /// is passed to the visual-row scroll.
+    pub fn center_on_position(&mut self, buffer: &mut Buffer, position: usize) {
+        let half = self.visible_line_count() / 2;
+        let line = buffer.get_line_number(position);
+        let line_start = buffer.line_start_offset(line).unwrap_or(position);
+
+        if !self.line_wrap_enabled {
+            // Unwrapped: one visual row per logical line, so walk back
+            // `half` logical lines from the target.
+            let mut iter = buffer.line_iterator(position, 80);
+            for _ in 0..half {
+                if iter.prev().is_none() {
+                    break;
+                }
+            }
+            self.top_byte = iter.current_position();
+            self.top_view_line_offset = 0;
+            return;
+        }
+
+        // Wrapped: find which visual row inside its logical line the
+        // target sits on, anchor the viewport top to that row, then
+        // scroll up `half` real visual rows (which walks back through any
+        // wrapped lines above).
+        let gutter_width = self.gutter_width(buffer);
+        let wrap_config = WrapConfig::new(
+            self.effective_width() as usize,
+            gutter_width,
+            true,
+            self.wrap_indent,
+        );
+        let match_row_in_line = if position > line_start {
+            let prefix = buffer
+                .get_text_range_mut(line_start, position - line_start)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_default();
+            // Rows the pre-match text occupies; the target is on the last
+            // of them (`saturating_sub(1)` maps a 1-row prefix to row 0).
+            Self::count_visual_rows_for_line(
+                line_start,
+                position,
+                &prefix,
+                &wrap_config,
+                &[],
+                &[],
+                None,
+            )
+            .saturating_sub(1)
+        } else {
+            0
+        };
+
+        self.top_byte = line_start;
+        self.top_view_line_offset = match_row_in_line;
+        self.scroll_up(buffer, &[], &[], half);
+    }
+
     /// Scroll down by N lines (byte-based)
     /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     ///
@@ -2528,6 +2597,62 @@ mod tests {
 
         vp.scroll_up(&mut buffer, &[], &[], 100);
         assert_eq!(vp.top_byte, 0); // Can't scroll past 0
+    }
+
+    #[test]
+    fn center_on_position_unwrapped_centers_logical_line() {
+        // 50 single-row lines, height 24 → half = 12. Centering on line
+        // index 29 should put the viewport top 12 logical lines above it.
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!("line{i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+        let mut vp = Viewport::new(80, 24); // wrap off by default
+
+        let pos = buffer.line_start_offset(29).unwrap();
+        vp.center_on_position(&mut buffer, pos);
+
+        assert_eq!(buffer.get_line_number(vp.top_byte), 29 - 12);
+        assert_eq!(vp.top_view_line_offset, 0);
+    }
+
+    #[test]
+    fn center_on_position_wrapped_counts_visual_rows() {
+        // A long line that wraps into many visual rows sits directly above
+        // the match. Naive logical-line centering (match_line - height/2)
+        // would scroll the top back past the long line and push the match
+        // off the bottom of the pane; visual-row centering must instead
+        // stop *inside* the long line so the match stays centered.
+        let mut content = String::new();
+        for i in 0..18 {
+            content.push_str(&format!("short{i}\n"));
+        }
+        content.push_str(&"x".repeat(400)); // line 18: wraps into >5 rows
+        content.push('\n');
+        content.push_str("THE_MATCH\n"); // line 19
+        for i in 0..10 {
+            content.push_str(&format!("tail{i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+
+        let mut vp = Viewport::new(40, 10); // half = 5
+        vp.line_wrap_enabled = true;
+
+        let pos = buffer.line_start_offset(19).unwrap();
+        vp.center_on_position(&mut buffer, pos);
+
+        // Visual-row centering lands the top inside the wrapped line just
+        // above the match (line 18), not back at logical line 14.
+        assert_eq!(
+            buffer.get_line_number(vp.top_byte),
+            18,
+            "top should sit within the wrapped line above the match"
+        );
+        assert!(
+            vp.top_view_line_offset > 0,
+            "top should be partway down the wrapped line's visual rows"
+        );
     }
 
     #[test]

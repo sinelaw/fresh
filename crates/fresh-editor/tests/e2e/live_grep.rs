@@ -193,6 +193,103 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
         .unwrap();
 }
 
+/// The Live Grep preview pane must paint every occurrence of the query
+/// using the search-match highlight colours, not merely park the (hidden)
+/// cursor on it. Drives the deterministic Buffers scope (pure JS, no
+/// subprocess) and asserts the previewed match's cells carry
+/// `theme.search_match_bg`.
+#[test]
+fn test_live_grep_preview_highlights_query_matches() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let token = "HILITE_TOKEN_4f9b";
+    let target = project_root.join("notes.txt");
+    // Put the token a few lines in so the preview has surrounding context.
+    fs::write(
+        &target,
+        format!("alpha\nbeta\ngamma\n{token} here\ndelta\nepsilon\n"),
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&target).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep (Find").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+
+    // Buffers only: drop Files (Alt+L) and Terminals (Alt+T).
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text(token).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("notes.txt:4"))
+        .unwrap();
+    // Let the preview pane resize + center over a couple of frames.
+    harness.render().unwrap();
+    harness.render().unwrap();
+
+    let search_bg = harness.editor().theme().search_match_bg;
+
+    // Count screen cells whose glyph is a token character AND whose
+    // background is the search-match colour. Only the preview highlight
+    // paints that background, so any run of them is the highlighted match.
+    let mut highlighted = 0usize;
+    for y in 0..30u16 {
+        for x in 0..140u16 {
+            let symbol = harness.get_cell(x, y);
+            let bg = harness.get_cell_style(x, y).and_then(|s| s.bg);
+            if let Some(sym) = symbol {
+                let is_token_char = sym
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                if is_token_char && bg == Some(search_bg) {
+                    highlighted += 1;
+                }
+            }
+        }
+    }
+
+    assert!(
+        highlighted >= token.len(),
+        "preview should highlight the matched query with search_match_bg \
+         (found {highlighted} highlighted token cells, expected >= {})",
+        token.len()
+    );
+}
+
 /// Test Live Grep plugin - basic search and preview functionality
 #[test]
 #[ignore = "flaky test - times out intermittently"]
