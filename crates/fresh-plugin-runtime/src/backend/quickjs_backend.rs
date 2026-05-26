@@ -1568,12 +1568,19 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
-    /// Get the line number (0-indexed) of the primary cursor
+    /// Get the line number (0-indexed) of the primary cursor.
+    ///
+    /// @deprecated Use `getPrimaryCursor()?.line` instead. This accessor cannot
+    /// represent "line index unavailable" (huge files before their line scan) —
+    /// it returns `0` in that case, indistinguishable from a real first line.
+    /// `getPrimaryCursor().line` is `number | null` and also covers every cursor
+    /// via `getAllCursors()`.
     pub fn get_cursor_line(&self) -> u32 {
-        // This would require line counting from the buffer
-        // For now, return 0 - proper implementation needs buffer access
-        // TODO: Add line number tracking to EditorStateSnapshot
-        0
+        self.state_snapshot
+            .read()
+            .ok()
+            .and_then(|s| s.primary_cursor.as_ref().and_then(|c| c.line))
+            .unwrap_or(0) as u32
     }
 
     /// Get the byte offset of the start of a line (0-indexed line number)
@@ -8194,6 +8201,7 @@ mod tests {
             state.primary_cursor = Some(CursorInfo {
                 position: 42,
                 selection: None,
+                line: Some(0),
             });
         }
 
@@ -8223,6 +8231,137 @@ mod tests {
                 let global = ctx.globals();
                 let result: u32 = global.get("_testResult").unwrap();
                 assert_eq!(result, 42);
+            });
+    }
+
+    /// Ad-hoc plugin probe for the cursor-line API (issue #2076).
+    ///
+    /// Exercises the real JS plugin surface (`getPrimaryCursor().line`,
+    /// `getAllCursors()`, and the deprecated `getCursorLine()`) against a
+    /// hand-built snapshot, covering both modes:
+    ///   * "small file": the buffer has a line index, so `line` is a real
+    ///     0-indexed number for every cursor.
+    ///   * "large file": the line index is unavailable (`line == None`), so
+    ///     `getPrimaryCursor().line` is `null` and the deprecated
+    ///     `getCursorLine()` collapses to its `0` fallback.
+    #[test]
+    fn test_api_get_cursor_line_small_and_large_file() {
+        // --- small-file mode: line index present -----------------------------
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        {
+            let mut state = state_snapshot.write().unwrap();
+            state.primary_cursor = Some(CursorInfo {
+                position: 120,
+                selection: None,
+                line: Some(7),
+            });
+            state.all_cursors = vec![
+                CursorInfo {
+                    position: 120,
+                    selection: None,
+                    line: Some(7),
+                },
+                CursorInfo {
+                    position: 200,
+                    selection: None,
+                    line: Some(12),
+                },
+            ];
+        }
+
+        let services = Arc::new(fresh_core::services::NoopServiceBridge);
+        let mut backend = QuickJsBackend::with_state(state_snapshot, tx, services).unwrap();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const primary = editor.getPrimaryCursor();
+            globalThis._primaryLine = primary.line;
+            globalThis._cursorLine = editor.getCursorLine();
+            globalThis._allLines = editor.getAllCursors().map(c => c.line);
+        "#,
+                "probe_small.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("probe_small")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                // getPrimaryCursor().line is the real 0-indexed line.
+                let primary_line: i32 = global.get("_primaryLine").unwrap();
+                assert_eq!(primary_line, 7);
+                // Deprecated getCursorLine() agrees in small-file mode.
+                let cursor_line: u32 = global.get("_cursorLine").unwrap();
+                assert_eq!(cursor_line, 7);
+                // Every cursor carries its own line (multi-cursor support).
+                let all_lines: Vec<i32> = global.get("_allLines").unwrap();
+                assert_eq!(all_lines, vec![7, 12]);
+            });
+
+        // --- large-file mode: line index unavailable --------------------------
+        let (tx2, _rx2) = mpsc::channel();
+        let state_snapshot2 = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        {
+            let mut state = state_snapshot2.write().unwrap();
+            state.primary_cursor = Some(CursorInfo {
+                position: 5_000_000,
+                selection: None,
+                line: None,
+            });
+            state.all_cursors = vec![CursorInfo {
+                position: 5_000_000,
+                selection: None,
+                line: None,
+            }];
+        }
+
+        let services2 = Arc::new(fresh_core::services::NoopServiceBridge);
+        let mut backend2 = QuickJsBackend::with_state(state_snapshot2, tx2, services2).unwrap();
+
+        backend2
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            const primary = editor.getPrimaryCursor();
+            // null and undefined both serialize to JS null here; normalize to a
+            // sentinel so the Rust side can assert "unknown" unambiguously.
+            globalThis._primaryLineIsNull = (primary.line === null || primary.line === undefined);
+            globalThis._cursorLineFallback = editor.getCursorLine();
+            globalThis._allLineIsNull = (editor.getAllCursors()[0].line === null);
+        "#,
+                "probe_large.js",
+            )
+            .unwrap();
+
+        backend2
+            .plugin_contexts
+            .borrow()
+            .get("probe_large")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                // The honest API reports "unknown" as null in large-file mode.
+                let primary_null: bool = global.get("_primaryLineIsNull").unwrap();
+                assert!(
+                    primary_null,
+                    "primary.line should be null in large-file mode"
+                );
+                let all_null: bool = global.get("_allLineIsNull").unwrap();
+                assert!(
+                    all_null,
+                    "getAllCursors()[0].line should be null in large-file mode"
+                );
+                // The deprecated accessor cannot express null; it collapses to 0.
+                let fallback: u32 = global.get("_cursorLineFallback").unwrap();
+                assert_eq!(fallback, 0);
             });
     }
 

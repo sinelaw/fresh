@@ -359,6 +359,12 @@ pub struct CursorInfo {
         ts(type = "{ start: number; end: number } | null")
     )]
     pub selection: Option<Range<usize>>,
+    /// 0-indexed line number of the cursor. `null` when the line index is
+    /// unavailable — e.g. a huge file whose line scan hasn't completed, where
+    /// the editor positions purely by byte offset. Plugins must treat `null`
+    /// as "unknown", never as line 0.
+    #[serde(default)]
+    pub line: Option<usize>,
 }
 
 /// Specification for an action to execute, with optional repeat count
@@ -5428,6 +5434,7 @@ mod tests {
             snapshot.primary_cursor = Some(CursorInfo {
                 position: 42,
                 selection: Some(10..42),
+                line: Some(3),
             });
         }
 
@@ -5454,14 +5461,17 @@ mod tests {
                 CursorInfo {
                     position: 10,
                     selection: None,
+                    line: Some(0),
                 },
                 CursorInfo {
                     position: 20,
                     selection: Some(15..20),
+                    line: Some(1),
                 },
                 CursorInfo {
                     position: 30,
                     selection: Some(25..30),
+                    line: Some(2),
                 },
             ];
         }

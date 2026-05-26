@@ -5344,9 +5344,21 @@ impl Editor {
                 let primary_position = primary.position;
                 let primary_selection = primary.selection_range();
 
+                let active_buf_id = self.active_buffer();
+                let line_of = |offset: usize| -> Option<usize> {
+                    self.buffers.get(&active_buf_id).and_then(|state| {
+                        if state.buffer.line_count().is_some() {
+                            Some(state.buffer.get_line_number(offset))
+                        } else {
+                            None
+                        }
+                    })
+                };
+
                 snapshot.primary_cursor = Some(CursorInfo {
                     position: primary_position,
                     selection: primary_selection.clone(),
+                    line: line_of(primary_position),
                 });
 
                 // All cursors
@@ -5355,6 +5367,7 @@ impl Editor {
                     .map(|(_, cursor)| CursorInfo {
                         position: cursor.position,
                         selection: cursor.selection_range(),
+                        line: line_of(cursor.position),
                     })
                     .collect();
 

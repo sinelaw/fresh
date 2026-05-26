@@ -6351,9 +6351,25 @@ impl Window {
                     let primary_position = primary.position;
                     let primary_selection = primary.selection_range();
 
+                    // Resolve a byte offset to its 0-indexed line, but only when the
+                    // active buffer has a line index. Huge files load without line
+                    // metadata (`line_count() == None`); reporting `0` there would be
+                    // a lie, so we surface `None` instead — the same guard the
+                    // viewport's `top_line` uses below.
+                    let line_of = |offset: usize| -> Option<usize> {
+                        buffers_mut.get(&active_buf_id).and_then(|state| {
+                            if state.buffer.line_count().is_some() {
+                                Some(state.buffer.get_line_number(offset))
+                            } else {
+                                None
+                            }
+                        })
+                    };
+
                     snapshot.primary_cursor = Some(CursorInfo {
                         position: primary_position,
                         selection: primary_selection.clone(),
+                        line: line_of(primary_position),
                     });
 
                     snapshot.all_cursors = active_cursors
@@ -6361,6 +6377,7 @@ impl Window {
                         .map(|(_, cursor)| CursorInfo {
                             position: cursor.position,
                             selection: cursor.selection_range(),
+                            line: line_of(cursor.position),
                         })
                         .collect();
 

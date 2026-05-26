@@ -395,7 +395,7 @@ registerHandler("vi_line_end", vi_line_end);
 async function vi_first_non_blank() : Promise<void> {
   consumeCount(); // Count doesn't apply
   // Get line start position directly (avoids stale snapshot from executeAction)
-  const line = editor.getCursorLine();
+  const line = editor.getPrimaryCursor()?.line ?? 0;
   const bufferId = editor.getActiveBufferId();
   const lineStart = await editor.getLineStartPosition(line);
   if (lineStart === null) {
@@ -939,7 +939,7 @@ async function vi_visual_block() : Promise<void> {
   // Calculate line and column for block anchor
   const cursorPos = editor.getCursorPosition();
   if (cursorPos !== null) {
-    const line = editor.getCursorLine() ?? 1;
+    const line = editor.getPrimaryCursor()?.line ?? 1;
     const lineStart = await editor.getLineStartPosition(line);
     const col = lineStart !== null ? cursorPos - lineStart : 0;
     state.visualBlockAnchor = { line, col };
@@ -2702,7 +2702,7 @@ async function executeCommand(
       if (info) {
         const modified = info.modified ? editor.t("info.modified") : "";
         const path = info.path || editor.t("info.no_name");
-        const line = editor.getCursorLine();
+        const line = editor.getPrimaryCursor()?.line ?? 0;
         return { message: editor.t("info.file", { path, modified, line: String(line), bytes: String(info.length) }) };
       }
       return { error: editor.t("error.no_buffer") };

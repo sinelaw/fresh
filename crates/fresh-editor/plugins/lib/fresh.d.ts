@@ -735,6 +735,13 @@ type CursorInfo = {
 		start: number;
 		end: number;
 	} | null;
+	/**
+	* 0-indexed line number of the cursor. `None` when the line index is
+	* unavailable — e.g. a huge file whose line scan hasn't completed, where
+	* the editor positions purely by byte offset. Plugins must treat `null`
+	* as "unknown", never as line 0.
+	*/
+	line: number | null;
 };
 type OverlayOptions = {
 	/**
@@ -1695,7 +1702,13 @@ interface EditorAPI {
 	*/
 	listSplits(): SplitSnapshot[];
 	/**
-	* Get the line number (0-indexed) of the primary cursor
+	* Get the line number (0-indexed) of the primary cursor.
+	* 
+	* @deprecated Use `getPrimaryCursor()?.line` instead. This accessor cannot
+	* represent "line index unavailable" (huge files before their line scan) —
+	* it returns `0` in that case, indistinguishable from a real first line.
+	* `getPrimaryCursor().line` is `number | null` and also covers every cursor
+	* via `getAllCursors()`.
 	*/
 	getCursorLine(): number;
 	/**
@@ -1864,38 +1877,17 @@ interface EditorAPI {
 	*/
 	getAuthorityLabel(): string;
 	/**
-	* Current Workspace Trust level for the active project:
-	* `"restricted"`, `"trusted"`, or `"blocked"` (empty `""` when trust
-	* state is unavailable, e.g. the default local authority).
-	*
-	* Trust is a per-project, user-granted decision. Plugins that run
-	* repo-controlled work (env activation, project tooling, repo-local
-	* binaries) MUST gate on this and treat anything other than
-	* `"trusted"` as "do not execute".
+	* Current Workspace Trust level for the active project: `"restricted"`,
+	* `"trusted"`, or `"blocked"` (empty when unavailable). Exposed to JS as
+	* `editor.workspaceTrustLevel()`. Plugins that run repo-controlled work
+	* should treat anything other than `"trusted"` as "do not execute".
 	*/
-	workspaceTrustLevel(): "restricted" | "trusted" | "blocked" | "";
+	workspaceTrustLevel(): string;
 	/**
-	* Activate an environment by setting the live env recipe: an activation
-	* shell `snippet` (e.g. `eval "$(direnv export bash)"`,
-	* `source .venv/bin/activate`, or `""` for a pure login shell) run in
-	* `dir` (defaults to the workspace). It is re-evaluated on demand on the
-	* active backend and applied to every spawn — language servers,
-	* formatters, `spawnProcess` — so they see the project environment. No
-	* authority rebuild; the LSP is restarted to pick it up.
-	*
-	* Honored only when `workspaceTrustLevel() === "trusted"` (it runs
-	* repo-controlled code). Call `clearEnv()` to deactivate.
-	*/
-	setEnv(snippet: string, dir?: string): void;
-	/**
-	* Deactivate the environment set by `setEnv` — spawns return to the
-	* inherited environment.
-	*/
-	clearEnv(): void;
-	/**
-	* Whether an environment is currently active (a recipe was set via
-	* `setEnv`). Survives the restart `setEnv` triggers, so a plugin can
-	* re-establish its file watch and reflect activation after reloading.
+	* Whether an environment is currently active (set via `editor.setEnv`).
+	* Exposed to JS as `editor.envActive()`. Lets the env-manager plugin
+	* reflect activation and re-establish its file watch after the restart
+	* that `setEnv` triggers.
 	*/
 	envActive(): boolean;
 	/**
@@ -2859,6 +2851,16 @@ interface EditorAPI {
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
+	/**
+	* Activate an environment: set the live env recipe (`snippet` run in
+	* `dir`). Applied to every spawn, re-evaluated on demand — no restart.
+	* Honored only when the workspace is Trusted.
+	*/
+	setEnv(snippet: string, dir: string | null): void;
+	/**
+	* Deactivate the environment — spawns return to the inherited env.
+	*/
+	clearEnv(): void;
 	/**
 	* Override the Remote Indicator's displayed state. Plugins call
 	* this to surface lifecycle transitions that the authority layer

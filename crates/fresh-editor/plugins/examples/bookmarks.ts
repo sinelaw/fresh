@@ -46,8 +46,9 @@ function getCurrentLocation(): {
 
 // Helper: Get actual line number using the API
 function getCurrentLineCol(): { line: number; column: number } {
-  // Use the actual getCursorLine API for accurate line number
-  const lineNumber = editor.getCursorLine();
+  // Read the primary cursor's line from the snapshot. `line` is null when the
+  // buffer has no line index yet (huge files); fall back to 0 there.
+  const lineNumber = editor.getPrimaryCursor()?.line ?? 0;
 
   // Get cursor position within the line by reading buffer content
   const bufferId = editor.getActiveBufferId();
