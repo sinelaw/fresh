@@ -3164,18 +3164,12 @@ impl Window {
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let buffer = &mut state.buffer;
-                    let cursor = *view_state.cursors.primary();
-                    let viewport_height = view_state.viewport.visible_line_count();
-                    let target_rows_from_top = viewport_height / 2;
-
-                    let mut iter = buffer.line_iterator(cursor.position, 80);
-                    for _ in 0..target_rows_from_top {
-                        if iter.prev().is_none() {
-                            break;
-                        }
-                    }
-                    let new_top_byte = iter.current_position();
-                    view_state.viewport.top_byte = new_top_byte;
+                    let cursor_pos = view_state.cursors.primary().position;
+                    // `center_on_position` counts real visual rows, so a
+                    // recenter in a wrapped document doesn't under-scroll
+                    // and leave the cursor below the viewport (each logical
+                    // line above the cursor can span many rows).
+                    view_state.viewport.center_on_position(buffer, cursor_pos);
                     view_state.viewport.set_skip_ensure_visible();
                 });
         }

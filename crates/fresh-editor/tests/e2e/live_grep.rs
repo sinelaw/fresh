@@ -294,6 +294,59 @@ fn test_live_grep_preview_highlights_query_matches() {
     );
 }
 
+/// Opening a match (Enter in Live Grep → `openFile` → `goto_line_col` →
+/// `Event::Recenter`) must scroll the visited buffer so the match is on
+/// screen. In a wrapped document the recenter walked back `height/2`
+/// *logical* lines, but each wraps into several visual rows, so the match
+/// landed far below the viewport — invisible. This drives the exact
+/// `goto_line_col` path the Enter handler uses; the unique token on the
+/// target line must be visible after the jump.
+#[test]
+fn test_goto_match_in_wrapped_doc_keeps_match_visible() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    // Lines long enough to wrap several times at width 100, stacked above
+    // the target so logical-line centering badly under-scrolls.
+    let long = "lorem ipsum dolor sit amet ".repeat(12); // ~324 chars
+    let token = "RECENTER_TARGET_z9";
+    let mut content = String::new();
+    for _ in 0..30 {
+        content.push_str(&long);
+        content.push('\n');
+    }
+    let target_line = 18; // 1-indexed; well inside the wrapped block
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    lines[target_line - 1] = format!("{token} on the target line");
+    let file_body = lines.join("\n");
+
+    let target = project_root.join("wrapped.txt");
+    fs::write(&target, &file_body).unwrap();
+
+    // Default config keeps line_wrap on (the condition for the bug).
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&target).unwrap();
+    harness.render().unwrap();
+
+    // Exactly what the Live Grep Enter handler does for a result.
+    harness.editor_mut().goto_line_col(target_line, Some(1));
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains(token),
+        "after jumping to a match in a wrapped document the match must be \
+         visible; screen was:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Test Live Grep plugin - basic search and preview functionality
 #[test]
 #[ignore = "flaky test - times out intermittently"]

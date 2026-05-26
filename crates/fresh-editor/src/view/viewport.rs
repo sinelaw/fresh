@@ -597,8 +597,6 @@ impl Viewport {
     /// is passed to the visual-row scroll.
     pub fn center_on_position(&mut self, buffer: &mut Buffer, position: usize) {
         let half = self.visible_line_count() / 2;
-        let line = buffer.get_line_number(position);
-        let line_start = buffer.line_start_offset(line).unwrap_or(position);
 
         if !self.line_wrap_enabled {
             // Unwrapped: one visual row per logical line, so walk back
@@ -618,6 +616,8 @@ impl Viewport {
         // target sits on, anchor the viewport top to that row, then
         // scroll up `half` real visual rows (which walks back through any
         // wrapped lines above).
+        let line = buffer.get_line_number(position);
+        let line_start = buffer.line_start_offset(line).unwrap_or(position);
         let gutter_width = self.gutter_width(buffer);
         let wrap_config = WrapConfig::new(
             self.effective_width() as usize,
