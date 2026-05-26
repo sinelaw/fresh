@@ -587,6 +587,23 @@ fn default_whitespace_indicator_fg() -> ColorDef {
 }
 
 /// UI element colors (tabs, menus, status bar, etc.)
+///
+/// Naming convention: every `*_bg` key that has text drawn on top of
+/// it MUST have a matching `*_fg` key, and renderers must pair them
+/// (never borrow a foreground from an unrelated surface — doing so is
+/// how text ends up invisible when a theme's borrowed fg matches the
+/// real bg). `popup_text_fg` is the foreground for `popup_bg` (kept
+/// under its historical name with a `popup_fg` serde alias).
+///
+/// `*_bg` keys WITHOUT a matching `*_fg` are intentional — they don't
+/// draw their own text and inherit the surrounding foreground:
+///   - lines / borders / separators: `tab_separator_bg`,
+///     `popup_border_fg`, `menu_border_fg`, `menu_separator_fg`,
+///     `split_separator_fg`, `scrollbar_*`, `tab_drop_zone_border`
+///   - selection / hover / highlight tints layered over a surface that
+///     keeps its base fg: `*_selection_bg`, `*_hover_bg`,
+///     `suggestion_selected_bg`, `text_input_selection_bg`,
+///     `semantic_highlight_bg`, `compose_margin_bg`, `inline_code_bg`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UiColors {
     /// Active tab text color
@@ -712,12 +729,19 @@ pub struct UiColors {
     /// Popup selected item text color
     #[serde(default = "default_popup_selection_fg")]
     pub popup_selection_fg: ColorDef,
-    /// Popup window text color
-    #[serde(default = "default_popup_text_fg")]
+    /// Popup window text color. Per the `*_bg`/`*_fg` convention this
+    /// is the foreground for `popup_bg`; `popup_fg` is accepted as an
+    /// alias so theme JSON can use the convention-consistent name.
+    #[serde(default = "default_popup_text_fg", alias = "popup_fg")]
     pub popup_text_fg: ColorDef,
     /// Autocomplete suggestion background
     #[serde(default = "default_suggestion_bg")]
     pub suggestion_bg: ColorDef,
+    /// Text color for content drawn on `suggestion_bg` (autocomplete
+    /// items, the overlay-prompt title/input field). Falls back to
+    /// `popup_text_fg` so existing themes need no change.
+    #[serde(default)]
+    pub suggestion_fg: Option<ColorDef>,
     /// Selected suggestion background
     #[serde(default = "default_suggestion_selected_bg")]
     pub suggestion_selected_bg: ColorDef,
@@ -1306,6 +1330,7 @@ pub struct Theme {
     pub text_input_selection_bg: Color,
 
     pub suggestion_bg: Color,
+    pub suggestion_fg: Color,
     pub suggestion_selected_bg: Color,
 
     pub help_bg: Color,
@@ -1518,9 +1543,15 @@ impl From<ThemeFile> for Theme {
             popup_bg: file.ui.popup_bg.into(),
             popup_selection_bg: file.ui.popup_selection_bg.into(),
             popup_selection_fg: file.ui.popup_selection_fg.into(),
-            popup_text_fg: file.ui.popup_text_fg.into(),
+            popup_text_fg: file.ui.popup_text_fg.clone().into(),
             text_input_selection_bg: file.ui.text_input_selection_bg.into(),
             suggestion_bg: file.ui.suggestion_bg.into(),
+            suggestion_fg: file
+                .ui
+                .suggestion_fg
+                .clone()
+                .map(|c| c.into())
+                .unwrap_or_else(|| file.ui.popup_text_fg.clone().into()),
             suggestion_selected_bg: file.ui.suggestion_selected_bg.into(),
             help_bg: file.ui.help_bg.into(),
             help_fg: file.ui.help_fg.into(),
@@ -1687,6 +1718,7 @@ impl From<Theme> for ThemeFile {
                 popup_text_fg: theme.popup_text_fg.into(),
                 text_input_selection_bg: theme.text_input_selection_bg.into(),
                 suggestion_bg: theme.suggestion_bg.into(),
+                suggestion_fg: Some(theme.suggestion_fg.into()),
                 suggestion_selected_bg: theme.suggestion_selected_bg.into(),
                 help_bg: theme.help_bg.into(),
                 help_fg: theme.help_fg.into(),
@@ -2009,6 +2041,7 @@ impl Theme {
                 "status_warning_indicator_hover_bg" => Some(self.status_warning_indicator_hover_bg),
                 "status_warning_indicator_hover_fg" => Some(self.status_warning_indicator_hover_fg),
                 "suggestion_bg" => Some(self.suggestion_bg),
+                "suggestion_fg" => Some(self.suggestion_fg),
                 "suggestion_selected_bg" => Some(self.suggestion_selected_bg),
                 "tab_active_bg" => Some(self.tab_active_bg),
                 "tab_active_fg" => Some(self.tab_active_fg),
@@ -2175,6 +2208,7 @@ impl Theme {
                 "settings_selected_bg" => Some(&mut self.settings_selected_bg),
                 "settings_selected_fg" => Some(&mut self.settings_selected_fg),
                 "suggestion_bg" => Some(&mut self.suggestion_bg),
+                "suggestion_fg" => Some(&mut self.suggestion_fg),
                 "suggestion_selected_bg" => Some(&mut self.suggestion_selected_bg),
                 "help_separator_fg" => Some(&mut self.help_separator_fg),
                 "help_indicator_fg" => Some(&mut self.help_indicator_fg),
@@ -2291,6 +2325,25 @@ mod tests {
         assert!(terminal
             .semantic_highlight_modifier
             .contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_suggestion_fg_falls_back_and_contrasts() {
+        // Regression: the overlay prompt (Live Grep) drew its title/input
+        // on `suggestion_bg`/`editor_bg` but borrowed `prompt_fg` for the
+        // text. Dracula's `prompt_fg` equals its editor background, so the
+        // text was invisible. `suggestion_fg` is the dedicated foreground
+        // for that surface; when a theme omits it, it falls back to
+        // `popup_text_fg` (never `prompt_fg`).
+        let dracula = Theme::load_builtin(THEME_DRACULA).expect("Dracula theme must exist");
+        assert_eq!(
+            dracula.suggestion_fg, dracula.popup_text_fg,
+            "suggestion_fg should fall back to popup_text_fg when unset"
+        );
+        assert_ne!(
+            dracula.suggestion_fg, dracula.suggestion_bg,
+            "suggestion_fg must contrast with suggestion_bg, not vanish into it"
+        );
     }
 
     #[test]

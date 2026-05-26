@@ -2721,8 +2721,8 @@ impl Editor {
         // (matching the toolbar/footer); input + right-side
         // padding + count get the editor bg so they read as one
         // contiguous text field. All colours from theme keys.
-        let title_style = Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg);
-        let input_style = Style::default().fg(theme.prompt_fg).bg(theme.editor_bg);
+        let title_style = Style::default().fg(theme.suggestion_fg).bg(theme.suggestion_bg);
+        let input_style = Style::default().fg(theme.editor_fg).bg(theme.editor_bg);
         let count_str = if prompt.suggestions.is_empty() {
             String::new()
         } else {
@@ -2933,7 +2933,7 @@ impl Editor {
                 width: inner.width,
                 height: 1,
             };
-            let footer_default_style = Style::default().fg(theme.prompt_fg).bg(theme.suggestion_bg);
+            let footer_default_style = Style::default().fg(theme.suggestion_fg).bg(theme.suggestion_bg);
             let footer_spans: Vec<Span> = prompt
                 .footer
                 .iter()

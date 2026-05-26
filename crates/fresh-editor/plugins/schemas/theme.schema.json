@@ -221,6 +221,7 @@
           30,
           30
         ],
+        "suggestion_fg": null,
         "suggestion_selected_bg": [
           58,
           79,
@@ -691,7 +692,7 @@
       }
     },
     "UiColors": {
-      "description": "UI element colors (tabs, menus, status bar, etc.)",
+      "description": "UI element colors (tabs, menus, status bar, etc.)\n\nNaming convention: every `*_bg` key that has text drawn on top of\nit MUST have a matching `*_fg` key, and renderers must pair them\n(never borrow a foreground from an unrelated surface — doing so is\nhow text ends up invisible when a theme's borrowed fg matches the\nreal bg). `popup_text_fg` is the foreground for `popup_bg` (kept\nunder its historical name with a `popup_fg` serde alias).\n\n`*_bg` keys WITHOUT a matching `*_fg` are intentional — they don't\ndraw their own text and inherit the surrounding foreground:\n  - lines / borders / separators: `tab_separator_bg`,\n    `popup_border_fg`, `menu_border_fg`, `menu_separator_fg`,\n    `split_separator_fg`, `scrollbar_*`, `tab_drop_zone_border`\n  - selection / hover / highlight tints layered over a surface that\n    keeps its base fg: `*_selection_bg`, `*_hover_bg`,\n    `suggestion_selected_bg`, `text_input_selection_bg`,\n    `semantic_highlight_bg`, `compose_margin_bg`, `inline_code_bg`",
       "type": "object",
       "properties": {
         "tab_active_fg": {
@@ -1011,7 +1012,7 @@
           ]
         },
         "popup_text_fg": {
-          "description": "Popup window text color",
+          "description": "Popup window text color. Per the `*_bg`/`*_fg` convention this\nis the foreground for `popup_bg`; `popup_fg` is accepted as an\nalias so theme JSON can use the convention-consistent name.",
           "$ref": "#/$defs/ColorDef",
           "default": "White"
         },
@@ -1023,6 +1024,18 @@
             30,
             30
           ]
+        },
+        "suggestion_fg": {
+          "description": "Text color for content drawn on `suggestion_bg` (autocomplete\nitems, the overlay-prompt title/input field). Falls back to\n`popup_text_fg` so existing themes need no change.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColorDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "suggestion_selected_bg": {
           "description": "Selected suggestion background",
