@@ -158,16 +158,14 @@ impl crate::app::window::Window {
 
                 let needs_recenter = !cursor_visible || (scrolled && recenter_on_scroll);
                 if needs_recenter {
-                    let viewport_height = view_state.viewport.visible_line_count();
-                    let target_rows_from_top = viewport_height / 2;
-                    let mut iter = state.buffer.line_iterator(cursor_pos, 80);
-                    for _ in 0..target_rows_from_top {
-                        if iter.prev().is_none() {
-                            break;
-                        }
-                    }
-                    view_state.viewport.top_byte = iter.current_position();
-                    view_state.viewport.top_view_line_offset = 0;
+                    // Count real visual rows so a recenter in a wrapped
+                    // document doesn't under-scroll and leave the cursor
+                    // below the viewport — each logical line above the
+                    // cursor can span many rows (e.g. an EPUB/XML paragraph
+                    // on one very long line).
+                    view_state
+                        .viewport
+                        .center_on_position(&mut state.buffer, cursor_pos);
                     view_state.viewport.scrolled_up_in_wrap = false;
                     view_state.viewport.set_skip_ensure_visible();
                 }

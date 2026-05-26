@@ -8,6 +8,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
 
 /// When Find Next jumps to a match far below the viewport, the viewport
 /// should end up with the match vertically centered.
@@ -60,6 +61,51 @@ fn test_find_next_centers_match_when_scrolling() {
         "Find Next should center the match vertically when scrolling; \
          viewport_height={}, expected_top_line={}, got top_line={}",
         viewport_height, expected_top_line, top_line
+    );
+}
+
+/// A match several long, soft-wrapped lines down must be scrolled into
+/// view (and centered) when navigation jumps to it. This is the path
+/// `editor.openFile(file, line, col)` uses (Live Grep Enter →
+/// `jump_to_line_column` → `jump_active_cursor_to` →
+/// `ensure_cursor_visible_for_navigation`). The recenter used to walk back
+/// `height/2` *logical* lines, but each wraps into several visual rows, so
+/// it under-scrolled and left the match below the viewport — the EPUB/XML
+/// long-line case reported by users.
+#[test]
+fn test_find_centers_match_in_wrapped_doc() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("wrapped.txt");
+
+    // Many lines, each long enough to wrap ~3 rows at width 100, so
+    // logical-line centering badly under-scrolls. Needle sits well down.
+    let needle = "WRAP_NEEDLE_x7";
+    let long = "lorem ipsum dolor sit amet ".repeat(12); // ~324 cols
+    let mut lines: Vec<String> = (0..30).map(|_| long.clone()).collect();
+    lines[18] = format!("{needle} on the target line");
+    std::fs::write(&file_path, lines.join("\n")).unwrap();
+
+    // Default config keeps line wrapping on (the condition for the bug).
+    let mut harness = EditorTestHarness::with_config(100, 24, Config::default()).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(needle).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains(needle),
+        "navigation must scroll a deep match in a wrapped document into \
+         view; screen was:\n{}",
+        harness.screen_to_string()
     );
 }
 
