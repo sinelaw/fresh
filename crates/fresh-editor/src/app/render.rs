@@ -1480,15 +1480,17 @@ impl Editor {
             .map(|s| s.visible)
             .unwrap_or(false);
         if settings_visible {
-            // Dim the editor content behind the settings modal
-            crate::view::dimming::apply_dimming(frame, size);
+            // Dim the editor content behind the settings modal. Use the
+            // chrome area (right of a left dock) so the modal sits beside
+            // the persistent dock instead of being overlapped by it.
+            crate::view::dimming::apply_dimming(frame, chrome_area);
         }
         if let Some(ref mut settings_state) = self.settings_state {
             if settings_state.visible {
                 settings_state.update_focus_states();
                 let settings_layout = crate::view::settings::render_settings(
                     frame,
-                    size,
+                    chrome_area,
                     settings_state,
                     &*self.theme.read().unwrap(),
                 );
@@ -1499,10 +1501,10 @@ impl Editor {
         // Render calibration wizard if active
         if let Some(ref wizard) = self.calibration_wizard {
             // Dim the editor content behind the wizard modal
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::calibration_wizard::render_calibration_wizard(
                 frame,
-                size,
+                chrome_area,
                 wizard,
                 &*self.theme.read().unwrap(),
             );
@@ -1510,10 +1512,10 @@ impl Editor {
 
         // Render keybinding editor if active
         if let Some(ref mut kb_editor) = self.keybinding_editor {
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::keybinding_editor::render_keybinding_editor(
                 frame,
-                size,
+                chrome_area,
                 kb_editor,
                 &*self.theme.read().unwrap(),
             );
@@ -1522,10 +1524,10 @@ impl Editor {
         // Render event debug dialog if active
         if let Some(ref debug) = self.active_window().event_debug {
             // Dim the editor content behind the dialog modal
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::event_debug::render_event_debug(
                 frame,
-                size,
+                chrome_area,
                 debug,
                 &*self.theme.read().unwrap(),
             );

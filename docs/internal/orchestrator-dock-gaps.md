@@ -11,12 +11,11 @@
 ## Open gaps
 
 ### Rendering / z-order (core)
-- **Full-screen modals overlap the dock.** Settings, calibration
-  wizard, keybinding editor, and the workspace-trust dialog still
-  render against the whole screen and dim it (`render.rs` ~1482–1574
-  use `size`, not `chrome_area`). With the dock visible the dock column
-  draws over their left edge (dock is painted last). Either confine
-  these to `chrome_area` or suppress the dock while one is open.
+- ~~Full-screen modals overlap the dock.~~ **Fixed**: Settings,
+  calibration wizard, keybinding editor, and event-debug now dim +
+  render against `chrome_area`, so they sit beside the dock instead of
+  being overpainted by it. The workspace-trust dialog still uses `size`
+  — it's a startup gate that can't be concurrent with the dock.
 - **Centered/anchored popups use full-screen coords.** Command-palette
   suggestions and global popups (`render_prompt_popups`,
   `render_top_global_popup`) are positioned/clamped against `size`, so

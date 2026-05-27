@@ -63,8 +63,27 @@
 29. Menu bar (`F10` / `Alt+F`) opens; dropdowns align to the chrome (not
     offset by the dock) — *known gap if not.*
 30. LSP / hover / completion popups position within the window.
-31. Full-screen modals (Settings, keybinding editor) — *known gap: may
-    overlap the dock.*
+31. Full-screen modals (Settings, keybinding editor, wizard, event-debug)
+    now render in the **chrome area** (right of the dock), not overlapped.
+
+### F.1 Settings editor (with the dock open) — run 2026-05-27
+31a. Open Settings while the dock is visible: PASS — the dialog renders
+     beside the dock (right of the column), fully visible, no overlap.
+     (Before the fix it centered on the full screen and the dock
+     overpainted its left ~32 cols.)
+31b. Keyboard-operable: PASS — Settings has focus (the dock blurred on
+     the Ctrl+P that opened the palette); the dock doesn't steal keys.
+31c. Esc closes: PASS — Settings dismissed, dock still visible & usable.
+31d. Dock hidden baseline: PASS — Settings renders full-width centered.
+31a. Open Settings (Ctrl+P → "Settings") while the dock is visible:
+     the Settings dialog renders and is usable; note whether the dock
+     column overlaps its left edge (z-order) or dims correctly.
+31b. Settings is keyboard-operable (navigate categories, Tab focus,
+     search, Esc) — the dock must not steal its keys.
+31c. Close Settings (Esc): the editor + dock return to a clean state
+     (no residual dim, dock still visible & usable, cursor correct).
+31d. Open Settings while the dock is **hidden** (baseline): renders
+     full-width as normal.
 
 ## G. File explorer with the dock open
 32. `Ctrl+E` focuses the file explorer; the dock stays put.
