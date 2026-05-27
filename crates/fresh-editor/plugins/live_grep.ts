@@ -684,6 +684,10 @@ const quickfixFinder = new Finder<GrepMatch>(editor, {
     },
   }),
   useUtilityDock: true,
+  // Keep the Quickfix list docked when jumping to an entry — like Vim's
+  // quickfix and VS Code's results list — so the user can step through
+  // matches. (Find References / Diagnostics keep the default close.)
+  closeOnSelect: false,
 });
 
 // Snapshot the current Live Grep results into the Quickfix dock panel.

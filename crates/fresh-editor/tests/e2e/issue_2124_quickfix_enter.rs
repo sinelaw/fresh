@@ -125,4 +125,12 @@ fn quickfix_enter_opens_match_location() {
         content.contains(unique) && !content.contains("Quickfix:"),
         "Enter on a Quickfix match must open target.rs; active buffer was:\n{content}"
     );
+
+    // The Quickfix panel must stay docked after the jump (closeOnSelect:
+    // false) so the user can step through further matches.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("*Quickfix*"),
+        "Quickfix panel should remain docked after jumping to a match; screen was:\n{screen}"
+    );
 }

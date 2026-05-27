@@ -116,6 +116,21 @@ export interface FinderConfig<T> {
   /** Panel-specific: navigate source split when cursor moves (preview without focus change) */
   navigateOnCursorMove?: boolean;
 
+  /**
+   * Panel-specific: whether selecting an entry (Enter) closes the
+   * panel. Defaults to `true` — the panel dismisses as it jumps, which
+   * suits one-shot lists like Find References. Set `false` to keep the
+   * panel docked so the user can step through entries (Vim quickfix /
+   * VS Code results list). Only consulted by the default selection
+   * handler — a custom `onSelect` owns close behaviour itself.
+   *
+   * Note: leaving the panel open while `navigateOnCursorMove` is also
+   * on re-introduces the focus race the close was guarding against
+   * (a `focusSplit` queued after the jump can re-grab the panel), so
+   * the two shouldn't be combined without care.
+   */
+  closeOnSelect?: boolean;
+
   /** Called when the panel or prompt is closed (e.g. via Escape) */
   onClose?: () => void;
 
@@ -1398,13 +1413,17 @@ export class Finder<T> {
     } else if (entry.location) {
       const loc = entry.location;
 
-      // Close the panel first. This is necessary because
-      // navigateOnCursorMove's focusSplit(panelSplitId) can interfere with
-      // the jump — it queues a FocusSplit that runs after OpenFileInSplit
-      // and restores the panel as the active split.
-      this.closePanel();
+      // Close the panel first (unless the consumer opted to keep it
+      // docked via `closeOnSelect: false`). Closing is the default
+      // because navigateOnCursorMove's focusSplit(panelSplitId) can
+      // interfere with the jump — it queues a FocusSplit that runs after
+      // OpenFileInSplit and restores the panel as the active split.
+      if (this.config.closeOnSelect !== false) {
+        this.closePanel();
+      }
 
-      // Now navigate with the panel gone — only one split remains
+      // openFile routes away from the dock leaf, so with the panel kept
+      // open the file lands in the editor pane and the list stays put.
       this.editor.openFile(loc.file, loc.line, loc.column);
       this.editor.setStatus(`Jumped to ${loc.file}:${loc.line}`);
     }
