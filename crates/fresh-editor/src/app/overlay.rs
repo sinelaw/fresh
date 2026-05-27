@@ -78,11 +78,10 @@ pub(crate) enum LayerKind {
 /// focus and (later) paint/hit-test decisions.
 #[derive(Debug, Clone)]
 pub(crate) struct Layer {
-    // `kind` / `region` / `policy` describe the layer for the paint-order
-    // and mouse-hit-test migrations (later steps of P2); step 1 resolves
-    // only keyboard focus, which reads `owns_keyboard` + `key_context`.
-    #[allow(dead_code)]
     pub kind: LayerKind,
+    // `region` / `policy` describe the layer for the paint-order and
+    // mouse-hit-test migrations (later steps of P2); keyboard-focus
+    // resolution reads `kind` / `owns_keyboard` / `key_context`.
     #[allow(dead_code)]
     pub region: LayerRegion,
     #[allow(dead_code)]

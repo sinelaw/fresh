@@ -160,10 +160,18 @@ impl Editor {
         // visible underneath. Skip the unfocused-popup interception so
         // pressing Esc in a settings dialog still closes the dialog
         // rather than reaching past it to dismiss a stale popup.
-        if self.settings_state.as_ref().is_some_and(|s| s.visible)
-            || self.menu_state.active_menu.is_some()
-            || self.is_prompting()
-        {
+        //
+        // Ask the overlay stack directly rather than re-listing the modal
+        // fields: any layer ranked *above* the popup layer that owns the
+        // keyboard is exactly Settings / Menu / Prompt (the only layers
+        // above Popup). `popup_visible` above guarantees a Popup layer is
+        // present, so `take_while` stops before the editor base layer.
+        let blocked_by_higher_modal = self
+            .overlay_layers()
+            .iter()
+            .take_while(|l| l.kind != crate::app::overlay::LayerKind::Popup)
+            .any(|l| l.owns_keyboard);
+        if blocked_by_higher_modal {
             return None;
         }
 
