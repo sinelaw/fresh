@@ -921,12 +921,16 @@ function updatePanelContent(): void {
   //                                       trailing match-count stats.
   //   * `Row{ Toggle, Toggle, Toggle, Spacer, Button }`
   //                                       — case/regex/whole + Replace All.
+  //   * `HintBar{ ... }`                  — keyboard-hint row, sits
+  //                                       directly above the matches
+  //                                       section.
   //   * `Raw{ separator entry }`         — matches divider.
   //   * `List{ ... }` or `Raw{empty msg}` — virtual-scrolled match
   //                                       rows (host owns scroll +
   //                                       selection styling +
-  //                                       click routing).
-  //   * `HintBar{ ... }`                  — keyboard-hint footer.
+  //                                       click routing). Last child
+  //                                       so the match list is the
+  //                                       final thing in the buffer.
   if (!panel.widgetPanel) {
     panel.widgetPanel = new WidgetPanel(panel.resultsBufferId);
   }
@@ -935,9 +939,9 @@ function updatePanelContent(): void {
       buildLine1Spec(),
       buildOptionsRowSpec(),
       buildScopeRowSpec(),
+      hintBar(buildHelpHints()),
       raw(buildPanelEntries("postOptions"), "separator"),
       buildMatchListSpec(),
-      hintBar(buildHelpHints()),
     ),
   );
   // The Tree's `expandedKeys` field on the spec is initial-only —
@@ -1479,12 +1483,22 @@ async function rerunSearch(): Promise<void> {
   if (panel && currentSearchGeneration === myGen) {
     panel.busy = false;
     panel.searchPerformed = true;
-    // Only one tiny mutation needed: refresh matchStats since it
-    // depends on the busy flag and searchPerformed (showing
-    // "No matches" vs "Searching…"). The tree's nodes already
-    // reflect the final state — no full re-emit needed.
     if (panel.widgetPanel) {
-      panel.widgetPanel.setRawEntries("matchStats", buildMatchStatsEntries());
+      if (panel.searchResults.length === 0) {
+        // Zero matches: the match-list body is an empty-state `raw()`
+        // last rendered while `busy` was still true → "Searching…".
+        // `setRawEntries("matchStats", …)` only refreshes the small
+        // count label next to the inputs, not the body, so without a
+        // full re-emit the body stays stuck on "Searching…". Re-emit
+        // now that the flags are final so it shows "No matches".
+        // Cheap: the tree is empty (no per-node serialization cost).
+        updatePanelContent();
+      } else {
+        // Only one tiny mutation needed: refresh matchStats since it
+        // depends on the busy flag and searchPerformed. The tree's
+        // nodes already reflect the final state — no full re-emit.
+        panel.widgetPanel.setRawEntries("matchStats", buildMatchStatsEntries());
+      }
     }
   }
 }
