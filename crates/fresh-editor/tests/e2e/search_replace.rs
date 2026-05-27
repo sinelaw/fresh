@@ -624,6 +624,100 @@ fn test_search_replace_no_matches() {
         .unwrap();
 }
 
+/// Regression: once a zero-match search settles, the match-list *body*
+/// must update from the transient "Searching…" placeholder to "No
+/// matches" — not stay stuck on "Searching…". The small count label
+/// next to the input fields flipped correctly even with the bug, so a
+/// plain `contains("No matches")` check passes either way; the body was
+/// the stuck part. Assert no "Searching" text remains after the screen
+/// stabilizes.
+#[test]
+fn test_search_replace_no_matches_clears_searching() {
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    enter_search_and_replace(&mut harness, "ZZZZNOTFOUND", "whatever");
+
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("No matches"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Searching"),
+        "match-list body must not stay on 'Searching…' after a zero-match \
+         search settles. Got:\n{}",
+        screen
+    );
+}
+
+/// The keyboard-hint row sits directly above the "Matches" separator, so
+/// the match list is the last thing in the panel buffer. Asserts on the
+/// relative line order of the rendered hint row, the separator, and the
+/// empty-state body.
+#[test]
+fn test_search_replace_help_row_above_matches() {
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    // No search typed yet: separator shows "Matches" and the body shows
+    // the "Type a search pattern above" empty state.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("Matches") && s.contains("Type a search pattern")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+    let help_idx = lines
+        .iter()
+        .position(|l| l.contains("include/exclude"))
+        .unwrap_or_else(|| panic!("help hint row not rendered. Got:\n{}", screen));
+    let sep_idx = lines
+        .iter()
+        .position(|l| l.contains("Matches") && l.contains('─'))
+        .unwrap_or_else(|| panic!("Matches separator not rendered. Got:\n{}", screen));
+    let body_idx = lines
+        .iter()
+        .position(|l| l.contains("Type a search pattern"))
+        .unwrap_or_else(|| panic!("empty-state body not rendered. Got:\n{}", screen));
+
+    assert!(
+        help_idx < sep_idx,
+        "help hint row (line {}) must render above the Matches separator \
+         (line {}). Got:\n{}",
+        help_idx,
+        sep_idx,
+        screen
+    );
+    assert!(
+        sep_idx < body_idx,
+        "Matches separator (line {}) and its list (body line {}) must be \
+         the last section in the panel. Got:\n{}",
+        sep_idx,
+        body_idx,
+        screen
+    );
+}
+
 /// Cancelling at the search field (before typing) closes the empty panel.
 #[test]
 fn test_search_replace_cancel_at_search_field() {
