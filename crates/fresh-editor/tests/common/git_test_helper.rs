@@ -2,9 +2,52 @@
 
 use super::harness::{copy_plugin, copy_plugin_lib};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
+
+/// Build a `git` command for a test repo that is fully isolated from the host
+/// machine's git configuration.
+///
+/// Why this matters: without isolation, every test repo inherits the global /
+/// system git config of whatever machine runs the suite (a developer's box, a
+/// Linux CI runner, a Windows CI runner). That config can enable signing
+/// programs, background `gc`/`maintenance`, `init.templateDir` hooks,
+/// `core.autocrlf`, `fsmonitor`, etc. — any of which can make a commit fail or
+/// silently change behavior in environment-specific ways. The
+/// `git_log_commit_list_scrolls_with_wheel` flake ("fatal: unable to read
+/// <hash>" during commit) and the Windows CRLF discard failure were both
+/// symptoms of this leakage.
+///
+/// We therefore:
+///   * ignore system config (`GIT_CONFIG_NOSYSTEM`) and point global config at
+///     a nonexistent file (`GIT_CONFIG_GLOBAL`), which git treats as empty —
+///     cross-platform, unlike `/dev/null`;
+///   * pin every setting the tests rely on via `-c` so it applies to *every*
+///     subcommand including `init` (identity, no signing, LF endings);
+///   * disable automatic `gc`/`maintenance` so loose objects are never
+///     repacked mid-operation;
+///   * force durable loose-object writes (`core.fsync`) so an object written by
+///     one commit is guaranteed readable by the next, even on CI filesystems
+///     with weaker write-then-read coherency.
+fn git_command(path: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(path)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", path.join("nonexistent-gitconfig"))
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["-c", "user.name=Test User"])
+        .args(["-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(["-c", "tag.gpgsign=false"])
+        .args(["-c", "gc.auto=0"])
+        .args(["-c", "maintenance.auto=false"])
+        .args(["-c", "core.autocrlf=false"])
+        .args(["-c", "core.eol=lf"])
+        .args(["-c", "core.fsync=loose-object,index,reference"])
+        .args(["-c", "core.fsyncMethod=fsync"]);
+    cmd
+}
 
 /// A hermetic git repository for testing
 pub struct GitTestRepo {
@@ -20,10 +63,13 @@ impl GitTestRepo {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let path = temp_dir.path().to_path_buf();
 
-        // Initialize git repository
-        let output = Command::new("git")
+        // Initialize git repository. All git settings the tests rely on are
+        // pinned per-invocation by `git_command` (identity, no signing, LF
+        // endings, no auto gc/maintenance, durable writes), and the host's
+        // global/system config is ignored — so behavior is identical on every
+        // machine.
+        let output = git_command(&path)
             .arg("init")
-            .current_dir(&path)
             .output()
             .expect("Failed to initialize git repository");
 
@@ -33,52 +79,6 @@ impl GitTestRepo {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-
-        // Configure git user for commits
-        Command::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to configure git user.name");
-
-        Command::new("git")
-            .args(["config", "user.email", "test@example.com"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to configure git user.email");
-
-        // Disable GPG signing for test commits
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to disable GPG signing");
-
-        // Disable automatic GC/repacking to prevent "unable to read <hash>"
-        // failures when many test repos run in parallel: auto-gc can move loose
-        // objects into pack files mid-operation, making them temporarily
-        // unreadable by a concurrent git command in the same repo.
-        Command::new("git")
-            .args(["config", "gc.auto", "0"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to disable auto gc");
-
-        // Force LF line endings regardless of platform git configuration
-        // (e.g. core.autocrlf=true on Windows). Tests write files with \n and
-        // assert they come back with \n after a git checkout/restore; CRLF
-        // conversion would break those assertions on Windows.
-        Command::new("git")
-            .args(["config", "core.autocrlf", "false"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to set core.autocrlf");
-
-        Command::new("git")
-            .args(["config", "core.eol", "lf"])
-            .current_dir(&path)
-            .output()
-            .expect("Failed to set core.eol");
 
         GitTestRepo {
             _temp_dir: temp_dir,
@@ -102,9 +102,8 @@ impl GitTestRepo {
     /// Add files to git staging area
     pub fn git_add(&self, paths: &[&str]) {
         for path in paths {
-            let output = Command::new("git")
+            let output = git_command(&self.path)
                 .args(["add", path])
-                .current_dir(&self.path)
                 .output()
                 .expect("Failed to run git add");
 
@@ -119,9 +118,8 @@ impl GitTestRepo {
 
     /// Add all files to git
     pub fn git_add_all(&self) {
-        let output = Command::new("git")
+        let output = git_command(&self.path)
             .args(["add", "."])
-            .current_dir(&self.path)
             .output()
             .expect("Failed to run git add .");
 
@@ -135,9 +133,8 @@ impl GitTestRepo {
 
     /// Commit staged changes
     pub fn git_commit(&self, message: &str) {
-        let output = Command::new("git")
+        let output = git_command(&self.path)
             .args(["commit", "-m", message])
-            .current_dir(&self.path)
             .output()
             .expect("Failed to run git commit");
 
