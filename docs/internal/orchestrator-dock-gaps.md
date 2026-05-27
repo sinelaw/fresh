@@ -33,6 +33,14 @@
   the chosen width). Today the width is a fixed constant.
 
 ### Dock UX (plugin)
+- **Diving into a *switched* session focuses the file explorer, not the
+  buffer.** When you arrow to a different session and press Enter, the
+  window activates with its file-explorer pane focused, so the first
+  keystrokes filter the tree instead of editing — you must Ctrl+E / click
+  into the buffer first. (Editing the *current* session works seamlessly:
+  open a file → dock → dive → type all flows into the buffer.) Likely in
+  the window-activation focus-restore layer rather than the dock; verify
+  whether `set_active_window` should land focus on the last editor pane.
 - **Attention glyph (⚑).** No reliable per-session "agent waiting /
   exited" signal exists in the session model yet, so the wireframe's
   attention indicator is not implemented. Needs a real state source
