@@ -2188,6 +2188,13 @@ pub enum PluginCommand {
     /// `editor.activeWindow()` after.
     SetActiveWindow { id: WindowId },
 
+    /// Like `SetActiveWindow`, but plays a directional wipe on the
+    /// newly-active window's editor content as it appears. `from_edge`
+    /// is "top" | "bottom" | "left" | "right" (the edge the incoming
+    /// content slides in from). Used by the orchestrator dock so that
+    /// arrowing up/down the session list wipes the window up/down.
+    SetActiveWindowAnimated { id: WindowId, from_edge: String },
+
     /// Close a session and drop its associated state. Refuses to
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
@@ -3723,6 +3730,17 @@ pub enum PluginCommand {
     /// Tear down the floating widget panel. No-op when no floating
     /// panel is mounted, or when the `panel_id` doesn't match.
     UnmountFloatingWidget { panel_id: u64 },
+
+    /// Control a mounted floating widget panel's placement / focus
+    /// without re-sending its spec. `op` is one of:
+    /// - "dock"   — re-anchor as a full-height left dock; `arg` is the
+    ///   dock width in columns. The dock is non-modal: the editor
+    ///   underneath stays rendered and (when blurred) keyboard-usable.
+    /// - "center" — restore the default centered-overlay placement.
+    /// - "focus"  — route keys to the panel (modal-ish capture).
+    /// - "blur"   — stop routing keys to the panel; it stays rendered
+    ///   so focus returns to the editor while the dock remains visible.
+    FloatingPanelControl { panel_id: u64, op: String, arg: f64 },
 }
 
 impl PluginCommand {

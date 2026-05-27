@@ -331,6 +331,19 @@ interface OpenDialogState {
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
+// When the open panel is mounted as the persistent left dock rather
+// than the centered modal picker. The dock reuses the same panel +
+// `openDialog` state; these flags drive the dock-only behaviours
+// (live-switch on nav, Enter/Esc blur instead of close).
+let dockMode = false;
+// True while the dock is visible but blurred — keyboard focus is in
+// the editor and the dock just reflects the active session. The
+// toggle command re-focuses; Enter/Esc blur.
+let dockBlurred = false;
+// Monotonic token so a rapid run of ↑/↓ only commits the *last*
+// selection after the debounce window (30ms) — see `scheduleDockSwitch`.
+let dockSwitchToken = 0;
+const DOCK_WIDTH_COLS = 32;
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
 // showing every session; flipping it with the Project control / Alt+P
@@ -1684,7 +1697,7 @@ function refreshOpenDialog(): void {
   } else if (openDialog.selectedIndex < 0) {
     openDialog.selectedIndex = 0;
   }
-  openPanel.update(buildOpenSpec());
+  openPanel.update(dockMode ? buildDockSpec() : buildOpenSpec());
   // The list widget's `selectedIndex` in the spec is initial-only;
   // pin it via mutation so re-renders don't snap back to 0.
   if (openDialog.filteredIds.length > 0) {
@@ -1692,8 +1705,9 @@ function refreshOpenDialog(): void {
   }
 }
 
-function openControlRoom(): void {
+function openControlRoom(opts: { dock?: boolean } = {}): void {
   if (openPanel) return;
+  const asDock = opts?.dock === true;
   reconcileSessions();
   // Summarise on-disk session content up front so the trivial filter
   // has data on the first render.
@@ -1725,10 +1739,22 @@ function openControlRoom(): void {
   const activeIdx = openDialog.filteredIds.indexOf(activeId);
   openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
   openPanel = new FloatingWidgetPanel();
-  // 90% × 90% of the terminal — the open dialog wants room for
-  // a real session list + preview pane, unlike the new-session
-  // form which stays compact.
-  openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+  if (asDock) {
+    // Persistent, non-modal full-height left column. Mount, then
+    // re-anchor to the dock (which sets the content-wrap width to the
+    // dock columns) and re-render so the spec lays out at dock width.
+    dockMode = true;
+    dockBlurred = false;
+    openPanel.mount(buildDockSpec(), { widthPct: 100, heightPct: 100 });
+    editor.floatingPanelControl(openPanel.id(), "dock", DOCK_WIDTH_COLS);
+    openPanel.update(buildDockSpec());
+  } else {
+    dockMode = false;
+    // 90% × 90% of the terminal — the open dialog wants room for
+    // a real session list + preview pane, unlike the new-session
+    // form which stays compact.
+    openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+  }
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
@@ -1755,8 +1781,138 @@ function closeOpenDialog(): void {
     openPanel = null;
   }
   openDialog = null;
+  dockMode = false;
+  dockBlurred = false;
   editor.setEditorMode(null);
 }
+
+// ---------------------------------------------------------------------
+// Global left dock
+//
+// The dock reuses the open-dialog state/panel but is mounted as a
+// full-height, non-modal left column (host `floatingPanelControl`
+// "dock"). It renders a single-column session list (the modal's
+// two-pane picker would be unreadable at dock width). Navigating the
+// list switches the active window live (debounced), so the editor to
+// the dock's right *is* the preview.
+// ---------------------------------------------------------------------
+
+// Compact single-column spec for the dock. Reuses the same `sessions`
+// list key + filter/scope/action keys as the modal so the existing
+// `widget_event` handlers fire unchanged.
+function buildDockSpec(): WidgetSpec {
+  if (!openDialog) return col();
+  const filtered = openDialog.filteredIds;
+  const activeId = editor.activeWindow();
+  const items = filtered.map((id) => renderListItem(id, activeId));
+  const itemKeys = filtered.map(String);
+  const selIdx = filtered.length === 0
+    ? -1
+    : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
+  const inConfirm = openDialog.pendingConfirm !== null;
+  const scope = openDialog.scope;
+  const newKey = editor.getKeybindingLabel(
+    "orchestrator_open_new_from_picker",
+    OPEN_MODE,
+  );
+  const newLabel = newKey ? `+ New ${newKey}` : "+ New";
+
+  return col(
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
+        ]),
+      ],
+    },
+    row(
+      button(newLabel, {
+        intent: "primary",
+        key: inConfirm ? undefined : "new-session",
+      }),
+      flexSpacer(),
+      button(scope === "current" ? "this ▾" : "all ▾", {
+        key: inConfirm ? undefined : "scope-toggle",
+      }),
+    ),
+    text({
+      value: openDialog.filter.value,
+      cursorByte: openDialog.filter.cursor,
+      label: "Filter",
+      placeholder: "/ to search",
+      fullWidth: true,
+      key: inConfirm ? undefined : "filter",
+    }),
+    sessionsSeparator(),
+    sessionsColumnHeader(),
+    list({
+      items,
+      itemKeys,
+      selectedIndex: selIdx,
+      visibleRows: openDialog.listVisibleRows,
+      focusable: false,
+      key: inConfirm ? undefined : "sessions",
+    }),
+    row(
+      flexSpacer(),
+      hintBar([
+        { keys: "↑↓", label: "switch" },
+        { keys: "Enter", label: "edit" },
+        { keys: "Esc", label: "editor" },
+      ]),
+      flexSpacer(),
+    ),
+  );
+}
+
+function refreshDock(): void {
+  if (openPanel && dockMode && openDialog) {
+    openPanel.update(buildDockSpec());
+    if (openDialog.filteredIds.length > 0) {
+      openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+    }
+  }
+}
+
+// Commit the highlighted session as the active window after a short
+// debounce, so holding ↑/↓ to traverse the list doesn't thrash through
+// every session in between. `fromEdge` drives the directional wipe.
+function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
+  const token = ++dockSwitchToken;
+  void (async () => {
+    await editor.delay(30);
+    if (token !== dockSwitchToken) return;
+    if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
+    const id = openDialog.filteredIds[openDialog.selectedIndex];
+    if (typeof id !== "number" || id <= 0) return;
+    if (orchestratorSessions.get(id)?.discovered) return;
+    if (id === editor.activeWindow()) return;
+    if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
+    else editor.setActiveWindow(id);
+  })();
+}
+
+// Toggle command (bind to a key of choice; reachable as
+// "Orchestrator: Toggle Dock" in the command palette). hidden → show
+// + focus; focused → hide; blurred → re-focus.
+function toggleDock(): void {
+  if (openPanel && dockMode) {
+    if (dockBlurred) {
+      editor.floatingPanelControl(openPanel.id(), "focus");
+      dockBlurred = false;
+      editor.setEditorMode(OPEN_MODE);
+    } else {
+      closeOpenDialog();
+    }
+    return;
+  }
+  // A centered modal picker is open — leave it alone.
+  if (openPanel) return;
+  openControlRoom({ dock: true });
+}
+
+registerHandler("orchestrator_dock_toggle", toggleDock);
 
 // Stop every process one session owns. Sends SIGTERM first via the
 // host's `signalWindow` (which fans out through the window's
@@ -4220,7 +4376,17 @@ editor.on("widget_event", (e) => {
   // Open dialog (session picker)
   // ---------------------------------------------------------------------
   if (openPanel && openDialog && e.panel_id === openPanel.id()) {
-    if (e.event_type === "change" && e.widget_key === "filter") {
+    if (e.event_type === "blur") {
+      // Host fired this because Esc was pressed while the dock was
+      // focused — focus has returned to the editor; the dock stays
+      // visible. Drop the dock's editor-mode so its chords (/, Space,
+      // …) don't intercept keys meant for the buffer.
+      if (dockMode) {
+        dockBlurred = true;
+        editor.setEditorMode(null);
+      }
+      return;
+    }
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const value = payload.value;
       const cursor = payload.cursorByte;
@@ -4255,8 +4421,20 @@ editor.on("widget_event", (e) => {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
       if (typeof idx === "number") {
+        const prevIdx = openDialog.selectedIndex;
         openDialog.selectedIndex = idx;
         clearDialogError();
+        if (dockMode) {
+          // The editor to the dock's right is the preview: arrowing
+          // the list switches the active window live (debounced),
+          // wiping down when moving down the list and up when moving
+          // up. Re-render the dock list to move the highlight now.
+          openPanel.update(buildDockSpec());
+          openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+          const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
+          scheduleDockSwitch(fromEdge);
+          return;
+        }
         // Update preview pane.
         openPanel.update(buildOpenSpec());
         // Re-pin the list selection so the spec re-emit doesn't
@@ -4297,6 +4475,14 @@ editor.on("widget_event", (e) => {
       }
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
         editor.setActiveWindow(id);
+      }
+      if (dockMode && openPanel) {
+        // Dock stays visible; Enter just hands keyboard focus to the
+        // editor (the session is already active via live-switch).
+        editor.floatingPanelControl(openPanel.id(), "blur");
+        dockBlurred = true;
+        editor.setEditorMode(null);
+        return;
       }
       closeOpenDialog();
       return;
@@ -4547,6 +4733,13 @@ editor.registerCommand(
   "Orchestrator: Kill Selected",
   "Close the session highlighted in the open Orchestrator prompt",
   "orchestrator_kill",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Toggle Dock",
+  "Show/hide the persistent left session dock (↑↓ switches windows live)",
+  "orchestrator_dock_toggle",
   null,
   { terminalBypass: true },
 );

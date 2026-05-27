@@ -4379,6 +4379,19 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Switch the active window with a directional wipe on the
+    /// incoming content. `from_edge`: "top" | "bottom" | "left" |
+    /// "right". See `PluginCommand::SetActiveWindowAnimated`.
+    #[qjs(rename = "setActiveWindowAnimated")]
+    pub fn set_active_window_animated(&self, id: u64, from_edge: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetActiveWindowAnimated {
+                id: fresh_core::WindowId(id),
+                from_edge,
+            })
+            .is_ok()
+    }
+
     /// Close session `id`. Refuses to close the active session or
     /// the base session (id 1). Logs and no-ops on failure.
     pub fn close_window(&self, id: u64) -> bool {
@@ -5554,6 +5567,20 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::UnmountFloatingWidget {
                 panel_id: panel_id as u64,
+            })
+            .is_ok()
+    }
+
+    /// Control a mounted floating panel's placement / focus without
+    /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
+    /// "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+    #[qjs(rename = "floatingPanelControl")]
+    pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
+        self.command_sender
+            .send(PluginCommand::FloatingPanelControl {
+                panel_id: panel_id as u64,
+                op,
+                arg,
             })
             .is_ok()
     }

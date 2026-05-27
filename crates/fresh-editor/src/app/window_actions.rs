@@ -345,6 +345,43 @@ impl crate::app::Editor {
         }
     }
 
+    /// Switch the active window and play a directional wipe over the
+    /// editor content as the incoming window appears. The editor
+    /// content geometry is layout-driven (identical for any session),
+    /// so the outgoing window's last content rect is the right area to
+    /// animate. `capture_before_all` snapshots the previous frame (the
+    /// outgoing window) and `SlideIn` slides the new content in over it.
+    pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
+        let animate = self.active_window != id
+            && self.windows.contains_key(&id)
+            && self.config().editor.animations;
+        let area = self.active_layout().editor_content_area;
+        self.set_active_window(id);
+        if !animate {
+            return;
+        }
+        let Some(area) = area else { return };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        use crate::view::animation::{AnimationKind, Edge};
+        let from = match from_edge {
+            "top" => Edge::Top,
+            "bottom" => Edge::Bottom,
+            "left" => Edge::Left,
+            "right" => Edge::Right,
+            _ => Edge::Bottom,
+        };
+        self.active_window_mut().animations.start(
+            area,
+            AnimationKind::SlideIn {
+                from,
+                duration: std::time::Duration::from_millis(180),
+                delay: std::time::Duration::ZERO,
+            },
+        );
+    }
+
     /// Cycle to the next open window in the workspace.
     ///
     /// Windows are ordered by their numeric `WindowId` (which is

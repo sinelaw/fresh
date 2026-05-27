@@ -2566,6 +2566,13 @@ interface EditorAPI {
 	*/
 	setActiveWindow(id: number): boolean;
 	/**
+	* Like `setActiveWindow`, but plays a directional wipe on the
+	* newly-active window's editor content as it appears. `fromEdge`
+	* is the edge the incoming content slides in from — use "bottom"
+	* when moving down a list and "top" when moving up.
+	*/
+	setActiveWindowAnimated(id: number, fromEdge: "top" | "bottom" | "left" | "right"): boolean;
+	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.
 	*/
@@ -2866,6 +2873,18 @@ interface EditorAPI {
 	* Tear down the floating widget panel.
 	*/
 	unmountFloatingWidget(panelId: number): boolean;
+	/**
+	* Control a mounted floating panel's placement / focus without
+	* re-sending its spec.
+	* - `op="dock"`   — re-anchor as a full-height left dock; `arg` is
+	*   the dock width in columns. Non-modal: the editor underneath
+	*   stays rendered, and keyboard-usable while the dock is blurred.
+	* - `op="center"` — restore the default centered-overlay placement.
+	* - `op="focus"`  — route keys to the panel.
+	* - `op="blur"`   — stop routing keys to the panel (it stays
+	*   visible); focus returns to the editor.
+	*/
+	floatingPanelControl(panelId: number, op: "dock" | "center" | "focus" | "blur", arg?: number): boolean;
 	/**
 	* Spawn a process (async, returns request_id)
 	* 

@@ -1353,6 +1353,8 @@ mod tests {
             "mountFloatingWidget",
             "updateFloatingWidget",
             "unmountFloatingWidget",
+            "floatingPanelControl",
+            "setActiveWindowAnimated",
         ];
 
         let mut missing = Vec::new();

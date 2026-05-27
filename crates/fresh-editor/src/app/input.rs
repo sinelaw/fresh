@@ -249,8 +249,12 @@ impl Editor {
             && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
         {
             KeyContext::Popup
-        } else if self.floating_widget_panel.is_some() {
-            // A modal floating panel (picker / new-session form /
+        } else if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.focused)
+        {
+            // A focused floating panel (picker / new-session form /
             // plugin overlay) is the keyboard owner. Resolve keys
             // as Normal regardless of the underlying buffer's stale
             // `key_context` (which can still be Terminal when the
@@ -259,6 +263,11 @@ impl Editor {
             // Normal)` skipped the mode-keybinding lookup for any
             // Ctrl/Alt chord the plugin had bound on the panel's
             // mode, e.g. `Alt+N` for "new session from the picker".
+            //
+            // A *blurred* panel (the orchestrator dock after Enter)
+            // falls through to the editor's own context so the buffer
+            // underneath stays keyboard-usable while the dock stays
+            // visible.
             KeyContext::Normal
         } else if self
             .active_window()
@@ -324,7 +333,10 @@ impl Editor {
         // command dispatcher; printable chars feed `textInputChar` to
         // the focused TextInput. Mouse clicks outside the panel are
         // swallowed (handled in `mouse_input`).
-        if self.floating_widget_panel.is_some()
+        if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.focused)
             && self.dispatch_floating_widget_key(code, modifiers)
         {
             return Ok(());
@@ -2503,6 +2515,43 @@ impl Editor {
             Some(fwp) => fwp.panel_id,
             None => return false,
         };
+        // A left-dock panel is non-modal: Esc returns focus to the
+        // editor (blur) and leaves the dock visible, rather than
+        // tearing the panel down. The plugin is told via a "blur"
+        // widget_event so it can update its own focus mirror. Hiding
+        // the dock entirely is the toggle command's job.
+        if code == KeyCode::Esc
+            && matches!(
+                self.floating_widget_panel.as_ref().map(|f| f.placement),
+                Some(super::PanelPlacement::LeftDock { .. })
+            )
+        {
+            let widget_key = self
+                .widget_registry
+                .get(panel_id)
+                .map(|p| p.focus_key.clone())
+                .unwrap_or_default();
+            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+                fwp.focused = false;
+            }
+            if self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .has_hook_handlers("widget_event")
+            {
+                self.plugin_manager.read().unwrap().run_hook(
+                    "widget_event",
+                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                        panel_id,
+                        widget_key,
+                        event_type: "blur".to_string(),
+                        payload: serde_json::json!({}),
+                    },
+                );
+            }
+            return true;
+        }
         let key_name: Option<&str> = match code {
             KeyCode::Esc => {
                 // Mode-binding precedence: a plugin's `defineMode`

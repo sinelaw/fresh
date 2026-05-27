@@ -949,11 +949,32 @@ pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 /// mutate paths apply), but its rendered entries are painted into
 /// the overlay rect at draw time instead of being written into a
 /// virtual buffer.
+/// Where a floating widget panel is anchored on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelPlacement {
+    /// Centered modal overlay sized by `width_pct`/`height_pct`
+    /// (the historical default; dims the background, captures keys).
+    Centered,
+    /// Full-height column pinned to the left of the entire editor
+    /// chrome (left of the menu bar, splits, and status bar). The
+    /// chrome is laid out in the remaining width; no background
+    /// dimming. Non-modal — see `FloatingWidgetState::focused`.
+    LeftDock { width_cols: u16 },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FloatingWidgetState {
     pub panel_id: crate::widgets::PanelId,
     pub width_pct: u8,
     pub height_pct: u8,
+    /// On-screen anchor. Defaults to `Centered` on mount; a plugin
+    /// re-anchors to a dock via `FloatingPanelControl{op:"dock"}`.
+    pub placement: PanelPlacement,
+    /// Whether keys route to this panel. Always true for `Centered`
+    /// (modal). For `LeftDock` a plugin toggles this via
+    /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
+    /// underneath stays keyboard-usable while the dock is visible.
+    pub focused: bool,
     /// Most-recently rendered entries. Refreshed on every spec /
     /// command / mutate; painted into the overlay rect at draw
     /// time.

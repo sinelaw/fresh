@@ -55,6 +55,14 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
+        // Carve a full-height left column for a docked floating panel
+        // (e.g. the orchestrator dock) out of the screen *before* the
+        // chrome lays itself out, so the menu bar, splits, and status
+        // bar all sit to the dock's right. `chrome_area` is the region
+        // the rest of `render` lays into; `dock_area` (if any) is
+        // painted last alongside the centered-overlay path.
+        let (dock_area, chrome_area) = self.compute_dock_split(size);
+
         // Let active animations snapshot the previous frame's buffer
         // from the runner's own cache. We can't read the live
         // `frame.buffer_mut()` — ratatui resets it before each draw —
@@ -279,7 +287,7 @@ impl Editor {
                     },
                 ), // Prompt line
             ])
-            .split(size);
+            .split(chrome_area);
 
         let menu_bar_area = main_chunks[0];
         let main_content_area = main_chunks[1];
@@ -668,7 +676,7 @@ impl Editor {
                             },
                         ),
                     ])
-                    .split(size);
+                    .split(chrome_area);
             }
         }
 
@@ -1696,10 +1704,21 @@ impl Editor {
             .apply_all(frame.buffer_mut());
 
         // Floating widget panel is drawn last so it sits above every
-        // other layer (prompts, popups, animations).
-        if self.floating_widget_panel.is_some() {
-            let frame_area = frame.area();
-            self.render_floating_widget_panel(frame, frame_area);
+        // other layer (prompts, popups, animations). A centered panel
+        // paints over the whole frame; a left-dock panel paints only
+        // its carved column (`dock_area`), leaving the chrome it sits
+        // beside untouched.
+        match self.floating_widget_panel.as_ref().map(|f| f.placement) {
+            Some(super::PanelPlacement::LeftDock { .. }) => {
+                if let Some(dock) = dock_area {
+                    self.render_floating_widget_panel(frame, dock);
+                }
+            }
+            Some(super::PanelPlacement::Centered) => {
+                let frame_area = frame.area();
+                self.render_floating_widget_panel(frame, frame_area);
+            }
+            None => {}
         }
     }
 
@@ -3759,6 +3778,37 @@ impl Editor {
     /// caret at the focused TextInput. Stores the inner rect on the
     /// `FloatingWidgetState` so the click hit-test can recover the
     /// geometry on the next mouse event.
+    /// Split `size` into an optional full-height left dock column and
+    /// the remaining chrome area. Returns `(None, size)` unless a
+    /// floating panel is currently placed as a `LeftDock`. The dock
+    /// width is clamped so it can never crowd out the chrome.
+    pub(super) fn compute_dock_split(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> (Option<ratatui::layout::Rect>, ratatui::layout::Rect) {
+        let width = match self.floating_widget_panel.as_ref().map(|f| f.placement) {
+            Some(super::PanelPlacement::LeftDock { width_cols }) => width_cols,
+            _ => return (None, size),
+        };
+        let width = width.min(size.width.saturating_sub(4)).max(1);
+        if width == 0 || size.width <= width {
+            return (None, size);
+        }
+        let dock = ratatui::layout::Rect {
+            x: size.x,
+            y: size.y,
+            width,
+            height: size.height,
+        };
+        let chrome = ratatui::layout::Rect {
+            x: size.x.saturating_add(width),
+            y: size.y,
+            width: size.width.saturating_sub(width),
+            height: size.height,
+        };
+        (Some(dock), chrome)
+    }
+
     pub(super) fn render_floating_widget_panel(
         &mut self,
         frame: &mut Frame,
@@ -3766,19 +3816,28 @@ impl Editor {
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays, scroll_regions) =
-            match self.floating_widget_panel.as_ref() {
-                Some(fwp) => (
-                    fwp.width_pct,
-                    fwp.height_pct,
-                    fwp.entries.clone(),
-                    fwp.focus_cursor,
-                    fwp.embeds.clone(),
-                    fwp.overlays.clone(),
-                    fwp.scroll_regions.clone(),
-                ),
-                None => return,
-            };
+        let (
+            width_pct,
+            height_pct,
+            entries,
+            focus_cursor,
+            embeds,
+            overlays,
+            scroll_regions,
+            placement,
+        ) = match self.floating_widget_panel.as_ref() {
+            Some(fwp) => (
+                fwp.width_pct,
+                fwp.height_pct,
+                fwp.entries.clone(),
+                fwp.focus_cursor,
+                fwp.embeds.clone(),
+                fwp.overlays.clone(),
+                fwp.scroll_regions.clone(),
+                fwp.placement,
+            ),
+            None => return,
+        };
         let theme = self.theme.read().unwrap().clone();
         // Compute the requested rect from width%/height%, then
         // shrink the height to fit the rendered content (Bug 7).
@@ -3795,7 +3854,15 @@ impl Editor {
         // contributes N blank entries plus an EmbedRect that paints
         // over them at draw time). So `entries.len() + 2` (top
         // border + content + bottom border) is the natural fit.
-        let overlay_rect = {
+        // A left-dock panel fills its carved column (`area` is already
+        // the dock rect) at full height and does NOT dim the chrome —
+        // it's a persistent, non-modal companion to the editor, not a
+        // modal overlay. The centered placement keeps the historical
+        // fit-to-content + background-dim behaviour.
+        let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
+        let overlay_rect = if is_dock {
+            area
+        } else {
             let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
             let needed_h = (entries.len() as u16).saturating_add(2);
             let effective_h = needed_h.min(requested.height).max(3);
@@ -3807,7 +3874,9 @@ impl Editor {
             }
         };
 
-        crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
+        if !is_dock {
+            crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
+        }
         frame.render_widget(Clear, overlay_rect);
         let block = Block::default()
             .borders(Borders::ALL)

@@ -747,6 +747,9 @@ impl Editor {
             PluginCommand::SetActiveWindow { id } => {
                 self.set_active_window(id);
             }
+            PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
+                self.set_active_window_animated(id, &from_edge);
+            }
             PluginCommand::CloseWindow { id } => {
                 let _ = self.close_window(id);
             }
@@ -1489,6 +1492,10 @@ impl Editor {
 
             PluginCommand::UnmountFloatingWidget { panel_id } => {
                 self.handle_unmount_floating_widget(panel_id);
+            }
+
+            PluginCommand::FloatingPanelControl { panel_id, op, arg } => {
+                self.handle_floating_panel_control(panel_id, &op, arg);
             }
         }
         Ok(())
@@ -5633,6 +5640,8 @@ impl Editor {
             panel_id,
             width_pct,
             height_pct,
+            placement: super::PanelPlacement::Centered,
+            focused: true,
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
@@ -5766,6 +5775,13 @@ impl Editor {
     /// goes below 10 cols so flex spacers don't collapse to zero on
     /// narrow terminals.
     pub(super) fn floating_panel_inner_width(&self) -> u32 {
+        // A left-dock panel wraps its content to the dock's fixed
+        // column width rather than a percentage of the terminal.
+        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+            self.floating_widget_panel.as_ref().map(|f| f.placement)
+        {
+            return (width_cols as u32).saturating_sub(2).max(10);
+        }
         let term_w = self.terminal_width.max(1) as u32;
         let pct = self
             .floating_widget_panel
@@ -5774,6 +5790,40 @@ impl Editor {
             .unwrap_or(80);
         let w = (term_w * pct) / 100;
         w.saturating_sub(2).max(10)
+    }
+
+    /// Apply a `FloatingPanelControl` op. No-op if the panel id
+    /// doesn't match the mounted floating panel.
+    fn handle_floating_panel_control(&mut self, panel_id: u64, op: &str, arg: f64) {
+        let matches = self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.panel_id == panel_id);
+        if !matches {
+            tracing::warn!("FloatingPanelControl for unknown/mismatched panel {panel_id} ignored");
+            return;
+        }
+        let Some(fwp) = self.floating_widget_panel.as_mut() else {
+            return;
+        };
+        match op {
+            "dock" => {
+                // Clamp the dock width to something sane relative to
+                // the terminal so it can never swallow the whole chrome.
+                let term_w = self.terminal_width.max(20);
+                let max_cols = term_w.saturating_sub(20).max(10);
+                let width_cols = (arg as u16).clamp(10, max_cols);
+                fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                fwp.focused = true;
+            }
+            "center" => {
+                fwp.placement = super::PanelPlacement::Centered;
+                fwp.focused = true;
+            }
+            "focus" => fwp.focused = true,
+            "blur" => fwp.focused = false,
+            other => tracing::warn!("FloatingPanelControl: unknown op {other:?}"),
+        }
     }
 
     fn handle_get_text_properties_at_cursor(&self, buffer_id: BufferId) {
