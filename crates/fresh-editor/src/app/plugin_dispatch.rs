@@ -637,6 +637,9 @@ impl Editor {
             PluginCommand::ReloadGrammars { callback_id } => {
                 self.handle_reload_grammars(callback_id);
             }
+            PluginCommand::CancelPrompt => {
+                self.cancel_prompt();
+            }
             PluginCommand::StartPrompt {
                 label,
                 prompt_type,

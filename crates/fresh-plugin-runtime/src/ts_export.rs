@@ -1172,6 +1172,7 @@ mod tests {
             "unregisterCommand",
             "setContext",
             "executeAction",
+            "cancelPrompt",
             "getCursorPosition",
             "getBufferPath",
             "getBufferLength",

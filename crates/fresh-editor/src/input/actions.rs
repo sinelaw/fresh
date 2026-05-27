@@ -2747,8 +2747,6 @@ pub fn action_to_events(
         | Action::QuickOpenFiles
         | Action::OpenLiveGrep
         | Action::ResumeLiveGrep
-        | Action::LiveGrepExportQuickfix
-        | Action::QuickfixGoto
         | Action::ToggleUtilityDock
         | Action::OpenTerminalInDock
         | Action::CycleLiveGrepProvider

@@ -1794,14 +1794,6 @@
       "when": "prompt"
     },
     {
-      "comment": "Quickfix list (Utility Dock) — open the match under the cursor at its line:col, like Vim's quickfix and VS Code's results list.",
-      "key": "Enter",
-      "modifiers": [],
-      "action": "quickfix_goto",
-      "args": {},
-      "when": "mode:quickfix-list"
-    },
-    {
       "comment": "Utility Dock — focus / unfocus toggle. Avoids Alt+D because Ctrl+D (add_cursor_next_match) is in the multi-cursor cluster and the adjacency is muscle-memory-risky. Mnemonic: 'j' is 'down' in vim-ish navigation, matching the dock's bottom-of-screen home position.",
       "key": "j",
       "modifiers": ["alt"],

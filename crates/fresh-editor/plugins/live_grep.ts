@@ -179,6 +179,11 @@ let overlayActive = false;
 // pre-filled (rather than a bespoke cached-results overlay).
 let lastQuery = "";
 
+// The most recent merged result set, captured by `search` so the
+// Quickfix export can snapshot exactly what the user is looking at into
+// the dock panel without re-running the search.
+let lastResults: GrepMatch[] = [];
+
 // ── Search modes ──────────────────────────────────────────────────
 //
 // Separate from *where* we search (scopes): these control *how* the
@@ -662,6 +667,59 @@ const finder = new Finder<GrepMatch>(editor, {
   maxResults: MAX_RESULTS,
 });
 
+// The Quickfix list is just another "list of locations" surface, so it
+// rides the same Finder panel abstraction as Diagnostics and Find
+// References (dockable via `useUtilityDock`, Enter → openFile for free).
+// Exporting hands it a static snapshot of the current matches; the
+// bespoke Rust quickfix buffer it replaced is gone.
+const quickfixFinder = new Finder<GrepMatch>(editor, {
+  id: "quickfix",
+  format: (match) => ({
+    label: `${match.file}:${match.line}:${match.column}`,
+    description: match.content.trim(),
+    location: {
+      file: match.file,
+      line: match.line,
+      column: match.column,
+    },
+  }),
+  useUtilityDock: true,
+});
+
+// Snapshot the current Live Grep results into the Quickfix dock panel.
+// Bound to the `live_grep_export_quickfix` keybinding (Alt+M / Alt+Q,
+// when=prompt) — a plain plugin action now that the Rust action is gone.
+function exportQuickfix(): void {
+  if (!overlayActive) return;
+  if (lastResults.length === 0) {
+    editor.setStatus("No Live Grep results to export");
+    return;
+  }
+  const query = lastQuery;
+  const matches = lastResults;
+  // Dismiss the host overlay first so the panel opens against the editor
+  // pane (which is then routed into the dock), not behind the overlay.
+  // `cancelPrompt` is the same teardown Escape triggers; the plugin's
+  // own prompt state is cleared via the resulting `prompt_cancelled`
+  // hook.
+  editor.cancelPrompt();
+  void quickfixFinder.panel({
+    title: `Quickfix: ${query} (${matches.length} matches)`,
+    items: matches,
+  });
+}
+registerHandler("live_grep_export_quickfix", exportQuickfix);
+// Register the action→handler mapping so the `live_grep_export_quickfix`
+// keybinding (a PluginAction now) resolves across the plugin boundary.
+// A never-activated context keeps it out of the palette — it's only
+// meaningful from inside the Live Grep overlay.
+editor.registerCommand(
+  "Live Grep: Export to Quickfix (internal)",
+  "",
+  "live_grep_export_quickfix",
+  "live-grep-internal"
+);
+
 /**
  * Switch to the next *available* registered provider, in priority
  * order, wrapping at the end. Unavailable providers (those whose
@@ -937,6 +995,7 @@ async function search(query: string): Promise<GrepMatch[]> {
   if (lastSearchTruncated !== wasTruncated) {
     updateOverlayTitle(cachedSelected ?? null);
   }
+  lastResults = results;
   return results;
 }
 

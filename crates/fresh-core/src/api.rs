@@ -2653,6 +2653,9 @@ pub enum PluginCommand {
         column: Option<usize>, // 1-indexed, None = go to line start
     },
 
+    /// Cancel the active prompt / overlay, equivalent to the user
+    /// pressing Escape. Lets a plugin dismiss a prompt it opened.
+    CancelPrompt,
     /// Start a prompt (minibuffer) with a custom type identifier
     /// This allows plugins to create interactive prompts
     StartPrompt {

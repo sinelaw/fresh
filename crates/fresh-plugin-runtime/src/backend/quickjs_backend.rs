@@ -1342,6 +1342,16 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Cancel the active prompt / overlay — the same teardown the
+    /// Escape key triggers. Lets a plugin dismiss a prompt it opened
+    /// (e.g. exporting Live Grep results to a dock panel) without
+    /// routing a synthetic keypress.
+    pub fn cancel_prompt(&self) -> bool {
+        self.command_sender
+            .send(PluginCommand::CancelPrompt)
+            .is_ok()
+    }
+
     /// Register a custom statusbar token.
     /// Token will be named "plugin_name:token_name" where plugin_name is the current plugin.
     /// Returns true if registration succeeded, false if invalid or already registered.

@@ -1,12 +1,13 @@
 //! Regression test for issue #2124: pressing Enter on a line in the
-//! `*Quickfix*` dock buffer must open the referenced file at its
+//! `*Quickfix*` dock panel must open the referenced file at its
 //! `line:col`, instead of showing "Editing disabled in this buffer".
 //!
-//! The test drives the real flow — Live Grep → export to Quickfix
-//! (Alt+M) → Enter on a match — and asserts only on rendered output and
-//! the resulting active buffer (CONTRIBUTING §2). It fails on the
-//! pre-fix build (Enter trips the read-only editing guard) and passes
-//! once the `quickfix-list` mode binds Enter to `quickfix_goto`.
+//! The Quickfix list is a Finder panel (`useUtilityDock`) owned by the
+//! Live Grep plugin, like Diagnostics and Find References — navigation
+//! comes from the shared Finder Enter→openFile path. The test drives the
+//! real flow (Live Grep → export with Alt+M → Enter on a match) and
+//! asserts only on rendered output and the resulting active buffer
+//! (CONTRIBUTING §2).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -101,9 +102,9 @@ fn quickfix_enter_opens_match_location() {
         })
         .unwrap();
 
-    // The dock is focused after export. Step onto the first match line
-    // (line 0 is the "Quickfix: …" header) and press Enter.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // The panel is focused after export, with the cursor already on the
+    // first match (the Finder seeds the cursor on the first item, not the
+    // header). Press Enter to navigate.
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();

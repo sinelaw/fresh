@@ -736,7 +736,7 @@ type CursorInfo = {
 		end: number;
 	} | null;
 	/**
-	* 0-indexed line number of the cursor. `None` when the line index is
+	* 0-indexed line number of the cursor. `null` when the line index is
 	* unavailable — e.g. a huge file whose line scan hasn't completed, where
 	* the editor positions purely by byte offset. Plugins must treat `null`
 	* as "unknown", never as line 0.
@@ -903,6 +903,15 @@ type WidgetSpec = {
 	"kind": "row";
 	children: Array<WidgetSpec>;
 	key?: string | null;
+	/**
+	* When true, children that don't fit on one line reflow onto
+	* additional lines (growing the row's height) instead of being
+	* truncated. Children are never split — wrap happens at child
+	* boundaries — so wrap a logical group (e.g. a toggle + its
+	* accelerator) in a nested non-wrapping `Row` to keep it intact.
+	* Ignored when the row contains multi-line (block) children.
+	*/
+	wrap: boolean;
 } | {
 	"kind": "col";
 	children: Array<WidgetSpec>;
@@ -1213,6 +1222,16 @@ interface SearchHandle {
 	take(): SearchTakeResult;
 	cancel(): void;
 }
+type ReplaceResult = {
+	/**
+	* Number of replacements made
+	*/
+	replacements: number;
+	/**
+	* Buffer ID of the edited buffer
+	*/
+	bufferId: number;
+};
 type AuthorityFilesystem = {
 	kind: "local";
 };
@@ -1496,16 +1515,6 @@ type RemoteIndicatorStatePayload = {
 	kind: "disconnected";
 	label?: string | null;
 };
-type ReplaceResult = {
-	/**
-	* Number of replacements made
-	*/
-	replacements: number;
-	/**
-	* Buffer ID of the edited buffer
-	*/
-	bufferId: number;
-};
 type SpawnResult = {
 	/**
 	* Complete stdout as string
@@ -1628,6 +1637,13 @@ interface EditorAPI {
 	* Execute a built-in action
 	*/
 	executeAction(actionName: string): boolean;
+	/**
+	* Cancel the active prompt / overlay — the same teardown the
+	* Escape key triggers. Lets a plugin dismiss a prompt it opened
+	* (e.g. exporting Live Grep results to a dock panel) without
+	* routing a synthetic keypress.
+	*/
+	cancelPrompt(): boolean;
 	/**
 	* Register a custom statusbar token.
 	* Token will be named "plugin_name:token_name" where plugin_name is the current plugin.
@@ -2126,20 +2142,20 @@ interface EditorAPI {
 	*/
 	getDataDir(): string;
 	/**
-	* Per-working-directory data root for plugin state that should be scoped
-	* to the current project root / worktree rather than shared across all of
-	* them (`<data_dir>/workdirs/<encoded-cwd>/`). Prefer this over
-	* `getDataDir()` for per-project state; the directory is not created for
-	* you. Note: terminal scrollback and orchestrator state use their own
-	* dedicated layouts (see `getTerminalDir()`), not this root.
-	*/
-	getWorkingDataDir(): string;
-	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
-	* a search can stay scoped to the active project's terminals.
+	* Universal Search's terminal scope can stay scoped to the active
+	* project rather than spanning every project's terminals.
 	*/
 	getTerminalDir(): string;
+	/**
+	* Per-working-directory data root for plugin state scoped to the current
+	* project root / worktree (`<data_dir>/workdirs/<encoded-cwd>/`). Use
+	* instead of `getDataDir()` for state that should not be shared across
+	* worktrees. The directory is not created here — callers create what
+	* they need under it.
+	*/
+	getWorkingDataDir(): string;
 	/**
 	* Get themes directory path
 	*/
@@ -2479,26 +2495,21 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
-	* Set the floating-overlay prompt's header toolbar as a `WidgetSpec`
-	* (real, clickable `Toggle`/`Button` widgets), rendered in place of the
-	* styled-text title. Give each control a `key` equal to the action it
-	* should fire on click (e.g. `"live_grep_toggle_files"`). Pass `null` to
-	* clear it. No visible effect on non-overlay prompts.
-	*/
-	setPromptToolbar(spec: WidgetSpec | null): boolean;
-	/**
-	* Set the floating-overlay prompt's input-row status text, shown
-	* right-aligned just left of the `selected / total` count (e.g.
-	* "Searching…", "No matches"). Empty string clears it. No effect on
-	* non-overlay prompts.
+	* Set the floating-overlay prompt's input-row status text (right-aligned,
+	* left of the match count). Empty string clears it.
 	*/
 	setPromptStatus(status: string): boolean;
 	/**
+	* Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,
+	* clickable `Toggle`/`Button` widgets rendered in the header band, in
+	* place of the styled-text title). Pass `null`/`undefined` to clear it.
+	*/
+	setPromptToolbar(specObj: unknown): boolean;
+	/**
 	* Toggle a floating-overlay toolbar control by its widget `key`. The host
-	* owns the toggle's checked state, flips it in place, and emits a
-	* `widget_event` (`event_type: "toggle"`, payload `{ checked }`). Use this
-	* to route a plugin's own keyboard shortcut through the same host path as
-	* a click or Space on the toggle, then react in your `widget_event` handler.
+	* owns the toggle's checked state, flips it, and emits a `widget_event`
+	* the plugin can listen for. Lets a plugin route its own Alt+… shortcut
+	* through the same host path as a click / Space on the toggle.
 	*/
 	toggleOverlayToolbarWidget(key: string): boolean;
 	/**
@@ -2961,7 +2972,13 @@ interface EditorAPI {
 	* the consumer drains via `handle.take()` at its own cadence. Call
 	* `handle.cancel()` to abort.
 	*/
-	beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number }): SearchHandle;
+	beginSearch(pattern: string, opts?: {
+		fixedString?: boolean;
+		caseSensitive?: boolean;
+		maxResults?: number;
+		wholeWords?: boolean;
+		sourceBufferId?: number;
+	}): SearchHandle;
 	/**
 	* Replace matches in a file's buffer (async)
 	* Opens the file if not already in a buffer, applies edits via the buffer model,
