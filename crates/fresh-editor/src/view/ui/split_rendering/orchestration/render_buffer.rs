@@ -145,6 +145,15 @@ pub(crate) fn compute_buffer_layout(
     state
         .margins
         .update_width_for_buffer(estimated_lines, show_line_numbers);
+    // The diagnostic/indicator gutter is kept when line numbers are off only in
+    // compose mode, where the render below reclaims its width from the desk
+    // margin (issue #2146). In normal editor mode, line-numbers-off means no
+    // gutter at all — otherwise the 1-col indicator slot would eat into the
+    // text width and shift content right.
+    if !show_line_numbers && !matches!(view_mode, ViewMode::PageView) {
+        state.margins.left_config.enabled = false;
+        state.margins.left_config.width = 0;
+    }
     let mut gutter_width = state.margins.left_total_width();
 
     let mut compose_layout = calculate_compose_layout(area, &view_mode, compose_width);
