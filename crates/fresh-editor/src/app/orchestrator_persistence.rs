@@ -1006,4 +1006,119 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a, data_dir.join("orchestrator").join("windows.json"));
     }
+
+    #[test]
+    fn dedup_collapses_same_canonical_root_and_repoints_active() {
+        // Two windows at the same (non-existent, so canonicalize is a
+        // no-op) root must collapse to one. `active` named the loser,
+        // so it's repointed to the survivor.
+        let mut env = env_with(
+            5,
+            vec![
+                make_window(3, "/x/proj", None),
+                make_window(5, "/x/proj", None), // dup of id 3's root
+                make_window(7, "/x/other", None),
+            ],
+        );
+        dedup_windows_by_root(&mut env);
+        assert_eq!(env.windows.len(), 2, "the duplicate root collapsed");
+        // Neither was active by id-equality (active=5 is one of the
+        // dups); the higher id (5) wins, so active stays 5.
+        assert_eq!(env.active, 5);
+        let proj_count = env
+            .windows
+            .iter()
+            .filter(|w| w.root == Path::new("/x/proj"))
+            .count();
+        assert_eq!(proj_count, 1, "exactly one window per canonical root");
+    }
+
+    #[test]
+    fn discover_gcs_missing_dirs_and_yields_one_session_per_existing_dir() {
+        use crate::model::filesystem::StdFileSystem;
+        let data = tempfile::tempdir().unwrap();
+        let data_dir = data.path();
+        let ws_dir = workspaces_dir(data_dir);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        // A workspace file for an existing dir...
+        let live = tempfile::tempdir().unwrap();
+        let live_root = live.path().canonicalize().unwrap();
+        let live_file = ws_dir.join("live.json");
+        std::fs::write(
+            &live_file,
+            serde_json::to_vec(&serde_json::json!({
+                "working_dir": live_root, "label": "live-session",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // ...and one for a directory that does not exist.
+        let dead_file = ws_dir.join("dead.json");
+        std::fs::write(
+            &dead_file,
+            serde_json::to_vec(&serde_json::json!({
+                "working_dir": "/no/such/dir/anywhere", "label": "dead",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let fs = StdFileSystem;
+        let sessions = discover_sessions(&fs, data_dir);
+
+        assert_eq!(sessions.len(), 1, "only the existing dir yields a session");
+        assert_eq!(sessions[0].root, live_root);
+        assert_eq!(sessions[0].label, "live-session");
+        assert!(!dead_file.exists(), "the dead dir's cache file was GC'd");
+        assert!(live_file.exists(), "the live cache file is kept");
+    }
+
+    #[test]
+    fn migrate_folds_windows_json_into_workspace_files_and_retires_it() {
+        use crate::model::filesystem::StdFileSystem;
+        let data = tempfile::tempdir().unwrap();
+        let data_dir = data.path();
+        let proj = tempfile::tempdir().unwrap();
+        let proj_root = proj.path().canonicalize().unwrap();
+
+        // An existing per-dir workspace file with no label yet.
+        let ws_path = workspace_file_for(data_dir, &proj_root);
+        std::fs::create_dir_all(ws_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &ws_path,
+            serde_json::to_vec(&serde_json::json!({ "working_dir": proj_root })).unwrap(),
+        )
+        .unwrap();
+
+        // A legacy windows.json naming that session with a label.
+        let global_p = global_windows_path(data_dir);
+        std::fs::create_dir_all(global_p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &global_p,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 2, "active": 1, "next_id": 2,
+                "windows": [ { "id": 1, "label": "from-windows-json", "root": proj_root } ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let fs = StdFileSystem;
+        migrate_windows_json_into_workspaces(&fs, data_dir);
+
+        assert!(!global_p.exists(), "windows.json is retired");
+        assert!(
+            global_p.with_extension("json.retired.bak").exists(),
+            "a .retired.bak is kept"
+        );
+        let val: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&ws_path).unwrap()).unwrap();
+        assert_eq!(
+            val.get("label").and_then(|v| v.as_str()),
+            Some("from-windows-json"),
+            "the label was folded into the per-dir workspace file"
+        );
+    }
 }

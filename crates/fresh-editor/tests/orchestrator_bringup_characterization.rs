@@ -1,31 +1,22 @@
-//! Specification tests for the orchestrator bring-up flow (issue #2056).
+//! Specification tests for the orchestrator bring-up flow.
 //!
-//! These pin the DESIRED behavior of `Editor` construction + workspace
-//! restore when there are persisted orchestrator sessions on disk,
-//! across the persistence layouts a real user accumulates:
-//!
-//!   - v2 global   `<data>/orchestrator/windows.json`
-//!   - v1 per-cwd  `<data>/orchestrator/<encoded-cwd>/windows.json`  (migrated on read)
-//!   - v0.3.6      `<project>/.fresh/windows.json`                   (in the working tree)
-//!
-//! These assert the TARGET behavior, satisfied by the issue-#2056 fix
-//! (root-matched launch pick + per-window explorer root + foreign-id
-//! preservation).
+//! Sessions are the directories themselves: one per directory,
+//! discovered at boot from the per-dir workspace cache
+//! (`<data>/orchestrator/../workspaces/*.json`). There is no central
+//! windows.json any more (it was dropped; a legacy one is migrated into
+//! the workspace files and retired on first read).
 //!
 //! The spec (CLI dir matched by `root`):
-//!   * `fresh <dir>` activates a window rooted at `<dir>`; a worktree
-//!     session (root != `<dir>`) is NEVER activated by passing the
-//!     project dir — it stays an inactive shell, divable via the
-//!     orchestrator.
-//!   * passing a worktree dir restores the session rooted there.
-//!   * persisted windows for other projects are preserved as inactive
-//!     shells (no id-collision drop).
+//!   * `fresh <dir>` foregrounds the window rooted at `<dir>`; a
+//!     worktree session (root != `<dir>`) is NEVER foregrounded by
+//!     passing the project dir — it stays an inactive shell, divable
+//!     via the orchestrator.
+//!   * passing a worktree dir foregrounds the session rooted there.
+//!   * sessions for other directories are preserved as inactive shells.
+//!   * a directory that no longer exists is garbage-collected, not
+//!     surfaced as a session.
 //!
-//! Fixtures live in `tests/fixtures/orchestrator_bringup/*.json` with
-//! `__PROJECT__` / `__WORKTREE__` / `__OTHER__` path tokens that the
-//! harness substitutes with real canonicalized temp dirs. The real
-//! reader parses them during `Editor` construction, so a malformed
-//! fixture surfaces as "no sessions" rather than a false pass.
+//! Plugins are disabled so the tests exercise only the Rust core path.
 
 mod common;
 
@@ -35,11 +26,6 @@ use fresh::model::filesystem::StdFileSystem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
-
-const FIXTURES: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/orchestrator_bringup"
-);
 
 /// The set of temp dirs a bring-up scenario plays out in. `data_root`
 /// is what `DirectoryContext::for_testing` is rooted at; the editor's
@@ -78,49 +64,34 @@ impl Scenario {
         self.data_root.path().join("data")
     }
 
-    /// Load a fixture template and substitute the path tokens with
-    /// this scenario's real canonicalized dirs.
-    fn render_fixture(&self, name: &str) -> String {
-        let raw = std::fs::read_to_string(Path::new(FIXTURES).join(name))
-            .unwrap_or_else(|e| panic!("read fixture {name}: {e}"));
-        raw.replace("__PROJECT__", &json_path(&self.project_canon))
-            .replace("__WORKTREE__", &json_path(&self.worktree_canon))
-            .replace("__OTHER__", &json_path(&self.other_canon))
+    /// Seed a per-dir workspace file for `root` carrying `label`, the
+    /// way a prior session would have left one on disk. This is the
+    /// session registry now — discovery picks it up at boot.
+    fn place_workspace(&self, root: &Path, label: &str) {
+        let ws_dir = self.data_dir().join("workspaces");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut ws = fresh::workspace::Workspace::new(canonical.clone());
+        ws.label = Some(label.to_string());
+        let filename = format!(
+            "{}.json",
+            fresh::workspace::encode_path_for_filename(&canonical)
+        );
+        std::fs::write(
+            ws_dir.join(filename),
+            serde_json::to_vec_pretty(&ws).unwrap(),
+        )
+        .unwrap();
     }
 
-    /// Write a fixture to the v2 global location.
-    fn place_v2_global(&self, fixture: &str) {
-        let orch = self.data_dir().join("orchestrator");
-        std::fs::create_dir_all(&orch).unwrap();
-        std::fs::write(orch.join("windows.json"), self.render_fixture(fixture)).unwrap();
-    }
-
-    /// Write a fixture to the v1 per-cwd location (encoded by the
-    /// launch project path), so the first read triggers migration.
-    fn place_v1_percwd(&self, fixture: &str) {
-        let encoded = fresh::workspace::encode_path_for_filename(&self.project_canon);
-        let dir = self.data_dir().join("orchestrator").join(encoded);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("windows.json"), self.render_fixture(fixture)).unwrap();
-    }
-
-    /// Write a fixture to the v0.3.6 `<project>/.fresh/` location.
-    fn place_v036_dotfresh(&self, fixture: &str) {
-        let dir = self.project_canon.join(".fresh");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("windows.json"), self.render_fixture(fixture)).unwrap();
-    }
-
-    /// Construct the editor exactly as a `fresh .` launch in the
-    /// project would (phase B of bring-up: read persistence, pick the
-    /// active window, build the windows map). Plugins are disabled so
-    /// the test exercises only the Rust core path.
+    /// Construct the editor exactly as a `fresh <project>` launch would
+    /// (read persistence, discover sessions, pick the foreground window,
+    /// build the windows map).
     fn bring_up(&self) -> fresh::app::Editor {
         self.bring_up_in(&self.project_canon)
     }
 
-    /// Like [`Self::bring_up`] but launches with an explicit cwd (e.g.
-    /// the worktree dir) to exercise the converse of the invariant.
+    /// Like [`Self::bring_up`] but launches with an explicit cwd.
     fn bring_up_in(&self, cwd: &Path) -> fresh::app::Editor {
         let dir_context = DirectoryContext::for_testing(self.data_root.path());
         let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -144,15 +115,6 @@ impl Scenario {
         )
         .unwrap()
     }
-}
-
-/// Render a PathBuf into the JSON string body (without surrounding
-/// quotes) using serde so platform path escaping matches what the
-/// reader expects. The token in the fixture sits inside `"..."`, so we
-/// strip serde's quotes and splice the inner escaped form back in.
-fn json_path(p: &Path) -> String {
-    let quoted = serde_json::to_string(p).unwrap();
-    quoted.trim_matches('"').to_string()
 }
 
 /// Enumerate the roots of every window the editor built, sorted, for
@@ -180,7 +142,7 @@ fn no_persistence_boots_clean_base_at_cwd() {
     assert_eq!(
         editor.active_window().root,
         s.project_canon,
-        "with no windows.json the active window is a clean base at the launch cwd"
+        "with no sessions the foreground window is a clean base at the launch cwd"
     );
     assert_eq!(editor.working_dir(), s.project_canon.as_path());
     assert_eq!(editor.session_count(), 1, "only the base window exists");
@@ -188,223 +150,140 @@ fn no_persistence_boots_clean_base_at_cwd() {
 }
 
 // ---------------------------------------------------------------------------
-// Branch B: v2, only a base window rooted at the cwd, active == that.
+// Branch B: a session exists for the cwd. Launching there reopens it.
 // ---------------------------------------------------------------------------
 #[test]
-fn v2_base_only_reopens_base_at_cwd() {
+fn session_for_cwd_reopens_at_cwd() {
     let s = Scenario::new();
-    s.place_v2_global("v2_base_only.json");
+    s.place_workspace(&s.project_canon, "project");
     let editor = s.bring_up();
 
     assert_eq!(
         editor.active_window().root,
         s.project_canon,
-        "the persisted base window is rooted at the cwd, so it reopens cleanly"
+        "the session rooted at the cwd is foregrounded"
     );
     assert_eq!(editor.session_count(), 1);
 }
 
 // ---------------------------------------------------------------------------
-// Branch C: v2 worktree session whose project_path == cwd, persisted as
-// `active`. SPEC: passing the project dir must activate the project-
-// rooted window, NOT the worktree session.
+// Branch C: a worktree session (root != cwd) exists alongside the cwd
+// session. SPEC: passing the project dir foregrounds the project window,
+// never the worktree session, which survives as an inactive shell.
 // ---------------------------------------------------------------------------
 #[test]
-fn v2_worktree_session_does_not_hijack_plain_launch() {
+fn worktree_session_does_not_hijack_plain_launch() {
     let s = Scenario::new();
-    s.place_v2_global("v2_worktree_session.json");
+    s.place_workspace(&s.project_canon, "project");
+    s.place_workspace(&s.worktree_canon, "worktree");
     let editor = s.bring_up();
 
-    // DESIRED: launching `fresh <project>` activates the window rooted at
-    // the project (matched by `root`), never the worktree session.
     assert_eq!(
         editor.active_window().root,
         s.project_canon,
-        "the project-rooted window is active, not the worktree session"
+        "the project-rooted window is foreground, not the worktree session"
     );
-
-    // The invariant: working_dir is consistent with the active window.
     assert_eq!(
         editor.working_dir(),
         s.project_canon.as_path(),
-        "working_dir matches the active window's root"
+        "working_dir matches the foreground window's root"
     );
-
-    // The worktree session is preserved as an inactive shell (divable via
-    // the orchestrator), so both windows still exist.
     let roots = window_roots(&editor);
     assert!(
         roots.contains(&s.worktree_canon),
-        "worktree survives as a shell"
+        "the worktree session survives as an inactive shell"
     );
     assert!(roots.contains(&s.project_canon));
 }
 
 // ---------------------------------------------------------------------------
-// Branch C-converse: launching directly IN the worktree dir must restore
-// that worktree's session (root == cwd), not boot a fresh clean base.
-// This is the other half of the invariant: a worktree dir is restorable
-// by passing it, even though the project dir does NOT pull it in.
-//
-// Discriminating: the project_path-matching (pre-fix) logic would NOT
-// match the worktree session when cwd == worktree (its project_path is
-// the project, not the worktree), so it would boot a clean base at a
-// fresh id with an empty label. Asserting the persisted id + label
-// fails on that behavior and passes only with root-matching.
+// Branch C-converse: launching directly IN the worktree dir foregrounds
+// that worktree's session (root == cwd), restoring its label — not a
+// fresh clean base.
 // ---------------------------------------------------------------------------
 #[test]
-fn launching_in_a_worktree_restores_that_worktree_session() {
+fn launching_in_a_worktree_foregrounds_that_session() {
     let s = Scenario::new();
-    s.place_v2_global("v2_worktree_session.json");
+    s.place_workspace(&s.project_canon, "project");
+    s.place_workspace(&s.worktree_canon, "the-worktree-session");
     let editor = s.bring_up_in(&s.worktree_canon);
 
     assert_eq!(
         editor.active_window().root,
         s.worktree_canon,
-        "launching in the worktree activates a window rooted there"
-    );
-    assert_eq!(
-        editor.active_window().id,
-        fresh_core::WindowId(2),
-        "it is the PERSISTED worktree session (id 2), not a fresh clean base"
+        "launching in the worktree foregrounds a window rooted there"
     );
     assert_eq!(
         editor.active_window().label,
-        "anna-katharine-green_hand-and-ring",
+        "the-worktree-session",
         "the persisted session's label is restored, proving it's that session"
     );
     assert_eq!(editor.working_dir(), s.worktree_canon.as_path());
 }
 
 // ---------------------------------------------------------------------------
-// Branch D: v2 with a session only for an unrelated project (its base
-// window, persisted at id 1). SPEC: launching in our cwd boots a clean
-// base at the cwd (no cross-project bleed) AND preserves the unrelated
-// project's window as an inactive shell — the clean-base fallback must
-// take a non-colliding id rather than reusing id 1 and dropping it.
+// Branch D: a session exists only for an unrelated directory. Launching
+// in our cwd boots a clean base at the cwd (no cross-project bleed) AND
+// preserves the unrelated session as an inactive shell.
 // ---------------------------------------------------------------------------
 #[test]
-fn v2_cross_project_only_boots_clean_base_and_preserves_other() {
+fn cross_project_only_boots_clean_base_and_preserves_other() {
     let s = Scenario::new();
-    s.place_v2_global("v2_cross_project_only.json");
+    s.place_workspace(&s.other_canon, "other");
     let editor = s.bring_up();
 
     assert_eq!(
         editor.active_window().root,
         s.project_canon,
-        "no window belongs to the cwd, so a clean base is booted (no cross-project bleed)"
+        "no session belongs to the cwd, so a clean base is booted (no cross-project bleed)"
     );
     assert_eq!(
         editor.session_count(),
         2,
-        "the unrelated project's window is preserved (no id-collision drop)"
+        "the unrelated directory's session is preserved (no id-collision drop)"
     );
     assert!(
         window_roots(&editor).contains(&s.other_canon),
-        "the unrelated project's window survives as an inactive shell"
+        "the unrelated directory's session survives as an inactive shell"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Branch E: v2 with BOTH a base(cwd) and a worktree(cwd) session, the
-// worktree persisted as `active`. SPEC: the cwd-rooted base wins; the
-// worktree session is never activated by passing the project dir.
+// Branch E: a session whose directory no longer exists is garbage-
+// collected — it must not be surfaced as a window. (The workspace cache
+// accumulates an entry for every dir ever opened; dead ones are pruned.)
 // ---------------------------------------------------------------------------
 #[test]
-fn v2_base_and_worktree_activates_the_base() {
+fn stale_session_for_deleted_dir_is_gced() {
     let s = Scenario::new();
-    s.place_v2_global("v2_base_and_worktree.json");
-    let editor = s.bring_up();
+    // A session for a dir that we delete before bring-up.
+    let gone = TempDir::new().unwrap();
+    let gone_canon = gone.path().canonicalize().unwrap();
+    s.place_workspace(&gone_canon, "gone");
+    s.place_workspace(&s.other_canon, "other");
+    drop(gone); // remove the directory from disk
 
-    assert_eq!(
-        editor.active_window().root,
-        s.project_canon,
-        "the cwd-rooted base is active; the worktree session is not activated"
-    );
-    assert_eq!(
-        editor.working_dir(),
-        s.project_canon.as_path(),
-        "working_dir matches the active window's root"
+    let editor = s.bring_up();
+    let roots = window_roots(&editor);
+    assert!(
+        !roots.contains(&gone_canon),
+        "a session whose directory is gone is GC'd, not surfaced: {roots:?}"
     );
     assert!(
-        window_roots(&editor).contains(&s.worktree_canon),
-        "the worktree session survives as an inactive shell"
+        roots.contains(&s.other_canon),
+        "the surviving directory's session is kept"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Branch F: v1 per-cwd legacy file present, no global file. First read
-// migrates it into the global store. SPEC: even after migration, the
-// migrated worktree window (root = worktree) must NOT be activated by
-// launching in the project — a clean base at the cwd is activated, and
-// the migration side effects still occur.
-// ---------------------------------------------------------------------------
-#[test]
-fn v1_legacy_percwd_migrates_then_activates_base_at_cwd() {
-    let s = Scenario::new();
-    s.place_v1_percwd("v1_legacy_percwd.json");
-    let editor = s.bring_up();
-
-    // DESIRED: the migrated legacy worktree window (root = worktree) is
-    // matched by `root`, so it does not match the cwd and is not
-    // activated; the launch boots a clean base at the cwd.
-    assert_eq!(
-        editor.active_window().root,
-        s.project_canon,
-        "launch activates a clean base at the cwd, not the migrated worktree"
-    );
-
-    // Migration side effects: a global windows.json is written and the
-    // legacy per-cwd file is renamed to `.migrated.bak`.
-    let global = s.data_dir().join("orchestrator").join("windows.json");
-    assert!(global.exists(), "migration writes the global windows.json");
-    let encoded = fresh::workspace::encode_path_for_filename(&s.project_canon);
-    let legacy = s
-        .data_dir()
-        .join("orchestrator")
-        .join(&encoded)
-        .join("windows.json");
-    assert!(
-        !legacy.exists(),
-        "the legacy per-cwd file is consumed by migration"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Branch G: v0.3.6 `<project>/.fresh/windows.json` present. The current
-// reader only looks under the data dir, so this layout is IGNORED — a
-// 0.3.6 -> 0.3.8 upgrade does not surface these sessions at all.
-// ---------------------------------------------------------------------------
-#[test]
-fn v036_dotfresh_is_ignored_on_upgrade() {
-    let s = Scenario::new();
-    s.place_v036_dotfresh("v036_dotfresh.json");
-    let editor = s.bring_up();
-
-    assert_eq!(
-        editor.active_window().root,
-        s.project_canon,
-        "v0.3.6 .fresh/windows.json is not read by the data-dir reader; clean base boots"
-    );
-    assert_eq!(
-        editor.session_count(),
-        1,
-        "no sessions are imported from the working-tree .fresh layout"
-    );
-    // And the stray .fresh file is left untouched in the project tree.
-    assert!(s.project_canon.join(".fresh").join("windows.json").exists());
-}
-
-// ---------------------------------------------------------------------------
-// Branch H: restore disabled. Even with a cwd-matching base window
-// persisted, `restore_previous_session = false` must skip full restore.
-// Characterizes that the active window is still picked (phase B) but the
-// workspace contents (phase C) are not restored.
+// Branch F: restore disabled. Even with a cwd session present,
+// `restore_previous_session = false` still picks the foreground window
+// (phase B) but skips the workspace-content restore (phase C).
 // ---------------------------------------------------------------------------
 #[test]
 fn restore_previous_session_false_still_picks_window_but_skips_workspace() {
     let s = Scenario::new();
-    s.place_v2_global("v2_base_only.json");
+    s.place_workspace(&s.project_canon, "project");
 
     let dir_context = DirectoryContext::for_testing(s.data_root.path());
     let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -430,8 +309,5 @@ fn restore_previous_session_false_still_picks_window_but_skips_workspace() {
     )
     .unwrap();
 
-    // Window pick (phase B) happens during construction regardless of
-    // the restore flag; the flag only gates the phase-C workspace
-    // restore that the real launch performs afterward.
     assert_eq!(editor.active_window().root, s.project_canon);
 }

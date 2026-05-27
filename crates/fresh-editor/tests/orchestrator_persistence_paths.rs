@@ -65,16 +65,14 @@ fn save_orchestrator_state_does_not_create_dotfresh_in_working_dir() {
         "save_orchestrator_state must not create {stray:?} in the working tree (issue #1991)"
     );
 
-    // And the corresponding orchestrator state must have landed
-    // under the platform data dir instead. v2 stores everything in
-    // one global file regardless of `working_dir`.
-    let expected_windows_file = dir_context
-        .data_dir
-        .join("orchestrator")
-        .join("windows.json");
+    // Any orchestrator state that IS written lives under the platform
+    // data dir, never the working tree. (The central windows.json was
+    // dropped — sessions now persist in per-dir workspace files — so we
+    // assert the location invariant rather than a specific file.)
+    let working_tree_orch = project_dir.path().join("orchestrator");
     assert!(
-        expected_windows_file.exists(),
-        "expected orchestrator state at {expected_windows_file:?}"
+        !working_tree_orch.exists(),
+        "orchestrator state must not land in the working tree: {working_tree_orch:?}"
     );
 }
 
