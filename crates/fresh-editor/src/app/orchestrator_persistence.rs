@@ -222,19 +222,23 @@ fn discover_sessions(
             continue;
         };
         let root = PathBuf::from(root);
-        // GC only on a *confirmed* absence (`Ok(false)`): the directory
-        // is definitively gone, so drop the stale cache file (best-
-        // effort — a failed delete just leaves a harmless file to retry
-        // next boot). An `Err` (permission, IO, an unreachable
-        // remote/unmounted FS) is indistinguishable from a deletion but
-        // is recoverable, so keep the file rather than irreversibly
-        // losing the session.
+        // GC only on a *definitive* answer that the root is unusable:
+        // `NotFound` (the directory is gone) or `Ok(false)` (the path
+        // was replaced by a non-dir). Drop the stale cache file then —
+        // best-effort, a failed delete just leaves a harmless file to
+        // retry next boot. Any *other* `Err` (permission, IO, an
+        // unreachable remote/unmounted FS) is ambiguous but recoverable,
+        // so keep the file rather than irreversibly losing the session.
         match filesystem.is_dir(&root) {
+            Ok(true) => {}
             Ok(false) => {
                 let _ = filesystem.remove_file(p).ok();
                 continue;
             }
-            Ok(true) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let _ = filesystem.remove_file(p).ok();
+                continue;
+            }
             Err(_) => continue,
         }
         let label = val
