@@ -110,20 +110,19 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     // Two sessions in *different* projects: switching the active window
     // changes the "current project", which the picker would float to the
     // top. The persistent dock must keep a stable order regardless.
+    // Both projects are siblings under one parent so their project-key
+    // (path) sort is deterministic (`aaa_project` < `zzz_project`),
+    // making "stable order" testable without random-tempdir flakiness.
     let (_tmp_a, root_a) = setup_project("aaa_project");
-    let (_tmp_b, root_b) = {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let root = temp_dir.path().join("zzz_project");
-        fs::create_dir(&root).unwrap();
-        let ok = std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&root)
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok);
-        (temp_dir, root)
-    };
+    let parent = root_a.parent().unwrap().to_path_buf();
+    let root_b = parent.join("zzz_project");
+    fs::create_dir(&root_b).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root_b)
+        .status()
+        .unwrap()
+        .success());
 
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
@@ -176,4 +175,101 @@ fn mouse_click_on_dock_new_button_opens_form() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
     h.assert_screen_contains("New Session");
+}
+
+#[test]
+fn dock_slash_filters_and_enter_returns_to_list() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Two extra sessions with distinct labels.
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // "/" focuses the filter; typing narrows the list live (host-level
+    // dock key, independent of editor modes).
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("gamma") && !s.contains("] beta")
+    })
+    .unwrap();
+    h.assert_screen_not_contains("] beta");
+
+    // Enter in the filter returns to the list (does NOT dive) — the dock
+    // stays visible and focused.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("gamma");
+}
+
+#[test]
+fn dock_space_toggles_multiselect_checkbox() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    // No row checked initially.
+    h.assert_screen_not_contains("[x]");
+    // Space toggles the highlighted row's checkbox (host fires dock_space,
+    // the plugin owns the selection set).
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[x]"))
+        .unwrap();
+    h.assert_screen_contains("[x]");
+    // Space again clears it.
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("[x]"))
+        .unwrap();
+}
+
+#[test]
+fn dock_mouse_click_row_then_space_selects_that_row() {
+    // A click on a session row must focus the dock so the keyboard works
+    // afterward (regression: clicking after a dive left the dock unable to
+    // receive keys). Click the second row, then Space; that row's checkbox
+    // must toggle — proving the click selected + re-focused it.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    let beta_row = row_of(&h, "beta") as u16;
+    h.mouse_click(3, beta_row).unwrap();
+    h.render().unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[x]"))
+        .unwrap();
+    // The checked row is the one we clicked (beta).
+    let checked = row_of(&h, "[x]");
+    let beta = row_of(&h, "beta");
+    assert_eq!(
+        checked, beta,
+        "Space after click should check the clicked (beta) row"
+    );
 }
