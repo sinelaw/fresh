@@ -4242,7 +4242,16 @@ editor.on("widget_event", (e) => {
       refreshOpenDialog();
       return;
     }
-    if (e.event_type === "select" && e.widget_key === "sessions") {
+    // List selection. Keyboard nav fires this with `widget_key`
+    // "sessions" (the list's own key); a mouse click on a row fires it
+    // with `widget_key` set to the clicked item's key, carrying the
+    // list key in `payload.list_key` instead — accept both so clicking a
+    // row selects it (highlight + preview) just like arrowing to it.
+    if (
+      e.event_type === "select" &&
+      (e.widget_key === "sessions" ||
+        ((e.payload ?? {}) as Record<string, unknown>).list_key === "sessions")
+    ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
       if (typeof idx === "number") {

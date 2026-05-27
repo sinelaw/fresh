@@ -377,11 +377,14 @@ impl Editor {
             // file browser consumed the scroll
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
-        } else if self.handle_floating_widget_panel_wheel(col, row, delta) {
-            // The floating widget panel (orchestrator New Session,
-            // ...) absorbed the wheel — its Text-widget
-            // completion popup uses this to scroll its candidate
-            // list when the user mouse-wheels over the popup.
+        } else if self.floating_widget_panel.is_some() {
+            // The floating widget panel (orchestrator picker, New
+            // Session form, ...) is modal: scroll it when the pointer is
+            // over it (e.g. a Text-widget completion popup scrolls its
+            // candidate list), and otherwise swallow the wheel so it
+            // can't leak through to the buffer behind the modal. Either
+            // way the event is consumed here — never falls through.
+            self.handle_floating_widget_panel_wheel(col, row, delta);
         } else if self
             .active_window()
             .split_at_position(col, row)
