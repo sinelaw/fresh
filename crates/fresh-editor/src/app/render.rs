@@ -1261,7 +1261,7 @@ impl Editor {
 
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], size.width);
+        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], chrome_area.width);
 
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
@@ -1926,7 +1926,9 @@ impl Editor {
             drop(keybindings);
             let max_height = prompt_area.y.saturating_sub(1).min(20);
             let popup_area = ratatui::layout::Rect {
-                x: 0,
+                // Anchor to the prompt line's x (right of a left dock,
+                // if any) so the picker never overlaps the dock column.
+                x: prompt_area.x,
                 y: prompt_area.y.saturating_sub(max_height),
                 width,
                 height: max_height,
@@ -1956,7 +1958,7 @@ impl Editor {
         let height = suggestion_count as u16 + 2 + hints_height;
 
         let suggestions_area = ratatui::layout::Rect {
-            x: 0,
+            x: prompt_area.x,
             y: prompt_area.y.saturating_sub(height),
             width,
             height: height - hints_height,
@@ -3825,6 +3827,7 @@ impl Editor {
             overlays,
             scroll_regions,
             placement,
+            panel_focused,
         ) = match self.floating_widget_panel.as_ref() {
             Some(fwp) => (
                 fwp.width_pct,
@@ -3835,6 +3838,7 @@ impl Editor {
                 fwp.overlays.clone(),
                 fwp.scroll_regions.clone(),
                 fwp.placement,
+                fwp.focused,
             ),
             None => return,
         };
@@ -4027,14 +4031,14 @@ impl Editor {
             if cx < inner.x + inner.width && cy < inner.y + inner.height {
                 frame.set_cursor_position((cx, cy));
             }
-        } else {
-            // No focused text input — the underlying editor's
-            // `set_cursor_position` (called earlier in this frame)
-            // would otherwise leave a hardware caret blinking
-            // inside the dimmed buffer behind the panel. Park the
-            // cursor on the floating panel's bottom-right corner
-            // so it's hidden under the panel chrome instead of
-            // bleeding through.
+        } else if panel_focused {
+            // No focused text input, and the panel owns the keyboard —
+            // the underlying editor's `set_cursor_position` (called
+            // earlier this frame) would otherwise leave a hardware
+            // caret blinking inside the dimmed buffer behind the panel.
+            // Park it on the panel's bottom-right corner so it hides
+            // under the panel chrome. A *blurred* dock skips this: the
+            // editor beside it is focused and must keep its caret.
             let cx = inner.x + inner.width.saturating_sub(1);
             let cy = inner.y + inner.height.saturating_sub(1);
             frame.set_cursor_position((cx, cy));

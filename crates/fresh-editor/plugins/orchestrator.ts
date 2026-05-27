@@ -344,6 +344,14 @@ let dockBlurred = false;
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
 const DOCK_WIDTH_COLS = 32;
+// The dock's own editor mode. Unlike the modal picker (OPEN_MODE), the
+// dock binds Up/Down/Enter/Esc explicitly so navigation + dive + leave
+// are deterministic regardless of which inner widget holds focus.
+const DOCK_MODE = "orchestrator-dock";
+// Which dock zone has keyboard focus: the session list (default) or the
+// filter input. `/` switches to the filter; Enter/Esc from the filter
+// return to the list (rather than diving / leaving).
+let dockFocus: "list" | "filter" = "list";
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
 // showing every session; flipping it with the Project control / Alt+P
@@ -1773,7 +1781,12 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   // In the dock the focusable session list is the default focus
   // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
   openPanel.setFocusKey(asDock ? "sessions" : "visit");
-  editor.setEditorMode(OPEN_MODE);
+  if (asDock) {
+    dockFocus = "list";
+    editor.setEditorMode(DOCK_MODE);
+  } else {
+    editor.setEditorMode(OPEN_MODE);
+  }
 
   // Discover worktrees that exist on disk but aren't open yet and
   // fold them into the list. Async (it shells out to git per
@@ -2632,6 +2645,75 @@ editor.defineMode(
   true,
 );
 
+// The dock's mode: list navigation + dive/leave are explicit bindings.
+// `/`, Space, and the M-* chords reuse the picker handlers (they operate
+// on the shared `openDialog`).
+editor.defineMode(
+  DOCK_MODE,
+  [
+    ["Up", "orchestrator_dock_up"],
+    ["Down", "orchestrator_dock_down"],
+    ["Enter", "orchestrator_dock_enter"],
+    ["Escape", "orchestrator_dock_escape"],
+    ["/", "orchestrator_focus_filter"],
+    ["Space", "orchestrator_toggle_select"],
+    ["M-n", "orchestrator_open_new_from_picker"],
+    ["M-p", "orchestrator_toggle_scope"],
+    ["M-t", "orchestrator_toggle_worktrees"],
+  ],
+  true,
+  true,
+);
+
+// Move the dock's session-list selection and live-switch the active
+// window. Works whether the list or the filter holds focus (so you can
+// type a filter and arrow through results without leaving the input).
+function dockMove(delta: number): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  const n = openDialog.filteredIds.length;
+  if (n === 0) return;
+  const prev = openDialog.selectedIndex;
+  let next = prev + delta;
+  if (next < 0) next = 0;
+  if (next >= n) next = n - 1;
+  if (next === prev) return;
+  openDialog.selectedIndex = next;
+  openPanel.update(buildDockSpec());
+  openPanel.setSelectedIndex("sessions", next);
+  scheduleDockSwitch(delta > 0 ? "bottom" : "top");
+}
+registerHandler("orchestrator_dock_up", () => dockMove(-1));
+registerHandler("orchestrator_dock_down", () => dockMove(1));
+
+// Enter: from the filter, return to the list; from the list, dive into
+// the selected (already-active) window — focus leaves the dock, which
+// stays visible.
+registerHandler("orchestrator_dock_enter", () => {
+  if (!openPanel || !dockMode) return;
+  if (dockFocus === "filter") {
+    dockFocus = "list";
+    openPanel.setFocusKey("sessions");
+    return;
+  }
+  editor.floatingPanelControl(openPanel.id(), "blur");
+  dockBlurred = true;
+  editor.setEditorMode(null);
+});
+
+// Esc: from the filter, return to the list; from the list, leave the
+// dock (focus the editor; the dock stays visible).
+registerHandler("orchestrator_dock_escape", () => {
+  if (!openPanel || !dockMode) return;
+  if (dockFocus === "filter") {
+    dockFocus = "list";
+    openPanel.setFocusKey("sessions");
+    return;
+  }
+  editor.floatingPanelControl(openPanel.id(), "blur");
+  dockBlurred = true;
+  editor.setEditorMode(null);
+});
+
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
   closeOpenDialog();
@@ -2641,6 +2723,7 @@ registerHandler("orchestrator_open_new_from_picker", () => {
 registerHandler("orchestrator_focus_filter", () => {
   if (!openDialog || !openPanel) return;
   openPanel.setFocusKey("filter");
+  if (dockMode) dockFocus = "filter";
 });
 
 // Space (rebindable): toggle the highlighted row in/out of the bulk
@@ -2664,6 +2747,12 @@ registerHandler("orchestrator_toggle_select", () => {
   }
   clearDialogError();
   refreshOpenDialog();
+  // The dock has no bulk preview pane / Visit button; just toggle the
+  // checkbox and keep focus on the list.
+  if (dockMode) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+    return;
+  }
   const isBulk = selectedSessions().length >= 2;
   if (!wasBulk && isBulk) {
     // Entering bulk mode — land focus on a bulk button (Up/Down from
@@ -4486,13 +4575,24 @@ editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
   if (openPanel && openDialog && e.panel_id === openPanel.id()) {
     if (e.event_type === "blur") {
-      // Host fired this because Esc was pressed while the dock was
-      // focused — focus has returned to the editor; the dock stays
-      // visible. Drop the dock's editor-mode so its chords (/, Space,
-      // …) don't intercept keys meant for the buffer.
+      // Host fired this because focus left the dock (Esc/Enter dive,
+      // editor click, or an unhandled chord like Ctrl+P). The dock
+      // stays visible; drop its editor-mode so its chords (/, Space,
+      // Up/Down, …) don't intercept keys meant for the buffer.
       if (dockMode) {
         dockBlurred = true;
         editor.setEditorMode(null);
+      }
+      return;
+    }
+    if (e.event_type === "focus") {
+      // Focus (re-)entered the dock — e.g. a mouse click on a row or
+      // the filter. Re-arm the dock's editor-mode so the keyboard
+      // works again, and track which zone was focused.
+      if (dockMode) {
+        dockBlurred = false;
+        editor.setEditorMode(DOCK_MODE);
+        dockFocus = e.widget_key === "filter" ? "filter" : "list";
       }
       return;
     }

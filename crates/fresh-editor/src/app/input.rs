@@ -2520,42 +2520,11 @@ impl Editor {
         // tearing the panel down. The plugin is told via a "blur"
         // widget_event so it can update its own focus mirror. Hiding
         // the dock entirely is the toggle command's job.
-        // A left-dock panel is non-modal. While the session list (or
-        // nothing) holds focus, Esc and Enter both return focus to the
-        // editor — Enter is "dive into the selected window" and Esc is
-        // "leave the dock" — leaving the dock visible (the toggle
-        // command hides it). When focus is on a Button/Toggle (the
-        // action row, a confirm prompt), Enter/Esc fall through to the
-        // widget system so those controls stay keyboard-operable.
-        if matches!(
-            self.floating_widget_panel.as_ref().map(|f| f.placement),
-            Some(super::PanelPlacement::LeftDock { .. })
-        ) && matches!(code, KeyCode::Esc | KeyCode::Enter)
-        {
-            let on_button = self
-                .widget_registry
-                .get(panel_id)
-                .map(|p| (p.focus_key.clone(), p.spec.clone()))
-                .and_then(|(key, spec)| {
-                    if key.is_empty() {
-                        None
-                    } else {
-                        crate::widgets::find_widget_by_key(&spec, &key).cloned()
-                    }
-                })
-                .map(|w| {
-                    matches!(
-                        w,
-                        fresh_core::api::WidgetSpec::Button { .. }
-                            | fresh_core::api::WidgetSpec::Toggle { .. }
-                    )
-                })
-                .unwrap_or(false);
-            if !on_button {
-                self.blur_floating_panel();
-                return true;
-            }
-        }
+        // The left dock drives Enter/Esc/Up/Down/Space//' through its
+        // own editor mode (`DOCK_MODE` in orchestrator.ts), so they are
+        // handled by the mode-binding precedence path below rather than
+        // the generic floating-panel smart keys. Nothing dock-specific
+        // is needed here.
         let key_name: Option<&str> = match code {
             KeyCode::Esc => {
                 // Mode-binding precedence: a plugin's `defineMode`
