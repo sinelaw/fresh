@@ -269,6 +269,14 @@ interface OpenDialogState {
   // (worktrees hidden) — discovery is opt-in. Remembered across opens
   // via `lastShowWorktrees`.
   showWorktrees: boolean;
+  // `true` hides "trivial" sessions — those with no terminal and at
+  // most one open file/buffer (empty-unnamed-buffer and single-file
+  // shells left behind by one-off editor launches). The "Show
+  // empty/1-file sessions" checkbox (Alt+I / `orchestrator_toggle_trivial`)
+  // flips it. Defaults to true; remembered across opens via
+  // `lastHideTrivial`. The active session and discovered worktree rows
+  // are never hidden by this filter regardless of the flag.
+  hideTrivial: boolean;
   // Progress marker for an in-flight *bulk* action. While set, the
   // selection bar shows "Archiving 2/3…" and its buttons are
   // hidden so a second Enter can't re-fire mid-batch. Cleared when
@@ -333,6 +341,87 @@ let lastOpenScope: "current" | "all" = "all";
 // (worktrees hidden) — surfacing them is opt-in via "Show all
 // worktrees" (Alt+T).
 let lastShowWorktrees = false;
+// Remembered across opens: whether "trivial" sessions are hidden.
+// Defaults to true — every editor launch on a throwaway directory or a
+// single file leaves a workspace file behind, which restores as a shell
+// window and clutters the list. Hiding them by default keeps the picker
+// focused on real sessions; the "Show empty/1-file sessions" checkbox
+// (Alt+I) reveals them.
+let lastHideTrivial = true;
+
+// Per-session content summary keyed by canonical session root, built
+// from the on-disk workspace files. The restored shell windows don't
+// carry their open-tab layout (it's lazily re-warmed on first dive), so
+// the workspace file is the only place to learn how much a session
+// holds. Rebuilt each time the picker opens. A session is "trivial"
+// when it has no terminal and at most one real file/unnamed buffer —
+// the empty-unnamed-buffer and single-file cases the filter targets.
+interface SessionContent {
+  files: number;
+  hasTerminal: boolean;
+  trivial: boolean;
+}
+const sessionContentByRoot = new Map<string, SessionContent>();
+
+// Roots from the editor (`WindowInfo.root`) and from workspace files
+// (`working_dir`) are both canonical absolute paths, but normalise a
+// trailing slash so the two always key the same map entry.
+function normRoot(p: string): string {
+  return p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
+}
+
+// Scan `<dataDir>/workspaces/*.json` and summarise each session's open
+// content. Mirrors the host's own `discover_sessions` (which keys on the
+// file's `working_dir`), so a root matches regardless of how the
+// filename was percent-encoded. Best-effort: unreadable / unparseable
+// files are skipped, and a missing summary is treated as "not trivial"
+// (shown) by the filter, so we never hide a session we couldn't classify.
+function scanSessionContent(): void {
+  sessionContentByRoot.clear();
+  const dir = editor.pathJoin(editor.getDataDir(), "workspaces");
+  let entries: DirEntry[];
+  try {
+    entries = editor.readDir(dir);
+  } catch {
+    return;
+  }
+  if (!entries) return;
+  for (const e of entries) {
+    if (!e.is_file || !e.name.endsWith(".json")) continue;
+    const raw = editor.readFile(editor.pathJoin(dir, e.name));
+    if (!raw) continue;
+    let ws: Record<string, unknown>;
+    try {
+      ws = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const wd = ws["working_dir"];
+    if (typeof wd !== "string") continue;
+    let files = 0;
+    let hasTerminal = Array.isArray(ws["terminals"]) &&
+      (ws["terminals"] as unknown[]).length > 0;
+    const splits = ws["split_states"];
+    if (splits && typeof splits === "object") {
+      for (const sv of Object.values(splits as Record<string, unknown>)) {
+        const tabs = (sv as Record<string, unknown> | null)?.["open_tabs"];
+        if (!Array.isArray(tabs)) continue;
+        for (const t of tabs) {
+          if (t && typeof t === "object") {
+            if ("File" in t || "Unnamed" in t) files++;
+            else if ("Terminal" in t) hasTerminal = true;
+          }
+        }
+      }
+    }
+    sessionContentByRoot.set(normRoot(wd), {
+      files,
+      hasTerminal,
+      trivial: !hasTerminal && files <= 1,
+    });
+  }
+}
+
 const OPEN_MODE = "orchestrator-open";
 
 // =============================================================================
@@ -561,12 +650,27 @@ function filterSessions(needle: string): number[] {
   reconcileSessions();
   const scope = openDialog?.scope ?? "current";
   const showWorktrees = openDialog?.showWorktrees ?? false;
+  const hideTrivial = openDialog?.hideTrivial ?? false;
   const cur = currentProjectKey();
   let allIds = Array.from(orchestratorSessions.keys());
   // "Show all worktrees" is opt-in: by default the discovered on-disk
   // worktree rows are filtered out.
   if (!showWorktrees) {
     allIds = allIds.filter((id) => !orchestratorSessions.get(id)!.discovered);
+  }
+  // "Hide empty/1-file sessions": drop the restored shells that hold no
+  // real work. The active session is always kept (you must be able to
+  // see where you are), and discovered worktree rows are governed by
+  // their own toggle, not this one. A session with no summary (e.g. a
+  // freshly created agent session not yet written to disk) is kept too.
+  if (hideTrivial) {
+    const activeId = editor.activeWindow();
+    allIds = allIds.filter((id) => {
+      const s = orchestratorSessions.get(id)!;
+      if (s.discovered || id === activeId) return true;
+      const c = sessionContentByRoot.get(normRoot(s.root));
+      return !c || !c.trivial;
+    });
   }
 
   const isDisc = (id: number): number =>
@@ -860,9 +964,9 @@ function maxListRowsForScreen(): number {
   // Chrome that isn't list rows: panel borders (2) + title (1) +
   // spacer (1) + footer (1) + sessions-section borders (2) +
   // column chrome above the list (New + Project + Worktree-filter +
-  // Filter + separator + header = 6) = 13. Floor at MIN_LIST_ROWS so
-  // a tiny terminal still shows something.
-  return Math.max(MIN_LIST_ROWS, panelH - 13);
+  // Trivial-filter + Filter + separator + header = 7) = 14. Floor at
+  // MIN_LIST_ROWS so a tiny terminal still shows something.
+  return Math.max(MIN_LIST_ROWS, panelH - 14);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -922,13 +1026,13 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // Match the sessions column's content height so the two panes'
   // bottom borders land on the same row. Sessions column inside its
   // borders = New (1) + Project (1) + Worktree-filter (1) +
-  // Filter (1) + separator (1) + header (1) + list (listVisibleRows)
-  // = listVisibleRows + 6. Preview inside its borders = button
-  // row (1) + spacer (1) + embedRows, so embedRows must equal
-  // listVisibleRows + 4. When details ARE shown, two info rows + a
-  // spacer eat three more lines — `_DETAILS_CHROME_ROWS` accounts
-  // for that.
-  const totalEmbedBase = (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 4;
+  // Trivial-filter (1) + Filter (1) + separator (1) + header (1) +
+  // list (listVisibleRows) = listVisibleRows + 7. Preview inside its
+  // borders = button row (1) + spacer (1) + embedRows, so embedRows
+  // must equal listVisibleRows + 5. When details ARE shown, two info
+  // rows + a spacer eat three more lines — `_DETAILS_CHROME_ROWS`
+  // accounts for that.
+  const totalEmbedBase = (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 5;
   const detailsOn = openDialog?.showDetails ?? false;
   const _DETAILS_CHROME_ROWS = 3; // 2 info rows + 1 spacer
   const embedRows = Math.max(
@@ -1391,6 +1495,23 @@ function buildOpenSpec(): WidgetSpec {
     }),
     flexSpacer(),
   );
+  // Content filter checkbox, beneath the worktree one. The flag is
+  // `hideTrivial`, but the checkbox reads as an opt-in "show" toggle to
+  // match the worktree row: unchecked (default) hides the empty /
+  // single-file shells, checking it reveals them. Inert during confirm.
+  const trivialKey = editor.getKeybindingLabel(
+    "orchestrator_toggle_trivial",
+    OPEN_MODE,
+  );
+  const trivialLabel = trivialKey
+    ? `Show empty/1-file sessions   (${trivialKey})`
+    : "Show empty/1-file sessions";
+  const trivialFilterRow = row(
+    toggle(!openDialog.hideTrivial, trivialLabel, {
+      key: openDialog.pendingConfirm !== null ? undefined : "hide-trivial",
+    }),
+    flexSpacer(),
+  );
 
   return col(
     {
@@ -1446,6 +1567,7 @@ function buildOpenSpec(): WidgetSpec {
           ),
           projectControlRow,
           worktreeFilterRow,
+          trivialFilterRow,
           filterInput,
           sessionsSeparator(),
           sessionsColumnHeader(),
@@ -1573,6 +1695,9 @@ function refreshOpenDialog(): void {
 function openControlRoom(): void {
   if (openPanel) return;
   reconcileSessions();
+  // Summarise on-disk session content up front so the trivial filter
+  // has data on the first render.
+  scanSessionContent();
   const activeId = editor.activeWindow();
   // Seed with the screen-max; buildOpenSpec refits to the session
   // count on the first render (and every render after).
@@ -1593,6 +1718,7 @@ function openControlRoom(): void {
     scope: lastOpenScope,
     selectedIds: new Set<number>(),
     showWorktrees: lastShowWorktrees,
+    hideTrivial: lastHideTrivial,
     bulkInFlight: null,
   };
   openDialog.filteredIds = filterSessions("");
@@ -2231,6 +2357,11 @@ editor.defineMode(
     // surfaces discovered on-disk worktree rows. Rebindable, same as
     // the scope toggle.
     ["M-t", "orchestrator_toggle_worktrees"],
+    // Alt+I toggles "Show empty/1-file sessions" — reveals the trivial
+    // restored shells hidden by default. Rebindable, same as the others.
+    // (Alt+E is unavailable: it's the Edit menu's mnemonic, which the
+    // menu bar claims before the picker's mode keymap sees it.)
+    ["M-i", "orchestrator_toggle_trivial"],
   ],
   true,
   true,
@@ -2321,6 +2452,30 @@ function toggleShowWorktrees(): void {
 }
 
 registerHandler("orchestrator_toggle_worktrees", toggleShowWorktrees);
+
+// Flip "Show empty/1-file sessions" — reveal/hide the trivial restored
+// shells. Preserves the highlighted row across the re-filter where
+// possible; drops now-hidden rows from the bulk selection. Shared by the
+// Alt+I chord and the checkbox click.
+function toggleHideTrivial(): void {
+  if (!openDialog) return;
+  openDialog.hideTrivial = !openDialog.hideTrivial;
+  lastHideTrivial = openDialog.hideTrivial;
+  const prevId = openDialog.filteredIds[openDialog.selectedIndex];
+  openDialog.filteredIds = filterSessions(openDialog.filter.value);
+  // Hiding trivial rows shouldn't leave them lingering in the selection.
+  if (openDialog.hideTrivial) {
+    const visible = new Set(openDialog.filteredIds);
+    for (const id of [...openDialog.selectedIds]) {
+      if (!visible.has(id)) openDialog.selectedIds.delete(id);
+    }
+  }
+  const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
+  openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
+  refreshOpenDialog();
+}
+
+registerHandler("orchestrator_toggle_trivial", toggleHideTrivial);
 
 // =============================================================================
 // New-session floating form
@@ -4155,6 +4310,12 @@ editor.on("widget_event", (e) => {
       // The toggle widget reports the new checked state; route through
       // the shared flip so the Alt+T chord and the click stay in sync.
       toggleShowWorktrees();
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "hide-trivial") {
+      // Same pattern as the worktree toggle: route the click through the
+      // shared flip so the checkbox and the Alt+I chord stay in sync.
+      toggleHideTrivial();
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "stop") {
