@@ -6565,6 +6565,9 @@ impl Window {
                 }
             }
         }
+
+        // Update active search state so plugins can query it via hasActiveSearch()
+        snapshot.has_active_search = self.search_state.is_some();
     }
 }
 

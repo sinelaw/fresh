@@ -1114,6 +1114,15 @@ impl JsEditorApi {
             .unwrap_or(0)
     }
 
+    /// Returns true when search highlights are currently active in the buffer.
+    /// Becomes true after a search is confirmed; false once cleared.
+    pub fn has_active_search(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.has_active_search)
+            .unwrap_or(false)
+    }
+
     /// List all open buffers - returns array of BufferInfo objects
     #[plugin_api(ts_return = "BufferInfo[]")]
     pub fn list_buffers<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {

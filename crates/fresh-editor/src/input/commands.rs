@@ -935,6 +935,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.clear_search",
+        desc_key: "cmd.clear_search_desc",
+        action: || Action::ClearSearch,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.replace",
         desc_key: "cmd.replace_desc",
         action: || Action::Replace,

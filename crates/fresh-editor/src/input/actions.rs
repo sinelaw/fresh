@@ -2894,6 +2894,7 @@ pub fn action_to_events(
         | Action::FindPrevious
         | Action::FindSelectionNext
         | Action::FindSelectionPrevious
+        | Action::ClearSearch
         | Action::Replace
         | Action::QueryReplace
         | Action::MenuActivate

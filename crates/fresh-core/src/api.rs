@@ -1196,6 +1196,12 @@ pub struct EditorStateSnapshot {
     pub terminal_width: u16,
     #[serde(default)]
     pub terminal_height: u16,
+
+    /// Whether search highlights are currently active in the active buffer.
+    /// True when a search has been confirmed and its match overlays are visible.
+    /// Cleared when the search is cancelled or a new search is started.
+    #[serde(default)]
+    pub has_active_search: bool,
 }
 
 /// Total terminal size in cells. Returned by `editor.getScreenSize()`.
@@ -1242,6 +1248,7 @@ impl EditorStateSnapshot {
             active_session_plugin_states: HashMap::new(),
             terminal_width: 0,
             terminal_height: 0,
+            has_active_search: false,
         }
     }
 }
