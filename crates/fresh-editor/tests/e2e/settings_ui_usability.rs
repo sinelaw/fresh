@@ -635,3 +635,170 @@ fn test_textlist_down_accepts_new_entry() {
         screen
     );
 }
+
+// ---------------------------------------------------------------------------
+// #2143-1: Enter in a text field should commit and advance focus
+// ---------------------------------------------------------------------------
+
+/// Pressing Enter while editing a plain text field should commit the value and
+/// move focus to the next field — not silently leave the user stuck in edit
+/// mode. Previously Enter was a no-op on text fields, so the following
+/// Tab/Esc/arrows appeared dead because the field still captured them.
+#[test]
+fn test_enter_commits_text_field_and_advances_focus() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+    open_lsp_edit_item(&mut harness);
+
+    // The focus indicator ">" sits to the left of a field's label. Returns
+    // true when that arrow precedes the given field name on some row.
+    fn field_has_focus_arrow(screen: &str, field: &str) -> bool {
+        screen
+            .lines()
+            .any(|line| match (line.find('>'), line.find(field)) {
+                (Some(arrow), Some(name)) => arrow < name,
+                _ => false,
+            })
+    }
+
+    // Focus starts on the first editable field, "Command".
+    assert!(
+        field_has_focus_arrow(&harness.screen_to_string(), "Command"),
+        "Expected focus to start on Command.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Enter starts editing the field.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("z").unwrap();
+    harness.render().unwrap();
+    // While editing, the footer advertises Enter/Tab as commit keys.
+    harness.assert_screen_contains("Enter/Tab:Commit field");
+
+    // Enter commits the value and advances focus to the next field.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // We are no longer in edit mode (footer back to navigation help)...
+    harness.assert_screen_not_contains("Enter/Tab:Commit field");
+    harness.assert_screen_contains("Enter:Edit");
+    // ...and focus has moved off Command onto the next field (Enabled).
+    let screen = harness.screen_to_string();
+    assert!(
+        !field_has_focus_arrow(&screen, "Command"),
+        "Enter should have advanced focus off Command.\nScreen:\n{screen}"
+    );
+    assert!(
+        field_has_focus_arrow(&screen, "Enabled"),
+        "Enter should have advanced focus to the next field (Enabled).\nScreen:\n{screen}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #2143-3: A newly-added LSP server should default to auto_start = true
+// ---------------------------------------------------------------------------
+
+/// When adding a brand-new LSP server through the Settings UI, the Auto Start
+/// field should default to ON, so a server you just configured actually starts
+/// on the next matching file open instead of never starting.
+#[test]
+fn test_new_lsp_server_auto_start_defaults_on() {
+    let mut harness = EditorTestHarness::new(120, 50).unwrap();
+    harness.render().unwrap();
+    harness.open_settings().unwrap();
+
+    // Navigate to the LSP map.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("lsp").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Find the python entry and open its server list.
+    let mut found_python = false;
+    for _ in 0..50 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen
+            .lines()
+            .any(|l| l.contains("python") && l.contains("[Enter to edit]"))
+        {
+            found_python = true;
+            break;
+        }
+    }
+    assert!(
+        found_python,
+        "Could not find python LSP entry.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Edit Value");
+
+    // Navigate to [+] Add new and open the Add Item dialog.
+    let mut found_add = false;
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen.lines().any(|line| {
+            line.contains("[+] Add new") && (line.contains(">") || line.contains("[Enter to add]"))
+        }) {
+            found_add = true;
+            break;
+        }
+    }
+    assert!(
+        found_add,
+        "Could not reach [+] Add new.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Add Item");
+
+    // Scroll until the Auto Start row renders, and confirm it defaults to ON
+    // ([v]). The toggle glyph is independent of focus colour, so the rendered
+    // text alone tells us the default.
+    let mut auto_on = false;
+    let mut auto_off = false;
+    for _ in 0..20 {
+        let screen = harness.screen_to_string();
+        if screen
+            .lines()
+            .any(|l| l.contains("Auto Start") && l.contains("[v]"))
+        {
+            auto_on = true;
+            break;
+        }
+        if screen
+            .lines()
+            .any(|l| l.contains("Auto Start") && l.contains("[ ]"))
+        {
+            auto_off = true;
+            break;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    assert!(
+        auto_on && !auto_off,
+        "New LSP server should default Auto Start to ON ([v]), but it was {}.\nScreen:\n{}",
+        if auto_off { "OFF ([ ])" } else { "not found" },
+        harness.screen_to_string()
+    );
+}

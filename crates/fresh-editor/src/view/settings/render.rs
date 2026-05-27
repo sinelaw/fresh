@@ -3957,6 +3957,13 @@ fn render_entry_dialog_inner(
         let help = "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit";
         let help_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(Paragraph::new(help).style(help_style), help_area);
+    } else if dialog.editing_text {
+        // Editing a plain text/number field: Enter and Tab both commit
+        // the value and move on, Esc cancels. Keeps the footer honest now
+        // that Enter no longer leaves the user stuck in edit mode.
+        let help = "Enter/Tab:Commit field  Esc:Cancel";
+        let help_style = Style::default().fg(theme.line_number_fg);
+        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
     } else {
         // The trailing `●:modified` legend is the only place in the
         // dialog that explains what the `●` row-indicator means. Without

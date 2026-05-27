@@ -170,11 +170,27 @@ impl SettingsState {
                     // Insert newline in JSON editor
                     dialog.insert_newline();
                 } else {
-                    // Add item for TextList, or stop editing
-                    if let Some(item) = dialog.current_item_mut() {
-                        if let SettingControl::TextList(state) = &mut item.control {
-                            state.add_item();
+                    // For a TextList, Enter commits the current row and
+                    // opens a fresh add-new slot so the user can keep
+                    // adding items. For a plain Text/Number field, Enter
+                    // commits the value and advances focus to the next
+                    // field — matching the form's footer hint and every
+                    // other form. Previously Enter was a silent no-op on
+                    // text fields, trapping the user in edit mode so the
+                    // following Tab/Esc/arrows appeared dead (issue #2143).
+                    let is_text_list = matches!(
+                        dialog.current_item().map(|i| &i.control),
+                        Some(SettingControl::TextList(_))
+                    );
+                    if is_text_list {
+                        if let Some(item) = dialog.current_item_mut() {
+                            if let SettingControl::TextList(state) = &mut item.control {
+                                state.add_item();
+                            }
                         }
+                    } else {
+                        dialog.stop_editing();
+                        dialog.focus_next();
                     }
                 }
             }
