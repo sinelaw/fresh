@@ -16,10 +16,12 @@
   render against `chrome_area`, so they sit beside the dock instead of
   being overpainted by it. The workspace-trust dialog still uses `size`
   — it's a startup gate that can't be concurrent with the dock.
-- **Centered/anchored popups use full-screen coords.** Command-palette
-  suggestions and global popups (`render_prompt_popups`,
-  `render_top_global_popup`) are positioned/clamped against `size`, so
-  with the dock up they can be offset or overrun the dock column.
+- **Some global popups still use full-screen coords.** Fixed for the
+  command-palette suggestions, the Live Grep overlay, and menu dropdowns
+  (all now use `chrome_area` / the chrome layout). Still TODO:
+  `render_top_global_popup` (corner/centered global popups) and
+  LSP hover/completion popups are positioned against `size`, so with the
+  dock up they can be offset or overrun the dock column.
 - **`last_frame_width/height` store full `size`,** not `chrome_area`, so
   macro-replay / `recompute_layout` lays the chrome at the wrong width
   while the dock is up.

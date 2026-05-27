@@ -1261,7 +1261,7 @@ impl Editor {
 
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], chrome_area.width);
+        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], chrome_area);
 
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
@@ -1903,17 +1903,19 @@ impl Editor {
         &mut self,
         frame: &mut Frame,
         prompt_area: ratatui::layout::Rect,
-        width: u16,
+        chrome: ratatui::layout::Rect,
     ) {
+        let width = chrome.width;
         let Some(prompt) = &self.active_window_mut().prompt else {
             return;
         };
 
         // Overlay prompts (Live Grep, issue #1796) get a dedicated
         // centred floating frame instead of the bottom-anchored popup.
+        // Centre it in the chrome area (right of a left dock) so it never
+        // overlaps the dock column.
         if prompt.overlay {
-            let frame_area = frame.area();
-            self.render_overlay_prompt(frame, frame_area);
+            self.render_overlay_prompt(frame, chrome);
             return;
         }
 

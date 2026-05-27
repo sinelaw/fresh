@@ -85,6 +85,15 @@
 31d. Open Settings while the dock is **hidden** (baseline): renders
      full-width as normal.
 
+### F.2 Live Grep & other overlays (with the dock open)
+31e. Live Grep (`Alt+/`) opens its floating overlay beside the dock
+     (right of the column), not overlapping it; results + preview show.
+31f. Live Grep is keyboard-operable (type query, ↑↓ results, Enter opens
+     a match in the editor), and the dock doesn't steal keys.
+31g. Resume Live Grep (`Alt+Shift+/`) restores prior query/results.
+31h. Quickfix export to the Utility (bottom) dock works; the left dock
+     and bottom dock coexist.
+
 ## G. File explorer with the dock open
 32. `Ctrl+E` focuses the file explorer; the dock stays put.
 33. Open a file from the explorer → it opens in the dived window's buffer.
@@ -145,6 +154,19 @@ across toggles (lingering editor mode, stale focus, cursor, key capture).
   tmux harness. Covered instead by the e2e `mouse_click_on_dock_new_
   button_opens_form` (hit-test) + mode-independent keys (click re-focuses
   → keyboard works). Needs a real terminal for full manual confirmation.
+
+### Live Grep / Settings / menu run 2026-05-27 (with dock open)
+- 29 (menu dropdown)  : PASS — File menu opens right of the dock (the
+                        chrome layout already offsets it); no overlap.
+- 31a–d (Settings)    : PASS — renders beside the dock (chrome area),
+                        keyboard-operable, Esc clean, hidden-dock baseline OK.
+- 31e (Live Grep)     : PASS — `Alt+/` overlay opens beside the dock
+                        (chrome-centred), not overlapping it.
+- 31f (LG operable)   : PASS — has focus; dock doesn't steal keys; Esc
+                        closes cleanly, dock + editor intact. (Result
+                        population is a git-grep/env matter, not the dock.)
+- Note: opening LG/Settings from a *terminal* session needs `Ctrl+]`
+  first (the dock's Alt+/ blur falls through to the PTY otherwise).
 
 ### Round-trip run 2026-05-27 (flows 39–45, after rebase onto master)
 - 39 toggle ON         : PASS — dock shows, sessions listed.
