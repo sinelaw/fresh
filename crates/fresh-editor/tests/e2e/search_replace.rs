@@ -527,6 +527,82 @@ fn test_search_replace_current_file_unnamed_buffer() {
     );
 }
 
+/// Issue #2112: "Search and Replace in Current File" must work when the active
+/// buffer is a file located *outside* the project workspace root (e.g. opened
+/// from /tmp). The project file-walk is rooted at the working directory, so an
+/// out-of-root file is never reached — before the fix this reported "No matches
+/// found" even though the file clearly contained the pattern. The host must
+/// search the source buffer's file directly when it lies outside the walk root.
+#[test]
+fn test_search_replace_current_file_outside_workspace() {
+    init_tracing_from_env();
+    let (temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    // A file that is a sibling of the working dir, i.e. outside the project
+    // walk root. The walker rooted at `project_root` can never reach it.
+    let outside_file = temp_dir.path().join("outside.txt");
+    fs::write(&outside_file, "Line 1: testing the search\nplain line\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&outside_file).unwrap();
+    harness.render().unwrap();
+
+    // Open via palette → "Search and Replace in Current File".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("Search and Replace in Current File")
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("Search and Replace in Current File")
+        })
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+
+    // The scope row must name the out-of-root file. It can't be made relative
+    // to the workspace root, so it shows the absolute path.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Only in:") && screen.contains("outside.txt"),
+        "Scope row should name the out-of-root file. Got:\n{}",
+        screen
+    );
+
+    // Search for text that exists in the out-of-root file.
+    harness.type_text("testing").unwrap();
+
+    // Wait for the search to settle — either the match-count header or the
+    // "No matches found" status appears once the backend reports `done`.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Matches (1 in 1 files)") || s.contains("No matches found")
+        })
+        .unwrap();
+
+    // The match in the out-of-root file must be found (this is the
+    // regression: it used to read "No matches found").
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Matches (1 in 1 files)"),
+        "Out-of-root current-file search must find the on-disk match, not \
+         report 'No matches'. Got:\n{}",
+        screen
+    );
+}
+
 /// Searching for a pattern with no matches shows the "No matches" message.
 #[test]
 fn test_search_replace_no_matches() {

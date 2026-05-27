@@ -2891,6 +2891,22 @@ impl Editor {
         let cwd = self.working_dir().to_path_buf();
         let query_len = pattern.len();
 
+        // The project walk below is rooted at `cwd`, so a source buffer backed
+        // by a file *outside* the workspace root (e.g. opened from /tmp) is
+        // never reached and a current-file search finds nothing. Queue that
+        // file explicitly so it flows through the same per-file search path
+        // (which also handles the dirty-buffer hybrid plan). In-root files are
+        // left to the walk to avoid searching them twice.
+        let out_of_root_source = (source_buffer_id != 0)
+            .then_some(BufferId(source_buffer_id))
+            .and_then(|bid| {
+                self.windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.get(&bid))
+            })
+            .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()))
+            .filter(|path| !path.starts_with(&cwd));
+
         let Some(runtime) = &self.tokio_runtime else {
             finish_with(
                 &handle,
@@ -2905,16 +2921,27 @@ impl Editor {
             let (path_tx, mut path_rx) = tokio::sync::mpsc::channel::<std::path::PathBuf>(256);
 
             let walker_handle = Arc::clone(&handle_for_task);
+            let walk_tx = path_tx.clone();
             tokio::task::spawn_blocking(move || {
                 if let Err(e) = filesystem_walker.walk_files(
                     &cwd,
                     IGNORED_DIRS,
                     &walker_handle.cancel,
-                    &mut |path, _rel| path_tx.blocking_send(path.to_path_buf()).is_ok(),
+                    &mut |path, _rel| walk_tx.blocking_send(path.to_path_buf()).is_ok(),
                 ) {
                     tracing::warn!("BeginSearch walk_files failed: {}", e);
                 }
             });
+
+            if let Some(path) = out_of_root_source {
+                // The receive loop below is the only consumer and is still
+                // alive, so a send error here just means the search was
+                // cancelled — discarding the path is correct.
+                path_tx.send(path).await.ok();
+            }
+            // Drop our retained sender so the receive loop terminates once the
+            // walker's clone is also dropped.
+            drop(path_tx);
 
             let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
             let match_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
