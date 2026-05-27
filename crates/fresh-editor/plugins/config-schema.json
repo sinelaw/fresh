@@ -1452,9 +1452,9 @@
           "x-order": 4
         },
         "auto_start": {
-          "description": "Whether to auto-start this LSP server when opening matching files\nIf false (default), the server must be started manually via command palette",
+          "description": "Whether to auto-start this LSP server when opening matching files.\nDefaults to true: a server you configure is normally one you want\nused, so it starts on the next matching file open. Set to false to\nrequire a manual start via the command palette.",
           "type": "boolean",
-          "default": false,
+          "default": true,
           "x-order": 5
         },
         "root_markers": {
