@@ -611,7 +611,6 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
 
     // Types
     if scope_lower.starts_with("entity.name.type")
-        || scope_lower.starts_with("storage.type")
         || scope_lower.starts_with("support.type")
         || scope_lower.starts_with("entity.name.class")
     {
@@ -637,8 +636,8 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Variable);
     }
 
-    // Storage modifiers (pub, static, const, etc.)
-    if scope_lower.starts_with("storage.modifier") {
+    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
+    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
     }
 
