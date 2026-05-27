@@ -81,4 +81,38 @@
     window.
 
 ## Results log
-Record `flow# : PASS/FAIL — note` per run below.
+
+### Run 2026-05-27 (after host-level dock-key rework)
+- 1 (show)           : PASS — full-height left column, chrome to its right.
+- 4 (fills/pins)     : PASS — list fills, hint pinned.
+- 5 (↑↓ live-switch) : PASS — right pane re-roots to each session.
+- 6 (order stable)   : PASS.
+- 7 (Enter dive)     : PASS — focus to editor, dock stays; Down no longer
+                       moves the dock.
+- 8 (Esc leave)      : PASS.
+- C12 (cursor)       : PASS — with the buffer focused + dock blurred the
+                       caret renders in the buffer (x=76); earlier "parked"
+                       reading was the explorer-focus confound.
+- C11/13 (edit)      : PASS — typing reaches the buffer after dive; while
+                       focused, typing does NOT leak to the buffer.
+- 16/17 (`/`, filter): PASS — `/` focuses filter, typing filters live.
+- 18 (filtered ↑↓)   : PASS — navigate filtered results.
+- 19 (Enter in filt) : PASS — returns to list (no dive); ↑↓ keep working.
+- 21 (Space select)  : PASS — toggles `[x]` on the highlighted row.
+- 27 (Ctrl+P)        : PASS — blurs dock, opens palette, dock stays.
+- 28 (palette width) : PASS — palette renders right of the dock; dock
+                       column intact.
+- A2 (toggle hide)   : PASS.
+
+### Not verifiable via tmux (terminal-mouse limitation here)
+- 9 (mouse click row): SGR mouse events don't reach the app under this
+  tmux harness. Covered instead by the e2e `mouse_click_on_dock_new_
+  button_opens_form` (hit-test) + mode-independent keys (click re-focuses
+  → keyboard works). Needs a real terminal for full manual confirmation.
+
+### Key root-cause note
+Dock keys are handled at the floating-panel layer (host
+`dispatch_floating_widget_key`), NOT via `editor.defineMode` — mode
+bindings resolve against the *active buffer's* mode, which the dock floats
+over, so a session whose buffer has a local mode (terminal, markdown, …)
+would shadow them. This is why earlier mode-based Space/`/` never worked.

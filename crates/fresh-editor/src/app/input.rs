@@ -2515,16 +2515,62 @@ impl Editor {
             Some(fwp) => fwp.panel_id,
             None => return false,
         };
-        // A left-dock panel is non-modal: Esc returns focus to the
-        // editor (blur) and leaves the dock visible, rather than
-        // tearing the panel down. The plugin is told via a "blur"
-        // widget_event so it can update its own focus mirror. Hiding
-        // the dock entirely is the toggle command's job.
-        // The left dock drives Enter/Esc/Up/Down/Space//' through its
-        // own editor mode (`DOCK_MODE` in orchestrator.ts), so they are
-        // handled by the mode-binding precedence path below rather than
-        // the generic floating-panel smart keys. Nothing dock-specific
-        // is needed here.
+        // The left dock handles Enter / Esc / Space / "/" here, at the
+        // floating-panel layer, *independent of editor modes*. Editor
+        // modes (`defineMode`) resolve against the active buffer's mode,
+        // which the dock floats over — so a session whose buffer has a
+        // local mode would shadow any global dock mode. Up/Down fall
+        // through to the generic smart-key list nav below (which fires
+        // the `select` event the plugin live-switches on).
+        if matches!(
+            self.floating_widget_panel.as_ref().map(|f| f.placement),
+            Some(super::PanelPlacement::LeftDock { .. })
+        ) {
+            let on_filter = self
+                .widget_registry
+                .focus_key(panel_id)
+                .map(|k| k == "filter")
+                .unwrap_or(false);
+            match code {
+                KeyCode::Enter | KeyCode::Esc => {
+                    if on_filter {
+                        // Return from the filter to the session list.
+                        self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
+                    } else {
+                        // Dive into / leave the dock — focus the editor;
+                        // the dock stays visible.
+                        self.blur_floating_panel();
+                    }
+                    return true;
+                }
+                KeyCode::Char('/') if modifiers.is_empty() => {
+                    self.set_panel_focus_and_notify(panel_id, "filter".to_string());
+                    return true;
+                }
+                KeyCode::Char(' ') => {
+                    // Toggle the highlighted row's multi-select checkbox
+                    // (plugin owns the selection set).
+                    if self
+                        .plugin_manager
+                        .read()
+                        .unwrap()
+                        .has_hook_handlers("widget_event")
+                    {
+                        self.plugin_manager.read().unwrap().run_hook(
+                            "widget_event",
+                            crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                                panel_id,
+                                widget_key: "sessions".to_string(),
+                                event_type: "dock_space".to_string(),
+                                payload: serde_json::json!({}),
+                            },
+                        );
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
         let key_name: Option<&str> = match code {
             KeyCode::Esc => {
                 // Mode-binding precedence: a plugin's `defineMode`

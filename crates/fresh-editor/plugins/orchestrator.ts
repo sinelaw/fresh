@@ -344,13 +344,10 @@ let dockBlurred = false;
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
 const DOCK_WIDTH_COLS = 32;
-// The dock's own editor mode. Unlike the modal picker (OPEN_MODE), the
-// dock binds Up/Down/Enter/Esc explicitly so navigation + dive + leave
-// are deterministic regardless of which inner widget holds focus.
-const DOCK_MODE = "orchestrator-dock";
 // Which dock zone has keyboard focus: the session list (default) or the
-// filter input. `/` switches to the filter; Enter/Esc from the filter
-// return to the list (rather than diving / leaving).
+// filter input. Tracked from the host's `focus` widget_event. The host
+// (dispatch_floating_widget_key) reads the panel focus directly to route
+// Enter/Esc/Space//'; this mirror is informational for the plugin.
 let dockFocus: "list" | "filter" = "list";
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
@@ -1782,8 +1779,11 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
   openPanel.setFocusKey(asDock ? "sessions" : "visit");
   if (asDock) {
+    // The dock has no editor mode — its keys are handled at the host
+    // floating-panel layer (mode bindings would be shadowed by the
+    // active session's buffer mode).
     dockFocus = "list";
-    editor.setEditorMode(DOCK_MODE);
+    editor.setEditorMode(null);
   } else {
     editor.setEditorMode(OPEN_MODE);
   }
@@ -2645,74 +2645,12 @@ editor.defineMode(
   true,
 );
 
-// The dock's mode: list navigation + dive/leave are explicit bindings.
-// `/`, Space, and the M-* chords reuse the picker handlers (they operate
-// on the shared `openDialog`).
-editor.defineMode(
-  DOCK_MODE,
-  [
-    ["Up", "orchestrator_dock_up"],
-    ["Down", "orchestrator_dock_down"],
-    ["Enter", "orchestrator_dock_enter"],
-    ["Escape", "orchestrator_dock_escape"],
-    ["/", "orchestrator_focus_filter"],
-    ["Space", "orchestrator_toggle_select"],
-    ["M-n", "orchestrator_open_new_from_picker"],
-    ["M-p", "orchestrator_toggle_scope"],
-    ["M-t", "orchestrator_toggle_worktrees"],
-  ],
-  true,
-  true,
-);
-
-// Move the dock's session-list selection and live-switch the active
-// window. Works whether the list or the filter holds focus (so you can
-// type a filter and arrow through results without leaving the input).
-function dockMove(delta: number): void {
-  if (!openDialog || !openPanel || !dockMode) return;
-  const n = openDialog.filteredIds.length;
-  if (n === 0) return;
-  const prev = openDialog.selectedIndex;
-  let next = prev + delta;
-  if (next < 0) next = 0;
-  if (next >= n) next = n - 1;
-  if (next === prev) return;
-  openDialog.selectedIndex = next;
-  openPanel.update(buildDockSpec());
-  openPanel.setSelectedIndex("sessions", next);
-  scheduleDockSwitch(delta > 0 ? "bottom" : "top");
-}
-registerHandler("orchestrator_dock_up", () => dockMove(-1));
-registerHandler("orchestrator_dock_down", () => dockMove(1));
-
-// Enter: from the filter, return to the list; from the list, dive into
-// the selected (already-active) window — focus leaves the dock, which
-// stays visible.
-registerHandler("orchestrator_dock_enter", () => {
-  if (!openPanel || !dockMode) return;
-  if (dockFocus === "filter") {
-    dockFocus = "list";
-    openPanel.setFocusKey("sessions");
-    return;
-  }
-  editor.floatingPanelControl(openPanel.id(), "blur");
-  dockBlurred = true;
-  editor.setEditorMode(null);
-});
-
-// Esc: from the filter, return to the list; from the list, leave the
-// dock (focus the editor; the dock stays visible).
-registerHandler("orchestrator_dock_escape", () => {
-  if (!openPanel || !dockMode) return;
-  if (dockFocus === "filter") {
-    dockFocus = "list";
-    openPanel.setFocusKey("sessions");
-    return;
-  }
-  editor.floatingPanelControl(openPanel.id(), "blur");
-  dockBlurred = true;
-  editor.setEditorMode(null);
-});
+// The dock's Enter / Esc / Space / "/" are handled at the host's
+// floating-panel layer (see dispatch_floating_widget_key), not via an
+// editor mode — `defineMode` bindings resolve against the active
+// buffer's mode, which the dock floats over, so a session with a
+// buffer-local mode would shadow them. Up/Down use the host's generic
+// list smart-keys, which fire the `select` event we live-switch on.
 
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
@@ -2732,7 +2670,7 @@ registerHandler("orchestrator_focus_filter", () => {
 // (so the now-absent "visit" focus would otherwise be clamped to a
 // random tabbable), and when the selection drops back below two the
 // per-session preview — with its "visit" button — returns.
-registerHandler("orchestrator_toggle_select", () => {
+function toggleSelectCurrent(): void {
   if (!openDialog || !openPanel) return;
   // Inert while a confirm prompt is up — the selection is frozen
   // behind the confirmation panel.
@@ -2762,7 +2700,8 @@ registerHandler("orchestrator_toggle_select", () => {
     // Back to single preview — restore focus to Visit.
     openPanel.setFocusKey("visit");
   }
-});
+}
+registerHandler("orchestrator_toggle_select", toggleSelectCurrent);
 
 function toggleScope(): void {
   if (!openDialog) return;
@@ -4575,25 +4514,26 @@ editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
   if (openPanel && openDialog && e.panel_id === openPanel.id()) {
     if (e.event_type === "blur") {
-      // Host fired this because focus left the dock (Esc/Enter dive,
-      // editor click, or an unhandled chord like Ctrl+P). The dock
-      // stays visible; drop its editor-mode so its chords (/, Space,
-      // Up/Down, …) don't intercept keys meant for the buffer.
-      if (dockMode) {
-        dockBlurred = true;
-        editor.setEditorMode(null);
-      }
+      // Host fired this because focus left the dock (Enter/Esc dive or
+      // leave, editor click, or an unhandled chord like Ctrl+P). The
+      // dock stays visible; the host stops routing keys to it.
+      if (dockMode) dockBlurred = true;
       return;
     }
     if (e.event_type === "focus") {
-      // Focus (re-)entered the dock — e.g. a mouse click on a row or
-      // the filter. Re-arm the dock's editor-mode so the keyboard
-      // works again, and track which zone was focused.
+      // Focus (re-)entered the dock — a mouse click on a row/filter, or
+      // a host-driven focus move. Track the zone so Up/Down + filter
+      // behave; mark the dock active again.
       if (dockMode) {
         dockBlurred = false;
-        editor.setEditorMode(DOCK_MODE);
         dockFocus = e.widget_key === "filter" ? "filter" : "list";
       }
+      return;
+    }
+    if (e.event_type === "dock_space") {
+      // Host Space on the dock → toggle the highlighted row's
+      // multi-select checkbox.
+      if (dockMode) toggleSelectCurrent();
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
