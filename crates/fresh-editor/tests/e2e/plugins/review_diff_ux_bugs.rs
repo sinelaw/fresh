@@ -1979,11 +1979,16 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         screen
     );
 
-    // The discard must actually revert the working tree on disk.
+    // The discard must actually revert the working tree on disk: the
+    // unterminated added line is gone and the committed lines are restored.
+    // Compare line-ending-agnostically — whether git writes the restored file
+    // back as LF or CRLF depends on the user's core.autocrlf, which the test
+    // leaves at its platform default; that's git's choice, not the feature's.
     let after = fs::read_to_string(&notes).unwrap();
     assert_eq!(
-        after, original,
+        after.replace("\r\n", "\n"),
+        original,
         "Issue #2117: discarding the hunk should restore the committed \
-         content (removing the unterminated added line)."
+         content (removing the unterminated added line). Got: {after:?}"
     );
 }

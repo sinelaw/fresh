@@ -13,23 +13,27 @@ use tempfile::TempDir;
 /// system git config of whatever machine runs the suite (a developer's box, a
 /// Linux CI runner, a Windows CI runner). That config can enable signing
 /// programs, background `gc`/`maintenance`, `init.templateDir` hooks,
-/// `core.autocrlf`, `fsmonitor`, etc. — any of which can make a commit fail or
-/// silently change behavior in environment-specific ways. The
-/// `git_log_commit_list_scrolls_with_wheel` flake ("fatal: unable to read
-/// <hash>" during commit) and the Windows CRLF discard failure were both
-/// symptoms of this leakage.
+/// `fsmonitor`, etc. — any of which can make a commit fail in
+/// environment-specific ways. The `git_log_commit_list_scrolls_with_wheel`
+/// flake ("fatal: unable to read <hash>" during commit) was a symptom of this
+/// leakage.
 ///
 /// We therefore:
 ///   * ignore system config (`GIT_CONFIG_NOSYSTEM`) and point global config at
 ///     a nonexistent file (`GIT_CONFIG_GLOBAL`), which git treats as empty —
 ///     cross-platform, unlike `/dev/null`;
-///   * pin every setting the tests rely on via `-c` so it applies to *every*
-///     subcommand including `init` (identity, no signing, LF endings);
+///   * pin identity and disable signing via `-c` so it applies to *every*
+///     subcommand including `init`;
 ///   * disable automatic `gc`/`maintenance` so loose objects are never
 ///     repacked mid-operation;
 ///   * force durable loose-object writes (`core.fsync`) so an object written by
 ///     one commit is guaranteed readable by the next, even on CI filesystems
 ///     with weaker write-then-read coherency.
+///
+/// We deliberately do NOT pin `core.autocrlf` / `core.eol`: line-ending
+/// behavior is left at git's platform default so the editor under test is
+/// exercised the way a real user's git would behave. Tests that read files
+/// back must therefore be line-ending-agnostic rather than assuming LF.
 pub fn git_command(path: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(path)
@@ -42,8 +46,6 @@ pub fn git_command(path: &Path) -> Command {
         .args(["-c", "tag.gpgsign=false"])
         .args(["-c", "gc.auto=0"])
         .args(["-c", "maintenance.auto=false"])
-        .args(["-c", "core.autocrlf=false"])
-        .args(["-c", "core.eol=lf"])
         .args(["-c", "core.fsync=loose-object,index,reference"])
         .args(["-c", "core.fsyncMethod=fsync"]);
     cmd
@@ -63,11 +65,12 @@ impl GitTestRepo {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let path = temp_dir.path().to_path_buf();
 
-        // Initialize git repository. All git settings the tests rely on are
-        // pinned per-invocation by `git_command` (identity, no signing, LF
-        // endings, no auto gc/maintenance, durable writes), and the host's
-        // global/system config is ignored — so behavior is identical on every
-        // machine.
+        // Initialize git repository. The test's own git invocations are
+        // isolated by `git_command` so the host's signing program / background
+        // gc can't break commits, but we deliberately leave line-ending config
+        // (core.autocrlf / core.eol) at git's defaults — the editor under test
+        // must behave correctly for a normal user's git, whatever their
+        // platform default is, rather than relying on the test pinning LF.
         let output = git_command(&path)
             .arg("init")
             .output()
