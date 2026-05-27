@@ -80,6 +80,23 @@
 38. No stray rendering artifacts in the dock column when scrolling the
     window.
 
+## I. Round-trip (toggle on → use → toggle off → edit → toggle on)
+A single end-to-end scenario, not isolated flows — catches state leaking
+across toggles (lingering editor mode, stale focus, cursor, key capture).
+39. Toggle the dock **on** (Ctrl+P → Toggle Dock).
+40. `↑`/`↓` between sessions; confirm the window re-roots each time.
+41. `Enter` to **dive** into a session; type/edit in its buffer; confirm
+    the edit lands and the dock stays visible.
+42. Toggle the dock **off**; confirm the chrome reclaims the full width
+    and the editor is fully usable (type, move cursor, `Ctrl+P` palette,
+    `Ctrl+E` explorer) with **no** residual dock key-capture.
+43. Do a normal editor workflow with the dock off (open a file, edit,
+    save) — behaves exactly as if the dock never existed.
+44. Toggle the dock **on** again; confirm it reopens focused, the session
+    list is intact/correct, and `↑↓`/dive work again (no stale state).
+45. Repeat 39–44 a couple of times — no drift, no leaked mode, cursor
+    always correct.
+
 ## Results log
 
 ### Run 2026-05-27 (after host-level dock-key rework)
@@ -109,6 +126,24 @@
   tmux harness. Covered instead by the e2e `mouse_click_on_dock_new_
   button_opens_form` (hit-test) + mode-independent keys (click re-focuses
   → keyboard works). Needs a real terminal for full manual confirmation.
+
+### Round-trip run 2026-05-27 (flows 39–45, after rebase onto master)
+- 39 toggle ON         : PASS — dock shows, sessions listed.
+- 40 ↑↓ switch          : PASS — window re-roots.
+- 41 Enter dive         : PASS — dock stays visible (blurred).
+- 42 toggle OFF         : PASS — chrome reclaims the full left edge.
+- 43 editor w/ dock off : PASS — Ctrl+P palette opens, no residual dock
+                          key-capture; editor fully usable.
+- 44 toggle ON again    : PASS — reopens focused, list intact, ↑↓ work.
+- 45 repeat             : PASS — no drift / leaked mode across cycles.
+
+### New interaction from the rebase (gap)
+Master added a **"Show empty/1-file sessions"** filter to the modal
+picker (hidden by default), and the dock shares `filterSessions`, so the
+dock now hides empty/1-file sessions (e.g. a freshly-launched session
+with no edits). But `buildDockSpec` has no toggle to reveal them — so the
+dock can't show empty sessions at all. Add the toggle (or a dock
+equivalent) to `buildDockSpec`. Tracked in `orchestrator-dock-gaps.md`.
 
 ### Key root-cause note
 Dock keys are handled at the floating-panel layer (host

@@ -33,6 +33,11 @@
   the chosen width). Today the width is a fixed constant.
 
 ### Dock UX (plugin)
+- **No "show empty/1-file sessions" toggle in the dock.** Master added
+  this filter to the modal picker (default off); the dock shares
+  `filterSessions` so it hides empty/1-file sessions too, but
+  `buildDockSpec` has no control to reveal them — a freshly-launched
+  session with no edits never appears in the dock. Add the toggle.
 - **Diving into a *switched* session focuses the file explorer, not the
   buffer.** When you arrow to a different session and press Enter, the
   window activates with its file-explorer pane focused, so the first
