@@ -5803,15 +5803,20 @@ impl Editor {
             tracing::warn!("FloatingPanelControl for unknown/mismatched panel {panel_id} ignored");
             return;
         }
+        // `blur` fires a widget_event, so handle it before borrowing the
+        // panel — it reborrows `self` via the shared helper.
+        if op == "blur" {
+            self.blur_floating_panel();
+            return;
+        }
+        // Clamp the dock width relative to the terminal so it can never
+        // swallow the whole chrome. Read before the &mut borrow below.
+        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
         let Some(fwp) = self.floating_widget_panel.as_mut() else {
             return;
         };
         match op {
             "dock" => {
-                // Clamp the dock width to something sane relative to
-                // the terminal so it can never swallow the whole chrome.
-                let term_w = self.terminal_width.max(20);
-                let max_cols = term_w.saturating_sub(20).max(10);
                 let width_cols = (arg as u16).clamp(10, max_cols);
                 fwp.placement = super::PanelPlacement::LeftDock { width_cols };
                 fwp.focused = true;
@@ -5821,10 +5826,6 @@ impl Editor {
                 fwp.focused = true;
             }
             "focus" => fwp.focused = true,
-            "blur" => {
-                drop(fwp);
-                self.blur_floating_panel();
-            }
             other => tracing::warn!("FloatingPanelControl: unknown op {other:?}"),
         }
     }

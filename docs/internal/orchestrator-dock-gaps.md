@@ -25,6 +25,13 @@
   macro-replay / `recompute_layout` lays the chrome at the wrong width
   while the dock is up.
 
+### Dock chrome (core)
+- **Right-edge-only border + drag-resize.** The dock currently draws a
+  full box (all four borders). It should draw only a **right** border
+  (no top/left/bottom — reclaim those rows/cols for content), and that
+  right border should be **draggable** to resize the dock width (persist
+  the chosen width). Today the width is a fixed constant.
+
 ### Dock UX (plugin)
 - **Attention glyph (⚑).** No reliable per-session "agent waiting /
   exited" signal exists in the session model yet, so the wireframe's

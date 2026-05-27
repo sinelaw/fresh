@@ -694,12 +694,17 @@ function filterSessions(needle: string): number[] {
   // at the top and other projects' below, and within each project the
   // pre-existing live sessions come first with the discovered on-disk
   // worktrees listed after them.
+  // The dock is persistent and switches the active session constantly,
+  // so it must NOT reorder as the active project changes — pin a stable
+  // order (project, then id). The modal picker, opened fresh each time,
+  // keeps the current-project-first grouping.
+  const pinCurrentFirst = !dockMode;
   const byProjectThenId = (a: number, b: number): number => {
     const sa = orchestratorSessions.get(a)!;
     const sb = orchestratorSessions.get(b)!;
     const aCur = projectKeyOf(sa) === cur ? 0 : 1;
     const bCur = projectKeyOf(sb) === cur ? 0 : 1;
-    if (aCur !== bCur) return aCur - bCur;
+    if (pinCurrentFirst && aCur !== bCur) return aCur - bCur;
     const ka = projectKeyOf(sa);
     const kb = projectKeyOf(sb);
     if (ka !== kb) return ka < kb ? -1 : 1;
@@ -4536,9 +4541,12 @@ editor.on("widget_event", (e) => {
           // The editor to the dock's right is the preview: arrowing
           // the list switches the active window live (debounced),
           // wiping down when moving down the list and up when moving
-          // up. Re-render the dock list to move the highlight now.
+          // up. Re-render the dock list to move the highlight now, and
+          // keep focus pinned to the list so Enter activates it (→ blur
+          // to the editor) rather than drifting to the New button.
           openPanel.update(buildDockSpec());
           openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+          openPanel.setFocusKey("sessions");
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
           scheduleDockSwitch(fromEdge);
           return;

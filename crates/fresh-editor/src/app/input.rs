@@ -2668,12 +2668,20 @@ impl Editor {
                     return false;
                 }
             }
-            // Ctrl/Alt-modified chords with no mode binding are
-            // swallowed by the floating panel without further action —
-            // a modal dialog must not leak keys to global bindings
-            // like Ctrl-P or Alt-F. Plain (or Shift-only) chars feed
-            // printable text into the focused TextInput.
+            // Ctrl/Alt-modified chords with no mode binding: a centered
+            // modal swallows them (it must not leak keys to global
+            // bindings like Ctrl-P). The non-modal dock does the
+            // opposite — an unhandled shortcut returns focus to the
+            // editor (blur) and falls through so the editor handles it
+            // (e.g. Ctrl-P opens the command palette).
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                if matches!(
+                    self.floating_widget_panel.as_ref().map(|f| f.placement),
+                    Some(super::PanelPlacement::LeftDock { .. })
+                ) {
+                    self.blur_floating_panel();
+                    return false;
+                }
                 return true;
             }
             let ch = if modifiers.contains(KeyModifiers::SHIFT) {
