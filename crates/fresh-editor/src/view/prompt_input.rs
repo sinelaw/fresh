@@ -330,6 +330,16 @@ impl Prompt {
                 ctx.defer(DeferredAction::UpdatePromptSuggestions);
                 InputResult::Consumed
             }
+            'u' => {
+                // Delete to start of line (standard readline kill).
+                // Without this, Ctrl+U did nothing and the only way to
+                // clear the command-palette line was repeated Backspace
+                // (issue #2143).
+                self.clear_selection();
+                self.delete_to_start();
+                ctx.defer(DeferredAction::UpdatePromptSuggestions);
+                InputResult::Consumed
+            }
             'z' => {
                 // Undo the last input edit. Operates on the prompt's own
                 // history so undo edits the query box, not the underlying
