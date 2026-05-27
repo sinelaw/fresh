@@ -218,8 +218,9 @@ fn discover_sessions(
         };
         let root = PathBuf::from(root);
         // GC: the directory is gone — drop the stale cache file.
+        // Best-effort: a failed delete just leaves a harmless file to retry next boot.
         if !filesystem.is_dir(&root).unwrap_or(false) {
-            let _ = filesystem.remove_file(p);
+            let _ = filesystem.remove_file(p).ok();
             continue;
         }
         let label = val
@@ -292,13 +293,15 @@ fn migrate_windows_json_into_workspaces(
             }
         }
         if let Ok(out) = serde_json::to_vec_pretty(&val) {
-            let _ = filesystem.write_file(&ws_path, &out);
+            // Best-effort backfill: on failure the workspace keeps its pre-migration content.
+            let _ = filesystem.write_file(&ws_path, &out).ok();
         }
     }
     // Retire windows.json (keep a .bak so a downgrade isn't one-way).
     let bak = global_p.with_extension("json.retired.bak");
     if filesystem.rename(&global_p, &bak).is_err() {
-        let _ = filesystem.remove_file(&global_p);
+        // Best-effort: if delete also fails the file stays and migration reruns (idempotent).
+        let _ = filesystem.remove_file(&global_p).ok();
     }
 }
 
