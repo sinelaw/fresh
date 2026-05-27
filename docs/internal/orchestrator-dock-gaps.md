@@ -56,8 +56,17 @@
   project tag (like the modal), not collapsible project group headers
   (the `list` widget is flat; grouping needs interleaved header rows +
   selection-index remapping).
-- **New-session from the dock closes it** (`openForm` →
-  `closeOpenDialog`); arguably the dock should persist / reopen after.
+- **New-session from the dock closes it** — `+ New` (`openForm`) calls
+  `closeOpenDialog`, so the centered form replaces the dock. Root cause:
+  the host (`Editor.floating_widget_panel`) holds **one** floating panel
+  at a time. The left dock and a centered modal occupy disjoint regions
+  and *should* coexist (the dock stays visible while the form is open).
+  **Proper fix (deferred to a future branch):** give the host two panel
+  slots — one `LeftDock`, one centered — and route input/mouse to the
+  focused one; render both each frame. TODO markers in
+  `app/mod.rs` (`floating_widget_panel`) and `plugins/orchestrator.ts`
+  (`orchestrator_open_new_from_picker`). Not doing the reopen-after-close
+  workaround, since the real answer is simultaneous panels.
 - **Detail strip is one line** (branch only). The richer
   age / pgid / last-terminal-line detail (`buildPreviewEntries`) is not
   surfaced in the dock to keep the list-fill height maths exact.

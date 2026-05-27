@@ -933,6 +933,13 @@ pub struct Editor {
     /// overlay is modal-ish (input is routed to it) and stacking
     /// floaters would obscure each other without a usable focus
     /// model. Mounting a second one replaces the first.
+    ///
+    /// TODO(dock): the non-modal left dock (`PanelPlacement::LeftDock`)
+    /// and a centered modal (the new-session form, etc.) occupy disjoint
+    /// screen regions and should be able to coexist — today mounting the
+    /// form replaces the dock. Reconsider this as two slots (one dock,
+    /// one centered) with input/mouse routed to the focused one. See
+    /// docs/internal/orchestrator-dock-gaps.md.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
 
     /// Persisted width (columns) of the orchestrator left dock after the

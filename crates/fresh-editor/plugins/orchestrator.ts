@@ -2666,6 +2666,14 @@ editor.defineMode(
 
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
+  // TODO(dock): opening the new-session form closes the dock because the
+  // host allows only one mounted floating panel at a time, so the
+  // centered form replaces the left dock. The dock (left column) and a
+  // centered modal occupy disjoint regions and SHOULD be able to coexist
+  // — i.e. "+ New" from the dock should leave the dock visible. Fixing
+  // this needs the host to hold two panels (a dock slot + a centered
+  // slot) and route input/mouse to the focused one. Deferred to a future
+  // branch; see docs/internal/orchestrator-dock-gaps.md.
   closeOpenDialog();
   openForm({ fromPicker: true });
 });
