@@ -68,7 +68,7 @@ fn observe_rendered_root_with_orchestrator_plugin_loaded() {
 
     // Phase C restore + inactive-window restore.
     h.startup(true, &[]).unwrap();
-    h.editor_mut().restore_inactive_window_workspaces();
+    h.editor_mut().materialize_all_windows();
 
     // Let plugins finish loading and run any startup hooks
     // (editor_initialized / ready). Generous bounded pump.

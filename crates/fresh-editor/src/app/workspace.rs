@@ -554,11 +554,12 @@ impl Editor {
     }
 
     /// Eagerly materialize every not-yet-restored window. Production
-    /// startup is lazy (per-window restore on first dive/preview); this
-    /// is for callers that need all windows populated up front — chiefly
-    /// the orchestrator bring-up render tests, which assert every
-    /// restored session paints.
-    pub fn restore_inactive_window_workspaces(&mut self) {
+    /// startup is lazy (per-window restore on first dive/preview via
+    /// `materialize_window`); this eager variant exists only for tests
+    /// that need all windows populated up front — chiefly the
+    /// orchestrator bring-up render tests, which assert every restored
+    /// session paints. Not called from production code.
+    pub fn materialize_all_windows(&mut self) {
         let pending: Vec<fresh_core::WindowId> = self.materialize_pending.iter().copied().collect();
         for id in pending {
             self.materialize_window(id);

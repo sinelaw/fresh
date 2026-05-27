@@ -130,7 +130,7 @@ fn launch_in_project_roots_rendered_ui_at_project() {
     // Phase C: restore (mirrors handle_first_run_setup), plus the
     // inactive-window restore main.rs runs right after.
     h.startup(true, &[]).unwrap();
-    h.editor_mut().restore_inactive_window_workspaces();
+    h.editor_mut().materialize_all_windows();
 
     // Phase D: open the file explorer and pump async until its tree
     // initializes (init_file_explorer spawns a tokio task).

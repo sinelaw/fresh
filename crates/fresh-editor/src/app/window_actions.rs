@@ -53,12 +53,6 @@ impl crate::app::Editor {
     /// `PluginCommand::CreateWindow` dispatcher rejects relative
     /// paths before reaching here.
     ///
-    /// Seeds the new window with an empty scratch buffer + a
-    /// minimal split layout up front (same shape as the
-    /// first-dive seed path), so the window is renderable
-    /// immediately. Without this, never-dived windows have
-    /// `splits == None` and any cross-window render (e.g. the
-    /// Orchestrator preview pane's `WindowEmbed`) draws blank.
     /// Find an existing window whose root resolves to the same
     /// canonical directory, if any. Backs the one-session-per-dir
     /// invariant: opening a directory that already has a window
@@ -71,6 +65,18 @@ impl crate::app::Editor {
             .map(|(id, _)| *id)
     }
 
+    /// Open the window for `root`, creating it if absent. Enforces
+    /// one-session-per-directory: if a window already exists at the
+    /// same canonical root it is returned as-is and `label` is
+    /// ignored (the existing window keeps its label) — no duplicate
+    /// is created.
+    ///
+    /// Seeds a freshly created window with an empty scratch buffer +
+    /// a minimal split layout up front (same shape as the first-dive
+    /// seed path), so the window is renderable immediately. Without
+    /// this, never-dived windows have `splits == None` and any
+    /// cross-window render (e.g. the Orchestrator preview pane's
+    /// `WindowEmbed`) draws blank.
     pub fn create_window_at(&mut self, root: PathBuf, label: String) -> WindowId {
         // One session per directory: reuse an existing window at this
         // root instead of spawning a colliding duplicate.

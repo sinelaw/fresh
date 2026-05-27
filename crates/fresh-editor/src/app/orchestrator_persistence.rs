@@ -152,17 +152,20 @@ pub(crate) fn read_persisted_windows_env(
         return None;
     }
     let next_id = windows.iter().map(|w| w.id).max().unwrap_or(0) + 1;
+    // One session per directory is enforced upstream by the workspace
+    // cache itself: `get_workspace_path` keys each file on the
+    // canonical root, so discovery yields at most one window per
+    // canonical dir. No post-hoc dedup is needed.
+    //
     // `active` is decided downstream by the launch cwd
     // (`pick_active_window_for_cwd`); 0 means "no stored hint", so the
     // cwd-match branch governs which session is foregrounded.
-    let mut env = PersistedWindows {
+    Some(PersistedWindows {
         version: CURRENT_VERSION,
         active: 0,
         next_id,
         windows,
-    };
-    dedup_windows_by_root(&mut env);
-    Some(env)
+    })
 }
 
 fn workspaces_dir(data_dir: &Path) -> PathBuf {
@@ -204,7 +207,9 @@ fn discover_sessions(
     let mut found: Vec<(PathBuf, String, SessionState)> = Vec::new();
     for entry in entries {
         let p = &entry.path;
-        if !entry.name.ends_with(".json") || entry.name.ends_with(".tmp") {
+        // Only real workspace files. A torn `*.json.tmp` write or a
+        // `*.retired.bak` already fails the `.json` suffix test.
+        if !entry.name.ends_with(".json") {
             continue;
         }
         let Ok(bytes) = filesystem.read_file(p) else {
@@ -217,11 +222,20 @@ fn discover_sessions(
             continue;
         };
         let root = PathBuf::from(root);
-        // GC: the directory is gone — drop the stale cache file.
-        // Best-effort: a failed delete just leaves a harmless file to retry next boot.
-        if !filesystem.is_dir(&root).unwrap_or(false) {
-            let _ = filesystem.remove_file(p).ok();
-            continue;
+        // GC only on a *confirmed* absence (`Ok(false)`): the directory
+        // is definitively gone, so drop the stale cache file (best-
+        // effort — a failed delete just leaves a harmless file to retry
+        // next boot). An `Err` (permission, IO, an unreachable
+        // remote/unmounted FS) is indistinguishable from a deletion but
+        // is recoverable, so keep the file rather than irreversibly
+        // losing the session.
+        match filesystem.is_dir(&root) {
+            Ok(false) => {
+                let _ = filesystem.remove_file(p).ok();
+                continue;
+            }
+            Ok(true) => {}
+            Err(_) => continue,
         }
         let label = val
             .get("label")
@@ -366,62 +380,6 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
 /// the same session.
 pub(crate) fn canonical_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// Enforce the one-session-per-directory invariant on a freshly
-/// loaded envelope: when two persisted windows share a canonical
-/// root (e.g. a plain project window and an orchestrator session
-/// rooted at the same dir), collapse them to a single entry. The
-/// kept entry is the active one if present, otherwise the
-/// highest-id (most recently created); `active` is repointed when
-/// it referenced a dropped duplicate. Without this, colliding
-/// roots clobber one another's per-dir workspace file under the
-/// non-deterministic save order.
-pub(crate) fn dedup_windows_by_root(env: &mut PersistedWindows) {
-    use std::collections::HashMap as Map;
-    // canonical root -> index of the kept window in env.windows
-    let mut kept: Map<PathBuf, usize> = Map::new();
-    let mut remap: Map<u64, u64> = Map::new();
-    let mut drop_idx: Vec<usize> = Vec::new();
-
-    for i in 0..env.windows.len() {
-        let key = canonical_key(&env.windows[i].root);
-        match kept.get(&key).copied() {
-            None => {
-                kept.insert(key, i);
-            }
-            Some(j) => {
-                // Pick the winner between the already-kept j and i.
-                let win_is_active = |idx: usize| env.windows[idx].id == env.active;
-                let keep_i = if win_is_active(i) {
-                    true
-                } else if win_is_active(j) {
-                    false
-                } else {
-                    env.windows[i].id > env.windows[j].id
-                };
-                let (winner, loser) = if keep_i { (i, j) } else { (j, i) };
-                remap.insert(env.windows[loser].id, env.windows[winner].id);
-                if keep_i {
-                    kept.insert(key, i);
-                }
-                drop_idx.push(loser);
-            }
-        }
-    }
-
-    if drop_idx.is_empty() {
-        return;
-    }
-    // Repoint active if it named a dropped duplicate.
-    if let Some(&target) = remap.get(&env.active) {
-        env.active = target;
-    }
-    drop_idx.sort_unstable();
-    drop_idx.dedup();
-    for &idx in drop_idx.iter().rev() {
-        env.windows.remove(idx);
-    }
 }
 
 /// Scan `<data>/orchestrator/*/windows.json` for legacy v1
@@ -997,32 +955,6 @@ mod tests {
         let b = global_windows_path(data_dir);
         assert_eq!(a, b);
         assert_eq!(a, data_dir.join("orchestrator").join("windows.json"));
-    }
-
-    #[test]
-    fn dedup_collapses_same_canonical_root_and_repoints_active() {
-        // Two windows at the same (non-existent, so canonicalize is a
-        // no-op) root must collapse to one. `active` named the loser,
-        // so it's repointed to the survivor.
-        let mut env = env_with(
-            5,
-            vec![
-                make_window(3, "/x/proj", None),
-                make_window(5, "/x/proj", None), // dup of id 3's root
-                make_window(7, "/x/other", None),
-            ],
-        );
-        dedup_windows_by_root(&mut env);
-        assert_eq!(env.windows.len(), 2, "the duplicate root collapsed");
-        // Neither was active by id-equality (active=5 is one of the
-        // dups); the higher id (5) wins, so active stays 5.
-        assert_eq!(env.active, 5);
-        let proj_count = env
-            .windows
-            .iter()
-            .filter(|w| w.root == Path::new("/x/proj"))
-            .count();
-        assert_eq!(proj_count, 1, "exactly one window per canonical root");
     }
 
     #[test]
