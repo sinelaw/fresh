@@ -646,6 +646,29 @@ impl Editor {
             .expect("active_window id must be a member of sessions")
     }
 
+    /// Borrow one of the two coexisting widget-panel slots (centered
+    /// modal vs. left dock). See `PanelSlot`.
+    pub(crate) fn panel(
+        &self,
+        slot: crate::app::PanelSlot,
+    ) -> Option<&crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => self.floating_widget_panel.as_ref(),
+            crate::app::PanelSlot::Dock => self.dock.as_ref(),
+        }
+    }
+
+    /// Mutable handle to one of the two widget-panel slots.
+    pub(crate) fn panel_mut(
+        &mut self,
+        slot: crate::app::PanelSlot,
+    ) -> Option<&mut crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => self.floating_widget_panel.as_mut(),
+            crate::app::PanelSlot::Dock => self.dock.as_mut(),
+        }
+    }
+
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.

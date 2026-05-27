@@ -934,13 +934,17 @@ pub struct Editor {
     /// floaters would obscure each other without a usable focus
     /// model. Mounting a second one replaces the first.
     ///
-    /// TODO(dock): the non-modal left dock (`PanelPlacement::LeftDock`)
-    /// and a centered modal (the new-session form, etc.) occupy disjoint
-    /// screen regions and should be able to coexist — today mounting the
-    /// form replaces the dock. Reconsider this as two slots (one dock,
-    /// one centered) with input/mouse routed to the focused one. See
-    /// docs/internal/orchestrator-dock-gaps.md.
+    /// This is the **centered modal** slot (`PanelSlot::Floating`): the
+    /// orchestrator picker, the new-session form, and other plugin
+    /// modals. The persistent left dock lives in a separate slot
+    /// (`dock`) so the two can coexist (a modal opens *over* the editor
+    /// while the dock stays visible). Routing is by `PanelSlot`.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
+
+    /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
+    /// shown. Independent of `floating_widget_panel` so the dock persists
+    /// while a centered modal is open. Always rendered as a `LeftDock`.
+    pub(crate) dock: Option<FloatingWidgetState>,
 
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,
@@ -957,6 +961,31 @@ pub struct Editor {
 /// rerender paths special-case this id and paint into the overlay
 /// rect instead.
 pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
+
+/// Sentinel `BufferId` for the editor-global **dock** panel — distinct
+/// from `FLOATING_PANEL_BUFFER_ID` so the dock and a centered modal can
+/// both live in the widget registry (and be hit-tested) at the same
+/// time. See `Editor::dock` and `PanelSlot`.
+pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
+
+/// Selects which of the two coexisting widget-panel slots an operation
+/// targets: the centered modal overlay (`Floating`, the picker /
+/// new-session form / plugin modals) or the persistent editor-global
+/// left `Dock`. They occupy disjoint screen regions and render together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelSlot {
+    Floating,
+    Dock,
+}
+
+impl PanelSlot {
+    pub(crate) fn buffer_id(self) -> BufferId {
+        match self {
+            PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
+            PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+        }
+    }
+}
 
 /// A widget panel rendered as a centered floating overlay rather
 /// than into a virtual buffer. The panel still lives in the shared
