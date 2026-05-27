@@ -2006,17 +2006,14 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
 }
 
 // Toggle command (bind to a key of choice; reachable as
-// "Orchestrator: Toggle Dock" in the command palette). hidden → show
-// + focus; focused → hide; blurred → re-focus.
+// "Orchestrator: Toggle Dock" in the command palette). Simple
+// 2-state: visible → hide, hidden → show + focus. (A blurred-but-
+// visible dock is re-focused by clicking it.) A 3-state toggle can't
+// work reliably because invoking the toggle via a chord first blurs
+// the focused dock — the toggle would then always see "blurred".
 function toggleDock(): void {
   if (openPanel && dockMode) {
-    if (dockBlurred) {
-      editor.floatingPanelControl(openPanel.id(), "focus");
-      dockBlurred = false;
-      editor.setEditorMode(OPEN_MODE);
-    } else {
-      closeOpenDialog();
-    }
+    closeOpenDialog();
     return;
   }
   // A centered modal picker is open — leave it alone.
@@ -4540,13 +4537,9 @@ editor.on("widget_event", (e) => {
         if (dockMode) {
           // The editor to the dock's right is the preview: arrowing
           // the list switches the active window live (debounced),
-          // wiping down when moving down the list and up when moving
-          // up. Re-render the dock list to move the highlight now, and
-          // keep focus pinned to the list so Enter activates it (→ blur
-          // to the editor) rather than drifting to the New button.
+          // wiping down when moving down the list and up when moving up.
           openPanel.update(buildDockSpec());
           openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-          openPanel.setFocusKey("sessions");
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
           scheduleDockSwitch(fromEdge);
           return;
