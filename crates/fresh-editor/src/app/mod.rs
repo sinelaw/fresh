@@ -49,6 +49,7 @@ mod mouse_input;
 mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;
+mod overlay;
 mod path_utils;
 mod plugin_commands;
 mod plugin_dispatch;
@@ -1536,6 +1537,85 @@ mod tests {
 
         assert_eq!(editor.buffers().len(), 1);
         assert!(!editor.should_quit());
+    }
+
+    fn default_test_editor() -> Editor {
+        let (dir_context, temp) = test_dir_context();
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        Editor::new(
+            Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap()
+    }
+
+    fn test_panel(placement: PanelPlacement, focused: bool) -> FloatingWidgetState {
+        FloatingWidgetState {
+            panel_id: 1,
+            width_pct: 50,
+            height_pct: 50,
+            placement,
+            focused,
+            entries: Vec::new(),
+            focus_cursor: None,
+            embeds: Vec::new(),
+            overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
+            last_inner_rect: None,
+        }
+    }
+
+    /// The overlay layer stack always terminates in the editor base layer,
+    /// which owns the keyboard, so a fresh editor resolves to its active
+    /// window's context.
+    #[test]
+    fn overlay_stack_base_layer_owns_keyboard() {
+        use crate::app::overlay::{FocusPolicy, LayerKind};
+        use crate::input::keybindings::KeyContext;
+
+        let editor = default_test_editor();
+        let layers = editor.overlay_layers();
+        let base = layers.last().expect("at least the base layer");
+        assert_eq!(base.kind, LayerKind::Editor);
+        assert_eq!(base.policy, FocusPolicy::Base);
+        assert!(base.owns_keyboard);
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// P1 invariant preserved through the P2 layer walk: a *focused* dock
+    /// owns the keyboard (`KeyContext::Dock`); once blurred it falls
+    /// through to the editor underneath so the buffer stays usable.
+    #[test]
+    fn focused_dock_owns_keyboard_blurred_falls_through() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(PanelPlacement::LeftDock { width_cols: 30 }, true));
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+
+        editor.dock.as_mut().unwrap().focused = false;
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// A focused centered modal outranks a focused dock — when the
+    /// new-session form opens on top of the dock, the modal owns input.
+    #[test]
+    fn centered_modal_outranks_dock() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(PanelPlacement::LeftDock { width_cols: 30 }, true));
+        editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
+        // The centered modal resolves as Normal (not Dock).
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
     }
 
     #[test]

@@ -232,57 +232,114 @@ impl Editor {
         }
     }
 
-    /// Determine the current keybinding context based on UI state
-    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+    /// Build the editor's overlay stack, ordered top-first (highest
+    /// keyboard-focus precedence first), ending with the always-present
+    /// editor base layer.
+    ///
+    /// This is the single source of truth for focus precedence: it
+    /// reproduces the historical ladder (Settings > Menu > Prompt > Popup
+    /// (only when capturing) > focused centered modal > focused dock >
+    /// CompositeBuffer / current context) as a list of
+    /// [`crate::app::overlay::Layer`]s. `get_key_context` walks it; render
+    /// and mouse dispatch are migrated onto the same list in later steps.
+    pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
+        use crate::app::overlay::{FocusPolicy, Layer, LayerKind, LayerRegion};
         use crate::input::keybindings::KeyContext;
 
-        // Priority order: Settings > Menu > Prompt > Popup (only when
-        // editor-pane focused) > CompositeBuffer > Current context
-        // (FileExplorer or Normal).
+        let mut layers = Vec::new();
+
+        // Full-screen modals own the keyboard whenever they are present.
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
-            KeyContext::Settings
-        } else if self.menu_state.active_menu.is_some() {
-            KeyContext::Menu
-        } else if self.is_prompting() {
-            KeyContext::Prompt
-        } else if self.popups_capture_keys()
-            && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
-        {
-            KeyContext::Popup
-        } else if self
-            .floating_widget_panel
-            .as_ref()
-            .is_some_and(|f| f.focused)
-        {
-            // A focused centered modal (picker / new-session form /
-            // plugin overlay) is the keyboard owner. It takes
-            // precedence over a focused dock: when "+ New" opens the
-            // form on top of the dock, the modal owns input. Resolve
-            // keys as Normal regardless of the underlying buffer's
-            // stale `key_context` (which can still be Terminal when the
-            // panel was opened from a python3 session). Without this,
-            // `should_check_mode_bindings = matches!(ctx, Normal)`
-            // skipped the mode-keybinding lookup for any Ctrl/Alt chord
-            // the plugin had bound on the panel's mode, e.g. `Alt+N`.
-            KeyContext::Normal
-        } else if self.dock.as_ref().is_some_and(|f| f.focused) {
-            // A focused dock (the orchestrator's global side panel) is
-            // the keyboard owner, but it lives *outside* the active
-            // window's chrome. Its own context lets dock keybindings
-            // (when="dock") resolve while still allowing UI fallthrough.
-            // A *blurred* dock falls through to the editor's own context
-            // so the buffer underneath stays keyboard-usable while the
-            // dock stays visible.
-            KeyContext::Dock
-        } else if self
+            layers.push(Layer {
+                kind: LayerKind::Settings,
+                region: LayerRegion::FullScreen,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: true,
+                key_context: KeyContext::Settings,
+            });
+        }
+        if self.menu_state.active_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::Menu,
+                region: LayerRegion::FullScreen,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: true,
+                key_context: KeyContext::Menu,
+            });
+        }
+        if self.is_prompting() {
+            layers.push(Layer {
+                kind: LayerKind::Prompt,
+                region: LayerRegion::FullScreen,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: true,
+                key_context: KeyContext::Prompt,
+            });
+        }
+        // A popup is *present* whenever visible, but only *owns* the
+        // keyboard while capturing (`popups_capture_keys`); a merely-visible
+        // unfocused popup falls through to the layers below it.
+        if self.global_popups.is_visible() || self.active_state().popups.is_visible() {
+            layers.push(Layer {
+                kind: LayerKind::Popup,
+                region: LayerRegion::Anchored,
+                policy: FocusPolicy::NonModal,
+                owns_keyboard: self.popups_capture_keys(),
+                key_context: KeyContext::Popup,
+            });
+        }
+        // The centered widget modal (picker / new-session form / plugin
+        // overlay) owns the keyboard when focused. It resolves as `Normal`
+        // regardless of the underlying buffer's (possibly stale) context so
+        // mode-keybinding lookups still fire for the panel's own chords.
+        if let Some(f) = self.floating_widget_panel.as_ref() {
+            layers.push(Layer {
+                kind: LayerKind::FloatingModal,
+                region: LayerRegion::Centered,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: f.focused,
+                key_context: KeyContext::Normal,
+            });
+        }
+        // The editor-global dock owns the keyboard only while focused; a
+        // blurred dock stays visible but lets the buffer underneath keep
+        // the keyboard.
+        if let Some(d) = self.dock.as_ref() {
+            layers.push(Layer {
+                kind: LayerKind::Dock,
+                region: LayerRegion::LeftDock,
+                policy: FocusPolicy::NonModal,
+                owns_keyboard: d.focused,
+                key_context: KeyContext::Dock,
+            });
+        }
+        // The editor content is the keyboard owner of last resort.
+        let base_context = if self
             .active_window()
             .is_composite_buffer(self.active_buffer())
         {
             KeyContext::CompositeBuffer
         } else {
-            // Use the current context (can be FileExplorer or Normal)
             self.active_window().key_context.clone()
-        }
+        };
+        layers.push(Layer {
+            kind: LayerKind::Editor,
+            region: LayerRegion::EditorContent,
+            policy: FocusPolicy::Base,
+            owns_keyboard: true,
+            key_context: base_context,
+        });
+
+        layers
+    }
+
+    /// Determine the current keybinding context based on UI state.
+    ///
+    /// Returns the `KeyContext` of the topmost overlay layer that owns the
+    /// keyboard (see [`Editor::overlay_layers`]).
+    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+        crate::app::overlay::resolve_focus_context(&self.overlay_layers())
+            .expect("editor base layer always owns the keyboard")
     }
 
     /// Handle a key event and return whether it was handled
