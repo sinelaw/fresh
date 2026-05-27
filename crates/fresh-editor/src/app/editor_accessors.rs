@@ -669,6 +669,43 @@ impl Editor {
         }
     }
 
+    /// Mutable handle to the slot *option* itself (for take/assign).
+    pub(crate) fn panel_opt_mut(
+        &mut self,
+        slot: crate::app::PanelSlot,
+    ) -> &mut Option<crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => &mut self.floating_widget_panel,
+            crate::app::PanelSlot::Dock => &mut self.dock,
+        }
+    }
+
+    /// Which slot currently holds the panel with this id, if any.
+    pub(crate) fn slot_of_panel(&self, panel_id: u64) -> Option<crate::app::PanelSlot> {
+        if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.panel_id == panel_id)
+        {
+            Some(crate::app::PanelSlot::Floating)
+        } else if self.dock.as_ref().is_some_and(|f| f.panel_id == panel_id) {
+            Some(crate::app::PanelSlot::Dock)
+        } else {
+            None
+        }
+    }
+
+    /// Map a panel sentinel buffer-id back to its slot.
+    pub(crate) fn slot_for_panel_buffer(buffer_id: BufferId) -> Option<crate::app::PanelSlot> {
+        if buffer_id == crate::app::FLOATING_PANEL_BUFFER_ID {
+            Some(crate::app::PanelSlot::Floating)
+        } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
+            Some(crate::app::PanelSlot::Dock)
+        } else {
+            None
+        }
+    }
+
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.

@@ -304,7 +304,13 @@ impl Editor {
         // dimensions (Bug 13). The hook above lets plugins update
         // their spec; this rerender picks up either the updated
         // spec or the existing spec at the new width.
-        if let Some(panel_id) = self.floating_widget_panel.as_ref().map(|f| f.panel_id) {
+        for panel_id in [
+            self.dock.as_ref().map(|f| f.panel_id),
+            self.floating_widget_panel.as_ref().map(|f| f.panel_id),
+        ]
+        .into_iter()
+        .flatten()
+        {
             self.rerender_widget_panel(panel_id);
         }
     }

@@ -254,21 +254,26 @@ impl Editor {
             .as_ref()
             .is_some_and(|f| f.focused)
         {
-            // A focused floating panel (picker / new-session form /
-            // plugin overlay) is the keyboard owner. Resolve keys
-            // as Normal regardless of the underlying buffer's stale
-            // `key_context` (which can still be Terminal when the
-            // panel was opened from a python3 session). Without
-            // this, `should_check_mode_bindings = matches!(ctx,
-            // Normal)` skipped the mode-keybinding lookup for any
-            // Ctrl/Alt chord the plugin had bound on the panel's
-            // mode, e.g. `Alt+N` for "new session from the picker".
-            //
-            // A *blurred* panel (the orchestrator dock after Enter)
-            // falls through to the editor's own context so the buffer
-            // underneath stays keyboard-usable while the dock stays
-            // visible.
+            // A focused centered modal (picker / new-session form /
+            // plugin overlay) is the keyboard owner. It takes
+            // precedence over a focused dock: when "+ New" opens the
+            // form on top of the dock, the modal owns input. Resolve
+            // keys as Normal regardless of the underlying buffer's
+            // stale `key_context` (which can still be Terminal when the
+            // panel was opened from a python3 session). Without this,
+            // `should_check_mode_bindings = matches!(ctx, Normal)`
+            // skipped the mode-keybinding lookup for any Ctrl/Alt chord
+            // the plugin had bound on the panel's mode, e.g. `Alt+N`.
             KeyContext::Normal
+        } else if self.dock.as_ref().is_some_and(|f| f.focused) {
+            // A focused dock (the orchestrator's global side panel) is
+            // the keyboard owner, but it lives *outside* the active
+            // window's chrome. Its own context lets dock keybindings
+            // (when="dock") resolve while still allowing UI fallthrough.
+            // A *blurred* dock falls through to the editor's own context
+            // so the buffer underneath stays keyboard-usable while the
+            // dock stays visible.
+            KeyContext::Dock
         } else if self
             .active_window()
             .is_composite_buffer(self.active_buffer())
@@ -333,11 +338,18 @@ impl Editor {
         // command dispatcher; printable chars feed `textInputChar` to
         // the focused TextInput. Mouse clicks outside the panel are
         // swallowed (handled in `mouse_input`).
+        // A focused centered modal takes keyboard precedence over the
+        // dock (e.g. the New-Session form opened on top of the dock).
         if self
             .floating_widget_panel
             .as_ref()
             .is_some_and(|f| f.focused)
-            && self.dispatch_floating_widget_key(code, modifiers)
+            && self.dispatch_floating_widget_key(super::PanelSlot::Floating, code, modifiers)
+        {
+            return Ok(());
+        }
+        if self.dock.as_ref().is_some_and(|f| f.focused)
+            && self.dispatch_floating_widget_key(super::PanelSlot::Dock, code, modifiers)
         {
             return Ok(());
         }
@@ -2507,11 +2519,12 @@ impl Editor {
     /// currently focused TextInput.
     fn dispatch_floating_widget_key(
         &mut self,
+        slot: super::PanelSlot,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
-        let panel_id = match self.floating_widget_panel.as_ref() {
+        let panel_id = match self.panel(slot) {
             Some(fwp) => fwp.panel_id,
             None => return false,
         };
@@ -2523,7 +2536,7 @@ impl Editor {
         // through to the generic smart-key list nav below (which fires
         // the `select` event the plugin live-switches on).
         if matches!(
-            self.floating_widget_panel.as_ref().map(|f| f.placement),
+            self.panel(slot).map(|f| f.placement),
             Some(super::PanelPlacement::LeftDock { .. })
         ) {
             let on_filter = self
@@ -2539,12 +2552,36 @@ impl Editor {
                     } else {
                         // Dive into / leave the dock — focus the editor;
                         // the dock stays visible.
-                        self.blur_floating_panel();
+                        self.blur_floating_panel(slot);
                     }
                     return true;
                 }
                 KeyCode::Char('/') if modifiers.is_empty() => {
                     self.set_panel_focus_and_notify(panel_id, "filter".to_string());
+                    return true;
+                }
+                KeyCode::Char('n' | 'N') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+N opens the new-session form. Handled here (not
+                    // via an editor mode) because the dock floats over the
+                    // active buffer's mode; fire a `dock_new` widget_event
+                    // the plugin turns into "+ New" — and which now leaves
+                    // the dock mounted (the form is a separate slot).
+                    if self
+                        .plugin_manager
+                        .read()
+                        .unwrap()
+                        .has_hook_handlers("widget_event")
+                    {
+                        self.plugin_manager.read().unwrap().run_hook(
+                            "widget_event",
+                            crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                                panel_id,
+                                widget_key: "sessions".to_string(),
+                                event_type: "dock_new".to_string(),
+                                payload: serde_json::json!({}),
+                            },
+                        );
+                    }
                     return true;
                 }
                 KeyCode::Char(' ') => {
@@ -2617,7 +2654,7 @@ impl Editor {
                         },
                     );
                 }
-                self.floating_widget_panel = None;
+                *self.panel_opt_mut(slot) = None;
                 let _ = self.widget_registry.unmount(panel_id);
                 return true;
             }
@@ -2718,10 +2755,10 @@ impl Editor {
             // (e.g. Ctrl-P opens the command palette).
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
                 if matches!(
-                    self.floating_widget_panel.as_ref().map(|f| f.placement),
+                    self.panel(slot).map(|f| f.placement),
                     Some(super::PanelPlacement::LeftDock { .. })
                 ) {
-                    self.blur_floating_panel();
+                    self.blur_floating_panel(slot);
                     return false;
                 }
                 return true;

@@ -34,7 +34,10 @@ impl Editor {
             || self.settings_state.as_ref().is_some_and(|s| s.visible)
             || self.calibration_wizard.is_some()
             || self.keybinding_editor.is_some()
-            || self.floating_widget_panel.is_some();
+            || self.floating_widget_panel.is_some()
+            // The dock blocks PTY routing only while it owns the keyboard;
+            // a blurred dock leaves the dived-into terminal usable.
+            || self.dock.as_ref().is_some_and(|f| f.focused);
 
         if in_modal {
             return None;

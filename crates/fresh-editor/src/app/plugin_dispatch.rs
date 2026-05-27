@@ -22,7 +22,7 @@ use crate::services::async_bridge::AsyncMessage;
 use crate::view::split::SplitViewState;
 
 use super::window::Window;
-use super::{Editor, FloatingWidgetState, FLOATING_PANEL_BUFFER_ID};
+use super::{Editor, FloatingWidgetState};
 
 /// Returns the byte offset of the start (want_end=false) or end (want_end=true)
 /// of `line` (0-indexed) within `content`. Returns `None` when `line` is out of
@@ -1482,8 +1482,9 @@ impl Editor {
                 spec,
                 width_pct,
                 height_pct,
+                as_dock,
             } => {
-                self.handle_mount_floating_widget(panel_id, spec, width_pct, height_pct);
+                self.handle_mount_floating_widget(panel_id, spec, width_pct, height_pct, as_dock);
             }
 
             PluginCommand::UpdateFloatingWidget { panel_id, spec } => {
@@ -3720,7 +3721,7 @@ impl Editor {
         // with 5 000 nodes that's a multi-MB deep clone per IPC, which
         // dominates the host's per-mutation cost during a streaming
         // search.
-        let (buffer_id, is_floating, panel_width, out_pieces) = {
+        let (buffer_id, _is_floating, panel_width, out_pieces) = {
             let (buffer_id, spec) = match self.widget_registry.buffer_and_spec_ref(panel_id) {
                 Some(s) => s,
                 None => return,
@@ -3735,9 +3736,10 @@ impl Editor {
                 .focus_key(panel_id)
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            let is_floating = buffer_id == FLOATING_PANEL_BUFFER_ID;
-            let panel_width = if is_floating {
-                self.floating_panel_inner_width()
+            let panel_slot = Self::slot_for_panel_buffer(buffer_id);
+            let is_floating = panel_slot.is_some();
+            let panel_width = if let Some(slot) = panel_slot {
+                self.floating_panel_inner_width(slot)
             } else {
                 self.widget_panel_width(buffer_id)
             };
@@ -3745,6 +3747,7 @@ impl Editor {
             (buffer_id, is_floating, panel_width, out)
         };
         let _ = panel_width;
+        let panel_slot = Self::slot_for_panel_buffer(buffer_id);
         let focus_cursor = out_pieces.focus_cursor;
         let entries = out_pieces.entries;
         let embeds = out_pieces.embeds;
@@ -3764,8 +3767,8 @@ impl Editor {
             tracing::warn!("rerender_widget_panel({}) lost panel mid-call", panel_id);
             return;
         }
-        if is_floating {
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(slot) = panel_slot {
+            if let Some(fwp) = self.panel_mut(slot) {
                 if fwp.panel_id == panel_id {
                     fwp.entries = entries;
                     fwp.focus_cursor = focus_cursor;
@@ -5628,19 +5631,46 @@ impl Editor {
         spec: fresh_core::api::WidgetSpec,
         width_pct: u8,
         height_pct: u8,
+        as_dock: bool,
     ) {
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
-        if let Some(existing) = self.floating_widget_panel.take() {
+        // The dock mounts into its own slot so it coexists with a
+        // centered modal; everything else is a centered overlay.
+        let slot = if as_dock {
+            super::PanelSlot::Dock
+        } else {
+            super::PanelSlot::Floating
+        };
+        let buffer_id = slot.buffer_id();
+        // A centered modal owns the keyboard: blur a focused dock so the
+        // two slots never both claim input. Without this, a dock key
+        // handler (e.g. its Esc→blur) would greedily consume keys the
+        // modal deferred to its own mode bindings, stranding the modal
+        // open. Fires the dock's `blur` widget_event so the owning plugin
+        // can mirror the state. Does nothing when the dock isn't focused.
+        if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
+            self.blur_floating_panel(super::PanelSlot::Dock);
+        }
+        let placement = if as_dock {
+            let width = self
+                .dock_width
+                .unwrap_or(32)
+                .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
+            super::PanelPlacement::LeftDock { width_cols: width }
+        } else {
+            super::PanelPlacement::Centered
+        };
+        if let Some(existing) = self.panel_opt_mut(slot).take() {
             if existing.panel_id != panel_id {
                 let _ = self.widget_registry.unmount(existing.panel_id);
             }
         }
-        self.floating_widget_panel = Some(FloatingWidgetState {
+        *self.panel_opt_mut(slot) = Some(FloatingWidgetState {
             panel_id,
             width_pct,
             height_pct,
-            placement: super::PanelPlacement::Centered,
+            placement,
             focused: true,
             entries: Vec::new(),
             focus_cursor: None,
@@ -5654,7 +5684,7 @@ impl Editor {
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width();
+        let panel_width = self.floating_panel_inner_width(slot);
         let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
@@ -5663,14 +5693,14 @@ impl Editor {
         let scroll_regions = out.scroll_regions;
         self.widget_registry.mount(
             panel_id,
-            FLOATING_PANEL_BUFFER_ID,
+            buffer_id,
             spec,
             out.hits,
             out.instance_states,
             out.focus_key,
             out.tabbable,
         );
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
@@ -5686,16 +5716,13 @@ impl Editor {
     }
 
     fn handle_update_floating_widget(&mut self, panel_id: u64, spec: fresh_core::api::WidgetSpec) {
-        match self.floating_widget_panel.as_ref() {
-            Some(fwp) if fwp.panel_id == panel_id => {}
-            _ => {
-                tracing::debug!(
-                    "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
-                    panel_id
-                );
-                return;
-            }
-        }
+        let Some(slot) = self.slot_of_panel(panel_id) else {
+            tracing::debug!(
+                "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
+                panel_id
+            );
+            return;
+        };
         let prev = self
             .widget_registry
             .instance_states(panel_id)
@@ -5706,7 +5733,7 @@ impl Editor {
             .focus_key(panel_id)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let panel_width = self.floating_panel_inner_width();
+        let panel_width = self.floating_panel_inner_width(slot);
         let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
@@ -5731,7 +5758,7 @@ impl Editor {
             );
             return;
         }
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
@@ -5741,17 +5768,14 @@ impl Editor {
     }
 
     fn handle_unmount_floating_widget(&mut self, panel_id: u64) {
-        match self.floating_widget_panel.as_ref() {
-            Some(fwp) if fwp.panel_id == panel_id => {}
-            _ => {
-                tracing::debug!(
-                    "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
-                    panel_id
-                );
-                return;
-            }
-        }
-        self.floating_widget_panel = None;
+        let Some(slot) = self.slot_of_panel(panel_id) else {
+            tracing::debug!(
+                "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
+                panel_id
+            );
+            return;
+        };
+        *self.panel_opt_mut(slot) = None;
         let _ = self.widget_registry.unmount(panel_id);
         // Restore the active window's visible terminal PTYs to their
         // dive-view split rects. The orchestrator picker's preview
@@ -5774,18 +5798,17 @@ impl Editor {
     /// border. Mirrors the `widget_panel_width` reservation; never
     /// goes below 10 cols so flex spacers don't collapse to zero on
     /// narrow terminals.
-    pub(super) fn floating_panel_inner_width(&self) -> u32 {
+    pub(super) fn floating_panel_inner_width(&self, slot: super::PanelSlot) -> u32 {
         // A left-dock panel wraps its content to the dock's fixed
         // column width rather than a percentage of the terminal.
         if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.floating_widget_panel.as_ref().map(|f| f.placement)
+            self.panel(slot).map(|f| f.placement)
         {
             return (width_cols as u32).saturating_sub(2).max(10);
         }
         let term_w = self.terminal_width.max(1) as u32;
         let pct = self
-            .floating_widget_panel
-            .as_ref()
+            .panel(slot)
             .map(|f| f.width_pct.clamp(1, 100) as u32)
             .unwrap_or(80);
         let w = (term_w * pct) / 100;
@@ -5795,18 +5818,14 @@ impl Editor {
     /// Apply a `FloatingPanelControl` op. No-op if the panel id
     /// doesn't match the mounted floating panel.
     fn handle_floating_panel_control(&mut self, panel_id: u64, op: &str, arg: f64) {
-        let matches = self
-            .floating_widget_panel
-            .as_ref()
-            .is_some_and(|f| f.panel_id == panel_id);
-        if !matches {
+        let Some(slot) = self.slot_of_panel(panel_id) else {
             tracing::warn!("FloatingPanelControl for unknown/mismatched panel {panel_id} ignored");
             return;
-        }
+        };
         // `blur` fires a widget_event, so handle it before borrowing the
         // panel — it reborrows `self` via the shared helper.
         if op == "blur" {
-            self.blur_floating_panel();
+            self.blur_floating_panel(slot);
             return;
         }
         // Clamp the dock width relative to the terminal so it can never
@@ -5815,7 +5834,7 @@ impl Editor {
         // default so the resize survives toggling the dock off/on.
         let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
         let persisted = self.dock_width;
-        let Some(fwp) = self.floating_widget_panel.as_mut() else {
+        let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
         match op {
@@ -5840,11 +5859,11 @@ impl Editor {
     /// (e.g. drop its editor mode). No-op when no panel is mounted.
     /// Shared by the Esc handler, the editor-click handler, and the
     /// `FloatingPanelControl{op:"blur"}` command.
-    pub(super) fn blur_floating_panel(&mut self) {
-        let Some(panel_id) = self.floating_widget_panel.as_ref().map(|f| f.panel_id) else {
+    pub(super) fn blur_floating_panel(&mut self, slot: super::PanelSlot) {
+        let Some(panel_id) = self.panel(slot).map(|f| f.panel_id) else {
             return;
         };
-        if let Some(f) = self.floating_widget_panel.as_mut() {
+        if let Some(f) = self.panel_mut(slot) {
             f.focused = false;
         }
         let widget_key = self

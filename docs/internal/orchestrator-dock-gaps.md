@@ -56,16 +56,15 @@
   project tag (like the modal), not collapsible project group headers
   (the `list` widget is flat; grouping needs interleaved header rows +
   selection-index remapping).
-- **New-session from the dock closes it** — `+ New` (`openForm`) calls
-  `closeOpenDialog`, so the centered form replaces the dock. Root cause:
-  the host (`Editor.floating_widget_panel`) holds **one** floating panel
-  at a time, and the dock currently lives in that slot. The left dock and
-  a centered modal occupy disjoint regions and *should* coexist (the dock
-  stays visible while the form is open). We are **not** doing the
-  reopen-after-close workaround. The principled solutions are written up
-  in [Design: dock + modal coexistence](#design-dock--modal-coexistence)
-  below. TODO markers in `app/mod.rs` (`floating_widget_panel`) and
-  `plugins/orchestrator.ts` (`orchestrator_open_new_from_picker`).
+- **New-session from the dock closes it** — *Fixed (P1).* The host now
+  holds two independent widget-panel slots (`PanelSlot::Dock` +
+  `PanelSlot::Floating`, see `app/mod.rs`); the dock mounts into the Dock
+  slot (`mountFloatingWidget(..., asDock=true)`) and a centered modal
+  (the New-Session form) into the Floating slot, so `+ New` / `Alt+N`
+  leaves the dock visible beside the form. Input/mouse/wheel route to the
+  focused slot, with the centered modal taking precedence over the dock.
+  The dock has its own `KeyContext::Dock`. See
+  [Design: dock + modal coexistence](#design-dock--modal-coexistence).
 - **Detail strip is one line** (branch only). The richer
   age / pgid / last-terminal-line detail (`buildPreviewEntries`) is not
   surfaced in the dock to keep the list-fill height maths exact.

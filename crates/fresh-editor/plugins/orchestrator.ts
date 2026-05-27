@@ -1755,7 +1755,15 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     // dock columns) and re-render so the spec lays out at dock width.
     dockMode = true;
     dockBlurred = false;
-    openPanel.mount(buildDockSpec(), { widthPct: 100, heightPct: 100 });
+    // Mount straight into the host's dedicated dock slot so it
+    // coexists with a centered modal (the New-Session form) instead
+    // of being replaced by it. `asDock` carves the left column and
+    // wraps the content to the dock width.
+    openPanel.mount(buildDockSpec(), {
+      widthPct: 100,
+      heightPct: 100,
+      asDock: true,
+    });
     editor.floatingPanelControl(openPanel.id(), "dock", DOCK_WIDTH_COLS);
     openPanel.update(buildDockSpec());
   } else {
@@ -2666,14 +2674,17 @@ editor.defineMode(
 
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
-  // TODO(dock): opening the new-session form closes the dock because the
-  // host allows only one mounted floating panel at a time, so the
-  // centered form replaces the left dock. The dock (left column) and a
-  // centered modal occupy disjoint regions and SHOULD be able to coexist
-  // — i.e. "+ New" from the dock should leave the dock visible. Fixing
-  // this needs the host to hold two panels (a dock slot + a centered
-  // slot) and route input/mouse to the focused one. Deferred to a future
-  // branch; see docs/internal/orchestrator-dock-gaps.md.
+  // The New-Session form is a centered modal in the host's dedicated
+  // floating slot, which coexists with the dock's own slot. From the
+  // dock, leave the dock mounted underneath (it keeps showing the live
+  // session list); from the centered picker, replace it with the form.
+  if (dockMode) {
+    // Hand keyboard focus to the form by blurring the dock; the host
+    // routes keys to the focused centered modal first.
+    dockBlurred = true;
+    openForm({ fromPicker: true });
+    return;
+  }
   closeOpenDialog();
   openForm({ fromPicker: true });
 });
@@ -3914,13 +3925,29 @@ function closeForm(): void {
   editor.setEditorMode(null);
 }
 
+// When the New-Session form was opened on top of a still-mounted dock,
+// closing the form returns keyboard focus to the dock (rather than
+// reopening a centered picker). Returns true when it handled the
+// restore — i.e. the dock is live.
+function restoreDockAfterForm(): boolean {
+  if (!openPanel || !dockMode) return false;
+  dockBlurred = false;
+  dockFocus = "list";
+  editor.floatingPanelControl(openPanel.id(), "focus", 0);
+  openPanel.setFocusKey("sessions");
+  refreshOpenDialog();
+  return true;
+}
+
 // Cancel path: tear down the form, and if it was reached via the
 // picker (Alt+N or "+ New Session" button), reopen the picker so
 // Esc behaves like a true "back" rather than dropping the user
-// into the bare editor.
+// into the bare editor. When the dock is still mounted underneath,
+// just hand focus back to it instead.
 function cancelForm(): void {
   const wasFromPicker = !!form?.fromPicker;
   closeForm();
+  if (restoreDockAfterForm()) return;
   if (wasFromPicker) {
     openControlRoom();
   }
@@ -4069,6 +4096,13 @@ async function submitForm(): Promise<void> {
   if (createWorktree) appendHistory("branch", reportedBranch);
 
   closeForm();
+  // When the form was opened over the dock, the new session dives in
+  // below — hand keyboard focus to the dived-into terminal by blurring
+  // the dock (it stays visible and refreshes to show the new row).
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  }
 
   // Spawn the new window + agent terminal atomically. Compared to
   // the legacy `createWindow → window_created hook → createTerminal`
@@ -4113,6 +4147,8 @@ async function submitForm(): Promise<void> {
       branch: reportedBranch || undefined,
     };
     orchestratorSessions.set(id, tracked);
+    // Refresh the dock so the freshly-created session shows up.
+    if (openPanel && dockMode) refreshOpenDialog();
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to start session — ${
@@ -4521,6 +4557,7 @@ editor.on("widget_event", (e) => {
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
+      if (restoreDockAfterForm()) return;
       if (wasFromPicker) {
         openControlRoom();
       }
@@ -4554,6 +4591,15 @@ editor.on("widget_event", (e) => {
       // Host Space on the dock → toggle the highlighted row's
       // multi-select checkbox.
       if (dockMode) toggleSelectCurrent();
+      return;
+    }
+    if (e.event_type === "dock_new") {
+      // Host Alt+N on the dock → open the new-session form. The form is
+      // a centered modal in a separate slot, so the dock stays visible.
+      if (dockMode) {
+        dockBlurred = true;
+        openForm({ fromPicker: true });
+      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {

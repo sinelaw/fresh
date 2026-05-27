@@ -175,6 +175,41 @@ fn mouse_click_on_dock_new_button_opens_form() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
     h.assert_screen_contains("New Session");
+    // The dock and the centered form occupy disjoint slots, so opening
+    // the form must NOT tear down the dock — its header stays painted in
+    // the left column beside the modal.
+    h.assert_screen_contains("ORCHESTRATOR");
+
+    // Esc cancels the form; the dock regains focus and stays visible.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.assert_screen_contains("ORCHESTRATOR");
+}
+
+#[test]
+fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Alt+N from the focused dock opens the new-session form (host fires a
+    // `dock_new` widget_event since the dock has no editor mode). The dock
+    // lives in its own slot, so the centered form coexists with it.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.assert_screen_contains("New Session");
+    h.assert_screen_contains("ORCHESTRATOR");
+
+    // Esc returns to the dock, which is still mounted and re-focused.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.assert_screen_contains("ORCHESTRATOR");
 }
 
 #[test]

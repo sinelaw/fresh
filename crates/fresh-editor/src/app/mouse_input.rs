@@ -163,7 +163,7 @@ impl Editor {
                 if self.dock_resizing {
                     self.dock_resizing = false;
                     if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-                        self.floating_widget_panel.as_ref().map(|f| f.placement)
+                        self.dock.as_ref().map(|f| f.placement)
                     {
                         self.dock_width = Some(width_cols);
                     }
@@ -389,13 +389,17 @@ impl Editor {
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
         } else if self.floating_widget_panel.is_some() {
-            // The floating widget panel (orchestrator picker, New
-            // Session form, ...) is modal: scroll it when the pointer is
-            // over it (e.g. a Text-widget completion popup scrolls its
-            // candidate list), and otherwise swallow the wheel so it
-            // can't leak through to the buffer behind the modal. Either
-            // way the event is consumed here — never falls through.
-            self.handle_floating_widget_panel_wheel(col, row, delta);
+            // A centered modal (orchestrator picker, New-Session form,
+            // ...) is modal and takes precedence: scroll it when the
+            // pointer is over it, otherwise swallow the wheel so it
+            // can't leak through to the buffer (or the dock) behind it.
+            // Either way the event is consumed here — never falls through.
+            self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, delta);
+        } else if self.dock.is_some()
+            && self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
+        {
+            // The dock swallows the wheel whenever the pointer is over
+            // its column (never leaks to the window beneath).
         } else if self
             .active_window()
             .split_at_position(col, row)
@@ -1488,50 +1492,42 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
+        // A centered modal takes click precedence over the dock: while
+        // the New-Session form is up over the dock, clicks hit-test the
+        // modal (clicks outside it are swallowed — it has Cancel / Esc).
+        if self.floating_widget_panel.is_some() {
+            self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
+            return Ok(());
+        }
         // Dock resize: a press on the dock's right border (its rightmost
         // column) starts a drag that resizes the dock width. Checked
         // before the click-routing below so the border column is a
         // resize handle, not a widget hit.
         if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.floating_widget_panel.as_ref().map(|f| f.placement)
+            self.dock.as_ref().map(|f| f.placement)
         {
             if col == width_cols.saturating_sub(1) {
                 self.dock_resizing = true;
                 return Ok(());
             }
         }
-        // Floating widget panel click routing. A centered panel is
-        // modal: clicks inside hit-test its widgets, clicks outside are
-        // swallowed (the form has explicit Cancel / Esc). A left dock
-        // is non-modal: clicks inside its column hit-test (and re-focus
-        // it if blurred); clicks in the editor blur the dock and fall
-        // through to normal editor handling.
-        if let Some((placement, focused)) = self
-            .floating_widget_panel
-            .as_ref()
-            .map(|f| (f.placement, f.focused))
+        // Dock click routing (non-modal): clicks inside its column
+        // hit-test (and re-focus it if blurred); clicks in the editor
+        // blur the dock and fall through to normal editor handling.
+        if let Some((super::PanelPlacement::LeftDock { width_cols }, focused)) =
+            self.dock.as_ref().map(|f| (f.placement, f.focused))
         {
-            match placement {
-                super::PanelPlacement::Centered => {
-                    self.handle_floating_widget_click(col, row);
-                    return Ok(());
-                }
-                super::PanelPlacement::LeftDock { width_cols } => {
-                    if col < width_cols {
-                        if !focused {
-                            if let Some(f) = self.floating_widget_panel.as_mut() {
-                                f.focused = true;
-                            }
-                        }
-                        self.handle_floating_widget_click(col, row);
-                        return Ok(());
-                    }
-                    // Click landed in the editor: hand focus back so the
-                    // dock stops capturing keys, then fall through.
-                    if focused {
-                        self.blur_floating_panel();
+            if col < width_cols {
+                if !focused {
+                    if let Some(f) = self.dock.as_mut() {
+                        f.focused = true;
                     }
                 }
+                self.handle_floating_widget_click(super::PanelSlot::Dock, col, row);
+                return Ok(());
+            }
+            if focused {
+                self.blur_floating_panel(super::PanelSlot::Dock);
             }
         }
         if let Some(r) = self.handle_click_context_menus(col, row) {
@@ -2509,7 +2505,7 @@ impl Editor {
         if self.dock_resizing {
             let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
             let new_w = col.saturating_add(1).clamp(10, max_cols);
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+            if let Some(fwp) = self.dock.as_mut() {
                 if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
                     *width_cols = new_w;
                 }
@@ -2518,7 +2514,9 @@ impl Editor {
         }
         // Floating-panel list scrollbar drag takes precedence — the
         // modal panel owns the input channel while it's up.
-        if self.try_widget_scrollbar_drag(row) {
+        if self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
+            || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
+        {
             let _ = col;
             return Ok(());
         }
@@ -3603,8 +3601,14 @@ impl Editor {
     /// is active AND the mouse is inside its inner rect (so the
     /// caller knows the wheel was consumed and shouldn't fall
     /// through to buffer scrolling).
-    fn handle_floating_widget_panel_wheel(&mut self, col: u16, row: u16, delta: i32) -> bool {
-        let inner = match self.floating_widget_panel.as_ref() {
+    fn handle_floating_widget_panel_wheel(
+        &mut self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> bool {
+        let inner = match self.panel(slot) {
             Some(fwp) => match fwp.last_inner_rect {
                 Some(rect) => rect,
                 None => return false,
@@ -3617,12 +3621,12 @@ impl Editor {
         if row < inner.y || row >= inner.y + inner.height {
             return false;
         }
-        let scrolled = self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta);
+        let scrolled = self.handle_widget_panel_wheel(slot.buffer_id(), delta);
         // The non-modal dock must swallow the wheel whenever the pointer
         // is over it, even when the list is too short to scroll — the
         // scroll must never leak through to the active window beneath.
         let is_dock = matches!(
-            self.floating_widget_panel.as_ref().map(|f| f.placement),
+            self.panel(slot).map(|f| f.placement),
             Some(super::PanelPlacement::LeftDock { .. })
         );
         scrolled || is_dock
@@ -3632,20 +3636,19 @@ impl Editor {
     /// true if the press landed on a scrollbar track (so the caller
     /// skips row hit-testing — the bar overlaps the list's rightmost
     /// column). Reuses the canonical `ScrollbarMouse`/`ScrollbarState`.
-    fn try_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
+    fn try_widget_scrollbar_press(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
         use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_id, tracks) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, tracks) = match self.panel(slot) {
             Some(fwp) => (fwp.panel_id, fwp.scrollbar_tracks.clone()),
             None => return false,
         };
         for t in &tracks {
             let state = ScrollbarState::new(t.total, t.visible, t.scroll);
             let pressed = self
-                .floating_widget_panel
-                .as_mut()
+                .panel_mut(slot)
                 .and_then(|fwp| fwp.scrollbar_mouse.press(state, t.rect, col, row));
             if let Some(new_offset) = pressed {
-                if let Some(fwp) = self.floating_widget_panel.as_mut() {
+                if let Some(fwp) = self.panel_mut(slot) {
                     fwp.scrollbar_drag_key = Some(t.list_key.clone());
                 }
                 self.apply_widget_scroll(panel_id, &t.list_key, new_offset, t.visible);
@@ -3657,9 +3660,9 @@ impl Editor {
 
     /// Continue an in-flight floating-panel scrollbar drag. Returns
     /// true if a drag is active (the press captured a `list_key`).
-    fn try_widget_scrollbar_drag(&mut self, row: u16) -> bool {
+    fn try_widget_scrollbar_drag(&mut self, slot: super::PanelSlot, row: u16) -> bool {
         use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_id, key) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, key) = match self.panel(slot) {
             Some(fwp) => match &fwp.scrollbar_drag_key {
                 Some(k) => (fwp.panel_id, k.clone()),
                 None => return false,
@@ -3668,7 +3671,7 @@ impl Editor {
         };
         // The track geometry for the dragged list (its rect may have
         // shifted if the panel re-rendered between events).
-        let track = self.floating_widget_panel.as_ref().and_then(|fwp| {
+        let track = self.panel(slot).and_then(|fwp| {
             fwp.scrollbar_tracks
                 .iter()
                 .find(|t| t.list_key == key)
@@ -3679,8 +3682,7 @@ impl Editor {
         };
         let state = ScrollbarState::new(t.total, t.visible, t.scroll);
         let new_offset = self
-            .floating_widget_panel
-            .as_mut()
+            .panel_mut(slot)
             .and_then(|fwp| fwp.scrollbar_mouse.drag(state, t.rect, row));
         if let Some(off) = new_offset {
             self.apply_widget_scroll(panel_id, &key, off, t.visible);
@@ -3690,7 +3692,10 @@ impl Editor {
 
     /// End any in-flight floating-panel scrollbar drag.
     pub(super) fn release_widget_scrollbar(&mut self) {
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        for fwp in [self.dock.as_mut(), self.floating_widget_panel.as_mut()]
+            .into_iter()
+            .flatten()
+        {
             fwp.scrollbar_mouse.release();
             fwp.scrollbar_drag_key = None;
         }
@@ -3737,13 +3742,13 @@ impl Editor {
 
     /// `handle_editor_click` uses; clicks outside the rect are
     /// swallowed without dismissing the panel.
-    fn handle_floating_widget_click(&mut self, col: u16, row: u16) {
+    fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
         // Scrollbar press wins over row hit-testing (the bar overlaps
         // the list's rightmost column).
-        if self.try_widget_scrollbar_press(col, row) {
+        if self.try_widget_scrollbar_press(slot, col, row) {
             return;
         }
-        let (panel_id, inner) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, inner) = match self.panel(slot) {
             Some(fwp) => match fwp.last_inner_rect {
                 Some(rect) => (fwp.panel_id, rect),
                 None => return,
@@ -3758,8 +3763,7 @@ impl Editor {
         }
         let brow = (row - inner.y) as u32;
         let entries = self
-            .floating_widget_panel
-            .as_ref()
+            .panel(slot)
             .map(|f| f.entries.clone())
             .unwrap_or_default();
         let local_screen_col = (col - inner.x) as usize;
@@ -3770,7 +3774,7 @@ impl Editor {
         let (hit_payload, hit_event, hit_key, hit_kind) =
             match self
                 .widget_registry
-                .hit_test(super::FLOATING_PANEL_BUFFER_ID, brow, bcol as u32)
+                .hit_test(slot.buffer_id(), brow, bcol as u32)
             {
                 Some((_, hit)) => (
                     hit.payload.clone(),

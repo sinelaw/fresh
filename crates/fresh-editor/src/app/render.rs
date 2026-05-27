@@ -1710,22 +1710,19 @@ impl Editor {
             .animations
             .apply_all(frame.buffer_mut());
 
-        // Floating widget panel is drawn last so it sits above every
-        // other layer (prompts, popups, animations). A centered panel
-        // paints over the whole frame; a left-dock panel paints only
-        // its carved column (`dock_area`), leaving the chrome it sits
-        // beside untouched.
-        match self.floating_widget_panel.as_ref().map(|f| f.placement) {
-            Some(super::PanelPlacement::LeftDock { .. }) => {
-                if let Some(dock) = dock_area {
-                    self.render_floating_widget_panel(frame, dock);
-                }
+        // Panels are drawn last so they sit above every other layer
+        // (prompts, popups, animations). The two slots are independent:
+        // the dock paints into its carved column (`dock_area`); a
+        // centered modal paints over the whole frame (dimmed). Draw the
+        // dock first so a centered modal sits visually above it.
+        if let Some(dock) = dock_area {
+            if self.dock.is_some() {
+                self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
             }
-            Some(super::PanelPlacement::Centered) => {
-                let frame_area = frame.area();
-                self.render_floating_widget_panel(frame, frame_area);
-            }
-            None => {}
+        }
+        if self.floating_widget_panel.is_some() {
+            let frame_area = frame.area();
+            self.render_floating_widget_panel(frame, frame_area, super::PanelSlot::Floating);
         }
     }
 
@@ -3797,7 +3794,7 @@ impl Editor {
         &self,
         size: ratatui::layout::Rect,
     ) -> (Option<ratatui::layout::Rect>, ratatui::layout::Rect) {
-        let width = match self.floating_widget_panel.as_ref().map(|f| f.placement) {
+        let width = match self.dock.as_ref().map(|f| f.placement) {
             Some(super::PanelPlacement::LeftDock { width_cols }) => width_cols,
             _ => return (None, size),
         };
@@ -3824,6 +3821,7 @@ impl Editor {
         &mut self,
         frame: &mut Frame,
         area: ratatui::layout::Rect,
+        slot: super::PanelSlot,
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
@@ -3837,7 +3835,7 @@ impl Editor {
             scroll_regions,
             placement,
             panel_focused,
-        ) = match self.floating_widget_panel.as_ref() {
+        ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
                 fwp.height_pct,
@@ -3907,7 +3905,7 @@ impl Editor {
         frame.render_widget(block, overlay_rect);
 
         if inner.width == 0 || inner.height == 0 {
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+            if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
             }
             return;
@@ -4061,7 +4059,7 @@ impl Editor {
             frame.set_cursor_position((cx, cy));
         }
 
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
             fwp.scrollbar_tracks = scrollbar_tracks;
         }

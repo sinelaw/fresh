@@ -3720,6 +3720,10 @@ pub enum PluginCommand {
         spec: WidgetSpec,
         width_pct: u8,
         height_pct: u8,
+        /// When true, mount into the editor-global left **dock** slot
+        /// (persists alongside a centered modal) rather than as a
+        /// centered overlay.
+        as_dock: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget
