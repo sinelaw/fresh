@@ -410,15 +410,18 @@ fn discovered_rows_sort_after_live_sessions() {
 
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
-    let base_idx = lines
+    // The live launch session is the `mainrepo` row with a checkbox and
+    // no `· on-disk` tag (that tag marks the discovered worktree). There
+    // is no longer a `BASE` badge — id 1 is just a normal session now.
+    let live_idx = lines
         .iter()
-        .position(|l| l.contains("[ ]") && l.contains("BASE"));
+        .position(|l| l.contains("[ ]") && l.contains("mainrepo") && !l.contains("· on-disk"));
     let disc_idx = lines.iter().position(|l| l.contains("· on-disk"));
     assert!(
-        base_idx.is_some() && disc_idx.is_some() && base_idx < disc_idx,
-        "live base session must list above the discovered worktree.\n\
-         base_idx={:?} disc_idx={:?}\nScreen:\n{}",
-        base_idx,
+        live_idx.is_some() && disc_idx.is_some() && live_idx < disc_idx,
+        "live launch session must list above the discovered worktree.\n\
+         live_idx={:?} disc_idx={:?}\nScreen:\n{}",
+        live_idx,
         disc_idx,
         screen
     );

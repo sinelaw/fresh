@@ -555,18 +555,17 @@ fn snapshot_has_buffer_at(harness: &EditorTestHarness, path: &Path) -> bool {
 /// F2 reproducer: a successful attach must persist the
 /// `attach:<cwd> = "attached"` per-workspace decision so the
 /// "Reopen in Container?" popup doesn't re-fire on the next cold
-/// start. We assert via `Editor::capture_workspace()` — the same
-/// `plugin_global_state` blob that the workspace serializer writes
-/// to disk on quit and reads back on relaunch.
+/// start. We assert via `Editor::plugin_global_state()` — the
+/// editor-global blob the orchestrator-state serializer writes to
+/// disk on quit and reads back on relaunch.
 ///
 /// The plugin writes the decision in `devcontainer_on_attach_popup`
 /// before kicking off `runDevcontainerUp`, so by the time the
-/// container authority lands the key must be visible in the
-/// captured state. If this test ever starts failing, the regression
-/// is in either the plugin's call ordering (pre-`setAuthority`) or
-/// in how `capture_workspace` snapshots `plugin_global_state` — the
-/// production cold-restart bug from the test plan would surface
-/// here first.
+/// container authority lands the key must be visible in the global
+/// state. If this test ever starts failing, the regression is in
+/// either the plugin's call ordering (pre-`setAuthority`) or in how
+/// `setGlobalState` reaches `plugin_global_state` — the production
+/// cold-restart bug from the test plan would surface here first.
 #[test]
 fn attach_decision_persists_in_plugin_global_state() {
     let (_workspace_temp, workspace) = set_up_workspace();
@@ -584,20 +583,14 @@ fn attach_decision_persists_in_plugin_global_state() {
     let _ = wait_for_container_authority(&mut harness);
     harness.tick_and_render().unwrap();
 
-    let workspace_state = harness.editor().capture_workspace();
-    let dc_state = workspace_state
-        .plugin_global_state
-        .get("devcontainer")
-        .unwrap_or_else(|| {
-            panic!(
-                "expected `devcontainer` plugin to have written global state. \
+    let global_state = harness.editor().plugin_global_state();
+    let dc_state = global_state.get("devcontainer").unwrap_or_else(|| {
+        panic!(
+            "expected `devcontainer` plugin to have written global state. \
                  Plugin map: {:?}",
-                workspace_state
-                    .plugin_global_state
-                    .keys()
-                    .collect::<Vec<_>>()
-            )
-        });
+            global_state.keys().collect::<Vec<_>>()
+        )
+    });
 
     let key = format!("attach:{}", workspace.display());
     let value = dc_state.get(&key).unwrap_or_else(|| {
@@ -661,8 +654,8 @@ fn attach_popup_offers_separate_once_and_always_dismiss() {
 
     // After "Ignore (once)" the plugin must NOT have written a
     // persistent dismissal — re-launches should re-ask.
-    let workspace_state = harness.editor().capture_workspace();
-    let dc_state = workspace_state.plugin_global_state.get("devcontainer");
+    let global_state = harness.editor().plugin_global_state();
+    let dc_state = global_state.get("devcontainer");
     let key = format!("attach:{}", workspace.display());
     let persisted = dc_state.and_then(|m| m.get(&key));
     assert!(
@@ -700,20 +693,14 @@ fn attach_popup_dismiss_always_persists_decision() {
         .unwrap();
     harness.tick_and_render().unwrap();
 
-    let workspace_state = harness.editor().capture_workspace();
-    let dc_state = workspace_state
-        .plugin_global_state
-        .get("devcontainer")
-        .unwrap_or_else(|| {
-            panic!(
-                "Ignore (always …) must write to plugin global state. \
+    let global_state = harness.editor().plugin_global_state();
+    let dc_state = global_state.get("devcontainer").unwrap_or_else(|| {
+        panic!(
+            "Ignore (always …) must write to plugin global state. \
                  Plugin map: {:?}",
-                workspace_state
-                    .plugin_global_state
-                    .keys()
-                    .collect::<Vec<_>>()
-            )
-        });
+            global_state.keys().collect::<Vec<_>>()
+        )
+    });
     let key = format!("attach:{}", workspace.display());
     let value = dc_state.get(&key).unwrap_or_else(|| {
         panic!(

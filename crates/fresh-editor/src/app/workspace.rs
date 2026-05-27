@@ -158,6 +158,18 @@ impl Editor {
         self.active_window().capture_workspace()
     }
 
+    /// Editor-global plugin state (`getGlobalState`/`setGlobalState`),
+    /// the live map persisted once to the global `orchestrator/state/`
+    /// store. Deliberately separate from `capture_workspace`, which no
+    /// longer embeds it per window. Read accessor for tests that assert
+    /// a plugin recorded a cross-restart decision.
+    pub fn plugin_global_state(
+        &self,
+    ) -> &std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>
+    {
+        &self.plugin_global_state
+    }
+
     /// Save the current (active) window's workspace to disk. Thin
     /// active-window wrapper over [`Editor::save_workspace_for`].
     pub fn save_workspace(&mut self) -> Result<(), WorkspaceError> {

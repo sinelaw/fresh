@@ -513,21 +513,27 @@ fn opening_a_file_attaches_buffer_to_active_session() {
 }
 
 #[test]
-fn close_session_refuses_base_session() {
+fn close_session_refuses_last_window() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
-    // Add an inactive session and switch to it so the base is no
-    // longer active — only the "is base" rule should keep it
-    // alive.
+    // id 1 is no longer a magic, undeletable "base": it's just the
+    // window the editor launched into, closable like any other once a
+    // second window exists. The only invariant is "the editor always
+    // hosts at least one window".
     let id = harness
         .editor_mut()
         .create_window_at(PathBuf::from("/tmp/wt-feat"), "feat".into());
     harness.editor_mut().set_active_window(id);
 
+    // Two windows exist, so closing id 1 (now inactive) succeeds.
     let removed = harness.editor_mut().close_window(WindowId(1));
+    assert!(removed, "id 1 is closable once another window exists");
+    assert_eq!(harness.editor().session_count(), 1);
 
+    // The sole remaining window must not be closable.
+    let removed_last = harness.editor_mut().close_window(id);
     assert!(
-        !removed,
-        "close_window must refuse the base session even when not active"
+        !removed_last,
+        "close_window must refuse the last remaining window"
     );
-    assert_eq!(harness.editor().session_count(), 2);
+    assert_eq!(harness.editor().session_count(), 1);
 }
