@@ -2399,6 +2399,17 @@ pub enum PluginCommand {
         end: usize,
     },
 
+    /// Remove overlays in a namespace that overlap with a byte range.
+    /// Like [`ClearOverlaysInRange`] but scoped to a single namespace, so a
+    /// plugin can invalidate its own decorations for a line without clobbering
+    /// editor-owned overlays (e.g. LSP diagnostics) in the same range.
+    ClearOverlaysInRangeForNamespace {
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    },
+
     /// Add virtual text (inline text that doesn't exist in the buffer)
     /// Used for color swatches, type hints, parameter hints, etc.
     AddVirtualText {
@@ -4798,6 +4809,24 @@ impl PluginApi {
         })
     }
 
+    /// Clear overlays in a single namespace that overlap with a byte range.
+    /// Unlike [`clear_overlays_in_range`], overlays in other namespaces
+    /// (e.g. editor-owned LSP diagnostics) are left untouched.
+    pub fn clear_overlays_in_range_for_namespace(
+        &self,
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::ClearOverlaysInRangeForNamespace {
+            buffer_id,
+            namespace: OverlayNamespace::from_string(namespace),
+            start,
+            end,
+        })
+    }
+
     /// Set the status message
     pub fn set_status(&self, message: String) -> Result<(), String> {
         self.send_command(PluginCommand::SetStatus { message })
@@ -5930,6 +5959,21 @@ mod tests {
             |a: &PluginApi| a.clear_overlays_in_range(BufferId(4), 10, 20),
             PluginCommand::ClearOverlaysInRange { buffer_id, start, end }
                 if buffer_id == BufferId(4) && start == 10 && end == 20
+        );
+
+        // clear_overlays_in_range_for_namespace
+        assert_dispatches!(
+            |a: &PluginApi| a.clear_overlays_in_range_for_namespace(
+                BufferId(5),
+                "md-emphasis".into(),
+                10,
+                20
+            ),
+            PluginCommand::ClearOverlaysInRangeForNamespace { buffer_id, namespace, start, end }
+                if buffer_id == BufferId(5)
+                    && namespace.as_str() == "md-emphasis"
+                    && start == 10
+                    && end == 20
         );
 
         // open_file_at_location

@@ -2290,6 +2290,12 @@ interface EditorAPI {
 	*/
 	clearOverlaysInRange(bufferId: number, start: number, end: number): boolean;
 	/**
+	* Clear overlays in a single namespace that overlap with a byte range.
+	* Unlike clearOverlaysInRange, overlays in other namespaces (e.g.
+	* editor-owned LSP diagnostics) are left untouched.
+	*/
+	clearOverlaysInRangeForNamespace(bufferId: number, namespace: string, start: number, end: number): boolean;
+	/**
 	* Remove an overlay by its handle
 	*/
 	removeOverlay(bufferId: number, handle: string): boolean;

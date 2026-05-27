@@ -112,6 +112,7 @@ pub mod lsp_unified_code_actions;
 pub mod lsp_unresponsive_capability_does_not_block;
 pub mod macros;
 pub mod markdown_compose;
+pub mod markdown_compose_diagnostics;
 pub mod markdown_compose_scroll_reach;
 pub mod memory_scroll_leak;
 pub mod menu_bar;

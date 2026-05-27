@@ -161,6 +161,30 @@ impl Editor {
         }
     }
 
+    /// Handle ClearOverlaysInRangeForNamespace command
+    pub(super) fn handle_clear_overlays_in_range_for_namespace(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.overlays.remove_in_range_for_namespace(
+                &(start..end),
+                &namespace,
+                &mut state.marker_list,
+            );
+            // Note: Overlays are ephemeral, not added to event log for undo/redo
+        }
+    }
+
     // ==================== Virtual Text Commands ====================
 
     /// Handle AddVirtualText command

@@ -1046,7 +1046,9 @@ function processLineConceals(
   // the one-frame glitch where conceals are cleared but not yet rebuilt.
   editor.debug(`[mc] processLine clear+rebuild bytes=${byteStart}..${byteEnd} content="${lineContent.slice(0,40)}"`);
   editor.clearConcealsInRange(bufferId, byteStart, byteEnd);
-  editor.clearOverlaysInRange(bufferId, byteStart, byteEnd);
+  // Only clear our own emphasis overlays — clearing ALL overlays in the range
+  // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
+  editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
 
   const cursorOnLine = cursors.some(c => c >= byteStart && c <= byteEnd);
   // Strict version: excludes the boundary at byteEnd so that the cursor

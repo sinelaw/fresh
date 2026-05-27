@@ -145,9 +145,26 @@ pub(crate) fn compute_buffer_layout(
     state
         .margins
         .update_width_for_buffer(estimated_lines, show_line_numbers);
-    let gutter_width = state.margins.left_total_width();
+    let mut gutter_width = state.margins.left_total_width();
 
-    let compose_layout = calculate_compose_layout(area, &view_mode, compose_width);
+    let mut compose_layout = calculate_compose_layout(area, &view_mode, compose_width);
+    // In compose mode the gutter (diagnostic / indicator slot) is drawn in the
+    // reclaimed desk margin so it does not shrink the centered text width
+    // (issue #2146). Only do this when there is enough desk margin to give up;
+    // if the paper already fills the area, drop the gutter instead of eating
+    // into the text so table/wrap layout stays intact.
+    if matches!(view_mode, ViewMode::PageView) && gutter_width > 0 {
+        let g = gutter_width as u16;
+        if compose_layout.left_pad >= g {
+            compose_layout.left_pad -= g;
+            let ra = compose_layout.render_area;
+            compose_layout.render_area = Rect::new(ra.x - g, ra.y, ra.width + g, ra.height);
+        } else {
+            state.margins.left_config.enabled = false;
+            state.margins.left_config.width = 0;
+            gutter_width = 0;
+        }
+    }
     let render_area = compose_layout.render_area;
 
     // Clone view_transform so we can reuse it if scrolling triggers a rebuild

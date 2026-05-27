@@ -3413,6 +3413,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Clear overlays in a namespace that overlap with a byte range
+    pub fn clear_overlays_in_range_for_namespace(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearOverlaysInRangeForNamespace {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+                start: start as usize,
+                end: end as usize,
+            })
+            .is_ok()
+    }
+
     /// Remove an overlay by its handle
     pub fn remove_overlay(&self, buffer_id: u32, handle: String) -> bool {
         use fresh_core::overlay::OverlayHandle;

@@ -258,6 +258,14 @@ impl Editor {
             } => {
                 self.handle_clear_overlays_in_range(buffer_id, start, end);
             }
+            PluginCommand::ClearOverlaysInRangeForNamespace {
+                buffer_id,
+                namespace,
+                start,
+                end,
+            } => {
+                self.handle_clear_overlays_in_range_for_namespace(buffer_id, namespace, start, end);
+            }
 
             // ==================== Virtual Text Commands ====================
             PluginCommand::AddVirtualText {
