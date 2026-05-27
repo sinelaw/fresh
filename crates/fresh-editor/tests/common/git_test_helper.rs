@@ -30,7 +30,7 @@ use tempfile::TempDir;
 ///   * force durable loose-object writes (`core.fsync`) so an object written by
 ///     one commit is guaranteed readable by the next, even on CI filesystems
 ///     with weaker write-then-read coherency.
-fn git_command(path: &Path) -> Command {
+pub fn git_command(path: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(path)
         .env("GIT_CONFIG_NOSYSTEM", "1")

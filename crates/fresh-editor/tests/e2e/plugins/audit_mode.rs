@@ -1,6 +1,6 @@
 //! E2E tests for audit_mode (Review Diff) plugin
 
-use crate::common::git_test_helper::GitTestRepo;
+use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -1943,18 +1943,16 @@ fn test_review_diff_scrolling_many_files() {
         repo.create_file(&path, &format!("fn staged_func_{}() {{}}\n", i));
     }
     // Stage them
-    let output = std::process::Command::new("git")
+    let output = git_command(&repo.path)
         .args(["add", "src/"])
-        .current_dir(&repo.path)
         .output()
         .expect("git add failed");
     assert!(output.status.success(), "git add failed");
 
     // Create 5 unstaged modified files (modify existing tracked files or create new ones)
     // First commit the staged files
-    let output = std::process::Command::new("git")
+    let output = git_command(&repo.path)
         .args(["commit", "-m", "Add staged files"])
-        .current_dir(&repo.path)
         .output()
         .expect("git commit failed");
     assert!(output.status.success(), "git commit failed");
@@ -2250,9 +2248,8 @@ fn test_review_diff_renamed_file_message() {
     repo.git_commit("Initial commit");
 
     // Rename a file via git mv (staged rename)
-    let output = std::process::Command::new("git")
+    let output = git_command(&repo.path)
         .args(["mv", "src/utils.rs", "src/helpers.rs"])
-        .current_dir(&repo.path)
         .output()
         .expect("git mv failed");
     assert!(output.status.success(), "git mv failed");
@@ -4099,9 +4096,8 @@ fn test_review_diff_capital_s_stages_whole_file() {
 
 /// Run `git` with the given args in the given repo and panic on failure.
 fn run_git(repo: &GitTestRepo, args: &[&str]) {
-    let out = std::process::Command::new("git")
+    let out = git_command(&repo.path)
         .args(args)
-        .current_dir(&repo.path)
         .output()
         .unwrap_or_else(|e| panic!("git {:?} failed to spawn: {}", args, e));
     if !out.status.success() {

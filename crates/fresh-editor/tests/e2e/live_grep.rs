@@ -1,4 +1,5 @@
 use crate::common::fixtures::TestFixture;
+use crate::common::git_test_helper::git_command;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::input::commands::Suggestion;
@@ -26,15 +27,7 @@ fn test_live_grep_git_grep_flow_finds_match_in_repo() {
     // Initialise a real git repo so `git rev-parse --is-inside-work-tree`
     // succeeds and `isAvailable` returns true for git-grep.
     let run_git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&project_root)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .output()
-            .unwrap();
+        let out = git_command(&project_root).args(args).output().unwrap();
         assert!(
             out.status.success(),
             "git {:?} failed: {}",
