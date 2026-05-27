@@ -54,6 +54,32 @@ impl GitTestRepo {
             .output()
             .expect("Failed to disable GPG signing");
 
+        // Disable automatic GC/repacking to prevent "unable to read <hash>"
+        // failures when many test repos run in parallel: auto-gc can move loose
+        // objects into pack files mid-operation, making them temporarily
+        // unreadable by a concurrent git command in the same repo.
+        Command::new("git")
+            .args(["config", "gc.auto", "0"])
+            .current_dir(&path)
+            .output()
+            .expect("Failed to disable auto gc");
+
+        // Force LF line endings regardless of platform git configuration
+        // (e.g. core.autocrlf=true on Windows). Tests write files with \n and
+        // assert they come back with \n after a git checkout/restore; CRLF
+        // conversion would break those assertions on Windows.
+        Command::new("git")
+            .args(["config", "core.autocrlf", "false"])
+            .current_dir(&path)
+            .output()
+            .expect("Failed to set core.autocrlf");
+
+        Command::new("git")
+            .args(["config", "core.eol", "lf"])
+            .current_dir(&path)
+            .output()
+            .expect("Failed to set core.eol");
+
         GitTestRepo {
             _temp_dir: temp_dir,
             path,
