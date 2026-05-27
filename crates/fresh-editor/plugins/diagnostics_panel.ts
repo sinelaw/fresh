@@ -130,6 +130,16 @@ const finder = new Finder<DiagnosticItem>(editor, {
   // the shared Utility Dock so it shares space with Quickfix,
   // search-replace results, etc. See issue #1796.
   useUtilityDock: true,
+  // Keys advertised in the panel's status hint
+  // ("a: toggle filter | RET: goto | q: close"). RET/Esc are bound by
+  // the Finder itself; these wire up the diagnostics-specific actions
+  // so they no longer fall through to the read-only text layer and
+  // trip "Editing disabled in this buffer" (issue #2125).
+  panelKeys: [
+    ["q", "diagnostics_close"],
+    ["a", "diagnostics_toggle_all"],
+    ["r", "diagnostics_refresh"],
+  ],
   onClose: () => {
     isOpen = false;
     sourceBufferId = null;

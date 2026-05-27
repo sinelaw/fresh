@@ -120,6 +120,19 @@ export interface FinderConfig<T> {
   onClose?: () => void;
 
   /**
+   * Panel-specific: extra key bindings active while the panel buffer
+   * is focused, as `[key, command]` pairs (e.g. `["q", "my_close"]`).
+   * `command` is dispatched as a plugin action, so it should name a
+   * handler registered via `registerHandler`. These augment the
+   * built-in `Return` (select) and `Escape` (close) bindings.
+   *
+   * Without this, keys a plugin advertises in its panel UI (e.g.
+   * "q: close") fall through to the read-only text layer and trip
+   * "Editing disabled in this buffer" (issue #2125).
+   */
+  panelKeys?: Array<[string, string]>;
+
+  /**
    * When true, panels created by this Finder are routed into the
    * shared Utility Dock (issue #1796 / Section 2 of
    * `docs/internal/tui-editor-layout-design.md`). The first
@@ -1111,12 +1124,17 @@ export class Finder<T> {
   private registerPanelHandlers(): void {
     const self = this;
 
-    // Define panel mode
+    // Define panel mode. The built-in Return/Escape bindings are
+    // augmented with any caller-supplied `panelKeys` so plugin-specific
+    // shortcuts (e.g. Diagnostics' "q: close | a: toggle filter") resolve
+    // to their handlers instead of falling through to the read-only text
+    // layer (issue #2125).
     this.editor.defineMode(
       this.modeName,
       [
         ["Return", `${this.handlerPrefix}_panel_select`],
         ["Escape", `${this.handlerPrefix}_panel_close`],
+        ...(this.config.panelKeys ?? []),
       ],
       true
     );

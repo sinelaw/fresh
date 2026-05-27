@@ -257,3 +257,82 @@ fn test_diagnostics_panel_jump_to_correct_line() {
         after_jump
     );
 }
+
+// ─── Bug 3: Panel shortcuts (q / a) are advertised but not bound ────────────
+
+/// The panel's status hint advertises `q: close`, but pressing `q` in the
+/// diagnostics panel does nothing useful — the key falls through to the
+/// read-only text layer and shows "Editing disabled in this buffer" while the
+/// panel stays open (issue #2125). With the fix, `q` runs the close handler.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_diagnostics_panel_q_closes() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let _fake_server = FakeLspServer::spawn_many_diagnostics(temp_dir.path(), 3).unwrap();
+    let (mut harness, _test_file) = setup_harness(&temp_dir);
+
+    open_diagnostics_panel(&mut harness);
+    assert!(
+        harness.screen_to_string().contains("Esc:close"),
+        "Panel should be open before pressing q.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Press `q` — should close the panel, not edit the read-only buffer.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Esc:close"))
+        .unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        !after.contains("Editing disabled"),
+        "Pressing q should close the panel, not trip 'Editing disabled'.\nScreen:\n{}",
+        after
+    );
+    assert!(
+        !after.contains("Diagnostics ("),
+        "Panel should be closed after pressing q.\nScreen:\n{}",
+        after
+    );
+}
+
+/// The panel's status hint advertises `a: toggle filter`. Pressing `a` should
+/// flip the title between "Current File" and "All Files". Before the fix, `a`
+/// fell through to the read-only text layer ("Editing disabled") and the title
+/// never changed (issue #2125).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_diagnostics_panel_a_toggles_filter() {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let _fake_server = FakeLspServer::spawn_many_diagnostics(temp_dir.path(), 3).unwrap();
+    let (mut harness, _test_file) = setup_harness(&temp_dir);
+
+    open_diagnostics_panel(&mut harness);
+    assert!(
+        harness.screen_to_string().contains("Current File"),
+        "Panel should start filtered to the current file.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Press `a` — should toggle the filter title to "All Files".
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("All Files"))
+        .unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        !after.contains("Editing disabled"),
+        "Pressing a should toggle the filter, not trip 'Editing disabled'.\nScreen:\n{}",
+        after
+    );
+}
