@@ -25,6 +25,7 @@ pub enum HighlightCategory {
     String,
     Type,
     Variable,
+    VariableBuiltin,
     /// `markup.inserted.*` — added lines in a diff. Fills the row's
     /// background with `editor.diff_add_bg`; foreground stays at the
     /// theme's default so the `+` token reads as plain text.
@@ -65,6 +66,7 @@ impl HighlightCategory {
             Self::Function => "syntax.function",
             Self::Type => "syntax.type",
             Self::Variable | Self::Property => "syntax.variable",
+            Self::VariableBuiltin => "syntax.variable_builtin",
             Self::Constant | Self::Number | Self::Attribute => "syntax.constant",
             Self::Operator => "syntax.operator",
             Self::PunctuationBracket => "syntax.punctuation_bracket",
@@ -95,6 +97,7 @@ impl HighlightCategory {
             Self::String => "String",
             Self::Type => "Type",
             Self::Variable => "Variable",
+            Self::VariableBuiltin => "Variable (Builtin)",
             Self::Inserted => "Diff Inserted",
             Self::Deleted => "Diff Deleted",
             Self::Changed => "Diff Changed",
@@ -130,6 +133,7 @@ pub fn highlight_color(category: HighlightCategory, theme: &crate::view::theme::
         HighlightCategory::String => theme.syntax_string,
         HighlightCategory::Type => theme.syntax_type,
         HighlightCategory::Variable => theme.syntax_variable,
+        HighlightCategory::VariableBuiltin => theme.syntax_variable_builtin,
         // Diff categories don't have a dedicated fg — they're a bg
         // wash on top of the buffer's default fg. Return the editor
         // foreground so cells keep readable contrast.

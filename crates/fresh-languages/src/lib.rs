@@ -61,6 +61,7 @@ pub enum HighlightCategory {
     String,
     Type,
     Variable,
+    VariableBuiltin,
     /// `markup.inserted.*` — added lines in a diff. The renderer
     /// fills the whole row's background with the theme's
     /// `editor.diff_add_bg`. Foreground stays default so the row
@@ -131,7 +132,7 @@ impl HighlightCategory {
             18 => Some(Self::Type),                 // type
             19 => Some(Self::Type),                 // type.builtin
             20 => Some(Self::Variable),             // variable
-            21 => Some(Self::Constant),             // variable.builtin (this, super, arguments)
+            21 => Some(Self::VariableBuiltin),      // variable.builtin (this, super, arguments)
             22 => Some(Self::Variable),             // variable.parameter
             _ => None,
         }
@@ -146,6 +147,7 @@ impl HighlightCategory {
             Self::Function => "syntax.function",
             Self::Type => "syntax.type",
             Self::Variable | Self::Property => "syntax.variable",
+            Self::VariableBuiltin => "syntax.variable_builtin",
             Self::Constant | Self::Number | Self::Attribute => "syntax.constant",
             Self::Operator => "syntax.operator",
             Self::PunctuationBracket => "syntax.punctuation_bracket",
@@ -176,6 +178,7 @@ impl HighlightCategory {
             Self::String => "String",
             Self::Type => "Type",
             Self::Variable => "Variable",
+            Self::VariableBuiltin => "Variable (Builtin)",
             Self::Inserted => "Diff Inserted",
             Self::Deleted => "Diff Deleted",
             Self::Changed => "Diff Changed",

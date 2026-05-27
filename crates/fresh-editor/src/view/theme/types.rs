@@ -1186,6 +1186,9 @@ pub struct SyntaxColors {
     /// Variable names
     #[serde(default = "default_syntax_variable")]
     pub variable: ColorDef,
+    /// Built-in language variables (self, this, super, etc.)
+    #[serde(default = "default_syntax_variable_builtin")]
+    pub variable_builtin: ColorDef,
     /// Constants and literals
     #[serde(default = "default_syntax_constant")]
     pub constant: ColorDef,
@@ -1218,6 +1221,9 @@ fn default_syntax_type() -> ColorDef {
 }
 fn default_syntax_variable() -> ColorDef {
     ColorDef::Rgb(156, 220, 254)
+}
+fn default_syntax_variable_builtin() -> ColorDef {
+    ColorDef::Rgb(86, 156, 214) // same as keyword — self/this/super are language-defined
 }
 fn default_syntax_constant() -> ColorDef {
     ColorDef::Rgb(79, 193, 255)
@@ -1417,6 +1423,7 @@ pub struct Theme {
     pub syntax_function: Color,
     pub syntax_type: Color,
     pub syntax_variable: Color,
+    pub syntax_variable_builtin: Color,
     pub syntax_constant: Color,
     pub syntax_operator: Color,
     pub syntax_punctuation_bracket: Color,
@@ -1636,6 +1643,7 @@ impl From<ThemeFile> for Theme {
             syntax_function: file.syntax.function.into(),
             syntax_type: file.syntax.type_.into(),
             syntax_variable: file.syntax.variable.into(),
+            syntax_variable_builtin: file.syntax.variable_builtin.into(),
             syntax_constant: file.syntax.constant.into(),
             syntax_operator: file.syntax.operator.into(),
             syntax_punctuation_bracket: file.syntax.punctuation_bracket.into(),
@@ -1784,6 +1792,7 @@ impl From<Theme> for ThemeFile {
                 function: theme.syntax_function.into(),
                 type_: theme.syntax_type.into(),
                 variable: theme.syntax_variable.into(),
+                variable_builtin: theme.syntax_variable_builtin.into(),
                 constant: theme.syntax_constant.into(),
                 operator: theme.syntax_operator.into(),
                 punctuation_bracket: theme.syntax_punctuation_bracket.into(),
@@ -2068,6 +2077,7 @@ impl Theme {
                 "string" => Some(self.syntax_string),
                 "type" => Some(self.syntax_type),
                 "variable" => Some(self.syntax_variable),
+                "variable_builtin" => Some(self.syntax_variable_builtin),
                 _ => None,
             },
             "diagnostic" => match field {
@@ -2222,6 +2232,7 @@ impl Theme {
                 "function" => Some(&mut self.syntax_function),
                 "type" => Some(&mut self.syntax_type),
                 "variable" => Some(&mut self.syntax_variable),
+                "variable_builtin" => Some(&mut self.syntax_variable_builtin),
                 "constant" => Some(&mut self.syntax_constant),
                 "operator" => Some(&mut self.syntax_operator),
                 "punctuation_bracket" => Some(&mut self.syntax_punctuation_bracket),

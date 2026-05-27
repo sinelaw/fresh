@@ -629,6 +629,9 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     }
 
     // Variables and parameters
+    if scope_lower.starts_with("variable.language") {
+        return Some(HighlightCategory::VariableBuiltin);
+    }
     if scope_lower.starts_with("variable.parameter") {
         return Some(HighlightCategory::Variable);
     }
