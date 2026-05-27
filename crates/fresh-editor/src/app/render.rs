@@ -1368,7 +1368,10 @@ impl Editor {
                         } else {
                             cursor_screen_pos
                         };
-                        let popup_area = popup.calculate_area(size, Some(popup_pos));
+                        // Clamp within the chrome area (right of a left
+                        // dock) so a cursor-anchored popup near the left
+                        // edge can't extend into the dock column.
+                        let popup_area = popup.calculate_area(chrome_area, Some(popup_pos));
 
                         // Track popup area for mouse hit testing
                         // Account for description height when calculating the list item area
@@ -1465,7 +1468,9 @@ impl Editor {
             )
         });
         if !top_is_trust_modal {
-            self.render_top_global_popup(frame, size, &theme_clone, hover_target.as_ref());
+            // Global popups render within the chrome area (right of a
+            // left dock) so corner/centred popups don't overrun it.
+            self.render_top_global_popup(frame, chrome_area, &theme_clone, hover_target.as_ref());
         }
 
         // Render menu bar last so dropdown appears on top of all other content
