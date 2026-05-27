@@ -1,63 +1,52 @@
 //! Cross-restart persistence for Orchestrator sessions and
 //! plugin global state.
 //!
-//! ## Storage layout (v2, current)
+//! ## The session registry is the directory set
 //!
-//!   - `<data_dir>/orchestrator/windows.json` — **global**, per-
-//!     user list of every Orchestrator session the user has
-//!     ever created. Each entry carries a `project_path` so the
-//!     Open dialog can scope its default view to the current
-//!     project while still allowing an "all projects" toggle.
-//!     One file means the user can see their full orchestration
-//!     history across projects without scanning a directory
-//!     tree, and avoids the "cd to different paths sees disjoint
-//!     state" surprise of the old per-cwd layout.
+//! There is no central session-list file. A session *is* a
+//! directory (one session per dir), and the registry is the
+//! per-dir workspace cache:
 //!
-//!   - `<data_dir>/orchestrator/state/<plugin>.json` — plugin
-//!     global state, one file per plugin. Same shape as before;
-//!     it's not per-project, so it lives at the new global
-//!     location too.
+//!   - `<data_dir>/workspaces/<encoded-root>.json` — one file per
+//!     directory ever opened. Each carries that window's identity
+//!     (`label`, `session_plugin_state`) plus its buffer/split
+//!     layout. [`discover_sessions`] scans this directory at boot,
+//!     garbage-collects entries whose directory no longer exists,
+//!     and returns one [`PersistedWindow`] per survivor (ids
+//!     assigned by sorted canonical root for run-to-run stability).
 //!
-//! ## Migration from v1 (per-cwd) layout
+//!   - `<data_dir>/orchestrator/state/<plugin>.json` — editor-wide
+//!     plugin global state, one file per plugin (not per-project).
 //!
-//! v1 wrote `<data>/orchestrator/<encoded_cwd>/windows.json`
-//! and `<data>/orchestrator/<encoded_cwd>/state/<plugin>.json`.
-//! On first read at the new global path, the loader detects any
-//! v1 files and folds them into the global store with
-//! `project_path = decoded_cwd` (the slug → original path
-//! reverse). The legacy files are renamed to
-//! `windows.json.migrated.bak` (and similarly for plugin state)
-//! so a downgrade isn't a one-way trip. Migration is idempotent
-//! — once the global file exists, the legacy files are ignored.
+//! `PersistedWindow` / `PersistedWindows` are now in-memory shapes
+//! produced by discovery (and still the parse target of a legacy
+//! `windows.json` during migration), not an on-disk schema.
 //!
-//! The state lives under the platform data directory
-//! (`$XDG_DATA_HOME/fresh/` on Linux); this keeps the user's
-//! working tree free of stray dotfiles (issue #1991).
+//! ## Migration
 //!
-//! On startup, [`read_persisted_windows_env`] +
-//! [`read_persisted_plugin_state`] are called from
-//! `Editor::with_options` (see `editor_init.rs`) *before* the
-//! editor struct is built. The factory reopens the session the user
-//! last used **in the launch cwd's project** (see
-//! [`pick_active_window_for_cwd`]) and uses it for the active window's
-//! id / root / label / plugin state, so the spawned LSP targets the
-//! right project. Crucially the pick is cwd-scoped: a session from a
-//! *different* project is never activated, which is what kept one
-//! day's directories/files from bleeding into another project's
-//! window. When the cwd has no sessions, the active window is a clean
-//! base (id 1) rooted at the cwd. All other persisted windows come
-//! back as inert shells (no splits, no LSP); first dive into one
-//! re-warms it on demand exactly like a freshly-`createWindow`-ed
-//! session. The factory also populates `plugin_global_state` so
-//! plugins reading `getGlobalState` during their on-load handler see
-//! the previous run's values.
+//! Older builds kept a central `<data_dir>/orchestrator/windows.json`
+//! (and, before that, per-cwd `<data>/orchestrator/<encoded_cwd>/
+//! windows.json`). On first read, [`migrate_legacy_windows`] folds any
+//! per-cwd files into a single windows.json, then
+//! [`migrate_windows_json_into_workspaces`] backfills its
+//! `label` / per-session plugin state into the matching per-dir
+//! workspace files and retires the file to `windows.json.retired.bak`.
+//! After that the workspace cache is the sole registry.
 //!
-//! The "warm" half of warm-swap (split layout, LSP, file
-//! explorer state) is intentionally *not* persisted: the only
-//! purpose of warmth is "fast switch within one editor
-//! lifetime"; serialising those across restarts buys nothing
-//! and is a large amount of fragile state-machine work.
-//! Re-warming on first dive is fast enough.
+//! State lives under the platform data dir (`$XDG_DATA_HOME/fresh/`),
+//! never the working tree (issue #1991).
+//!
+//! ## Startup
+//!
+//! [`read_persisted_windows_env`] + [`read_persisted_plugin_state`]
+//! run from `editor_init` before the editor struct exists. The
+//! foreground window is the one whose `root` matches the launch cwd
+//! ([`pick_active_window_for_cwd`]) — authoritatively, regardless of
+//! which session was last used; if none matches, a clean window is
+//! booted at the cwd. Every other discovered session comes back as an
+//! inert shell (no splits/LSP) restored lazily on first dive/preview.
+//! The "warm" layout is intentionally not persisted across restarts —
+//! re-warming on first dive is fast enough.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
