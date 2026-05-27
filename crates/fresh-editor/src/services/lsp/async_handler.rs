@@ -2743,6 +2743,7 @@ impl LspTask {
         stderr_log_path: std::path::PathBuf,
         shutting_down: Arc<AtomicBool>,
         document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+        config_options: Arc<std::sync::Mutex<Option<Value>>>,
     ) {
         tokio::spawn(async move {
             tracing::info!("LSP stdout reader task started for {}", language);
@@ -2759,6 +2760,7 @@ impl LspTask {
                             &server_command,
                             &stdin_writer,
                             &document_versions,
+                            &config_options,
                         )
                         .await
                         {
@@ -2848,6 +2850,12 @@ impl LspTask {
         let language_clone: String = (*state.language).clone();
         let server_name: String = (*state.server_name).clone();
 
+        // Initialization options for this server, shared with the stdout reader
+        // so it can answer `workspace/configuration` pulls. Populated when the
+        // Initialize command is processed below (before the server can ask).
+        let config_options: Arc<std::sync::Mutex<Option<Value>>> =
+            Arc::new(std::sync::Mutex::new(None));
+
         // Flag to indicate intentional shutdown (prevents spurious error messages)
         let shutting_down = Arc::new(AtomicBool::new(false));
 
@@ -2863,6 +2871,7 @@ impl LspTask {
             self.stderr_log_path,
             shutting_down.clone(),
             self.document_versions.clone(),
+            config_options.clone(),
         );
 
         // Sequential command dispatch loop.
@@ -2955,6 +2964,10 @@ impl LspTask {
                         message: None,
                     });
                     tracing::info!("Processing Initialize command");
+                    // Publish the options before initializing so the stdout
+                    // reader can answer the server's `workspace/configuration`
+                    // pull (which arrives only after `initialize`).
+                    *config_options.lock().unwrap() = initialization_options.clone();
                     let result = await_draining!(
                         state.handle_initialize_sequential(
                             root_uri,
@@ -3530,6 +3543,99 @@ async fn read_message_from_stdout(
     serde_json::from_str(&json).map_err(|e| format!("Failed to deserialize message: {}", e))
 }
 
+/// Build the response to a `workspace/configuration` request.
+///
+/// LSP servers pull their settings by asking the client for named
+/// configuration sections. We answer each requested item from this server's
+/// configured `initialization_options` (the same object sent in the
+/// `initialize` request): the section name selects into that object, so e.g.
+/// harper-ls — which requests the `harper-ls` section — is configured via
+/// `{"harper-ls": { ... }}` and receives the inner object. `null` is a valid
+/// "use your defaults" answer for a section we have no configuration for.
+fn resolve_workspace_configuration(
+    items: &[Value],
+    init_options: Option<&Value>,
+    server_command: &str,
+) -> Vec<Value> {
+    if items.is_empty() {
+        return vec![resolve_configuration_section(
+            None,
+            init_options,
+            server_command,
+        )];
+    }
+    items
+        .iter()
+        .map(|item| {
+            let section = item
+                .get("section")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            resolve_configuration_section(section, init_options, server_command)
+        })
+        .collect()
+}
+
+/// Resolve a single requested configuration `section` (a possibly dotted path
+/// such as `rust-analyzer.inlayHints`) against the configured init options,
+/// falling back to a built-in default when nothing is configured.
+fn resolve_configuration_section(
+    section: Option<&str>,
+    init_options: Option<&Value>,
+    server_command: &str,
+) -> Value {
+    if let Some(options) = init_options {
+        match section {
+            Some(section) => {
+                let mut current = options;
+                let mut resolved = true;
+                for part in section.split('.') {
+                    match current.get(part) {
+                        Some(next) => current = next,
+                        None => {
+                            resolved = false;
+                            break;
+                        }
+                    }
+                }
+                if resolved {
+                    return current.clone();
+                }
+            }
+            // No section requested: hand back the whole configured object.
+            None => return options.clone(),
+        }
+    }
+    default_configuration_section(server_command)
+}
+
+/// Built-in configuration returned when a requested section has no configured
+/// value. rust-analyzer ships no default init options yet relies on the client
+/// enabling inlay hints through this pull, so it keeps that default; every
+/// other server gets `null` (use its own defaults).
+fn default_configuration_section(server_command: &str) -> Value {
+    if server_command_is_rust_analyzer(server_command) {
+        serde_json::json!({
+            "inlayHints": {
+                "typeHints": { "enable": true },
+                "parameterHints": { "enable": true },
+                "chainingHints": { "enable": true },
+                "closureReturnTypeHints": { "enable": "always" }
+            }
+        })
+    } else {
+        Value::Null
+    }
+}
+
+fn server_command_is_rust_analyzer(server_command: &str) -> bool {
+    std::path::Path::new(server_command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(server_command)
+        .contains("rust-analyzer")
+}
+
 /// Standalone function to handle and dispatch messages (for reader task)
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::let_underscore_must_use)] // oneshot/mpsc send results are best-effort; receiver drop is not actionable
@@ -3542,6 +3648,7 @@ async fn handle_message_dispatch(
     server_command: &str,
     stdin_writer: &Arc<tokio::sync::Mutex<ChildStdin>>,
     document_versions: &Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+    config_options: &Arc<std::sync::Mutex<Option<Value>>>,
 ) -> Result<(), String> {
     match message {
         JsonRpcMessage::Response(response) => {
@@ -3599,42 +3706,28 @@ async fn handle_message_dispatch(
                     }
                 }
                 "workspace/configuration" => {
-                    // Return configuration with inlay hints enabled for rust-analyzer
-                    // The request contains items asking for configuration sections
-                    // We return an array with one config object per requested item
+                    // The server is pulling configuration for one or more named
+                    // sections (e.g. harper-ls asks for the "harper-ls" section).
+                    // Resolve each requested section against this server's own
+                    // configured initialization options so pull-config servers can
+                    // actually be customized, instead of handing every server the
+                    // same rust-analyzer blob (sinelaw/fresh#2144).
                     tracing::trace!(
-                        "Responding to workspace/configuration with inlay hints enabled"
+                        "Responding to workspace/configuration for {}",
+                        server_command
                     );
 
-                    // Parse request params to see how many items are requested
-                    let num_items = request
+                    let empty = Vec::new();
+                    let items = request
                         .params
                         .as_ref()
                         .and_then(|p| p.get("items"))
                         .and_then(|items| items.as_array())
-                        .map(|arr| arr.len())
-                        .unwrap_or(1);
+                        .unwrap_or(&empty);
 
-                    // rust-analyzer configuration with inlay hints enabled
-                    let ra_config = serde_json::json!({
-                        "inlayHints": {
-                            "typeHints": {
-                                "enable": true
-                            },
-                            "parameterHints": {
-                                "enable": true
-                            },
-                            "chainingHints": {
-                                "enable": true
-                            },
-                            "closureReturnTypeHints": {
-                                "enable": "always"
-                            }
-                        }
-                    });
-
-                    // Return one config object for each requested item
-                    let configs: Vec<Value> = (0..num_items).map(|_| ra_config.clone()).collect();
+                    let stored = config_options.lock().unwrap().clone();
+                    let configs =
+                        resolve_workspace_configuration(items, stored.as_ref(), server_command);
 
                     JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
@@ -4746,6 +4839,91 @@ mod tests {
     use super::*;
     use crate::services::lsp::manager::LanguageScope;
     use crate::services::remote::LocalLongRunningSpawner;
+
+    /// A `workspace/configuration` request item asking for `section`.
+    fn config_item(section: &str) -> Value {
+        serde_json::json!({ "section": section })
+    }
+
+    #[test]
+    fn workspace_configuration_resolves_section_from_init_options() {
+        // harper-ls pulls the "harper-ls" section; it must receive the inner
+        // object from its configured init options, not a rust-analyzer blob.
+        let opts = serde_json::json!({
+            "harper-ls": { "linters": { "SpellCheck": false } }
+        });
+        let configs =
+            resolve_workspace_configuration(&[config_item("harper-ls")], Some(&opts), "harper-ls");
+        assert_eq!(
+            configs,
+            vec![serde_json::json!({ "linters": { "SpellCheck": false } })]
+        );
+    }
+
+    #[test]
+    fn workspace_configuration_resolves_dotted_section() {
+        let opts = serde_json::json!({ "a": { "b": { "c": 1 } } });
+        let configs =
+            resolve_workspace_configuration(&[config_item("a.b")], Some(&opts), "some-ls");
+        assert_eq!(configs, vec![serde_json::json!({ "c": 1 })]);
+    }
+
+    #[test]
+    fn workspace_configuration_unknown_section_is_null_for_non_rust() {
+        // A section we have no configuration for yields null ("use defaults"),
+        // never another server's config.
+        let opts = serde_json::json!({ "harper-ls": { "linters": {} } });
+        let configs =
+            resolve_workspace_configuration(&[config_item("marksman")], Some(&opts), "marksman");
+        assert_eq!(configs, vec![Value::Null]);
+    }
+
+    #[test]
+    fn workspace_configuration_rust_analyzer_default_enables_inlay_hints() {
+        // rust-analyzer ships no init options yet still needs inlay hints on.
+        for command in [
+            "rust-analyzer",
+            "/usr/local/bin/rust-analyzer",
+            "custom-rust-analyzer",
+        ] {
+            let configs =
+                resolve_workspace_configuration(&[config_item("rust-analyzer")], None, command);
+            assert_eq!(configs.len(), 1);
+            assert_eq!(
+                configs[0]["inlayHints"]["typeHints"]["enable"], true,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_configuration_non_rust_without_options_is_null() {
+        let configs =
+            resolve_workspace_configuration(&[config_item("harper-ls")], None, "harper-ls");
+        assert_eq!(configs, vec![Value::Null]);
+    }
+
+    #[test]
+    fn workspace_configuration_one_response_per_item() {
+        let opts = serde_json::json!({ "a": 1, "b": 2 });
+        let configs = resolve_workspace_configuration(
+            &[config_item("a"), config_item("b"), config_item("missing")],
+            Some(&opts),
+            "some-ls",
+        );
+        assert_eq!(
+            configs,
+            vec![serde_json::json!(1), serde_json::json!(2), Value::Null]
+        );
+    }
+
+    #[test]
+    fn workspace_configuration_no_items_returns_whole_object() {
+        // A request with no items (section unset) gets the whole config object.
+        let opts = serde_json::json!({ "linters": { "SpellCheck": false } });
+        let configs = resolve_workspace_configuration(&[], Some(&opts), "harper-ls");
+        assert_eq!(configs, vec![opts]);
+    }
 
     /// Shared spawner used by every LspHandle::spawn test so individual
     /// call sites stay legible. Host-local, no limits applied.
