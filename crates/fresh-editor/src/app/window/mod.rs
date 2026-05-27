@@ -2653,6 +2653,103 @@ impl Window {
         }
     }
 
+    /// Re-evaluate committed search highlights around an edited region.
+    ///
+    /// Search-match overlays are anchored by markers that merely *track*
+    /// byte positions through edits; they never re-check whether the text
+    /// they cover still matches the query. So editing inside a highlighted
+    /// match (or typing against its boundary, which can break a `\b`
+    /// whole-word rule) would leave a stale highlight on text that no
+    /// longer matches. This recomputes matches on just the line(s) touched
+    /// by the edit and swaps the search overlays in that span, so highlights
+    /// drop and appear exactly where the text starts/stops matching.
+    ///
+    /// `edit_start` / `edit_new_len` are in post-edit byte coordinates (for
+    /// a deletion, `edit_new_len` is 0). Bounded to the affected lines to
+    /// keep it viewport-localized rather than a full-buffer rescan.
+    pub fn reevaluate_search_overlays_around(
+        &mut self,
+        edit_start: usize,
+        edit_new_len: usize,
+        search_fg: ratatui::style::Color,
+        search_bg: ratatui::style::Color,
+    ) {
+        let query = match self.search_state.as_ref() {
+            Some(ss) if !ss.query.is_empty() => ss.query.clone(),
+            _ => return,
+        };
+
+        let case_sensitive = self.search_case_sensitive;
+        let whole_word = self.search_whole_word;
+        let use_regex = self.search_use_regex;
+        let ns = self.search_namespace.clone();
+
+        let regex_pattern = if use_regex {
+            if whole_word {
+                format!(r"\b{}\b", query)
+            } else {
+                query
+            }
+        } else {
+            let escaped = regex::escape(&query);
+            if whole_word {
+                format!(r"\b{}\b", escaped)
+            } else {
+                escaped
+            }
+        };
+
+        let regex = match regex::RegexBuilder::new(&regex_pattern)
+            .case_insensitive(!case_sensitive)
+            .build()
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let state = self.active_state_mut();
+        let buf_len = state.buffer.len();
+        let edit_end = edit_start.saturating_add(edit_new_len).min(buf_len);
+
+        // Expand the edited byte span to the full line(s) it touches so that
+        // word-boundary context on either side of the edit is included.
+        let start_line = state.buffer.get_line_number(edit_start.min(buf_len));
+        let end_line = state.buffer.get_line_number(edit_end);
+        let win_start = state.buffer.line_start_offset(start_line).unwrap_or(0);
+        let win_end = state
+            .buffer
+            .line_start_offset(end_line + 1)
+            .unwrap_or(buf_len)
+            .min(buf_len);
+
+        let text = state.get_text_range(win_start, win_end);
+
+        let mut new_overlays = Vec::new();
+        for mat in regex.find_iter(&text) {
+            let absolute_pos = win_start + mat.start();
+            let match_len = mat.end() - mat.start();
+            let search_style = ratatui::style::Style::default().fg(search_fg).bg(search_bg);
+            new_overlays.push(
+                crate::view::overlay::Overlay::with_namespace_fixed_end(
+                    &mut state.marker_list,
+                    absolute_pos..(absolute_pos + match_len),
+                    crate::view::overlay::OverlayFace::Style {
+                        style: search_style,
+                    },
+                    ns.clone(),
+                )
+                .with_priority_value(10),
+            );
+        }
+
+        state.overlays.replace_range_in_namespace(
+            &ns,
+            &(win_start..win_end),
+            new_overlays,
+            &mut state.marker_list,
+        );
+    }
+
     // ---- File-explorer leaf delegators ----
 
     /// Whether this window's file-explorer panel is visible.

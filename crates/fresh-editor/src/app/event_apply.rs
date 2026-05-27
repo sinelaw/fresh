@@ -148,17 +148,61 @@ impl Editor {
         self.active_window_mut()
             .adjust_other_split_cursors_for_event(event);
 
-        // 3. Clear search highlights on edit (Insert/Delete events)
-        // This preserves highlights while navigating but clears them when modifying text
-        // EXCEPT during interactive replace where we want to keep highlights visible
-        let in_interactive_replace = self.active_window().interactive_replace_state.is_some();
-
-        // Note: We intentionally do NOT clear search overlays on buffer modification.
-        // Overlays have markers that automatically track position changes through edits,
-        // which allows F3/Shift+F3 to find matches at their updated positions.
-        // The visual highlights may be on text that no longer matches the query,
-        // but that's acceptable - user can see where original matches were.
-        let _ = in_interactive_replace; // silence unused warning
+        // 3. Re-evaluate search highlights around the edited region.
+        // Overlays have markers that automatically track position changes
+        // through edits (so F3/Shift+F3 find matches at their updated
+        // positions), but the markers never re-check whether the covered
+        // text still matches the query. Without this, editing inside a
+        // highlighted match — or typing against its boundary so a
+        // whole-word `\b` rule no longer holds — would leave a stale
+        // highlight on text that no longer matches. We skip during
+        // interactive replace, which manages its own highlight lifecycle.
+        if self.active_window().interactive_replace_state.is_none() {
+            let search_bg = self.theme.read().unwrap().search_match_bg;
+            let search_fg = self.theme.read().unwrap().search_match_fg;
+            match event {
+                Event::Insert { position, text, .. } => {
+                    self.active_window_mut().reevaluate_search_overlays_around(
+                        *position,
+                        text.len(),
+                        search_fg,
+                        search_bg,
+                    );
+                }
+                Event::Delete { range, .. } => {
+                    self.active_window_mut().reevaluate_search_overlays_around(
+                        range.start,
+                        0,
+                        search_fg,
+                        search_bg,
+                    );
+                }
+                Event::Batch { events, .. } => {
+                    for e in events {
+                        match e {
+                            Event::Insert { position, text, .. } => {
+                                self.active_window_mut().reevaluate_search_overlays_around(
+                                    *position,
+                                    text.len(),
+                                    search_fg,
+                                    search_bg,
+                                );
+                            }
+                            Event::Delete { range, .. } => {
+                                self.active_window_mut().reevaluate_search_overlays_around(
+                                    range.start,
+                                    0,
+                                    search_fg,
+                                    search_bg,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
         // 3. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);

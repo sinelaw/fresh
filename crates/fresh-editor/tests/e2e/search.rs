@@ -358,6 +358,112 @@ fn test_search_highlight_does_not_extend_on_adjacent_insert() {
     );
 }
 
+/// Regression test for issue #2133: editing inside a highlighted search
+/// match must drop the highlight, because the text no longer matches.
+#[test]
+fn test_search_highlight_clears_when_edit_breaks_match() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "abc def ghi\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Search for "def" and commit, leaving a persistent highlight.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("def").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Confirm the match is highlighted: capture the highlight background of
+    // the first match character.
+    let (col, row) = harness
+        .find_text_on_screen("def")
+        .expect("match text should be visible");
+    let match_bg = harness
+        .get_cell_style(col, row)
+        .and_then(|s| s.bg)
+        .expect("matched char should have a highlight background");
+
+    // Move one char into the match and type a character, breaking the match
+    // ("def" -> "dXef").
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The first match character must no longer carry the search highlight.
+    let after_bg = harness.get_cell_style(col, row).and_then(|s| s.bg);
+    assert_ne!(
+        after_bg,
+        Some(match_bg),
+        "search highlight must clear when an edit breaks the match"
+    );
+}
+
+/// Regression test for issue #2133: with Whole Word enabled, typing right
+/// after a match breaks the `\b` boundary, so the highlight must clear.
+#[test]
+fn test_search_highlight_clears_when_whole_word_boundary_breaks() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one def two\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Search for whole-word "def" and commit.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    // Toggle Whole Word with Alt+W.
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("def").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let (col, row) = harness
+        .find_text_on_screen("def")
+        .expect("match text should be visible");
+    let match_bg = harness
+        .get_cell_style(col, row)
+        .and_then(|s| s.bg)
+        .expect("matched char should have a highlight background");
+
+    // Move just past the match (3 chars) and type a character. "def" -> "defX"
+    // is no longer a whole word, so the highlight must clear.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("X").unwrap();
+    harness.process_async_and_render().unwrap();
+
+    let after_bg = harness.get_cell_style(col, row).and_then(|s| s.bg);
+    assert_ne!(
+        after_bg,
+        Some(match_bg),
+        "whole-word search highlight must clear when the boundary is broken"
+    );
+}
+
 /// Test that search highlighting only applies to visible viewport
 #[test]
 fn test_search_highlighting_visible_only() {
