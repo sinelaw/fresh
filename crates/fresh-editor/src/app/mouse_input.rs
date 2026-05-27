@@ -158,6 +158,17 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // End a dock-resize drag and persist the chosen width so
+                // it survives toggling the dock off/on.
+                if self.dock_resizing {
+                    self.dock_resizing = false;
+                    if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+                        self.floating_widget_panel.as_ref().map(|f| f.placement)
+                    {
+                        self.dock_width = Some(width_cols);
+                    }
+                    return Ok(true);
+                }
                 // Check if we were dragging a separator to trigger terminal resize
                 let was_dragging_separator = self
                     .active_window_mut()
@@ -1477,6 +1488,18 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
+        // Dock resize: a press on the dock's right border (its rightmost
+        // column) starts a drag that resizes the dock width. Checked
+        // before the click-routing below so the border column is a
+        // resize handle, not a widget hit.
+        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+            self.floating_widget_panel.as_ref().map(|f| f.placement)
+        {
+            if col == width_cols.saturating_sub(1) {
+                self.dock_resizing = true;
+                return Ok(());
+            }
+        }
         // Floating widget panel click routing. A centered panel is
         // modal: clicks inside hit-test its widgets, clicks outside are
         // swallowed (the form has explicit Cancel / Esc). A left dock
@@ -2480,6 +2503,19 @@ impl Editor {
 
     /// Handle mouse drag event
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        // Dock resize drag: track the pointer column as the new dock
+        // width (the right border follows the cursor), clamped so it
+        // can't swallow the chrome.
+        if self.dock_resizing {
+            let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
+            let new_w = col.saturating_add(1).clamp(10, max_cols);
+            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+                if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
+                    *width_cols = new_w;
+                }
+            }
+            return Ok(());
+        }
         // Floating-panel list scrollbar drag takes precedence — the
         // modal panel owns the input channel while it's up.
         if self.try_widget_scrollbar_drag(row) {

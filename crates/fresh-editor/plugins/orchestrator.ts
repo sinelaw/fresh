@@ -1903,6 +1903,11 @@ function buildDockSpec(): WidgetSpec {
   const newLabel = newKey ? `+ New ${newKey}` : "+ New";
   const worktreeKey = editor.getKeybindingLabel("orchestrator_toggle_worktrees", OPEN_MODE);
   const worktreeLabel = worktreeKey ? `worktrees (${worktreeKey})` : "worktrees";
+  // Checked = show trivial (empty / single-file) sessions; unchecked
+  // (default) hides them so the dock focuses on real work. Same
+  // `hide-trivial` widget key the modal uses, so the existing
+  // `widget_event` toggle handler fires for the dock too.
+  const trivialLabel = "show empty/1-file";
 
   // Pinned bottom block: a confirm prompt (separator + 2 rows) OR
   // detail + actions (separator + 0–2 rows), then the hint bar. The
@@ -1942,12 +1947,13 @@ function buildDockSpec(): WidgetSpec {
     bottom.push(hintRow);
   }
 
-  // Size the list to fill the dock. Inner height = screen rows − dock
-  // borders (2); fixed top chrome is 6 rows (title, New/scope,
-  // worktrees toggle, filter, separator, column header).
+  // Size the list to fill the dock. The dock draws only a right border
+  // (no top/bottom), so its content area is the full terminal height.
+  // Fixed top chrome is 7 rows (title, New/scope, worktrees toggle,
+  // empty/1-file toggle, filter, separator, header).
   const screen = editor.getScreenSize();
-  const innerH = Math.max(8, (screen.height > 0 ? screen.height : 30) - 2);
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - 6 - bottomRows);
+  const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - 7 - bottomRows);
   openDialog.listVisibleRows = listRows;
 
   return col(
@@ -1972,6 +1978,12 @@ function buildDockSpec(): WidgetSpec {
     row(
       toggle(openDialog.showWorktrees, worktreeLabel, {
         key: inConfirm ? undefined : "worktree-show",
+      }),
+      flexSpacer(),
+    ),
+    row(
+      toggle(!openDialog.hideTrivial, trivialLabel, {
+        key: inConfirm ? undefined : "hide-trivial",
       }),
       flexSpacer(),
     ),

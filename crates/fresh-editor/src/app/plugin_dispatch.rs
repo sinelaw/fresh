@@ -5811,13 +5811,17 @@ impl Editor {
         }
         // Clamp the dock width relative to the terminal so it can never
         // swallow the whole chrome. Read before the &mut borrow below.
+        // A user-dragged width (`dock_width`) overrides the plugin's
+        // default so the resize survives toggling the dock off/on.
         let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
+        let persisted = self.dock_width;
         let Some(fwp) = self.floating_widget_panel.as_mut() else {
             return;
         };
         match op {
             "dock" => {
-                let width_cols = (arg as u16).clamp(10, max_cols);
+                let requested = persisted.unwrap_or(arg as u16);
+                let width_cols = requested.clamp(10, max_cols);
                 fwp.placement = super::PanelPlacement::LeftDock { width_cols };
                 fwp.focused = true;
             }

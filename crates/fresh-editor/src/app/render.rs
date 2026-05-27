@@ -3891,8 +3891,16 @@ impl Editor {
             crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         }
         frame.render_widget(Clear, overlay_rect);
+        // The dock draws ONLY a right border (a thin draggable divider) —
+        // no top/left/bottom — so it reclaims those rows/cols for content
+        // and reads as a panel attached to the left edge. The centered
+        // modal keeps a full box.
         let block = Block::default()
-            .borders(Borders::ALL)
+            .borders(if is_dock {
+                Borders::RIGHT
+            } else {
+                Borders::ALL
+            })
             .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
             .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);

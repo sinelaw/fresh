@@ -273,3 +273,84 @@ fn dock_mouse_click_row_then_space_selects_that_row() {
         "Space after click should check the clicked (beta) row"
     );
 }
+
+/// 0-based column of `needle` within screen row `row`.
+fn col_in_row(h: &EditorTestHarness, row: u16, needle: &str) -> usize {
+    let line = h.screen_row_text(row);
+    line.find(needle)
+        .unwrap_or_else(|| panic!("row {row} missing '{needle}': {line:?}"))
+}
+
+#[test]
+fn dock_right_border_drag_resizes_and_persists() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR"))
+        .unwrap();
+
+    // The menu bar ("Edit") sits right of the dock on row 0; its index in
+    // the row string shifts right as the dock widens. (We can't match the
+    // box-drawing border char — the harness renders multi-byte glyphs as
+    // raw bytes — but the menu word is ASCII and its delta tracks width.)
+    // Default dock width is 32 → right border at col 31.
+    let edit_before = col_in_row(&h, 0, "Edit");
+
+    // Drag the right border (col 31) out to col 60 to widen the dock.
+    h.mouse_drag(31, 6, 60, 6).unwrap();
+    h.render().unwrap();
+    let edit_after = col_in_row(&h, 0, "Edit");
+    assert!(
+        edit_after > edit_before + 15,
+        "drag should widen the dock: Edit index {edit_before} -> {edit_after}"
+    );
+
+    // Width persists across a hide/show toggle.
+    let widened = edit_after;
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+        .unwrap();
+    open_dock(&mut h);
+    let edit_reopened = col_in_row(&h, 0, "Edit");
+    assert!(
+        (edit_reopened as i32 - widened as i32).abs() <= 3,
+        "dock width should persist across toggle: {widened} -> {edit_reopened}"
+    );
+}
+
+#[test]
+fn dock_show_empty_toggle_flips_on_click() {
+    // The "show empty/1-file" toggle defaults to off (hide trivial
+    // sessions). Clicking it flips the checkbox `[ ]` → `[v]`, proving the
+    // dock toggle is wired to the shared hide-trivial filter.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("show empty/1-file"))
+        .unwrap();
+    let trow = row_of(&h, "show empty/1-file") as u16;
+    // Off by default: unchecked.
+    assert!(
+        h.screen_row_text(trow).contains("[ ] show empty/1-file"),
+        "expected toggle off by default: {:?}",
+        h.screen_row_text(trow)
+    );
+    // Click it → checked.
+    h.mouse_click(3, trow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[v] show empty/1-file"))
+        .unwrap();
+}

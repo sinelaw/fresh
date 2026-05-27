@@ -29,18 +29,17 @@
   while the dock is up.
 
 ### Dock chrome (core)
-- **Right-edge-only border + drag-resize.** The dock currently draws a
-  full box (all four borders). It should draw only a **right** border
-  (no top/left/bottom — reclaim those rows/cols for content), and that
-  right border should be **draggable** to resize the dock width (persist
-  the chosen width). Today the width is a fixed constant.
+- ~~Right-edge-only border + drag-resize.~~ **Fixed**: the dock draws
+  only a right border (no top/left/bottom — content reclaims those
+  rows/cols); the right border is draggable to resize the width, and the
+  chosen width persists across hide/show within the session (`Editor.
+  dock_width`). Cross-session persistence (config) is still TODO.
 
 ### Dock UX (plugin)
-- **No "show empty/1-file sessions" toggle in the dock.** Master added
-  this filter to the modal picker (default off); the dock shares
-  `filterSessions` so it hides empty/1-file sessions too, but
-  `buildDockSpec` has no control to reveal them — a freshly-launched
-  session with no edits never appears in the dock. Add the toggle.
+- ~~No "show empty/1-file sessions" toggle in the dock.~~ **Fixed**: the
+  dock now renders a "show empty/1-file" toggle (default off — hides
+  trivial sessions), wired to the same `hide-trivial` filter as the
+  modal.
 - **Diving into a *switched* session focuses the file explorer, not the
   buffer.** When you arrow to a different session and press Enter, the
   window activates with its file-explorer pane focused, so the first

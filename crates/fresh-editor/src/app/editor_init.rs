@@ -275,6 +275,8 @@ impl Editor {
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
+            dock_width: None,
+            dock_resizing: false,
         }
     }
 

@@ -934,6 +934,14 @@ pub struct Editor {
     /// floaters would obscure each other without a usable focus
     /// model. Mounting a second one replaces the first.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
+
+    /// Persisted width (columns) of the orchestrator left dock after the
+    /// user drags its right border. `None` until first resized; when set,
+    /// `FloatingPanelControl{op:"dock"}` restores this instead of the
+    /// plugin's default so the width survives toggling the dock off/on.
+    pub(crate) dock_width: Option<u16>,
+    /// True while the user is dragging the dock's right border to resize.
+    pub(crate) dock_resizing: bool,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the
