@@ -507,6 +507,9 @@ pub enum Action {
     /// Dock as a Quickfix list. Only fires when the active prompt is
     /// `PromptType::LiveGrep`.
     LiveGrepExportQuickfix,
+    /// Open the file referenced by the Quickfix line under the cursor at
+    /// its `line:col`. Bound to Enter in the `quickfix-list` buffer mode.
+    QuickfixGoto,
     /// Toggle focus on the Utility Dock. If the dock exists and is not
     /// focused, focus it. If it is focused, return focus to the
     /// previously active editor split.
@@ -1006,6 +1009,7 @@ impl Action {
             "open_live_grep" => OpenLiveGrep,
             "resume_live_grep" => ResumeLiveGrep,
             "live_grep_export_quickfix" => LiveGrepExportQuickfix,
+            "quickfix_goto" => QuickfixGoto,
             "toggle_utility_dock" => ToggleUtilityDock,
             "open_terminal_in_dock" => OpenTerminalInDock,
             "cycle_live_grep_provider" => CycleLiveGrepProvider,
@@ -2414,6 +2418,7 @@ impl KeybindingResolver {
             Action::OpenLiveGrep => t!("action.open_live_grep"),
             Action::ResumeLiveGrep => t!("action.resume_live_grep"),
             Action::LiveGrepExportQuickfix => t!("action.live_grep_export_quickfix"),
+            Action::QuickfixGoto => "Go to Quickfix Match".into(),
             Action::ToggleUtilityDock => t!("action.toggle_utility_dock"),
             Action::OpenTerminalInDock => t!("action.open_terminal_in_dock"),
             Action::CycleLiveGrepProvider => t!("action.cycle_live_grep_provider"),

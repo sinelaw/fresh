@@ -282,6 +282,53 @@ impl Editor {
         ));
     }
 
+    /// Open the file referenced by the Quickfix line under the cursor.
+    ///
+    /// Parses the `path:line:col` prefix of the cursor's line (the format
+    /// written by `install_quickfix_in_dock`) and jumps there. The header
+    /// line and any non-match line parse to `None` and are a no-op.
+    /// `open_file` redirects away from the dock leaf, so the match opens in
+    /// the editor pane rather than replacing the Quickfix list.
+    fn quickfix_goto(&mut self) {
+        let pos = self.active_cursors().primary().position;
+        let line_text = {
+            let state = self.active_state();
+            let Some(position) = state.buffer.offset_to_position(pos) else {
+                return;
+            };
+            match state.buffer.get_line(position.line) {
+                Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                None => return,
+            }
+        };
+        match Self::parse_quickfix_location(&line_text) {
+            Some((path, line, column)) => {
+                if let Err(e) = self.handle_open_file_at_location(path, Some(line), Some(column)) {
+                    tracing::error!("Failed to open quickfix match: {}", e);
+                }
+            }
+            None => {
+                self.set_status_message("No match location on this line".to_string());
+            }
+        }
+    }
+
+    /// Parse a Quickfix buffer line of the form `path:line:col  content`
+    /// into its location. Splits the content off at the first double-space
+    /// separator, then peels `line` and `col` from the right so paths that
+    /// themselves contain `:` (e.g. Windows drive letters) survive intact.
+    fn parse_quickfix_location(line: &str) -> Option<(std::path::PathBuf, usize, usize)> {
+        let location = line.trim_end_matches(['\n', '\r']).split("  ").next()?;
+        let mut parts = location.rsplitn(3, ':');
+        let column: usize = parts.next()?.trim().parse().ok()?;
+        let row: usize = parts.next()?.trim().parse().ok()?;
+        let file = parts.next()?;
+        if file.is_empty() {
+            return None;
+        }
+        Some((std::path::PathBuf::from(file), row, column))
+    }
+
     /// Whether editor-pane popups (LSP completion, hover, signature help,
     /// global plugin popups, …) should intercept keyboard input.
     ///
@@ -1376,6 +1423,9 @@ impl Editor {
                 self.cancel_prompt();
                 // Hand off to the dock-installer.
                 self.install_quickfix_in_dock(query, matches);
+            }
+            Action::QuickfixGoto => {
+                self.quickfix_goto();
             }
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;
@@ -2927,5 +2977,39 @@ impl Editor {
         // is the exclusive owner of the input channel until it
         // unmounts.
         true
+    }
+}
+
+#[cfg(test)]
+mod quickfix_parse_tests {
+    use super::Editor;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_path_line_col() {
+        assert_eq!(
+            Editor::parse_quickfix_location("src/main.rs:42:7  let x = 1;\n"),
+            Some((PathBuf::from("src/main.rs"), 42, 7))
+        );
+    }
+
+    #[test]
+    fn keeps_colons_in_path() {
+        // A path that itself contains ':' (e.g. a Windows drive prefix)
+        // must survive — only the trailing line:col are peeled off.
+        assert_eq!(
+            Editor::parse_quickfix_location(r"C:\proj\main.rs:3:1  fn main() {}"),
+            Some((PathBuf::from(r"C:\proj\main.rs"), 3, 1))
+        );
+    }
+
+    #[test]
+    fn rejects_header_and_garbage() {
+        assert_eq!(
+            Editor::parse_quickfix_location("Quickfix: foo (2 matches)"),
+            None
+        );
+        assert_eq!(Editor::parse_quickfix_location(""), None);
+        assert_eq!(Editor::parse_quickfix_location(":1:2  x"), None);
     }
 }
