@@ -803,6 +803,14 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub highlight_occurrences: bool,
 
+    /// Hide the current-line background highlight whenever a selection is
+    /// visible.  When `true` (default: `false`), the `current_line_bg` fill
+    /// is suppressed for the active split as soon as any cursor has a
+    /// non-empty selection, reducing visual clutter while text is selected.
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub hide_current_line_on_selection: bool,
+
     /// Highlight the column containing the cursor
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1454,6 +1462,7 @@ impl Default for EditorConfig {
             syntax_highlighting: true,
             highlight_current_line: true,
             highlight_occurrences: true,
+            hide_current_line_on_selection: false,
             highlight_current_column: false,
             line_wrap: true,
             wrap_indent: true,

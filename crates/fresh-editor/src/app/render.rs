@@ -715,6 +715,7 @@ impl Editor {
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
                     self.config.editor.highlight_current_column,
+                    self.config.editor.hide_current_line_on_selection,
                     __cell_theme_map_mut,
                     size.width,
                     &mut pending_hardware_cursor,
@@ -2277,6 +2278,7 @@ impl Editor {
                     self.config.editor.diagnostics_inline_text,
                     false, // hide tilde markers in the preview
                     self.config.editor.highlight_current_column,
+                    self.config.editor.hide_current_line_on_selection,
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,

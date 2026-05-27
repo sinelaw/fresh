@@ -90,6 +90,7 @@ pub(crate) fn render_content(
     diagnostics_inline_text: bool,
     show_tilde: bool,
     highlight_current_column: bool,
+    hide_current_line_on_selection: bool,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -573,8 +574,12 @@ pub(crate) fn render_content(
 
             // When cursors are hidden, also suppress current-line highlighting
             // and selection rendering so the buffer appears fully non-interactive.
+            let has_selection = hide_current_line_on_selection
+                && split_cursors
+                    .iter()
+                    .any(|(_, c)| c.selection_range().is_some());
             let effective_highlight_current_line =
-                view_prefs.highlight_current_line && state.show_cursors;
+                view_prefs.highlight_current_line && state.show_cursors && !has_selection;
 
             // Column rulers are a source-code editing aid; virtual buffers
             // (dashboard, *Diagnostics*, grep results, ...) aren't code, so
