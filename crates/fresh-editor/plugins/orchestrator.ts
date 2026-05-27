@@ -1765,7 +1765,9 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   // selection. The host clamps to the first tabbable when "visit"
   // isn't in the spec (empty filter result, no session), which is
   // safe — there's nothing to act on then anyway.
-  openPanel.setFocusKey("visit");
+  // In the dock the focusable session list is the default focus
+  // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
+  openPanel.setFocusKey(asDock ? "sessions" : "visit");
   editor.setEditorMode(OPEN_MODE);
 
   // Discover worktrees that exist on disk but aren't open yet and
@@ -1851,7 +1853,10 @@ function buildDockSpec(): WidgetSpec {
       itemKeys,
       selectedIndex: selIdx,
       visibleRows: openDialog.listVisibleRows,
-      focusable: false,
+      // Focusable in the dock (unlike the modal, where Up/Down forward
+      // from the filter): the list itself is the default focus so
+      // ↑↓ drive live-switch and Enter blurs to the editor.
+      focusable: !inConfirm,
       key: inConfirm ? undefined : "sessions",
     }),
     row(
@@ -4387,6 +4392,7 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
+    if (e.event_type === "change" && e.widget_key === "filter") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const value = payload.value;
       const cursor = payload.cursorByte;
