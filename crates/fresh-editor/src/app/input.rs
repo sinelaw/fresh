@@ -1434,6 +1434,31 @@ impl Editor {
                     t!("view.current_line_highlight_state", state = state).to_string(),
                 );
             }
+            Action::ToggleOccurrenceHighlight => {
+                let new_value = !self.config.editor.highlight_occurrences;
+                self.config_mut().editor.highlight_occurrences = new_value;
+
+                // Update all open buffers
+                for window in self.windows.values_mut() {
+                    for (_, state) in &mut window.buffers {
+                        state.reference_highlight_overlay.enabled = new_value;
+                        if !new_value {
+                            state
+                                .reference_highlight_overlay
+                                .clear(&mut state.overlays, &mut state.marker_list);
+                        }
+                    }
+                }
+
+                let state = if new_value {
+                    t!("view.state_enabled").to_string()
+                } else {
+                    t!("view.state_disabled").to_string()
+                };
+                self.set_status_message(
+                    t!("view.occurrence_highlight_state", state = state).to_string(),
+                );
+            }
             Action::ToggleReadOnly => {
                 let buffer_id = self.active_buffer();
                 let is_now_read_only = self

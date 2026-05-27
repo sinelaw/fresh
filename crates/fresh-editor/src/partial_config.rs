@@ -151,6 +151,7 @@ pub struct PartialEditorConfig {
     pub scroll_offset: Option<usize>,
     pub syntax_highlighting: Option<bool>,
     pub highlight_current_line: Option<bool>,
+    pub highlight_occurrences: Option<bool>,
     pub highlight_current_column: Option<bool>,
     pub line_wrap: Option<bool>,
     pub wrap_indent: Option<bool>,
@@ -560,6 +561,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             scroll_offset: Some(cfg.scroll_offset),
             syntax_highlighting: Some(cfg.syntax_highlighting),
             highlight_current_line: Some(cfg.highlight_current_line),
+            highlight_occurrences: Some(cfg.highlight_occurrences),
             highlight_current_column: Some(cfg.highlight_current_column),
             line_wrap: Some(cfg.line_wrap),
             wrap_indent: Some(cfg.wrap_indent),
@@ -655,6 +657,9 @@ impl PartialEditorConfig {
             highlight_current_line: self
                 .highlight_current_line
                 .unwrap_or(defaults.highlight_current_line),
+            highlight_occurrences: self
+                .highlight_occurrences
+                .unwrap_or(defaults.highlight_occurrences),
             highlight_current_column: self
                 .highlight_current_column
                 .unwrap_or(defaults.highlight_current_column),

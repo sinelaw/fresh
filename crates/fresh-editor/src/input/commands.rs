@@ -857,6 +857,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_occurrence_highlight",
+        desc_key: "cmd.toggle_occurrence_highlight_desc",
+        action: || Action::ToggleOccurrenceHighlight,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_page_view",
         desc_key: "cmd.toggle_page_view_desc",
         action: || Action::TogglePageView,

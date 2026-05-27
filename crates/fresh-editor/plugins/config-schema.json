@@ -35,6 +35,7 @@
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
+        "highlight_occurrences": true,
         "highlight_current_column": false,
         "line_wrap": true,
         "wrap_indent": true,
@@ -308,6 +309,12 @@
         },
         "highlight_current_line": {
           "description": "Highlight the line containing the cursor",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "highlight_occurrences": {
+          "description": "Highlight all occurrences of the word under the cursor",
           "type": "boolean",
           "default": true,
           "x-section": "Display"

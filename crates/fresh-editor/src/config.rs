@@ -784,6 +784,11 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub highlight_current_line: bool,
 
+    /// Highlight all occurrences of the word under the cursor
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub highlight_occurrences: bool,
+
     /// Highlight the column containing the cursor
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]
@@ -1422,6 +1427,7 @@ impl Default for EditorConfig {
             scroll_offset: default_scroll_offset(),
             syntax_highlighting: true,
             highlight_current_line: true,
+            highlight_occurrences: true,
             highlight_current_column: false,
             line_wrap: true,
             wrap_indent: true,

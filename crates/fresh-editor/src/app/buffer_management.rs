@@ -541,6 +541,7 @@ impl Editor {
         state
             .buffer
             .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
+        state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)

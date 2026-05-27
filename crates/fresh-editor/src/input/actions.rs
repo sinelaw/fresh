@@ -2753,6 +2753,7 @@ pub fn action_to_events(
         | Action::ShowHelp
         | Action::ToggleLineWrap
         | Action::ToggleCurrentLineHighlight
+        | Action::ToggleOccurrenceHighlight
         | Action::ToggleReadOnly
         | Action::TogglePageView
         | Action::SetPageWidth
