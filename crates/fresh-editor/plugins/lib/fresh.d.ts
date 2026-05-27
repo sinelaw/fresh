@@ -2566,12 +2566,11 @@ interface EditorAPI {
 	*/
 	setActiveWindow(id: number): boolean;
 	/**
-	* Like `setActiveWindow`, but plays a directional wipe on the
-	* newly-active window's editor content as it appears. `fromEdge`
-	* is the edge the incoming content slides in from — use "bottom"
-	* when moving down a list and "top" when moving up.
+	* Switch the active window with a directional wipe on the
+	* incoming content. `from_edge`: "top" | "bottom" | "left" |
+	* "right". See `PluginCommand::SetActiveWindowAnimated`.
 	*/
-	setActiveWindowAnimated(id: number, fromEdge: "top" | "bottom" | "left" | "right"): boolean;
+	setActiveWindowAnimated(id: number, fromEdge: string): boolean;
 	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.
@@ -2875,16 +2874,10 @@ interface EditorAPI {
 	unmountFloatingWidget(panelId: number): boolean;
 	/**
 	* Control a mounted floating panel's placement / focus without
-	* re-sending its spec.
-	* - `op="dock"`   — re-anchor as a full-height left dock; `arg` is
-	*   the dock width in columns. Non-modal: the editor underneath
-	*   stays rendered, and keyboard-usable while the dock is blurred.
-	* - `op="center"` — restore the default centered-overlay placement.
-	* - `op="focus"`  — route keys to the panel.
-	* - `op="blur"`   — stop routing keys to the panel (it stays
-	*   visible); focus returns to the editor.
+	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
+	* "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
 	*/
-	floatingPanelControl(panelId: number, op: "dock" | "center" | "focus" | "blur", arg?: number): boolean;
+	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
 	* Spawn a process (async, returns request_id)
 	* 

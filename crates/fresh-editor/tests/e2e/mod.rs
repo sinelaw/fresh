@@ -125,6 +125,7 @@ pub mod multibyte_characters;
 pub mod multicursor;
 pub mod on_save_actions;
 pub mod open_folder;
+pub mod orchestrator_dock;
 pub mod overlay_extend_to_line_end;
 pub mod paste;
 #[cfg(feature = "plugins")]
