@@ -355,12 +355,21 @@ impl crate::app::Editor {
         let animate = self.active_window != id
             && self.windows.contains_key(&id)
             && self.config().editor.animations;
-        let area = self.active_layout().editor_content_area;
+        // Wipe the ENTIRE window — menu bar, explorer, tabs, splits, and
+        // status bar — i.e. everything to the right of the dock. That's
+        // the chrome area from the dock split, not just the buffer's
+        // content rect. The dock column itself stays put.
+        let full = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.terminal_width,
+            height: self.terminal_height,
+        };
+        let (_dock, area) = self.compute_dock_split(full);
         self.set_active_window(id);
         if !animate {
             return;
         }
-        let Some(area) = area else { return };
         if area.width == 0 || area.height == 0 {
             return;
         }

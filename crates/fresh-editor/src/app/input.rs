@@ -2526,30 +2526,7 @@ impl Editor {
                 Some(super::PanelPlacement::LeftDock { .. })
             )
         {
-            let widget_key = self
-                .widget_registry
-                .get(panel_id)
-                .map(|p| p.focus_key.clone())
-                .unwrap_or_default();
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
-                fwp.focused = false;
-            }
-            if self
-                .plugin_manager
-                .read()
-                .unwrap()
-                .has_hook_handlers("widget_event")
-            {
-                self.plugin_manager.read().unwrap().run_hook(
-                    "widget_event",
-                    crate::services::plugins::hooks::HookArgs::WidgetEvent {
-                        panel_id,
-                        widget_key,
-                        event_type: "blur".to_string(),
-                        payload: serde_json::json!({}),
-                    },
-                );
-            }
+            self.blur_floating_panel();
             return true;
         }
         let key_name: Option<&str> = match code {

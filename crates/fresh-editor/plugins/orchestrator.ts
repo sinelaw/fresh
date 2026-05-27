@@ -1799,9 +1799,72 @@ function closeOpenDialog(): void {
 // the dock's right *is* the preview.
 // ---------------------------------------------------------------------
 
+// Single-line compact detail for the selected session, pinned just
+// above the action row. One line keeps the list-fill maths exact.
+function dockDetailLine(s: AgentSession | undefined): WidgetSpec | null {
+  if (!s || s.discovered) return null;
+  return {
+    kind: "raw",
+    entries: [
+      styledRow([
+        { text: "▸ ", style: { fg: "ui.help_key_fg" } },
+        { text: s.branch || "(detached)", style: { fg: "ui.menu_disabled_fg" } },
+      ]),
+    ],
+  };
+}
+
+// Action buttons for the selected live session — same keys as the
+// modal's preview pane so the existing widget_event handlers fire.
+function dockActionRow(s: AgentSession | undefined): WidgetSpec | null {
+  if (!s || s.discovered) return null;
+  const hasWorktree = ownsWorktree(s);
+  const isLastWindow = s.id > 0 && liveWindowCount() <= 1;
+  return row(
+    button("Stop", { key: "stop", disabled: !s.terminalId }),
+    spacer(1),
+    button("Arch", { key: "archive", disabled: !hasWorktree || isLastWindow }),
+    spacer(1),
+    button("Del", { intent: "danger", key: "delete", disabled: isLastWindow }),
+    flexSpacer(),
+  );
+}
+
+// Compact in-place confirmation for the dock (Delete is the only
+// action that confirms). Reuses `confirm-cancel` / `confirm-<action>`
+// keys so the modal's handlers run unchanged. Two lines.
+function dockConfirmRows(
+  confirm: { action: BulkAction; ids: number[] },
+): WidgetSpec[] {
+  const cap = confirm.action[0].toUpperCase() + confirm.action.slice(1);
+  const id = confirm.ids[0];
+  const label = orchestratorSessions.get(id)?.label ?? `#${id}`;
+  return [
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: `${cap} ${label}?`,
+            style: { fg: "ui.status_error_indicator_fg", bold: true },
+          },
+        ]),
+      ],
+    },
+    row(
+      button("Cancel", { key: "confirm-cancel" }),
+      spacer(1),
+      button(`${cap}`, { intent: "danger", key: `confirm-${confirm.action}` }),
+      flexSpacer(),
+    ),
+  ];
+}
+
 // Compact single-column spec for the dock. Reuses the same `sessions`
 // list key + filter/scope/action keys as the modal so the existing
-// `widget_event` handlers fire unchanged.
+// `widget_event` handlers fire unchanged. The session list fills the
+// available height; the hint bar is pinned to the bottom by sizing the
+// list to consume everything above the fixed bottom block.
 function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
@@ -1811,13 +1874,63 @@ function buildDockSpec(): WidgetSpec {
   const selIdx = filtered.length === 0
     ? -1
     : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
-  const inConfirm = openDialog.pendingConfirm !== null;
+  const selected = selIdx >= 0 ? orchestratorSessions.get(filtered[selIdx]) : undefined;
+  const confirm = openDialog.pendingConfirm;
+  const inConfirm = confirm !== null;
   const scope = openDialog.scope;
   const newKey = editor.getKeybindingLabel(
     "orchestrator_open_new_from_picker",
     OPEN_MODE,
   );
   const newLabel = newKey ? `+ New ${newKey}` : "+ New";
+  const worktreeKey = editor.getKeybindingLabel("orchestrator_toggle_worktrees", OPEN_MODE);
+  const worktreeLabel = worktreeKey ? `worktrees (${worktreeKey})` : "worktrees";
+
+  // Pinned bottom block: a confirm prompt (separator + 2 rows) OR
+  // detail + actions (separator + 0–2 rows), then the hint bar. The
+  // list is sized to consume the height above so the hint stays glued
+  // to the bottom.
+  const hintRow = row(
+    flexSpacer(),
+    hintBar([
+      { keys: "↑↓", label: "switch" },
+      { keys: "Enter", label: "edit" },
+      { keys: "Esc", label: "editor" },
+    ]),
+    flexSpacer(),
+  );
+  let bottom: WidgetSpec[];
+  let bottomRows: number;
+  if (inConfirm && confirm) {
+    bottom = [sessionsSeparator(), ...dockConfirmRows(confirm), hintRow];
+    bottomRows = 1 + 2 + 1;
+  } else {
+    const detail = dockDetailLine(selected);
+    const actions = dockActionRow(selected);
+    bottom = [];
+    bottomRows = 1; // hint
+    if (detail || actions) {
+      bottom.push(sessionsSeparator());
+      bottomRows += 1;
+    }
+    if (detail) {
+      bottom.push(detail);
+      bottomRows += 1;
+    }
+    if (actions) {
+      bottom.push(actions);
+      bottomRows += 1;
+    }
+    bottom.push(hintRow);
+  }
+
+  // Size the list to fill the dock. Inner height = screen rows − dock
+  // borders (2); fixed top chrome is 6 rows (title, New/scope,
+  // worktrees toggle, filter, separator, column header).
+  const screen = editor.getScreenSize();
+  const innerH = Math.max(8, (screen.height > 0 ? screen.height : 30) - 2);
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - 6 - bottomRows);
+  openDialog.listVisibleRows = listRows;
 
   return col(
     {
@@ -1838,6 +1951,12 @@ function buildDockSpec(): WidgetSpec {
         key: inConfirm ? undefined : "scope-toggle",
       }),
     ),
+    row(
+      toggle(openDialog.showWorktrees, worktreeLabel, {
+        key: inConfirm ? undefined : "worktree-show",
+      }),
+      flexSpacer(),
+    ),
     text({
       value: openDialog.filter.value,
       cursorByte: openDialog.filter.cursor,
@@ -1852,32 +1971,15 @@ function buildDockSpec(): WidgetSpec {
       items,
       itemKeys,
       selectedIndex: selIdx,
-      visibleRows: openDialog.listVisibleRows,
+      visibleRows: listRows,
       // Focusable in the dock (unlike the modal, where Up/Down forward
       // from the filter): the list itself is the default focus so
       // ↑↓ drive live-switch and Enter blurs to the editor.
       focusable: !inConfirm,
       key: inConfirm ? undefined : "sessions",
     }),
-    row(
-      flexSpacer(),
-      hintBar([
-        { keys: "↑↓", label: "switch" },
-        { keys: "Enter", label: "edit" },
-        { keys: "Esc", label: "editor" },
-      ]),
-      flexSpacer(),
-    ),
+    ...bottom,
   );
-}
-
-function refreshDock(): void {
-  if (openPanel && dockMode && openDialog) {
-    openPanel.update(buildDockSpec());
-    if (openDialog.filteredIds.length > 0) {
-      openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-    }
-  }
 }
 
 // Commit the highlighted session as the active window after a short

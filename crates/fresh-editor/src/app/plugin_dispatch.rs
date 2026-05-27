@@ -5821,8 +5821,47 @@ impl Editor {
                 fwp.focused = true;
             }
             "focus" => fwp.focused = true,
-            "blur" => fwp.focused = false,
+            "blur" => {
+                drop(fwp);
+                self.blur_floating_panel();
+            }
             other => tracing::warn!("FloatingPanelControl: unknown op {other:?}"),
+        }
+    }
+
+    /// Return keyboard focus to the editor while leaving a (docked)
+    /// floating panel visible. Clears the panel's `focused` flag and
+    /// fires a `blur` widget_event so the owning plugin can react
+    /// (e.g. drop its editor mode). No-op when no panel is mounted.
+    /// Shared by the Esc handler, the editor-click handler, and the
+    /// `FloatingPanelControl{op:"blur"}` command.
+    pub(super) fn blur_floating_panel(&mut self) {
+        let Some(panel_id) = self.floating_widget_panel.as_ref().map(|f| f.panel_id) else {
+            return;
+        };
+        if let Some(f) = self.floating_widget_panel.as_mut() {
+            f.focused = false;
+        }
+        let widget_key = self
+            .widget_registry
+            .get(panel_id)
+            .map(|p| p.focus_key.clone())
+            .unwrap_or_default();
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key,
+                    event_type: "blur".to_string(),
+                    payload: serde_json::json!({}),
+                },
+            );
         }
     }
 

@@ -1477,14 +1477,39 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        // Floating widget panel is modal: clicks inside hit-test
-        // against its widget hits; clicks outside are swallowed so
-        // the user can't accidentally focus another split while the
-        // form is up. Auto-dismiss on outside-click is deliberately
-        // NOT done — the form has explicit Cancel / Esc.
-        if self.floating_widget_panel.is_some() {
-            self.handle_floating_widget_click(col, row);
-            return Ok(());
+        // Floating widget panel click routing. A centered panel is
+        // modal: clicks inside hit-test its widgets, clicks outside are
+        // swallowed (the form has explicit Cancel / Esc). A left dock
+        // is non-modal: clicks inside its column hit-test (and re-focus
+        // it if blurred); clicks in the editor blur the dock and fall
+        // through to normal editor handling.
+        if let Some((placement, focused)) = self
+            .floating_widget_panel
+            .as_ref()
+            .map(|f| (f.placement, f.focused))
+        {
+            match placement {
+                super::PanelPlacement::Centered => {
+                    self.handle_floating_widget_click(col, row);
+                    return Ok(());
+                }
+                super::PanelPlacement::LeftDock { width_cols } => {
+                    if col < width_cols {
+                        if !focused {
+                            if let Some(f) = self.floating_widget_panel.as_mut() {
+                                f.focused = true;
+                            }
+                        }
+                        self.handle_floating_widget_click(col, row);
+                        return Ok(());
+                    }
+                    // Click landed in the editor: hand focus back so the
+                    // dock stops capturing keys, then fall through.
+                    if focused {
+                        self.blur_floating_panel();
+                    }
+                }
+            }
         }
         if let Some(r) = self.handle_click_context_menus(col, row) {
             return r;
@@ -3556,7 +3581,15 @@ impl Editor {
         if row < inner.y || row >= inner.y + inner.height {
             return false;
         }
-        self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta)
+        let scrolled = self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta);
+        // The non-modal dock must swallow the wheel whenever the pointer
+        // is over it, even when the list is too short to scroll — the
+        // scroll must never leak through to the active window beneath.
+        let is_dock = matches!(
+            self.floating_widget_panel.as_ref().map(|f| f.placement),
+            Some(super::PanelPlacement::LeftDock { .. })
+        );
+        scrolled || is_dock
     }
 
     /// Try to start a floating-panel list scrollbar drag. Returns
