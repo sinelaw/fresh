@@ -273,6 +273,18 @@ fn dock_slash_filters_and_enter_returns_to_list() {
 
 #[test]
 fn dock_space_toggles_multiselect_checkbox() {
+    // Wire up the test-process tracing subscriber so the dock/host-side
+    // `tracing::warn!` breadcrumbs added in
+    // `dispatch_floating_widget_key` (Space branch),
+    // `set_panel_focus_and_notify`, `refocus_floating_panel`,
+    // `blur_floating_panel`, and the dock mouse-click router fire to
+    // stderr when the test runs with `RUST_LOG=fresh::dock=warn` (the
+    // default `RUST_LOG=warn` also picks them up). This is the
+    // diagnostic hook for the Windows-CI timeout of this test —
+    // `Space` doesn't produce `[x]` on Windows but does on Linux/CI,
+    // and the breadcrumbs trace the dispatch path from key arrival
+    // through plugin notification.
+    crate::common::tracing::init_tracing_from_env();
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())

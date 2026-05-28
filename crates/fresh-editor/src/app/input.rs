@@ -2648,8 +2648,26 @@ impl Editor {
         use crossterm::event::{KeyCode, KeyModifiers};
         let panel_id = match self.panel(slot) {
             Some(fwp) => fwp.panel_id,
-            None => return false,
+            None => {
+                tracing::warn!(
+                    target: "fresh::dock",
+                    ?slot,
+                    ?code,
+                    "dispatch_floating_widget_key: no panel mounted in slot — returning false"
+                );
+                return false;
+            }
         };
+        tracing::warn!(
+            target: "fresh::dock",
+            panel_id,
+            ?slot,
+            ?code,
+            modifiers = ?modifiers,
+            placement = ?self.panel(slot).map(|f| f.placement),
+            focused = ?self.panel(slot).map(|f| f.focused),
+            "dispatch_floating_widget_key: entry"
+        );
         // The left dock handles Enter / Esc / Space / "/" here, at the
         // floating-panel layer, *independent of editor modes*. Editor
         // modes (`defineMode`) resolve against the active buffer's mode,
@@ -2709,12 +2727,19 @@ impl Editor {
                 KeyCode::Char(' ') => {
                     // Toggle the highlighted row's multi-select checkbox
                     // (plugin owns the selection set).
-                    if self
+                    let has_handler = self
                         .plugin_manager
                         .read()
                         .unwrap()
-                        .has_hook_handlers("widget_event")
-                    {
+                        .has_hook_handlers("widget_event");
+                    tracing::warn!(
+                        target: "fresh::dock",
+                        panel_id,
+                        has_handler,
+                        focus_key = ?self.widget_registry.focus_key(panel_id),
+                        "dispatch_floating_widget_key: Space on LeftDock — firing dock_space widget_event"
+                    );
+                    if has_handler {
                         self.plugin_manager.read().unwrap().run_hook(
                             "widget_event",
                             crate::services::plugins::hooks::HookArgs::WidgetEvent {

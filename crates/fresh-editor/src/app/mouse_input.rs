@@ -1537,6 +1537,14 @@ impl Editor {
             self.dock.as_ref().map(|f| (f.placement, f.focused))
         {
             if col < width_cols {
+                tracing::warn!(
+                    target: "fresh::dock",
+                    col,
+                    row,
+                    width_cols,
+                    focused,
+                    "handle_mouse_click: click in dock column"
+                );
                 if !focused {
                     // Symmetric with `blur_floating_panel`: the un-blur
                     // must notify the plugin via a `focus` widget_event
@@ -1552,6 +1560,13 @@ impl Editor {
                 return Ok(());
             }
             if focused {
+                tracing::warn!(
+                    target: "fresh::dock",
+                    col,
+                    row,
+                    width_cols,
+                    "handle_mouse_click: click outside dock — blurring"
+                );
                 self.blur_floating_panel(super::PanelSlot::Dock);
             }
         }
