@@ -156,10 +156,18 @@ impl Editor {
             .values()
             .map(|s| {
                 let slot = s.plugin_state.get("orchestrator");
+                // Normalise project_path at the API boundary: explicit
+                // non-empty value if the orchestrator recorded one,
+                // otherwise the session's root. Filtering empty strings
+                // is the same guard the plugin used to apply via
+                // `?? root` / `|| root` — now centralised so plugins
+                // can treat `project_path` as an always-set `string`.
                 let project_path = slot
                     .and_then(|m| m.get("project_path"))
                     .and_then(|v| v.as_str())
-                    .map(std::path::PathBuf::from);
+                    .filter(|p| !p.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| s.root.clone());
                 let shared_worktree = slot
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())

@@ -61,11 +61,11 @@ interface AgentSession {
   // Absolute filesystem root.
   root: string;
   // Canonical project root this session belongs to (set at
-  // create time from the Project Path field). `null` for
-  // sessions created outside the new-session form (e.g. the
-  // editor's base session, or sessions from before the
-  // Project Path field shipped).
-  projectPath: string | null;
+  // create time from the Project Path field). Equals `root`
+  // for sessions without an explicit project — the host
+  // normalises at the API boundary so plugins never have to
+  // distinguish `null`/`undefined`/`""`.
+  projectPath: string;
   // `true` if the session was created with the worktree
   // checkbox unchecked (shared worktree / non-git path).
   sharedWorktree: boolean;
@@ -466,7 +466,7 @@ function reconcileSessions(): void {
         id: s.id,
         label: s.label,
         root: s.root,
-        projectPath: s.project_path ?? null,
+        projectPath: s.project_path,
         sharedWorktree: s.shared_worktree ?? false,
         terminalId: null,
         // The base session has no agent; everything else
@@ -478,7 +478,7 @@ function reconcileSessions(): void {
     } else {
       existing.label = s.label;
       existing.root = s.root;
-      if (s.project_path != null) existing.projectPath = s.project_path;
+      existing.projectPath = s.project_path;
       if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
     }
   }
@@ -641,17 +641,10 @@ function ageString(createdAt: number): string {
 // the session root for sessions that predate the field (the base
 // session, externally-created windows).
 function projectKeyOf(s: AgentSession): string {
-  // Use `||`, not `??`, so an empty-string `projectPath` also falls
-  // through to `root`. The host serialises `WindowInfo.project_path:
-  // Option<PathBuf>`: `None` is skipped (so plugin sees `undefined`),
-  // but a `Some(PathBuf::new())` — or any path that round-trips as the
-  // empty string — would survive `??` as `""` and become the sort key.
-  // That made `byProjectThenId` compare two sessions as `"" < real path`
-  // (empty lex-sorts first), reversing the dock list on Windows CI
-  // where one session's projectPath was emerging as "". Treating empty
-  // as "no projectPath" is correct anyway: an empty path is meaningless
-  // as a project identifier.
-  return s.projectPath || s.root;
+  // The host guarantees `projectPath` is always a non-empty string
+  // (defaults to `root` when no explicit project is set), so no
+  // `?? root` / `|| root` defence is needed here.
+  return s.projectPath;
 }
 
 // The project the user is currently "in" — the active window's
@@ -910,7 +903,13 @@ function buildPreviewEntries(
 // a real checkout, so Archive (which moves the worktree) doesn't apply
 // and Delete simply forgets the session without touching the directory.
 function ownsWorktree(s: AgentSession): boolean {
-  return !!s.discovered || (!!s.projectPath && !s.sharedWorktree);
+  // "Has an explicit project that's separate from this session's
+  // root" means the session is a worktree of that project — Archive
+  // / Delete apply. `projectPath === root` is the "no separate
+  // project" case (host normalises absence → root); skip those too.
+  return (
+    !!s.discovered || (s.projectPath !== s.root && !s.sharedWorktree)
+  );
 }
 
 // =============================================================================
@@ -2215,11 +2214,17 @@ function liveWindowCount(): number {
 // `projectPath` recorded at create/discovery time, falling back to
 // resolving from the worktree itself.
 async function worktreeRepoRoot(s: AgentSession): Promise<string | null> {
-  if (s.projectPath) {
-    const r = await resolveCanonicalRepoRoot(s.projectPath);
-    if (r) return r;
+  // `projectPath` is the canonical repo root when the session is a
+  // worktree of a separate project, and equals `root` otherwise (the
+  // host normalises absence → root). Resolve once; if the canonical
+  // path is unavailable (non-git, etc.), fall back to `root` so the
+  // caller still gets something to dedupe against.
+  const r = await resolveCanonicalRepoRoot(s.projectPath);
+  if (r) return r;
+  if (s.projectPath !== s.root) {
+    return await resolveCanonicalRepoRoot(s.root);
   }
-  return await resolveCanonicalRepoRoot(s.root);
+  return null;
 }
 
 interface LifecycleResult {
