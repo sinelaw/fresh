@@ -43,10 +43,16 @@ fn skip_app_execution_alias() -> bool {
 /// Returning the fully-resolved path keeps spawn-time PATH resolution from
 /// re-finding the alias.
 pub fn select_windows_shell() -> String {
-    let skip_alias = skip_app_execution_alias();
+    pick_shell(skip_app_execution_alias(), &default_candidates(), |c| {
+        resolve_shell_candidate(c)
+    })
+    .unwrap_or_else(|| std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()))
+}
 
-    // Prefer a real PowerShell 7 install over a Store alias, then bare
-    // `pwsh.exe`/`powershell.exe` from PATH, then Windows PowerShell 5.
+/// Default shell candidates, in preference order. Real PowerShell 7
+/// installs first (so they win over a Store alias on PATH), then bare
+/// `pwsh.exe`/`powershell.exe`, then Windows PowerShell 5.
+fn default_candidates() -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
     for var in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
         if let Ok(base) = std::env::var(var) {
@@ -58,19 +64,28 @@ pub fn select_windows_shell() -> String {
     candidates.push("pwsh.exe".to_string());
     candidates.push("powershell.exe".to_string());
     candidates.push(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string());
+    candidates
+}
 
-    for candidate in &candidates {
-        if let Some(resolved) = resolve_shell_candidate(candidate) {
+/// Pure shell-selection core: walks `candidates`, asking `resolve` to map
+/// each one to a concrete path, and skips Microsoft Store alias stubs when
+/// `skip_alias` is true. Extracted from [`select_windows_shell`] so tests
+/// can drive it without touching PATH or the real filesystem.
+fn pick_shell<F>(skip_alias: bool, candidates: &[String], mut resolve: F) -> Option<String>
+where
+    F: FnMut(&str) -> Option<PathBuf>,
+{
+    for candidate in candidates {
+        if let Some(resolved) = resolve(candidate) {
             if skip_alias && is_app_execution_alias(&resolved) {
                 // Zero-byte WindowsApps stub: crashes under ConPTY with
                 // 0xc0000142 (STATUS_DLL_INIT_FAILED). (issue #2077)
                 continue;
             }
-            return resolved.to_string_lossy().into_owned();
+            return Some(resolved.to_string_lossy().into_owned());
         }
     }
-
-    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    None
 }
 
 /// Resolve a shell candidate to a concrete file path.
@@ -138,14 +153,36 @@ mod tests {
         );
     }
 
+    // Reproducer for issue #2077. Same candidate list, same on-disk state,
+    // only difference is the workaround flag: without it the picker returns
+    // the zero-byte alias stub (the buggy old behavior); with it the
+    // stub is skipped and the real binary is returned.
     #[test]
-    fn workaround_flag_toggle_round_trips() {
-        // Restore whatever the test harness left in place.
-        let original = skip_app_execution_alias();
-        set_skip_app_execution_alias(false);
-        assert!(!skip_app_execution_alias());
-        set_skip_app_execution_alias(true);
-        assert!(skip_app_execution_alias());
-        set_skip_app_execution_alias(original);
+    fn pick_shell_skips_alias_stub_only_when_flag_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let alias = dir.path().join("pwsh.exe");
+        std::fs::File::create(&alias).unwrap();
+        let real = dir.path().join("powershell.exe");
+        std::fs::write(&real, b"MZ").unwrap();
+
+        let candidates = vec![
+            alias.to_string_lossy().into_owned(),
+            real.to_string_lossy().into_owned(),
+        ];
+
+        // Workaround on: zero-byte stub is skipped, real binary wins.
+        let picked = pick_shell(true, &candidates, resolve_shell_candidate).unwrap();
+        assert_eq!(PathBuf::from(picked), real);
+
+        // Workaround off: first candidate wins, even though it's the stub
+        // (this is what crashed ConPTY in the issue).
+        let picked = pick_shell(false, &candidates, resolve_shell_candidate).unwrap();
+        assert_eq!(PathBuf::from(picked), alias);
+    }
+
+    #[test]
+    fn pick_shell_returns_none_when_nothing_resolves() {
+        let candidates = vec!["nonexistent.exe".to_string()];
+        assert!(pick_shell(true, &candidates, |_| None).is_none());
     }
 }

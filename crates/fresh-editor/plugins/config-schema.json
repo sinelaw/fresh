@@ -161,7 +161,8 @@
       "$ref": "#/$defs/TerminalConfig",
       "default": {
         "jump_to_end_on_output": true,
-        "shell": null
+        "shell": null,
+        "skip_app_execution_alias": true
       }
     },
     "keybindings": {
@@ -1048,6 +1049,11 @@
             }
           ],
           "default": null
+        },
+        "skip_app_execution_alias": {
+          "description": "Workaround for fresh#2077: when auto-detecting a shell on Windows,\nskip Microsoft Store **App Execution Alias** stubs (zero-byte\n`APPEXECLINK` reparse points under `%LOCALAPPDATA%\\Microsoft\\WindowsApps`).\nSpawning such a stub through ConPTY has been reported to crash with\n`0xc0000142` (STATUS_DLL_INIT_FAILED) on Windows 11 23H2.\n\nDefault `true`. Set to `false` to launch whatever `pwsh.exe`\nappears first on `PATH`, including the Store alias — useful if you\nwant the old behavior, or if you've confirmed the alias works on\nyour Windows build. No effect on non-Windows platforms or when\n`terminal.shell` is set explicitly.",
+          "type": "boolean",
+          "default": true
         }
       }
     },
