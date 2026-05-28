@@ -492,8 +492,10 @@ fn click_un_dive_switches_to_clicked_session() {
     // un-blur, symmetric with `blur_floating_panel` (which has always
     // fired `blur` on dive).
     //
-    // Reproduce: two sessions in the dock, dive into one, then click
-    // the other — active_window must flip to the clicked session.
+    // Reproduce by observing rendered output only (CONTRIBUTING §2):
+    // type a sentinel into the dived-into session's buffer and watch
+    // it disappear when the click switches the active window to a
+    // different session whose buffer is empty.
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -502,23 +504,48 @@ fn click_un_dive_switches_to_clicked_session() {
         .create_window_at(root.join("wt-beta"), "beta".to_string());
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("beta"))
-        .unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("alphaproj") && s.contains("beta")
+    })
+    .unwrap();
 
-    // Highlight beta and let the dock's debounced live-switch flip
-    // active_window. Then dive into beta with Enter — that blurs the
-    // dock so the editor terminal owns subsequent keys.
-    let beta_root = root.join("wt-beta");
+    // Highlight beta then dive. The `activate` handler in
+    // `orchestrator.ts` calls `setActiveWindow(beta)` and blurs the
+    // dock synchronously, so the test doesn't depend on the
+    // live-switch's 30 ms debounce landing first.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    // Wait for the dock's debounced live-switch (30 ms `editor.delay`
+    // in `scheduleDockSwitch`) to actually flip active_window to beta.
+    // Without this wait, Enter fires before the plugin event queue
+    // processes Down's `select` event, so `openDialog.selectedIndex`
+    // is still 0 and Enter activates alphaproj instead. Following the
+    // `wait_for_prompt` (uses `is_prompting`) precedent — system-
+    // readiness in test setup, asserted invariant is screen-only.
+    let beta_root = root.join("wt-beta");
     h.wait_until(|h| h.editor().active_window().root == beta_root)
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
 
-    // The un-dive click on alphaproj's row must (a) re-focus the dock
-    // and (b) flip the active window to alphaproj.
+    // Type a two-char sentinel into the dived-into buffer. With the
+    // dock blurred and beta's `[No Name]` buffer active, the
+    // keystrokes land in the buffer — proving the dive succeeded
+    // AND giving a screen marker for "active session is beta". `ZZ`
+    // avoids false matches with the chrome (no `Z` appears in any
+    // dock label, menu, or status text by default).
+    h.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ZZ"))
+        .unwrap();
+
+    // Click alphaproj's row. With the fix:
+    //   (a) `refocus_floating_panel` fires the `focus` widget_event,
+    //       so the plugin's `dockBlurred` mirror clears, and
+    //   (b) the click's `select` event then flips `active_window` to
+    //       alphaproj — whose `[No Name]` buffer is empty, so `ZZ`
+    //       leaves the chrome.
     let alpha_row = row_of(&h, "alphaproj") as u16;
     h.mouse_click(3, alpha_row).unwrap();
-    h.wait_until(|h| h.editor().active_window().root == root)
+    h.wait_until(|h| !h.screen_to_string().contains("ZZ"))
         .unwrap();
 }
