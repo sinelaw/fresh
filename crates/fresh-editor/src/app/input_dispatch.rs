@@ -119,49 +119,76 @@ impl Editor {
         None
     }
 
+    /// Walk the overlay stack top-down and, if a *capture-all* modal
+    /// (Settings / KeybindingEditor / CalibrationWizard / Menu) is the
+    /// keyboard owner, dispatch to its handler and return its result.
+    /// Returns `None` when no such modal is up, letting the caller fall
+    /// through to the Prompt / Popup blocks (which have their own
+    /// fall-through semantics that don't fit a top-down kind-walk).
+    ///
+    /// The mouse counterpart is `Editor::dispatch_modal_mouse`.
+    fn dispatch_modal_keyboard(&mut self, event: &KeyEvent) -> Option<InputResult> {
+        use crate::app::overlay::LayerKind;
+
+        // Snapshot the capturing kind first so the stack borrow ends
+        // before any `&mut self` handler runs.
+        let kind = self.overlay_layers().iter().find_map(|l| match l.kind {
+            LayerKind::Settings
+            | LayerKind::KeybindingEditor
+            | LayerKind::CalibrationWizard
+            | LayerKind::Menu => Some(l.kind),
+            _ => None,
+        })?;
+        let mut ctx = InputContext::new();
+        Some(match kind {
+            LayerKind::Settings => {
+                let result = {
+                    let settings = self
+                        .settings_state
+                        .as_mut()
+                        .expect("Settings layer implies settings_state present");
+                    settings.dispatch_input(event, &mut ctx)
+                };
+                self.process_deferred_actions(ctx);
+                result
+            }
+            LayerKind::KeybindingEditor => self.handle_keybinding_editor_input(event),
+            LayerKind::CalibrationWizard => self.handle_calibration_input(event),
+            LayerKind::Menu => {
+                let all_menus: Vec<crate::config::Menu> = self
+                    .menus
+                    .menus
+                    .iter()
+                    .chain(self.menu_state.plugin_menus.iter())
+                    .cloned()
+                    .collect();
+                let result = {
+                    let mut handler = MenuInputHandler::new(&mut self.menu_state, &all_menus);
+                    handler.dispatch_input(event, &mut ctx)
+                };
+                self.process_deferred_actions(ctx);
+                result
+            }
+            _ => unreachable!("find_map only returns the four capture-all kinds"),
+        })
+    }
+
     /// Dispatch input to the appropriate modal handler.
     ///
     /// Returns `Some(InputResult)` if a modal handled the input,
     /// `None` if no modal is active and input should be handled normally.
     pub fn dispatch_modal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
+        // Always-early-return modals (Settings, KeybindingEditor,
+        // CalibrationWizard, Menu) dispatch through the overlay stack so
+        // their precedence matches `get_key_context()`, the terminal-input
+        // gate and the mouse modal-capture path. The Prompt and Popup
+        // blocks below have fall-through (`Ignored`) semantics and
+        // multi-arm internal logic, so they stay as explicit blocks.
+        if let Some(result) = self.dispatch_modal_keyboard(event) {
+            return Some(result);
+        }
+
         let mut ctx = InputContext::new();
-
-        // Settings has highest priority
-        if let Some(ref mut settings) = self.settings_state {
-            if settings.visible {
-                let result = settings.dispatch_input(event, &mut ctx);
-                self.process_deferred_actions(ctx);
-                return Some(result);
-            }
-        }
-
-        // Keybinding editor is next
-        if self.keybinding_editor.is_some() {
-            let result = self.handle_keybinding_editor_input(event);
-            return Some(result);
-        }
-
-        // Calibration wizard is next (modal, blocks all other input)
-        if self.calibration_wizard.is_some() {
-            let result = self.handle_calibration_input(event);
-            return Some(result);
-        }
-
-        // Menu is next
-        if self.menu_state.active_menu.is_some() {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-
-            let mut handler = MenuInputHandler::new(&mut self.menu_state, &all_menus);
-            let result = handler.dispatch_input(event, &mut ctx);
-            self.process_deferred_actions(ctx);
-            return Some(result);
-        }
 
         // Prompt is next
         if self.active_window().prompt.is_some() {
