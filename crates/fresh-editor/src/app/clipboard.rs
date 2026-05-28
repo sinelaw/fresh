@@ -33,6 +33,21 @@ use super::Editor;
 /// recognise a stalled paste before they've moved on.
 pub(crate) const PASTE_ASYNC_DEADLINE: Duration = Duration::from_millis(500);
 
+/// Inline-wait budget at the top of `paste()`. Before going async, we
+/// race the arboard read against this duration; if the clipboard
+/// responds within the window (the common case on a responsive
+/// system, ~3ms), we paste inline and skip the placeholder entirely
+/// — the user sees zero perceptible latency, indistinguishable from
+/// the old synchronous path. Only when arboard takes longer than
+/// this do we fall through to the placeholder/event-bridge path,
+/// which keeps the UI unblocked at the cost of one async round trip
+/// (~16ms+ until the next editor tick picks up the result).
+///
+/// 20ms is below the ~50ms human latency-perception threshold, so a
+/// worst-case inline wait still feels instant; on a hung clipboard
+/// it's a short, bounded stall before the async path takes over.
+pub(crate) const PASTE_INLINE_WAIT: Duration = Duration::from_millis(20);
+
 /// Hard cap on concurrent pending pastes. Each entry costs one virtual
 /// text + one marker + one OS thread; in practice the deadline keeps
 /// the count near zero. The cap exists only to bound damage from a
@@ -78,6 +93,10 @@ pub struct PendingPaste {
     /// clipboard's LF-normalised text back to the buffer's format
     /// before insertion.
     pub line_ending: crate::model::buffer::LineEnding,
+    /// Wall-clock when paste() was called, used by the `paste_timing`
+    /// trace target to measure end-to-end latency from Ctrl+V to the
+    /// pasted text appearing on screen.
+    pub dispatched_at: Instant,
 }
 
 static NEXT_PASTE_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -633,13 +652,71 @@ impl Editor {
         let buffer_id = self.active_buffer();
         let line_ending = self.active_state().buffer.line_ending();
 
-        // Snapshot cursor selections and apply their deletions first.
-        // The paste's eventual insertion point is "where the cursor
-        // ends up after the selection is gone", and the user pressed
-        // Ctrl+V to commit to that replacement — they shouldn't get
-        // to keep typing into the selection while the read is in
-        // flight. Same semantics as the synchronous `paste_text` for
-        // the deletion half; the insertion half is what we defer.
+        // Kick the arboard read off on its own thread RIGHT AWAY,
+        // before touching the buffer. Two channels: a private
+        // `inline_tx` (bounded to 1) we race against a short timer
+        // for the fast path, and the editor's `AsyncBridge` for the
+        // slow path. The background thread tries `inline_tx` first
+        // and falls back to the bridge only if the inline receiver
+        // is gone (we dropped it after timing out).
+        //
+        // Each thread does its own `arboard::Clipboard::new().get_text()`,
+        // so back-to-back Ctrl+V with different OS-clipboard contents
+        // in between still picks each one up — the contents captured
+        // are whatever the OS clipboard held when this thread reached
+        // `get_text`.
+        let request_id = allocate_paste_request_id();
+        let dispatch_at = Instant::now();
+        let (inline_tx, inline_rx) = std::sync::mpsc::sync_channel::<Option<String>>(1);
+        let bridge_sender = sender.clone();
+        let thread_request_id = request_id;
+        std::thread::Builder::new()
+            .name("clipboard-paste".into())
+            .spawn(move || {
+                let arboard_start = Instant::now();
+                let text = arboard::Clipboard::new()
+                    .and_then(|mut cb| cb.get_text())
+                    .ok()
+                    .filter(|s| !s.is_empty());
+                let arboard_ms = arboard_start.elapsed().as_millis();
+                let len = text.as_ref().map(|s| s.len()).unwrap_or(0);
+                // Try the inline channel first. If the main thread
+                // is still inside its `recv_timeout`, the send
+                // succeeds and the fast path applies the paste. If
+                // the main thread already gave up and dropped
+                // `inline_rx`, fall through to the bridge for the
+                // async (placeholder) path.
+                match inline_tx.send(text.clone()) {
+                    Ok(()) => {
+                        tracing::info!(
+                            target: "paste_timing",
+                            "[req {}] arboard returned in {}ms ({} bytes), delivered via INLINE",
+                            thread_request_id, arboard_ms, len
+                        );
+                    }
+                    Err(_) => {
+                        tracing::info!(
+                            target: "paste_timing",
+                            "[req {}] arboard returned in {}ms ({} bytes), inline gone — sending via bridge",
+                            thread_request_id, arboard_ms, len
+                        );
+                        if let Err(e) = bridge_sender.send(AsyncMessage::ClipboardPasteResult {
+                            request_id: thread_request_id,
+                            text,
+                        }) {
+                            tracing::trace!("clipboard paste result delivery failed: {}", e);
+                        }
+                    }
+                }
+            })
+            .ok();
+
+        // Now race a short inline wait against the spawned read.
+        // Doing the selection-delete *after* this wait would be
+        // wrong: a fast inline paste needs the selection cleared
+        // first so it can replace it via `paste_text`'s normal
+        // logic. So delete the selection now (it's a synchronous
+        // local operation, ~µs) and only THEN race the wait.
         let cursor_selections: Vec<(CursorId, std::ops::Range<usize>)> = self
             .active_cursors()
             .iter()
@@ -658,8 +735,6 @@ impl Editor {
                     cursor_id: *cursor_id,
                 });
             }
-            // Apply in descending position order so earlier offsets
-            // remain valid as the bulk edit walks events.
             delete_events.sort_by(|a, b| {
                 let pa = if let Event::Delete { range, .. } = a {
                     range.start
@@ -683,9 +758,53 @@ impl Editor {
             }
         }
 
-        // After the selection deletes, read the cursors' resting
-        // positions — these are where the paste will land. We use
-        // these to plant the anchors.
+        // Inline wait: if arboard came back within budget, paste
+        // synchronously and skip the placeholder entirely — the
+        // user sees the paste appear in the same frame as the
+        // keystroke, indistinguishable from the old synchronous
+        // path. If the read is still in flight after the budget,
+        // drop `inline_rx` (which signals the thread to deliver via
+        // the bridge instead) and continue to the placeholder path.
+        match inline_rx.recv_timeout(PASTE_INLINE_WAIT) {
+            Ok(text) => {
+                tracing::info!(
+                    target: "paste_timing",
+                    "[req {}] fast path: inline result in {}ms, no placeholder needed",
+                    request_id,
+                    dispatch_at.elapsed().as_millis()
+                );
+                if let Some(t) = text {
+                    self.paste_text(t);
+                }
+                return;
+            }
+            Err(_) => {
+                tracing::info!(
+                    target: "paste_timing",
+                    "[req {}] inline wait timed out after {}ms — falling back to placeholder",
+                    request_id,
+                    dispatch_at.elapsed().as_millis()
+                );
+                // Dropping `inline_rx` here would race the thread
+                // (it might be mid-send). Keep it alive until after
+                // we've drained any last-second arrival.
+                if let Ok(text) = inline_rx.try_recv() {
+                    tracing::info!(
+                        target: "paste_timing",
+                        "[req {}] caught race — fast path after timeout",
+                        request_id
+                    );
+                    if let Some(t) = text {
+                        self.paste_text(t);
+                    }
+                    return;
+                }
+                drop(inline_rx);
+            }
+        }
+
+        // Slow path: plant placeholders and register the pending
+        // paste so the eventual bridge delivery lands at the anchor.
         let mut positions: Vec<usize> = self
             .active_cursors()
             .iter()
@@ -696,14 +815,9 @@ impl Editor {
         let cursor_count = positions.len();
 
         if positions.is_empty() {
-            // No cursors? Nothing to paste. (Shouldn't happen in
-            // practice but the fall-through is harmless.)
             return;
         }
 
-        // Plant a visible "▍" anchor at each position. The marker
-        // owned by each VirtualText auto-adjusts on edits, so the
-        // anchor floats with whatever the user types around it.
         let placeholder_style = Style::default().add_modifier(Modifier::DIM);
         let anchors: Vec<PasteAnchor> = {
             let Some(state) = self.buffers_mut().get_mut(&buffer_id) else {
@@ -718,9 +832,6 @@ impl Editor {
                         "▍".to_string(),
                         placeholder_style,
                         VirtualTextPosition::BeforeChar,
-                        // Negative priority so any plugin-rendered
-                        // virtual text at the same position (e.g.
-                        // inlay hints) takes visual precedence.
                         -100,
                     );
                     PasteAnchor {
@@ -730,28 +841,12 @@ impl Editor {
                 .collect()
         };
 
-        // Spawn the actual read on its own thread. Each thread does
-        // its own `arboard::Clipboard::new().get_text()`, so the
-        // contents captured are *whatever the OS clipboard held when
-        // this thread reached `get_text`* — that's the invariant
-        // making "pastes always take what the clipboard had at the
-        // time of pasting" work for back-to-back Ctrl+V with
-        // different copies in between.
-        let request_id = allocate_paste_request_id();
         let deadline = Instant::now() + PASTE_ASYNC_DEADLINE;
-        std::thread::Builder::new()
-            .name("clipboard-paste".into())
-            .spawn(move || {
-                let text = arboard::Clipboard::new()
-                    .and_then(|mut cb| cb.get_text())
-                    .ok()
-                    .filter(|s| !s.is_empty());
-                if let Err(e) = sender.send(AsyncMessage::ClipboardPasteResult { request_id, text })
-                {
-                    tracing::trace!("clipboard paste result delivery failed: {}", e);
-                }
-            })
-            .ok();
+        tracing::info!(
+            target: "paste_timing",
+            "[req {}] slow path: placeholder planted, registering for async delivery",
+            request_id
+        );
 
         self.paste_pending.insert(
             request_id,
@@ -761,6 +856,7 @@ impl Editor {
                 anchors,
                 cursor_count_at_dispatch: cursor_count,
                 line_ending,
+                dispatched_at: dispatch_at,
             },
         );
     }
@@ -777,8 +873,20 @@ impl Editor {
     ///   visible "▍" markers go away.
     pub(crate) fn resolve_pending_paste(&mut self, request_id: u64, text: Option<String>) {
         let Some(pending) = self.paste_pending.remove(&request_id) else {
+            tracing::info!(
+                target: "paste_timing",
+                "[req {}] resolve called but no matching entry (already cancelled/stale)",
+                request_id
+            );
             return;
         };
+        let total_ms = pending.dispatched_at.elapsed().as_millis();
+        let text_len = text.as_ref().map(|s| s.len()).unwrap_or(0);
+        tracing::info!(
+            target: "paste_timing",
+            "[req {}] resolving after {}ms ({} bytes from clipboard)",
+            request_id, total_ms, text_len
+        );
 
         // Bail out if the buffer is gone (closed during the wait).
         // The buffer's drop took its `virtual_texts` and `marker_list`
