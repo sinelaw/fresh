@@ -192,6 +192,14 @@
       "when": "normal"
     },
     {
+      "comment": "Ctrl+O - Open file (also available when the file explorer is focused)",
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
       "comment": "Normal context - Editing",
       "key": "z",
       "modifiers": ["ctrl"],
