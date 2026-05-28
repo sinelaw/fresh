@@ -1995,7 +1995,22 @@ function buildDockSpec(): WidgetSpec {
       kind: "raw",
       entries: [
         styledRow([
-          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
+          {
+            // TEMPORARY DIAGNOSTIC for the Windows-only
+            // `dock_initial_sort_…` / `dock_list_order_…` failure.
+            // Embed `dockMode`, the basename's first 3 chars of `cur`,
+            // and `filteredIds` into the dock header so the CI screen
+            // dump tells us whether the plugin sees `dockMode=true` (the
+            // fix is taking effect) and what `currentProjectKey()` it
+            // believes is current at filter time. Use only the first 3
+            // chars of the basename so it doesn't collide with the
+            // tests' `row_of("aaa_project")` / `row_of("zzz_project")`
+            // substring matches. Revert once the root cause is fixed.
+            text: `ORCHESTRATOR dm=${dockMode ? "T" : "F"} c=${(
+              currentProjectKey().split(/[/\\]/).pop() ?? ""
+            ).slice(0, 3)} f=[${filtered.join(",")}]`,
+            style: { fg: "ui.popup_border_fg", bold: true },
+          },
         ]),
       ],
     },
