@@ -9638,14 +9638,14 @@ mod tests {
                     id: fresh_core::WindowId(1),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
-                    project_path: None,
+                    project_path: std::path::PathBuf::from("/repo"),
                     shared_worktree: false,
                 },
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(2),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
-                    project_path: None,
+                    project_path: std::path::PathBuf::from("/wt/feat-auth"),
                     shared_worktree: false,
                 },
             ];
