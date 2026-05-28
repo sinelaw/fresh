@@ -492,6 +492,53 @@ fn picker_space_toggles_focused_checkbox_not_list() {
 }
 
 #[test]
+fn settings_dialog_does_not_overlap_dock() {
+    // Open the dock, then open the Settings modal via the command
+    // palette. The settings dialog must render fully inside
+    // `chrome_area` (right of the dock) — the dialog's top-left
+    // rounded corner glyph `╭` must be visible on the screen, NOT
+    // clipped by the dock's right border. With the bug,
+    // `render_settings` computes the modal x/y as *relative* offsets
+    // (line 146-147 of view/settings/render.rs) and uses them as
+    // *absolute* `Rect::new` coordinates — so the modal is placed
+    // ~6 columns from the FRAME left edge (inside the dock), and the
+    // dock then over-draws its left side, hiding the title bar.
+    //
+    // Observable signal: with the bug, the full "Settings" title
+    // never paints in one piece — the leading characters are clipped
+    // by the dock column. The full literal ` Settings [User] `
+    // (with both spaces and brackets) only appears on the rendered
+    // top border when the modal is positioned correctly.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Open Settings").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Open Settings"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Active Keybinding Map"))
+        .unwrap();
+
+    // The full title — including the leading space and the [User]
+    // label — must appear in one contiguous run on the screen. With
+    // the bug, the leading half is hidden behind the dock column.
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains(" Settings [User] "),
+        "settings dialog title `Settings [User]` should be visible \
+         in full on the chrome side of the dock, but the screen \
+         shows clipping:\n{screen}"
+    );
+}
+
+#[test]
 fn click_un_dive_switches_to_clicked_session() {
     // The Rust mouse handler sets `dock.focused = true` when a click
     // lands inside a blurred dock — the un-dive transition. The
@@ -626,5 +673,71 @@ fn dock_initial_sort_is_lex_stable_not_current_first() {
          aaa at {aaa_row}, zzz at {zzz_row}. This means `filterSessions` \
          ran with pinCurrentFirst=true (dockMode was still false), \
          which is the line-1757-before-1765 bug in `openControlRoom`."
+    );
+}
+
+#[test]
+fn dock_close_reflows_buffer_to_full_width() {
+    // Open dock, then toggle it closed. The active window's buffer
+    // must reflow to fill the freed columns on the LEFT — line 1's
+    // gutter (`  1 │`) must move from inside the chrome (col ~32+)
+    // back to column 0 immediately, without requiring any further
+    // keypress / mouse-wheel. With the bug, the chrome stays at its
+    // pre-close x-offset and the freed columns render as blank
+    // whitespace until the user nudges the editor.
+    let (_tmp, root) = setup_project("alphaproj");
+    // A file with multiple lines so the gutter "  1 │" is observable.
+    std::fs::write(root.join("readme.txt"), "alpha\nbeta\ngamma\n").unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut().open_file(&root.join("readme.txt")).unwrap();
+    h.render().unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("alpha"))
+        .unwrap();
+    open_dock(&mut h);
+
+    // Sanity: with the dock open, line 1's gutter "  1 │" lives in
+    // the chrome (right of the dock column), so it sits beyond col 30.
+    h.wait_until(|h| h.screen_to_string().contains("alpha"))
+        .unwrap();
+    let with_dock_col = h
+        .screen_to_string()
+        .lines()
+        .find_map(|l| l.find("  1 │").map(|c| (c, l.to_string())))
+        .expect("`  1 │` gutter on screen with dock open");
+    assert!(
+        with_dock_col.0 > 30,
+        "with dock open, line-1 gutter should be in chrome (col > 30); got col {}: {:?}",
+        with_dock_col.0,
+        with_dock_col.1,
+    );
+
+    // Toggle the dock closed via the command palette — the same
+    // path the user took in the interactive repro.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+        .unwrap();
+
+    // After the dock closes, the line-1 gutter must land at col 0
+    // (or very near it) — the chrome filled the freed space.
+    let after_close_col = h
+        .screen_to_string()
+        .lines()
+        .find_map(|l| l.find("  1 │").map(|c| (c, l.to_string())))
+        .expect("`  1 │` gutter still on screen after dock close");
+    assert!(
+        after_close_col.0 < 5,
+        "after dock close, line-1 gutter should be at the left edge \
+         (col < 5); got col {} — chrome did not reflow to fill the \
+         freed dock columns. Row: {:?}",
+        after_close_col.0,
+        after_close_col.1,
     );
 }

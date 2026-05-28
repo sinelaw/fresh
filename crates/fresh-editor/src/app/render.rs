@@ -55,6 +55,28 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
+        // Drain any plugin commands enqueued BEFORE this frame began —
+        // notably `UnmountFloatingWidget` from a Toggle-Dock invocation
+        // earlier in the same input cycle. The mid-render
+        // `process_commands` block below runs *after* `compute_dock_split`,
+        // so without this early drain the dock unmount lands too late:
+        // this frame computes `dock_area` / `chrome_area` from the stale
+        // `self.dock = Some(_)`, the chrome paints into the post-dock
+        // offset column, and the freed columns render as blank
+        // whitespace until the next user input forces another render.
+        let early_commands = self.plugin_manager.write().unwrap().process_commands();
+        if !early_commands.is_empty() {
+            tracing::trace!(
+                count = early_commands.len(),
+                "process_commands at top of render (pre-layout drain)"
+            );
+            for command in early_commands {
+                if let Err(e) = self.handle_plugin_command(command) {
+                    tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+                }
+            }
+        }
+
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
         // chrome lays itself out, so the menu bar, splits, and status
