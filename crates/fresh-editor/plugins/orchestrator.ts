@@ -2004,24 +2004,7 @@ function buildDockSpec(): WidgetSpec {
       kind: "raw",
       entries: [
         styledRow([
-          {
-            // TEMPORARY Windows-CI diagnostic. Show, in dock-list order,
-            // the FIRST 3 chars of each session's `projectPath` basename
-            // — what `byProjectThenId`'s lex comparison actually sees.
-            // Width-constrained: 3 chars per session, joined by `>` so
-            // the order is unambiguous in the screen dump. Doesn't
-            // collide with row_of("aaa_project") / row_of("zzz_project").
-            text: `ORCHESTRATOR ${filtered
-              .map((id) => {
-                const s = orchestratorSessions.get(id);
-                if (!s) return "?";
-                const base =
-                  s.projectPath.split(/[/\\]/).pop() ?? s.projectPath;
-                return base.slice(0, 3);
-              })
-              .join(">")}`,
-            style: { fg: "ui.popup_border_fg", bold: true },
-          },
+          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
         ]),
       ],
     },

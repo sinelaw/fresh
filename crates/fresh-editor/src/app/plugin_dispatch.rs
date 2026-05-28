@@ -172,22 +172,6 @@ impl Editor {
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                // TEMPORARY Windows-CI diagnostic for the
-                // `dock_initial_sort_…` / `dock_list_order_…` failure.
-                // Prints the exact Rust-side values fed into each
-                // WindowInfo so we can see whether the path strings on
-                // Windows match what the test's assertion message
-                // reports. Eprintln so `--nocapture` surfaces it;
-                // tests don't assert on this output. Remove once the
-                // root cause is pinned down.
-                eprintln!(
-                    "WIN_DIAG WindowInfo id={} label={:?} root={:?} project_path={:?} slot_present={}",
-                    s.id.0,
-                    s.label,
-                    s.root,
-                    project_path,
-                    slot.is_some(),
-                );
                 fresh_core::api::WindowInfo {
                     id: s.id,
                     label: s.label.clone(),
