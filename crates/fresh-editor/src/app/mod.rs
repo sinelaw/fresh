@@ -534,21 +534,16 @@ pub struct Editor {
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
 
-    /// In-flight async system-clipboard read. While `Some`, input events
-    /// (keys, mouse, bracketed-paste) are stashed into
-    /// `pending_input_queue` instead of dispatched, so the editor never
-    /// blocks on a slow/unresponsive X11/Wayland clipboard owner.
-    /// Cleared when a matching `ClipboardPasteResult` arrives or the
-    /// deadline fires (synthesized into the same channel by the tick).
-    pub(super) paste_pending: Option<crate::app::clipboard::PendingPaste>,
-
-    /// Input events queued while `paste_pending` is `Some`. Drained in
-    /// FIFO order from `process_async_messages` once the paste resolves.
-    /// Bounded to avoid unbounded growth if a deadline somehow never
-    /// fires; new events past the cap are dropped (the user has already
-    /// seen the editor visibly stall, so silent loss is the best of two
-    /// bad options).
-    pub(super) pending_input_queue: std::collections::VecDeque<crossterm::event::Event>,
+    /// In-flight async system-clipboard reads, keyed by `request_id`.
+    /// Each entry owns an anchor (`VirtualText("▍")`) in some buffer
+    /// that floats with edits via the marker tree; when the matching
+    /// `ClipboardPasteResult` arrives, the pasted text is inserted at
+    /// the anchor's *current* position (which may have moved since the
+    /// user pressed Ctrl+V). The editor stays fully interactive while
+    /// pastes are pending — multiple Ctrl+V presses simply add more
+    /// entries, each capturing the OS clipboard contents at the moment
+    /// its own background thread starts.
+    pub(super) paste_pending: std::collections::HashMap<u64, crate::app::clipboard::PendingPaste>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and

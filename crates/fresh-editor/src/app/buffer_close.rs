@@ -42,6 +42,13 @@ impl Editor {
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
     fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
+        // Discard any async pastes whose anchors live in this buffer:
+        // when the result arrives the buffer state will be gone, and
+        // there's no useful place to land the text without it. Done
+        // first so the rest of close doesn't observe a transient
+        // pending entry that points at a half-torn-down buffer.
+        self.cancel_pending_pastes_for_buffer(id);
+
         // Clear preview tracking if we're closing the current preview buffer.
         // This keeps `preview` from pointing at a freed buffer id.
         if let Some((_, preview_id)) = self.active_window().preview {

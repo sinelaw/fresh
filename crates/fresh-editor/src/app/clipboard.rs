@@ -5,6 +5,7 @@
 //! - Copy with formatting (HTML with syntax highlighting)
 //! - Multi-cursor add above/below/at next match
 
+use ratatui::style::{Modifier, Style};
 use rust_i18n::t;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -15,40 +16,68 @@ use crate::input::multi_cursor::{
 };
 use crate::model::buffer_position::byte_to_2d;
 use crate::model::cursor::Cursor;
-use crate::model::event::{CursorId, Event};
+use crate::model::event::{BufferId, CursorId, Event};
 use crate::primitives::word_navigation::{
     find_vi_word_end, find_word_start_left, find_word_start_right,
 };
 use crate::services::async_bridge::AsyncMessage;
+use crate::view::virtual_text::{VirtualTextId, VirtualTextPosition};
 
 use super::Editor;
 
-/// Async-paste deadline. After this, the editor synthesizes a `None`
-/// result and falls back to the internal clipboard, so a hung X11/
-/// Wayland clipboard owner can't freeze the UI longer than the budget
-/// the user perceives as "snappy paste". Chosen to comfortably exceed
-/// typical remote-X round trips (a few tens of ms) while staying well
-/// under the threshold where users notice a stall.
+/// Per-paste timeout. The async-paste path renders a placeholder
+/// marker and lets the user keep editing; if the background arboard
+/// read doesn't return within this window, the marker is removed and
+/// the paste is silently cancelled. 500 ms is comfortably longer than
+/// any reasonable clipboard round trip and short enough that users
+/// recognise a stalled paste before they've moved on.
 pub(crate) const PASTE_ASYNC_DEADLINE: Duration = Duration::from_millis(500);
 
-/// Cap on input events queued while a paste is in flight. With the
-/// 500ms deadline, even an aggressive autorepeat (~30 keys/s) tops out
-/// around 15 events; 256 is two orders of magnitude of headroom for
-/// pathological cases (key macros, mouse drags during a frozen tick)
-/// without unbounded memory growth.
-const PENDING_INPUT_QUEUE_CAP: usize = 256;
+/// Hard cap on concurrent pending pastes. Each entry costs one virtual
+/// text + one marker + one OS thread; in practice the deadline keeps
+/// the count near zero. The cap exists only to bound damage from a
+/// runaway macro / wedged process holding the clipboard forever.
+const MAX_PENDING_PASTES: usize = 64;
 
-/// State for an in-flight async clipboard paste. Held in
-/// `Editor::paste_pending` between dispatching the background read and
-/// receiving the matching `AsyncMessage::ClipboardPasteResult`.
+/// Single anchor a paste will land at when its read returns. Stored
+/// per-cursor at dispatch time (selections having been deleted first
+/// so the anchor sits at the eventual insertion point).
 #[derive(Debug, Clone, Copy)]
+pub struct PasteAnchor {
+    /// Virtual text rendering the visual "▍" placeholder; also owns
+    /// the underlying marker that tracks the position through edits.
+    pub virtual_text_id: VirtualTextId,
+}
+
+/// In-flight async paste. Lives in `Editor::paste_pending` keyed by
+/// `request_id` between dispatching the background read and receiving
+/// the matching `AsyncMessage::ClipboardPasteResult`. Multiple may be
+/// pending at once (each Ctrl+V allocates a new id) and each captures
+/// the OS clipboard contents at the moment its own thread starts.
+#[derive(Debug, Clone)]
 pub struct PendingPaste {
-    /// Monotonic id stamped into both the request and the result so we
-    /// can drop a late reply whose deadline already fired.
-    pub request_id: u64,
-    /// When the editor will give up on the background read and fall
-    /// back to the internal clipboard.
+    /// Wall-clock cutoff. The tick walks `paste_pending` and removes
+    /// any entry past this point; arboard threads that come back
+    /// afterwards find no matching entry and are dropped. (The
+    /// request id is the map key, not stored here.)
     pub deadline: Instant,
+    /// Buffer the anchors live in. Used at resolve time so a paste
+    /// initiated in buffer A still lands in A even if the user
+    /// switched to buffer B during the wait. If the buffer was closed
+    /// in the meantime the entire entry is discarded.
+    pub buffer_id: BufferId,
+    /// One anchor per cursor at dispatch time (after any selection
+    /// deletes were applied). Insertions happen in descending position
+    /// order at resolve time so earlier offsets stay valid.
+    pub anchors: Vec<PasteAnchor>,
+    /// Cursor count captured at dispatch — column-mode paste (one line
+    /// per cursor) is decided against this snapshot, not against the
+    /// live cursor list which may have changed during the wait.
+    pub cursor_count_at_dispatch: usize,
+    /// Buffer line-ending captured at dispatch, used to convert the
+    /// clipboard's LF-normalised text back to the buffer's format
+    /// before insertion.
+    pub line_ending: crate::model::buffer::LineEnding,
 }
 
 static NEXT_PASTE_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -551,17 +580,24 @@ impl Editor {
     /// - Selection replacement (deletes selection before inserting)
     /// - Atomic undo (single undo step for entire operation)
     pub fn paste(&mut self) {
-        // If a paste is already in flight, ignore. Don't queue another:
-        // Ctrl+V autorepeat would otherwise dispatch a flood of arboard
-        // reads behind a single stuck owner.
-        if self.paste_pending.is_some() {
+        // Defensive fast-paths. Prompt/terminal/file-explorer paste
+        // routes go through their own actions (PromptPaste,
+        // TerminalPaste, FileExplorerPaste); the buffer paste path
+        // below assumes there's a real buffer view in front of us. If
+        // we somehow landed here under one of those modes anyway,
+        // hand off to the synchronous service-level paste.
+        if self.active_window().prompt.is_some() || self.active_window().terminal_mode {
+            if let Some(text) = self.clipboard.paste() {
+                self.paste_text(text);
+            }
             return;
         }
 
-        // Fast-path #1: no async machinery (early bootstrap, headless
-        // test harness). Falling back to the synchronous read here is
-        // safe because the no-bridge configuration also implies no
-        // system display, so arboard returns immediately.
+        // No bridge (early bootstrap / test harness): there is no
+        // event loop to deliver the async result through, so a
+        // background read would never come back. The no-bridge
+        // configuration also implies no display, so the synchronous
+        // arboard call won't actually block.
         let sender = match self.async_bridge.as_ref() {
             Some(bridge) => bridge.sender(),
             None => {
@@ -572,9 +608,9 @@ impl Editor {
             }
         };
 
-        // Fast-path #2: system clipboard disabled (internal-only mode
-        // for tests, or user opted out via config). No reason to spin
-        // up a thread for a read that will never touch the OS.
+        // System clipboard disabled (internal-only test mode, or user
+        // opted out via config). Spinning up a thread for arboard is
+        // pointless when we already know we won't touch the OS.
         if !self.clipboard.uses_system_clipboard() || self.clipboard.is_internal_only() {
             if let Some(text) = self.clipboard.paste_internal() {
                 self.paste_text(text);
@@ -582,137 +618,323 @@ impl Editor {
             return;
         }
 
-        // Slow path: dispatch the arboard read on a background thread
-        // so the main loop can keep rendering and accept user input
-        // (which we queue — see `Editor::handle_input_event`). The
-        // result is delivered through the same `AsyncBridge` that LSP
-        // and plugin callbacks use, so it's processed on the next
-        // tick exactly like any other async message.
+        // Bound concurrent pendings. A clipboard owner stuck for an
+        // unusual length of time, combined with Ctrl+V autorepeat,
+        // could otherwise grow the map without limit. The deadline
+        // keeps the count near zero in normal use.
+        if self.paste_pending.len() >= MAX_PENDING_PASTES {
+            tracing::warn!(
+                "MAX_PENDING_PASTES ({}) reached, ignoring Ctrl+V",
+                MAX_PENDING_PASTES
+            );
+            return;
+        }
+
+        let buffer_id = self.active_buffer();
+        let line_ending = self.active_state().buffer.line_ending();
+
+        // Snapshot cursor selections and apply their deletions first.
+        // The paste's eventual insertion point is "where the cursor
+        // ends up after the selection is gone", and the user pressed
+        // Ctrl+V to commit to that replacement — they shouldn't get
+        // to keep typing into the selection while the read is in
+        // flight. Same semantics as the synchronous `paste_text` for
+        // the deletion half; the insertion half is what we defer.
+        let cursor_selections: Vec<(CursorId, std::ops::Range<usize>)> = self
+            .active_cursors()
+            .iter()
+            .filter_map(|(id, c)| c.selection_range().map(|r| (id, r)))
+            .collect();
+
+        if !cursor_selections.is_empty() {
+            let mut delete_events = Vec::with_capacity(cursor_selections.len());
+            for (cursor_id, range) in &cursor_selections {
+                let deleted_text = self
+                    .active_state_mut()
+                    .get_text_range(range.start, range.end);
+                delete_events.push(Event::Delete {
+                    range: range.clone(),
+                    deleted_text,
+                    cursor_id: *cursor_id,
+                });
+            }
+            // Apply in descending position order so earlier offsets
+            // remain valid as the bulk edit walks events.
+            delete_events.sort_by(|a, b| {
+                let pa = if let Event::Delete { range, .. } = a {
+                    range.start
+                } else {
+                    0
+                };
+                let pb = if let Event::Delete { range, .. } = b {
+                    range.start
+                } else {
+                    0
+                };
+                pb.cmp(&pa)
+            });
+            if let Err(e) = self.apply_events_to_buffer_as_bulk_edit(
+                buffer_id,
+                delete_events,
+                "Paste (clear selection)".to_string(),
+            ) {
+                tracing::warn!("paste selection delete failed: {}", e);
+                return;
+            }
+        }
+
+        // After the selection deletes, read the cursors' resting
+        // positions — these are where the paste will land. We use
+        // these to plant the anchors.
+        let mut positions: Vec<usize> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, c)| c.position)
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        let cursor_count = positions.len();
+
+        if positions.is_empty() {
+            // No cursors? Nothing to paste. (Shouldn't happen in
+            // practice but the fall-through is harmless.)
+            return;
+        }
+
+        // Plant a visible "▍" anchor at each position. The marker
+        // owned by each VirtualText auto-adjusts on edits, so the
+        // anchor floats with whatever the user types around it.
+        let placeholder_style = Style::default().add_modifier(Modifier::DIM);
+        let anchors: Vec<PasteAnchor> = {
+            let Some(state) = self.buffers_mut().get_mut(&buffer_id) else {
+                return;
+            };
+            positions
+                .iter()
+                .map(|&pos| {
+                    let id = state.virtual_texts.add(
+                        &mut state.marker_list,
+                        pos,
+                        "▍".to_string(),
+                        placeholder_style,
+                        VirtualTextPosition::BeforeChar,
+                        // Negative priority so any plugin-rendered
+                        // virtual text at the same position (e.g.
+                        // inlay hints) takes visual precedence.
+                        -100,
+                    );
+                    PasteAnchor {
+                        virtual_text_id: id,
+                    }
+                })
+                .collect()
+        };
+
+        // Spawn the actual read on its own thread. Each thread does
+        // its own `arboard::Clipboard::new().get_text()`, so the
+        // contents captured are *whatever the OS clipboard held when
+        // this thread reached `get_text`* — that's the invariant
+        // making "pastes always take what the clipboard had at the
+        // time of pasting" work for back-to-back Ctrl+V with
+        // different copies in between.
         let request_id = allocate_paste_request_id();
         let deadline = Instant::now() + PASTE_ASYNC_DEADLINE;
-        self.paste_pending = Some(PendingPaste {
-            request_id,
-            deadline,
-        });
-        self.set_status_message(t!("clipboard.pasting").to_string());
-
         std::thread::Builder::new()
             .name("clipboard-paste".into())
             .spawn(move || {
-                // Fresh `arboard::Clipboard` per read. Sharing the
-                // long-lived static handle would mean holding its
-                // mutex across the (potentially multi-second) X11
-                // selection wait, blocking concurrent copy/paste; the
-                // static handle is only critical for *writes* where
-                // it maintains X11 selection ownership for OSC 52.
                 let text = arboard::Clipboard::new()
                     .and_then(|mut cb| cb.get_text())
                     .ok()
                     .filter(|s| !s.is_empty());
-                // If the receiver is gone the editor has already
-                // shut down — nothing to do, the late thread will
-                // just exit when arboard finally returns.
-                if let Err(e) =
-                    sender.send(AsyncMessage::ClipboardPasteResult { request_id, text })
+                if let Err(e) = sender.send(AsyncMessage::ClipboardPasteResult { request_id, text })
                 {
                     tracing::trace!("clipboard paste result delivery failed: {}", e);
                 }
             })
             .ok();
+
+        self.paste_pending.insert(
+            request_id,
+            PendingPaste {
+                deadline,
+                buffer_id,
+                anchors,
+                cursor_count_at_dispatch: cursor_count,
+                line_ending,
+            },
+        );
     }
 
-    /// Stash an input event for replay after the in-flight paste
-    /// resolves. Bounded by `PENDING_INPUT_QUEUE_CAP`; past the cap
-    /// new events are dropped (see the doc on the constant for why
-    /// silent loss is the chosen failure mode).
-    pub(crate) fn enqueue_pending_input(&mut self, event: crossterm::event::Event) {
-        if self.pending_input_queue.len() >= PENDING_INPUT_QUEUE_CAP {
-            tracing::warn!(
-                "pending_input_queue at cap ({}), dropping event",
-                PENDING_INPUT_QUEUE_CAP
+    /// Resolve an in-flight async paste keyed by `request_id`.
+    ///
+    /// - Drops the result if no entry matches: a deadline-fired
+    ///   timeout already cleaned up the anchors, or a different
+    ///   paste cycle is in flight.
+    /// - If `text` is `Some` and the target buffer still exists,
+    ///   inserts at every anchor's current position (column-mode
+    ///   distributed using the dispatch-time cursor count).
+    /// - Cleans up the placeholder virtual texts in all cases so the
+    ///   visible "▍" markers go away.
+    pub(crate) fn resolve_pending_paste(&mut self, request_id: u64, text: Option<String>) {
+        let Some(pending) = self.paste_pending.remove(&request_id) else {
+            return;
+        };
+
+        // Bail out if the buffer is gone (closed during the wait).
+        // The buffer's drop took its `virtual_texts` and `marker_list`
+        // with it, so the anchors are already cleaned up.
+        if self.buffers().get(&pending.buffer_id).is_none() {
+            tracing::debug!(
+                "paste request {} resolved against closed buffer {:?}, discarding",
+                request_id,
+                pending.buffer_id
             );
             return;
         }
-        self.pending_input_queue.push_back(event);
-    }
 
-    /// Resolve an in-flight async paste.
-    ///
-    /// - Drops the result if `request_id` doesn't match the current
-    ///   `paste_pending` — that means the deadline already fired and
-    ///   we already fell back to the internal clipboard; this is the
-    ///   late reply arriving after the fact.
-    /// - On a real result, inserts the text. On `None` (error / empty
-    ///   / deadline), falls back to the internal clipboard so an
-    ///   in-editor copy still works as expected.
-    /// - Either way, drains any input events queued during the wait
-    ///   so the user's keystrokes land in order at the post-paste
-    ///   cursor position.
-    pub(crate) fn resolve_pending_paste(&mut self, request_id: u64, text: Option<String>) {
-        let Some(pending) = self.paste_pending else {
+        // Resolve each anchor's current position via the marker tree.
+        // Skip any anchor whose marker was deleted by an intervening
+        // edit (e.g. the user deleted through the placeholder).
+        let mut anchor_positions: Vec<(usize, usize)> = {
+            let state = self
+                .buffers()
+                .get(&pending.buffer_id)
+                .expect("checked above");
+            pending
+                .anchors
+                .iter()
+                .enumerate()
+                .filter_map(|(i, a)| {
+                    let mid = state.virtual_texts.marker_id_of(a.virtual_text_id)?;
+                    let pos = state.marker_list.get_position(mid)?;
+                    Some((i, pos))
+                })
+                .collect()
+        };
+
+        if let Some(raw_text) = text.filter(|s| !s.is_empty()) {
+            // Normalise to LF (mirrors `paste_text`) so column-mode
+            // line splitting is unambiguous, then convert back to the
+            // buffer's line ending captured at dispatch.
+            let normalized = raw_text.replace("\r\n", "\n").replace('\r', "\n");
+            let mut lines_for_distribution: Vec<&str> = normalized.split('\n').collect();
+            if lines_for_distribution.len() > 1 && lines_for_distribution.last() == Some(&"") {
+                lines_for_distribution.pop();
+            }
+            let use_column_paste = pending.cursor_count_at_dispatch > 1
+                && lines_for_distribution.len() > 1
+                && lines_for_distribution.len() == pending.cursor_count_at_dispatch
+                && anchor_positions.len() == pending.cursor_count_at_dispatch;
+
+            let paste_text_full = match pending.line_ending {
+                crate::model::buffer::LineEnding::LF => normalized.clone(),
+                crate::model::buffer::LineEnding::CRLF => normalized.replace('\n', "\r\n"),
+                crate::model::buffer::LineEnding::CR => normalized.replace('\n', "\r"),
+            };
+
+            // Sort anchors by position descending so each insertion
+            // doesn't shift subsequent ones forward. The original
+            // index is retained for column-mode line lookup.
+            anchor_positions.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let total = pending.cursor_count_at_dispatch;
+            let mut events = Vec::with_capacity(anchor_positions.len());
+            for (original_index, pos) in &anchor_positions {
+                let text_for_anchor = if use_column_paste {
+                    // Topmost cursor (smallest position) gets the
+                    // first line — matches `paste_text`'s mapping so
+                    // a block-selected round-trip preserves shape.
+                    lines_for_distribution[total - 1 - (total - 1 - *original_index)].to_string()
+                } else {
+                    paste_text_full.clone()
+                };
+                events.push(Event::Insert {
+                    position: *pos,
+                    text: text_for_anchor,
+                    // No cursor moves on this insert: the user has
+                    // been editing freely, and yanking their cursor
+                    // to the paste site (which might be far away)
+                    // would be the freeze bug in a different form.
+                    cursor_id: CursorId::UNDO_SENTINEL,
+                });
+            }
+
+            if let Err(e) = self.apply_events_to_buffer_as_bulk_edit(
+                pending.buffer_id,
+                events,
+                "Paste".to_string(),
+            ) {
+                tracing::warn!("paste insertion failed: {}", e);
+            } else {
+                self.set_status_message(t!("clipboard.pasted").to_string());
+            }
+        } else {
+            // Deadline fired or read returned empty. Leave the buffer
+            // untouched; cleanup of the placeholder markers below.
+            tracing::debug!(
+                "paste request {} resolved with no text — removing anchors",
+                request_id
+            );
+        }
+
+        // Remove the placeholder virtual texts (and their markers).
+        let Some(state) = self.buffers_mut().get_mut(&pending.buffer_id) else {
             return;
         };
-        if pending.request_id != request_id {
-            return; // stale: deadline fallback already handled this paste
-        }
-        self.paste_pending = None;
-
-        let text = text.or_else(|| self.clipboard.paste_internal());
-        if let Some(t) = text {
-            // `paste_text` sets its own "Pasted" status, overwriting
-            // the "Pasting…" placeholder we left up during the wait.
-            self.paste_text(t);
-        } else {
-            // No clipboard contents (read failed *and* internal
-            // clipboard is empty). Clear the stale "Pasting…" status
-            // so the user doesn't think the paste is still in flight.
-            self.active_window_mut().status_message = None;
-        }
-
-        // Drain the queue under the now-cleared pending flag so
-        // dispatch_input_event_immediate doesn't re-enqueue.
-        let queue = std::mem::take(&mut self.pending_input_queue);
-        for ev in queue {
-            if let Err(e) = self.dispatch_input_event_immediate(ev) {
-                tracing::warn!("error dispatching queued input event: {}", e);
-            }
+        for anchor in pending.anchors {
+            state
+                .virtual_texts
+                .remove(&mut state.marker_list, anchor.virtual_text_id);
         }
     }
 
-    /// If a paste is pending and its deadline has passed, synthesize
-    /// a None result so the editor stops waiting. Called from the
-    /// editor tick so the timeout fires even when no other async
-    /// message wakes the loop. Returns true when the deadline fired
-    /// (and the caller should redraw — the queued input drain and
-    /// status-message clear both want a frame).
+    /// Walk pending pastes, cancelling any whose deadline has passed.
+    /// Returns true when at least one entry was cancelled (the caller
+    /// should redraw to refresh the now-empty placeholder cells).
     pub(crate) fn check_paste_deadline(&mut self) -> bool {
-        let Some(pending) = self.paste_pending else {
-            return false;
-        };
-        if Instant::now() < pending.deadline {
+        let now = Instant::now();
+        let expired_ids: Vec<u64> = self
+            .paste_pending
+            .iter()
+            .filter_map(|(id, pending)| (now >= pending.deadline).then_some(*id))
+            .collect();
+        if expired_ids.is_empty() {
             return false;
         }
-        tracing::debug!(
-            "paste request {} hit {}ms deadline, falling back to internal clipboard",
-            pending.request_id,
-            PASTE_ASYNC_DEADLINE.as_millis()
-        );
-        let request_id = pending.request_id;
-        self.resolve_pending_paste(request_id, None);
+        for id in expired_ids {
+            tracing::debug!(
+                "paste request {} hit {}ms deadline, cancelling",
+                id,
+                PASTE_ASYNC_DEADLINE.as_millis()
+            );
+            self.resolve_pending_paste(id, None);
+        }
         true
     }
 
-    /// Earliest deadline the editor needs the tick loop to wake for,
-    /// limited to paste-related deadlines. Returned alongside other
-    /// time-driven deadlines from `next_periodic_redraw_deadline`.
+    /// Earliest deadline across all in-flight pastes, used by the
+    /// tick loop to know when to wake. `None` when nothing is pending.
     pub(crate) fn next_paste_deadline(&self) -> Option<Instant> {
-        self.paste_pending.as_ref().map(|p| p.deadline)
+        self.paste_pending.values().map(|p| p.deadline).min()
     }
 
-    /// Whether a paste is currently in flight. Used by the input loop
-    /// to know whether to queue rather than dispatch.
+    /// Whether at least one async paste is in flight. Exposed mainly
+    /// for tests and instrumentation; the input loop no longer keys
+    /// off this — input is dispatched immediately and the anchor
+    /// catches the eventual paste.
     pub fn is_paste_pending(&self) -> bool {
-        self.paste_pending.is_some()
+        !self.paste_pending.is_empty()
+    }
+
+    /// Cancel any pending pastes whose anchors live in the given
+    /// buffer. Called by the buffer-close path so we don't try to
+    /// insert into a freed buffer when the result arrives. The
+    /// buffer's `virtual_texts` and `marker_list` are about to be
+    /// dropped along with the buffer, so we just forget the entries
+    /// — no virtual-text removal needed.
+    pub fn cancel_pending_pastes_for_buffer(&mut self, buffer_id: BufferId) {
+        self.paste_pending
+            .retain(|_, pending| pending.buffer_id != buffer_id);
     }
 
     /// Paste text directly into the editor

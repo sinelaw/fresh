@@ -173,6 +173,15 @@ impl VirtualTextManager {
     /// state. Used by `pipeline_inputs_version` to invalidate scroll-math
     /// caches keyed off `EditorState`.
     #[inline]
+    /// MarkerId backing the given virtual text, or `None` if the id is unknown.
+    /// Callers pair this with `MarkerList::get_position` to read the current
+    /// buffer position after edits have moved the marker — used by async-paste
+    /// to look up where the placeholder ended up so the pasted text lands
+    /// there, not where the cursor was at Ctrl+V time.
+    pub fn marker_id_of(&self, id: VirtualTextId) -> Option<MarkerId> {
+        self.texts.get(&id).map(|vt| vt.marker_id)
+    }
+
     pub fn version(&self) -> u32 {
         self.version
     }

@@ -266,39 +266,14 @@ impl Editor {
 
     /// Dispatch a raw terminal event into the editor.
     ///
-    /// While an async clipboard paste is in flight (`paste_pending`),
-    /// key / mouse / bracketed-paste events are stashed into the
-    /// pending-input queue and replayed in order once the paste
-    /// resolves. Resize and focus events still go through immediately
-    /// — they only adjust rendering state, never the buffer, so
-    /// queuing would just make the UI feel sluggish.
+    /// Async clipboard pastes are anchored in the buffer (a floating
+    /// "▍" placeholder), not gated on an input queue, so input is
+    /// dispatched immediately even while a paste is in flight. The
+    /// pasted text lands at its anchor when it arrives without
+    /// disturbing the live cursor.
     ///
     /// Returns whether the editor wants the next frame redrawn.
     pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
-        use crossterm::event::Event as Ev;
-
-        if self.paste_pending.is_some() {
-            let queueable = matches!(&event, Ev::Key(_) | Ev::Mouse(_) | Ev::Paste(_));
-            if queueable {
-                self.enqueue_pending_input(event);
-                // A queued event still wants the next frame so the
-                // "Pasting…" status / pending input count stays fresh.
-                return Ok(true);
-            }
-            // Resize/Focus/Cursor reports fall through to the normal
-            // dispatch even with a paste pending.
-        }
-
-        self.dispatch_input_event_immediate(event)
-    }
-
-    /// Inner dispatch that assumes no paste is pending. Used both by
-    /// `handle_input_event` and by the paste-resolved drain path —
-    /// keeping the queueing decision in exactly one place.
-    pub(crate) fn dispatch_input_event_immediate(
-        &mut self,
-        event: crossterm::event::Event,
-    ) -> anyhow::Result<bool> {
         use crossterm::event::{Event as Ev, KeyEventKind};
 
         match event {
