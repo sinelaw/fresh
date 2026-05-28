@@ -109,14 +109,19 @@ fn focused_field(screen: &str) -> Option<String> {
 /// Helper: find which button has focus by looking for the ">" indicator
 /// rendered before button text. The ">" is at a separate cell position,
 /// so we search for it in the vicinity of button labels.
+///
+/// The Delete button's label is scope-aware — `[ Delete ]`, `[ Delete item ]`,
+/// or `[ Delete "<key>" ]` depending on whether the entry dialog is over
+/// a map entry or an array item — so the match is on the `[ <name>` prefix
+/// rather than the full bracketed string.
 fn focused_button(harness: &EditorTestHarness) -> Option<String> {
     let screen = harness.screen_to_string();
     let buttons = ["Save", "Delete", "Cancel"];
 
     for (row_idx, line) in screen.lines().enumerate() {
         for button in &buttons {
-            let label = format!("[ {} ]", button);
-            if let Some(col) = line.find(&label) {
+            let label_prefix = format!("[ {}", button);
+            if let Some(col) = line.find(&label_prefix) {
                 // Check for ">" indicator in the 1-3 cells before the button
                 let col = col as u16;
                 let row = row_idx as u16;
