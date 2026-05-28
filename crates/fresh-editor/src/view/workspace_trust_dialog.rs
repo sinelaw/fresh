@@ -7,6 +7,7 @@
 //! command palette the secondary button is "Cancel" (close without changing
 //! the current level).
 
+use crate::primitives::display_width::{str_width, DisplayWidth};
 use crate::view::theme::Theme;
 use ratatui::{
     layout::Rect,
@@ -15,28 +16,33 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
+use rust_i18n::t;
 
 /// One selectable trust option: its radio label and the one-line description
-/// shown beneath it. The mnemonic is the bracketed capital in `label`.
+/// shown beneath it. The mnemonic letter is appended in parentheses (e.g.
+/// "(T)") so the keypress works the same in every locale while the surrounding
+/// text is translatable.
 struct TrustOption {
-    label: &'static str,
-    description: &'static str,
+    label: String,
+    description: String,
 }
 
-const OPTIONS: [TrustOption; 3] = [
-    TrustOption {
-        label: "[T]rust folder & Allow Tooling",
-        description: "Runs everything: language servers, build scripts, tasks, env activation.",
-    },
-    TrustOption {
-        label: "[K]eep Restricted (Default)",
-        description: "Runs system tools found on your PATH (git, ripgrep, the system python). Blocks: executables & scripts located inside this project (e.g. ./gradlew, .venv/bin/python, node_modules/.bin/*), env activation (.env/.envrc/mise), and language servers.",
-    },
-    TrustOption {
-        label: "[B]lock All Execution",
-        description: "Nothing runs — no system tools, language servers, scripts, or tasks.",
-    },
-];
+fn options() -> [TrustOption; 3] {
+    [
+        TrustOption {
+            label: t!("trust.dialog.opt_trust_label").into_owned(),
+            description: t!("trust.dialog.opt_trust_desc").into_owned(),
+        },
+        TrustOption {
+            label: t!("trust.dialog.opt_restrict_label").into_owned(),
+            description: t!("trust.dialog.opt_restrict_desc").into_owned(),
+        },
+        TrustOption {
+            label: t!("trust.dialog.opt_block_label").into_owned(),
+            description: t!("trust.dialog.opt_block_desc").into_owned(),
+        },
+    ]
+}
 
 const DIALOG_WIDTH: u16 = 68;
 
@@ -91,17 +97,18 @@ pub fn render_workspace_trust_dialog(
     }
     let desc_w = inner_w.saturating_sub(6).max(8) as usize;
     let shown_path = truncate_middle(path, inner_w.saturating_sub(8).max(8) as usize);
+    let opts = options();
 
     let mut segs: Vec<Seg> = vec![
         Seg::Header,
         Seg::Sep,
-        Seg::Plain(" This project folder can execute arbitrary code:".to_string()),
+        Seg::Plain(format!(" {}", t!("trust.dialog.can_execute"))),
         Seg::Path(shown_path),
     ];
     // Why the prompt fired: the marker files/dirs we detected.
     if !triggers.is_empty() {
         let lines = wrap_text(
-            &format!("Detected: {triggers}"),
+            &t!("trust.dialog.detected", triggers = triggers),
             inner_w.saturating_sub(2).max(8) as usize,
         );
         for line in lines {
@@ -109,11 +116,11 @@ pub fn render_workspace_trust_dialog(
         }
     }
     segs.push(Seg::Blank);
-    segs.push(Seg::Plain(" How would you like to proceed?".to_string()));
+    segs.push(Seg::Plain(format!(" {}", t!("trust.dialog.how_proceed"))));
     segs.push(Seg::Blank);
-    for (i, opt) in OPTIONS.iter().enumerate() {
+    for (i, opt) in opts.iter().enumerate() {
         segs.push(Seg::Radio(i));
-        for line in wrap_text(opt.description, desc_w) {
+        for line in wrap_text(&opt.description, desc_w) {
             segs.push(Seg::Desc(line));
         }
         segs.push(Seg::Blank);
@@ -185,7 +192,7 @@ pub fn render_workspace_trust_dialog(
                 frame,
                 r,
                 Line::from(Span::styled(
-                    " ⚠  SECURITY WARNING",
+                    format!(" ⚠  {}", t!("trust.dialog.security_warning")),
                     Style::default()
                         .fg(theme.status_warning_indicator_fg)
                         .bg(bg)
@@ -217,7 +224,10 @@ pub fn render_workspace_trust_dialog(
                 frame,
                 r,
                 Line::from(vec![
-                    Span::styled(" Path: ", Style::default().fg(fg).bg(bg)),
+                    Span::styled(
+                        format!(" {} ", t!("trust.dialog.path_label")),
+                        Style::default().fg(fg).bg(bg),
+                    ),
                     Span::styled(
                         p,
                         Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
@@ -235,7 +245,7 @@ pub fn render_workspace_trust_dialog(
                 } else {
                     Style::default().fg(fg).bg(bg)
                 };
-                let text = pad_to(&format!(" {marker} {}", OPTIONS[i].label), iw as usize);
+                let text = pad_to(&format!(" {marker} {}", opts[i].label), iw as usize);
                 put(frame, r, Line::from(Span::styled(text, style)));
                 layout.radios[i] = row_rect(r);
             }
@@ -284,10 +294,10 @@ fn render_buttons(
     bg: ratatui::style::Color,
     fg: ratatui::style::Color,
 ) -> (Rect, Rect) {
-    let ok_label = "[ OK ]".to_string();
+    let ok_label = format!("[ {} ]", t!("trust.dialog.btn_ok"));
     let quit_label = format!("[ {secondary_label} ]");
-    let ok_w = ok_label.chars().count() as u16;
-    let quit_w = quit_label.chars().count() as u16;
+    let ok_w = ok_label.display_width() as u16;
+    let quit_w = quit_label.display_width() as u16;
     // OK at ~1/4, Quit at ~3/4 of the row.
     let ok_x = row.x + row.width / 4 - ok_w / 2;
     let quit_x = row.x + (row.width * 3) / 4 - quit_w / 2;
@@ -320,8 +330,8 @@ fn render_buttons(
     (ok_rect, quit_rect)
 }
 
-/// Greedy word-wrap `s` to lines of at most `width` columns (approximated by
-/// char count, which is exact for the ASCII copy used here).
+/// Greedy word-wrap `s` to lines of at most `width` display columns. Uses
+/// Unicode display width so CJK double-wide characters count as two columns.
 fn wrap_text(s: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -329,7 +339,7 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
     for word in s.split_whitespace() {
         if cur.is_empty() {
             cur.push_str(word);
-        } else if cur.chars().count() + 1 + word.chars().count() <= width {
+        } else if str_width(&cur) + 1 + str_width(word) <= width {
             cur.push(' ');
             cur.push_str(word);
         } else {
@@ -347,9 +357,10 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
 }
 
 /// Right-pad `s` with spaces to `width` display columns (no truncation here;
-/// callers pass text known to fit).
+/// callers pass text known to fit). Uses Unicode display width, so CJK
+/// double-wide characters count as two columns.
 fn pad_to(s: &str, width: usize) -> String {
-    let len = s.chars().count();
+    let len = str_width(s);
     if len >= width {
         s.to_string()
     } else {
