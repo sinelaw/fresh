@@ -150,7 +150,12 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     .unwrap();
     let aaa_before = row_of(&h, "aaa_project");
     let zzz_before = row_of(&h, "zzz_project");
-    assert!(aaa_before < zzz_before, "expected aaa above zzz initially");
+    assert!(
+        aaa_before < zzz_before,
+        "expected aaa above zzz initially; got aaa at row {aaa_before}, \
+         zzz at row {zzz_before}. Full screen for diagnosis:\n{}",
+        h.screen_to_string(),
+    );
 
     // Arrow down to the second row, which live-switches the active window
     // to the zzz project.
@@ -176,7 +181,9 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     let zzz_after = row_of(&h, "zzz_project");
     assert!(
         aaa_after < zzz_after,
-        "dock list reordered on switch: aaa now at {aaa_after}, zzz at {zzz_after}"
+        "dock list reordered on switch: aaa now at {aaa_after}, zzz at {zzz_after}.\n\
+         Full screen for diagnosis:\n{}",
+        h.screen_to_string(),
     );
 }
 
@@ -670,9 +677,14 @@ fn dock_initial_sort_is_lex_stable_not_current_first() {
     assert!(
         aaa_row < zzz_row,
         "dock initial order should be lex-stable (aaa above zzz); got \
-         aaa at {aaa_row}, zzz at {zzz_row}. This means `filterSessions` \
-         ran with pinCurrentFirst=true (dockMode was still false), \
-         which is the line-1757-before-1765 bug in `openControlRoom`."
+         aaa at {aaa_row}, zzz at {zzz_row}.\n\
+         Roots: aaa = {:?}, zzz = {:?}\n\
+         Active root at assertion time: {:?}\n\
+         Full screen for diagnosis:\n{}",
+        root_a,
+        root_b,
+        h.editor().active_window().root,
+        h.screen_to_string(),
     );
 }
 
