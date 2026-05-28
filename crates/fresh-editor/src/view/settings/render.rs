@@ -3361,7 +3361,11 @@ fn entry_delete_button_label(dialog: &EntryDialogState) -> String {
         "[ Delete entry ]".to_string()
     } else {
         let key = if dialog.entry_key.chars().count() > MAX_KEY_IN_LABEL {
-            let truncated: String = dialog.entry_key.chars().take(MAX_KEY_IN_LABEL - 1).collect();
+            let truncated: String = dialog
+                .entry_key
+                .chars()
+                .take(MAX_KEY_IN_LABEL - 1)
+                .collect();
             format!("{}…", truncated)
         } else {
             dialog.entry_key.clone()
@@ -3799,7 +3803,11 @@ fn render_entry_dialog_inner(
     let has_delete = !dialog.is_new && !dialog.no_delete;
     let delete_label = entry_delete_button_label(dialog);
     let buttons: Vec<String> = if has_delete {
-        vec!["[ Save ]".to_string(), "[ Cancel ]".to_string(), delete_label]
+        vec![
+            "[ Save ]".to_string(),
+            "[ Cancel ]".to_string(),
+            delete_label,
+        ]
     } else {
         vec!["[ Save ]".to_string(), "[ Cancel ]".to_string()]
     };
