@@ -349,6 +349,15 @@ const DOCK_WIDTH_COLS = 32;
 // (dispatch_floating_widget_key) reads the panel focus directly to route
 // Enter/Esc/Space//'; this mirror is informational for the plugin.
 let dockFocus: "list" | "filter" = "list";
+// Full focused-widget mirror for the open dialog (both dock and
+// centered-picker modes). Updated from every `focus` widget_event.
+// Used by `toggleSelectCurrent` so a Space keypress while focus is
+// on a filter checkbox toggles *that* checkbox rather than the list
+// — see the OPEN_MODE `["Space", "orchestrator_toggle_select"]`
+// binding below for why the mode binding can't be made conditional
+// upstream (it has to swallow Space unconditionally to keep it out
+// of the filter text-input).
+let pickerFocusKey: string = "sessions";
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
 // showing every session; flipping it with the Project control / Alt+P
@@ -1785,7 +1794,12 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   // safe — there's nothing to act on then anyway.
   // In the dock the focusable session list is the default focus
   // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
-  openPanel.setFocusKey(asDock ? "sessions" : "visit");
+  const initialFocus = asDock ? "sessions" : "visit";
+  openPanel.setFocusKey(initialFocus);
+  // Seed the `pickerFocusKey` mirror — `setFocusKey` only fires the
+  // `focus` widget_event when the inner key actually *changes*, so on
+  // a fresh mount it may not fire (no previous focus to differ from).
+  pickerFocusKey = initialFocus;
   if (asDock) {
     // The dock has no editor mode — its keys are handled at the host
     // floating-panel layer (mode bindings would be shadowed by the
@@ -2706,6 +2720,27 @@ function toggleSelectCurrent(): void {
   // Inert while a confirm prompt is up — the selection is frozen
   // behind the confirmation panel.
   if (openDialog.pendingConfirm) return;
+  // Context-sensitive Space dispatch. OPEN_MODE binds Space to
+  // `orchestrator_toggle_select` *unconditionally* — it must, to keep
+  // Space out of the filter text input (the host's
+  // dispatch_floating_widget_key defers any explicitly-bound mode key
+  // before the text-input path). We branch on the focused widget so
+  // Space on the filter checkboxes / scope chip toggles *that*
+  // control rather than the list multi-select. Other focused widgets
+  // (sessions list, Visit button, +New, the filter input itself) fall
+  // through to the list multi-select — preserving today's behaviour
+  // for widgets that don't expose a natural toggle.
+  switch (pickerFocusKey) {
+    case "worktree-show":
+      toggleShowWorktrees();
+      return;
+    case "hide-trivial":
+      toggleHideTrivial();
+      return;
+    case "scope-toggle":
+      toggleScope();
+      return;
+  }
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number") return;
   const wasBulk = selectedSessions().length >= 2;
@@ -4578,9 +4613,14 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "focus") {
-      // Focus (re-)entered the dock — a mouse click on a row/filter, or
-      // a host-driven focus move. Track the zone so Up/Down + filter
-      // behave; mark the dock active again.
+      // Focus (re-)entered the dock / picker — a mouse click on a
+      // row/filter, a host-driven focus move, or the symmetric
+      // refocus_floating_panel notification fired by the host's
+      // un-dive mouse handler. Track the zone (dockFocus) and the
+      // exact focused widget (pickerFocusKey); mark the dock active.
+      if (typeof e.widget_key === "string" && e.widget_key.length > 0) {
+        pickerFocusKey = e.widget_key;
+      }
       if (dockMode) {
         dockBlurred = false;
         dockFocus = e.widget_key === "filter" ? "filter" : "list";

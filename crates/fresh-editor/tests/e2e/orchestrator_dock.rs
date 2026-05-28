@@ -408,3 +408,117 @@ fn dock_show_empty_toggle_flips_on_click() {
     h.wait_until(|h| h.screen_to_string().contains("[v] show empty/1-file"))
         .unwrap();
 }
+
+#[test]
+fn picker_space_toggles_focused_checkbox_not_list() {
+    // OPEN_MODE binds Space to `orchestrator_toggle_select`
+    // unconditionally — it has to, to keep Space out of the filter
+    // text input (the host's `dispatch_floating_widget_key` defers any
+    // explicitly-bound mode key, including bare chars, before the text-
+    // input path). Without context-sensitivity, Space toggles the
+    // sessions-list multi-select even while focus is on the
+    // "Show all worktrees" / "Show empty/1-file" filter checkbox above
+    // the list.
+    //
+    // With the fix, `toggleSelectCurrent` branches on the focused
+    // widget (mirrored from the existing `focus` widget_event): Space
+    // on `worktree-show` toggles that checkbox, not the list.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Open the centered picker via the command palette.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Wait until the picker is fully mounted: the header is painted,
+    // the worktree filter row is visible, and the list shows alphaproj.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("ORCHESTRATOR :: Sessions")
+            && s.contains("Show all worktrees")
+            && s.contains("[ ] alphaproj")
+    })
+    .unwrap();
+
+    // Sanity: focus opens on the sessions list, so Space toggles the
+    // list multi-select. This guards against the test landing focus
+    // elsewhere by accident on a future picker re-layout.
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[x] alphaproj"))
+        .unwrap();
+    // Reset before the focus walk.
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[ ] alphaproj"))
+        .unwrap();
+
+    // Tab cycle is spec-order: new-session → scope-toggle →
+    // worktree-show → hide-trivial → filter → sessions. Three
+    // Shift+Tabs from `sessions` land on `worktree-show`.
+    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+
+    // Space here must toggle `worktree-show`, NOT the list.
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[v] Show all worktrees"))
+        .unwrap();
+    assert!(
+        h.screen_to_string().contains("[ ] alphaproj"),
+        "Space while focus is on the worktree-show checkbox must not \
+         toggle the list. Screen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+#[test]
+fn click_un_dive_switches_to_clicked_session() {
+    // The Rust mouse handler sets `dock.focused = true` when a click
+    // lands inside a blurred dock — the un-dive transition. The
+    // existing `set_panel_focus_and_notify` it then calls only fires a
+    // `focus` widget_event when the inner focus_key changes, which it
+    // doesn't here (a dive leaves the inner widget alone, only toggles
+    // overall dock focus). So the plugin's `dockBlurred` mirror stays
+    // `true`, and when the click's `select` event then schedules a
+    // dock-switch (`scheduleDockSwitch`), the +30 ms check
+    // `if (... || dockBlurred) return` swallows the active-window
+    // change. The fix is host-side: fire a `focus` widget_event on
+    // un-blur, symmetric with `blur_floating_panel` (which has always
+    // fired `blur` on dive).
+    //
+    // Reproduce: two sessions in the dock, dive into one, then click
+    // the other — active_window must flip to the clicked session.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    // Highlight beta and let the dock's debounced live-switch flip
+    // active_window. Then dive into beta with Enter — that blurs the
+    // dock so the editor terminal owns subsequent keys.
+    let beta_root = root.join("wt-beta");
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.editor().active_window().root == beta_root)
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // The un-dive click on alphaproj's row must (a) re-focus the dock
+    // and (b) flip the active window to alphaproj.
+    let alpha_row = row_of(&h, "alphaproj") as u16;
+    h.mouse_click(3, alpha_row).unwrap();
+    h.wait_until(|h| h.editor().active_window().root == root)
+        .unwrap();
+}

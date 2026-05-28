@@ -1538,9 +1538,15 @@ impl Editor {
         {
             if col < width_cols {
                 if !focused {
-                    if let Some(f) = self.dock.as_mut() {
-                        f.focused = true;
-                    }
+                    // Symmetric with `blur_floating_panel`: the un-blur
+                    // must notify the plugin via a `focus` widget_event
+                    // so any mirror of dock-focus state updates before
+                    // the click's row-select event fires its scheduling
+                    // logic. Without this, the orchestrator's
+                    // `dockBlurred` mirror stayed `true` and its
+                    // debounced live-switch aborted on the first
+                    // un-dive click.
+                    self.refocus_floating_panel(super::PanelSlot::Dock);
                 }
                 self.handle_floating_widget_click(super::PanelSlot::Dock, col, row);
                 return Ok(());

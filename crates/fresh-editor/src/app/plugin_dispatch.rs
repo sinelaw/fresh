@@ -5853,6 +5853,53 @@ impl Editor {
         }
     }
 
+    /// Restore keyboard focus to a (docked) floating panel that was
+    /// previously blurred — typically a mouse click landing back inside
+    /// the dock's column after the user dived into the editor. Sets
+    /// the panel's `focused` flag and fires a `focus` widget_event so
+    /// the owning plugin can update any mirror of the focused state
+    /// (the orchestrator's `dockBlurred`, for instance). Symmetric
+    /// with [`Editor::blur_floating_panel`], which has always fired
+    /// `blur` on the inverse transition.
+    ///
+    /// Unlike [`Editor::set_panel_focus_and_notify`] this fires the
+    /// `focus` event even when the *inner* focus_key hasn't changed —
+    /// the dive only flipped overall focus, not the active widget, so
+    /// the inner key is identical on re-focus and the "key-changed"
+    /// short-circuit would silently drop the event. That short-circuit
+    /// was the original bug: the host updated `dock.focused` but the
+    /// plugin's mirror stayed stale, and the dock's debounced
+    /// dock-switch then aborted at its `dockBlurred` guard.
+    pub(super) fn refocus_floating_panel(&mut self, slot: super::PanelSlot) {
+        let Some(panel_id) = self.panel(slot).map(|f| f.panel_id) else {
+            return;
+        };
+        if let Some(f) = self.panel_mut(slot) {
+            f.focused = true;
+        }
+        let widget_key = self
+            .widget_registry
+            .get(panel_id)
+            .map(|p| p.focus_key.clone())
+            .unwrap_or_default();
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key,
+                    event_type: "focus".to_string(),
+                    payload: serde_json::json!({ "previous": "(re-focus)" }),
+                },
+            );
+        }
+    }
+
     /// Return keyboard focus to the editor while leaving a (docked)
     /// floating panel visible. Clears the panel's `focused` flag and
     /// fires a `blur` widget_event so the owning plugin can react

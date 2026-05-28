@@ -40,6 +40,27 @@
   dock now renders a "show empty/1-file" toggle (default off — hides
   trivial sessions), wired to the same `hide-trivial` filter as the
   modal.
+- ~~Space toggles the list multi-select regardless of which widget owns
+  focus.~~ **Fixed**: the picker's `OPEN_MODE` binds Space to
+  `orchestrator_toggle_select` unconditionally — it has to, to keep
+  Space out of the filter text-input. `toggleSelectCurrent` now branches
+  on the focused widget key (mirrored from the existing `focus`
+  widget_event) and dispatches to the focused control's toggle
+  (`scope-toggle` → `toggleScope`, `worktree-show` →
+  `toggleShowWorktrees`, `hide-trivial` → `toggleHideTrivial`) or falls
+  through to the list when focus is on `sessions`. Buttons / filter
+  input no-op (Space has no toggle semantic on them).
+- ~~Clicking a dock row while the editor terminal is keyboard-diving
+  silently drops the row-switch.~~ **Fixed**: the host's mouse handler
+  set `dock.focused = true` on the un-dive click but didn't notify the
+  plugin (`set_panel_focus_and_notify` no-ops when the inner focus_key
+  is unchanged, which is the common case — the dive only touched
+  overall focus, not the inner widget). The plugin's `dockBlurred`
+  mirror stayed `true`, so `scheduleDockSwitch` short-circuited at the
+  +30 ms check and the click — *and* every subsequent arrow — was
+  swallowed. The host now fires a `focus` widget_event when the click
+  un-blurs the dock, symmetric with `blur_floating_panel` (which has
+  always fired `blur` on the inverse transition).
 - **Diving into a *switched* session focuses the file explorer, not the
   buffer.** When you arrow to a different session and press Enter, the
   window activates with its file-explorer pane focused, so the first
