@@ -24,15 +24,23 @@ use crate::view::split::SplitViewState;
 use super::window::Window;
 use super::{Editor, FloatingWidgetState};
 
-/// Strip Windows' `\\?\` verbatim prefix from a path. No-op on non-Windows.
-fn strip_verbatim_prefix(path: std::path::PathBuf) -> std::path::PathBuf {
+/// Normalize a session path for the plugin API. Sessions reach `WindowInfo`
+/// from two sources — the canonicalized launch session and `create_window_at`'s
+/// raw `PathBuf` — so any byte-level path field (lex sort, equality, …) in a
+/// plugin needs them encoded the same way. On Windows that means resolving
+/// 8.3 short names (`RUNNER~1` → `runneradmin`) and stripping the `\\?\`
+/// verbatim prefix `canonicalize` adds. No-op on non-Windows.
+fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
     #[cfg(windows)]
     {
-        let s = path.to_string_lossy();
+        let canonical = path.canonicalize().unwrap_or(path);
+        let s = canonical.to_string_lossy();
         if let Some(stripped) = s.strip_prefix(r"\\?\") {
             return std::path::PathBuf::from(stripped);
         }
+        return canonical;
     }
+    #[cfg(not(windows))]
     path
 }
 
@@ -184,15 +192,11 @@ impl Editor {
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                // Normalize paths at the plugin boundary: strip Windows'
-                // `\\?\` verbatim prefix so paths from different sources
-                // (canonicalized launch session vs raw `create_window_at`)
-                // compare/sort consistently in plugin land.
                 fresh_core::api::WindowInfo {
                     id: s.id,
                     label: s.label.clone(),
-                    root: strip_verbatim_prefix(s.root.clone()),
-                    project_path: strip_verbatim_prefix(project_path),
+                    root: normalize_plugin_path(s.root.clone()),
+                    project_path: normalize_plugin_path(project_path),
                     shared_worktree,
                 }
             })
