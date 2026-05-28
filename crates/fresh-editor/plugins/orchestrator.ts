@@ -641,7 +641,17 @@ function ageString(createdAt: number): string {
 // the session root for sessions that predate the field (the base
 // session, externally-created windows).
 function projectKeyOf(s: AgentSession): string {
-  return s.projectPath ?? s.root;
+  // Use `||`, not `??`, so an empty-string `projectPath` also falls
+  // through to `root`. The host serialises `WindowInfo.project_path:
+  // Option<PathBuf>`: `None` is skipped (so plugin sees `undefined`),
+  // but a `Some(PathBuf::new())` — or any path that round-trips as the
+  // empty string — would survive `??` as `""` and become the sort key.
+  // That made `byProjectThenId` compare two sessions as `"" < real path`
+  // (empty lex-sorts first), reversing the dock list on Windows CI
+  // where one session's projectPath was emerging as "". Treating empty
+  // as "no projectPath" is correct anyway: an empty path is meaningless
+  // as a project identifier.
+  return s.projectPath || s.root;
 }
 
 // The project the user is currently "in" — the active window's
@@ -1995,22 +2005,7 @@ function buildDockSpec(): WidgetSpec {
       kind: "raw",
       entries: [
         styledRow([
-          {
-            // TEMPORARY DIAGNOSTIC for the Windows-only
-            // `dock_initial_sort_…` / `dock_list_order_…` failure.
-            // Embed `dockMode`, the basename's first 3 chars of `cur`,
-            // and `filteredIds` into the dock header so the CI screen
-            // dump tells us whether the plugin sees `dockMode=true` (the
-            // fix is taking effect) and what `currentProjectKey()` it
-            // believes is current at filter time. Use only the first 3
-            // chars of the basename so it doesn't collide with the
-            // tests' `row_of("aaa_project")` / `row_of("zzz_project")`
-            // substring matches. Revert once the root cause is fixed.
-            text: `ORCHESTRATOR dm=${dockMode ? "T" : "F"} c=${(
-              currentProjectKey().split(/[/\\]/).pop() ?? ""
-            ).slice(0, 3)} f=[${filtered.join(",")}]`,
-            style: { fg: "ui.popup_border_fg", bold: true },
-          },
+          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
         ]),
       ],
     },
