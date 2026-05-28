@@ -1578,15 +1578,15 @@ mod tests {
     /// window's context.
     #[test]
     fn overlay_stack_base_layer_owns_keyboard() {
-        use crate::app::overlay::{FocusPolicy, LayerKind};
+        use crate::app::overlay::LayerKind;
         use crate::input::keybindings::KeyContext;
 
         let editor = default_test_editor();
         let layers = editor.overlay_layers();
         let base = layers.last().expect("at least the base layer");
         assert_eq!(base.kind, LayerKind::Editor);
-        assert_eq!(base.policy, FocusPolicy::Base);
         assert!(base.owns_keyboard);
+        assert!(!base.blocks_terminal_input);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
     }
 

@@ -24,6 +24,43 @@ fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
 }
 
 impl Editor {
+    /// If any overlay layer captures mouse events, dispatch to its
+    /// dedicated handler and return its result; otherwise return `None`
+    /// so the caller continues with the normal click/wheel pipeline.
+    ///
+    /// This is the mouse counterpart of `resolve_focus_context` /
+    /// `presents_blocking_overlay`: precedence is the order of
+    /// `overlay_layers()`, top-first. Only the kinds whose modal
+    /// handlers exist need an arm here — non-capturing layers fall
+    /// through.
+    fn dispatch_modal_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+        is_double_click: bool,
+    ) -> Option<AnyhowResult<bool>> {
+        use crate::app::overlay::LayerKind;
+
+        // Snapshot the capturing kinds first so the borrow ends before
+        // any `&mut self` handler runs.
+        let capturing_kind = self.overlay_layers().iter().find_map(|l| match l.kind {
+            LayerKind::Settings
+            | LayerKind::KeybindingEditor
+            | LayerKind::CalibrationWizard
+            | LayerKind::WorkspaceTrust => Some(l.kind),
+            _ => None,
+        })?;
+        Some(match capturing_kind {
+            LayerKind::KeybindingEditor => self.handle_keybinding_editor_mouse(mouse_event),
+            LayerKind::Settings => self.handle_settings_mouse(mouse_event, is_double_click),
+            // The calibration wizard owns the modal z-band but ignores
+            // every mouse event (its UI is keyboard-driven). Swallowing
+            // here matches the previous explicit `return Ok(false)`.
+            LayerKind::CalibrationWizard => Ok(false),
+            LayerKind::WorkspaceTrust => self.handle_workspace_trust_mouse(mouse_event),
+            _ => unreachable!("find_map only returns capturing kinds"),
+        })
+    }
+
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
     pub fn handle_mouse(
@@ -37,31 +74,13 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // When keybinding editor is open, capture all mouse events
-        if self.keybinding_editor.is_some() {
-            return self.handle_keybinding_editor_mouse(mouse_event);
-        }
-
-        // When settings modal is open, capture all mouse events
-        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
-            return self.handle_settings_mouse(mouse_event, is_double_click);
-        }
-
-        // When calibration wizard is active, ignore all mouse events
-        if self.calibration_wizard.is_some() {
-            return Ok(false);
-        }
-
-        // The workspace-trust modal captures every mouse event: clicks act on
-        // its controls (and are otherwise absorbed), the wheel scrolls it. None
-        // of it may leak to the buffer behind (which would move the cursor).
-        if self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        }) {
-            return self.handle_workspace_trust_mouse(mouse_event);
+        // Modal mouse-capture: walk the overlay stack top-down (the same
+        // list `get_key_context` / `dispatch_terminal_input` consult) and
+        // dispatch to the first layer that captures mouse. This replaces
+        // a hand-listed ladder that had drifted out of order with the
+        // keyboard dispatcher.
+        if let Some(result) = self.dispatch_modal_mouse(mouse_event, is_double_click) {
+            return result;
         }
 
         // Cancel LSP rename prompt on any mouse interaction

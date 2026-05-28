@@ -246,28 +246,37 @@ impl Editor {
     ///
     /// This is the single source of truth for overlay precedence: focus
     /// resolution (`get_key_context`), the unfocused-popup modal guard
-    /// (`resolve_unfocused_popup_action`) and the terminal-input gate
-    /// (`dispatch_terminal_input`) all read from this list rather than
-    /// keeping their own conditional ladders. Render and mouse dispatch
-    /// are migrated onto it in later steps.
+    /// (`resolve_unfocused_popup_action`), the terminal-input gate
+    /// (`dispatch_terminal_input`), and the mouse early-capture ladder
+    /// (`handle_mouse`) all read from this list rather than keeping their
+    /// own conditional ladders.
     pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
-        use crate::app::overlay::{FocusPolicy, Layer, LayerKind, LayerRegion};
+        use crate::app::overlay::{Layer, LayerKind};
         use crate::input::keybindings::KeyContext;
 
         let mut layers = Vec::new();
 
+        // Event-debug dialog intercepts every key event ahead of every
+        // other path (see `handle_key_event`), so it sits at the top of
+        // the stack. Its dispatcher is custom (no `KeyContext`).
+        if self.active_window().is_event_debug_active() {
+            layers.push(Layer {
+                kind: LayerKind::EventDebug,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
         // Full-screen modals own the keyboard whenever they are present.
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
             layers.push(Layer {
                 kind: LayerKind::Settings,
-                region: LayerRegion::FullScreen,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: true,
                 key_context: Some(KeyContext::Settings),
                 blocks_terminal_input: true,
             });
         }
-        // Keybinding editor and calibration wizard install their *own*
+        // Keybinding editor and calibration wizard install their own
         // input dispatchers (see `input_dispatch.rs`), so they are
         // transparent to `KeyContext`-driven keybinding resolution
         // (`key_context: None`) — but they fully own the keyboard while
@@ -275,8 +284,6 @@ impl Editor {
         if self.keybinding_editor.is_some() {
             layers.push(Layer {
                 kind: LayerKind::KeybindingEditor,
-                region: LayerRegion::FullScreen,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: true,
                 key_context: None,
                 blocks_terminal_input: true,
@@ -285,18 +292,33 @@ impl Editor {
         if self.calibration_wizard.is_some() {
             layers.push(Layer {
                 kind: LayerKind::CalibrationWizard,
-                region: LayerRegion::FullScreen,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: true,
                 key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // The workspace-trust prompt is a `global_popups` entry with its
+        // own modal z-band, key handler and mouse handler. When it's the
+        // top of the global stack it takes the place of the generic
+        // `Popup` layer so the dedicated handlers can be reached by
+        // top-down kind dispatch (`handle_mouse`, `input_dispatch`).
+        let trust_on_top = self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        });
+        if trust_on_top {
+            layers.push(Layer {
+                kind: LayerKind::WorkspaceTrust,
+                owns_keyboard: self.popups_capture_keys(),
+                key_context: Some(KeyContext::Popup),
                 blocks_terminal_input: true,
             });
         }
         if self.menu_state.active_menu.is_some() {
             layers.push(Layer {
                 kind: LayerKind::Menu,
-                region: LayerRegion::FullScreen,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: true,
                 key_context: Some(KeyContext::Menu),
                 blocks_terminal_input: true,
@@ -305,22 +327,20 @@ impl Editor {
         if self.is_prompting() {
             layers.push(Layer {
                 kind: LayerKind::Prompt,
-                region: LayerRegion::FullScreen,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: true,
                 key_context: Some(KeyContext::Prompt),
                 blocks_terminal_input: true,
             });
         }
-        // A popup is *present* whenever visible, but only *owns* the
-        // keyboard while capturing (`popups_capture_keys`); a merely-visible
-        // unfocused popup falls through to the layers below it. Either way
-        // a visible popup blocks PTY routing — it covers the active buffer.
-        if self.global_popups.is_visible() || self.active_state().popups.is_visible() {
+        // A non-trust popup is *present* whenever visible, but only *owns*
+        // the keyboard while capturing (`popups_capture_keys`); a
+        // merely-visible unfocused popup falls through. Either way a
+        // visible popup blocks PTY routing — it covers the active buffer.
+        if !trust_on_top
+            && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
+        {
             layers.push(Layer {
                 kind: LayerKind::Popup,
-                region: LayerRegion::Anchored,
-                policy: FocusPolicy::NonModal,
                 owns_keyboard: self.popups_capture_keys(),
                 key_context: Some(KeyContext::Popup),
                 blocks_terminal_input: true,
@@ -330,13 +350,11 @@ impl Editor {
         // overlay) owns the keyboard when focused. It resolves as `Normal`
         // regardless of the underlying buffer's (possibly stale) context so
         // mode-keybinding lookups still fire for the panel's own chords.
-        // It blocks PTY routing whenever present — the modal sits on top of
-        // (and obscures) the active terminal buffer.
+        // It blocks PTY routing whenever present — the modal sits on top
+        // of (and obscures) the active terminal buffer.
         if let Some(f) = self.floating_widget_panel.as_ref() {
             layers.push(Layer {
                 kind: LayerKind::FloatingModal,
-                region: LayerRegion::Centered,
-                policy: FocusPolicy::Modal,
                 owns_keyboard: f.focused,
                 key_context: Some(KeyContext::Normal),
                 blocks_terminal_input: true,
@@ -344,13 +362,11 @@ impl Editor {
         }
         // The editor-global dock owns the keyboard only while focused; a
         // blurred dock stays visible but lets the buffer underneath keep
-        // the keyboard *and* receive PTY routing (the dock lives beside the
-        // chrome, not over it).
+        // the keyboard *and* receive PTY routing (the dock lives beside
+        // the chrome, not over it).
         if let Some(d) = self.dock.as_ref() {
             layers.push(Layer {
                 kind: LayerKind::Dock,
-                region: LayerRegion::LeftDock,
-                policy: FocusPolicy::NonModal,
                 owns_keyboard: d.focused,
                 key_context: Some(KeyContext::Dock),
                 blocks_terminal_input: d.focused,
@@ -367,8 +383,6 @@ impl Editor {
         };
         layers.push(Layer {
             kind: LayerKind::Editor,
-            region: LayerRegion::EditorContent,
-            policy: FocusPolicy::Base,
             owns_keyboard: true,
             key_context: Some(base_context),
             blocks_terminal_input: false,
