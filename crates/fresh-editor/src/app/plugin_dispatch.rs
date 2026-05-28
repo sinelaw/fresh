@@ -24,6 +24,18 @@ use crate::view::split::SplitViewState;
 use super::window::Window;
 use super::{Editor, FloatingWidgetState};
 
+/// Strip Windows' `\\?\` verbatim prefix from a path. No-op on non-Windows.
+fn strip_verbatim_prefix(path: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(stripped);
+        }
+    }
+    path
+}
+
 /// Returns the byte offset of the start (want_end=false) or end (want_end=true)
 /// of `line` (0-indexed) within `content`. Returns `None` when `line` is out of
 /// range. The "end" position is the byte index of the terminating `\n`; for the
@@ -172,11 +184,15 @@ impl Editor {
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // Normalize paths at the plugin boundary: strip Windows'
+                // `\\?\` verbatim prefix so paths from different sources
+                // (canonicalized launch session vs raw `create_window_at`)
+                // compare/sort consistently in plugin land.
                 fresh_core::api::WindowInfo {
                     id: s.id,
                     label: s.label.clone(),
-                    root: s.root.clone(),
-                    project_path,
+                    root: strip_verbatim_prefix(s.root.clone()),
+                    project_path: strip_verbatim_prefix(project_path),
                     shared_worktree,
                 }
             })

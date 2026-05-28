@@ -463,18 +463,8 @@ impl Editor {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         // Canonicalize working_dir to resolve symlinks and normalize path components
-        // This ensures consistent path comparisons throughout the editor.
+        // This ensures consistent path comparisons throughout the editor
         let working_dir = working_dir.canonicalize().unwrap_or(working_dir);
-        // Strip Windows' `\\?\` verbatim prefix so this path is byte-equal to
-        // ones produced by ordinary `Path::join` elsewhere in the editor.
-        #[cfg(windows)]
-        let working_dir = {
-            let s = working_dir.to_string_lossy();
-            match s.strip_prefix(r"\\?\") {
-                Some(stripped) => PathBuf::from(stripped),
-                None => working_dir.clone(),
-            }
-        };
 
         t.phase("preamble");
         // Load all themes into registry
