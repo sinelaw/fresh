@@ -153,19 +153,21 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     assert!(aaa_before < zzz_before, "expected aaa above zzz initially");
 
     // Arrow down to the second row, which live-switches the active window
-    // to the zzz project. The previous `wait_until_stable(contains("zzz_project"))`
-    // was race-tolerant, not race-free: `contains("zzz_project")` is true
-    // *from the initial render* (both projects are listed), so phase 1
-    // returns on the first tick and phase 2 only waits for ~50 ms of
-    // quiescence. Down kicks an async chain (plugin `dock_focus` event
-    // → `scheduleDockSwitch`'s 30 ms `editor.delay` → `setActiveWindow`)
-    // whose effect can land *after* the dock side-paints settle, so the
-    // stability check fires mid-transition. Wait on an unambiguous
-    // post-switch signal — the editor's active_window root flipping to
-    // the zzz project — before reading the list order.
+    // to the zzz project.
+    //
+    // Snapshot the pre-Down screen so we can wait on a *screen-observable*
+    // post-switch signal — the dock's PROJECT column tag visibly swaps
+    // when the active session changes. Before Down: aaa is current
+    // (no project tag), zzz is not (tag = "zzz_project's basename"); after
+    // the switch: zzz is current (no tag), aaa shows its tag. This lets us
+    // detect the switch without an accessor wait (CONTRIBUTING §2) AND
+    // without false matches on mid-render snapshots — the post-Down
+    // highlight-move is a style-only change that doesn't enter
+    // `screen_to_string`, so the first diff that does is the tag swap
+    // after `scheduleDockSwitch`'s 30 ms debounce lands.
+    let pre = h.screen_to_string();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.editor().active_window().root == root_b)
-        .unwrap();
+    h.wait_until(|h| h.screen_to_string() != pre).unwrap();
     h.wait_until_stable(|_| true).unwrap();
 
     // Order must be unchanged — aaa still above zzz (the bug floated the
