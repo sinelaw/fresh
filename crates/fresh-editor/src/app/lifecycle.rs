@@ -264,6 +264,72 @@ impl Editor {
         );
     }
 
+    /// Dispatch a raw terminal event into the editor.
+    ///
+    /// While an async clipboard paste is in flight (`paste_pending`),
+    /// key / mouse / bracketed-paste events are stashed into the
+    /// pending-input queue and replayed in order once the paste
+    /// resolves. Resize and focus events still go through immediately
+    /// — they only adjust rendering state, never the buffer, so
+    /// queuing would just make the UI feel sluggish.
+    ///
+    /// Returns whether the editor wants the next frame redrawn.
+    pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
+        use crossterm::event::Event as Ev;
+
+        if self.paste_pending.is_some() {
+            let queueable = matches!(&event, Ev::Key(_) | Ev::Mouse(_) | Ev::Paste(_));
+            if queueable {
+                self.enqueue_pending_input(event);
+                // A queued event still wants the next frame so the
+                // "Pasting…" status / pending input count stays fresh.
+                return Ok(true);
+            }
+            // Resize/Focus/Cursor reports fall through to the normal
+            // dispatch even with a paste pending.
+        }
+
+        self.dispatch_input_event_immediate(event)
+    }
+
+    /// Inner dispatch that assumes no paste is pending. Used both by
+    /// `handle_input_event` and by the paste-resolved drain path —
+    /// keeping the queueing decision in exactly one place.
+    pub(crate) fn dispatch_input_event_immediate(
+        &mut self,
+        event: crossterm::event::Event,
+    ) -> anyhow::Result<bool> {
+        use crossterm::event::{Event as Ev, KeyEventKind};
+
+        match event {
+            Ev::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                let key_code = format!("{:?}", key_event.code);
+                let modifiers = format!("{:?}", key_event.modifiers);
+                self.active_window_mut()
+                    .log_keystroke(&key_code, &modifiers);
+                let translated = self.key_translator().translate(key_event);
+                self.handle_key(translated.code, translated.modifiers)?;
+                Ok(true)
+            }
+            Ev::Mouse(mouse_event) => self.handle_mouse(mouse_event),
+            Ev::Resize(w, h) => {
+                self.resize(w, h);
+                Ok(true)
+            }
+            Ev::Paste(text) => {
+                // Terminal-initiated bracketed paste — no async read
+                // needed, the terminal already harvested the clipboard.
+                self.paste_text(text);
+                Ok(true)
+            }
+            Ev::FocusGained => {
+                self.focus_gained();
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Adopt new terminal (screen) dimensions, then re-derive the whole
     /// layout. This is the OS-terminal-resize entry point; it only
     /// records the new screen size and defers everything else to the

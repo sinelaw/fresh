@@ -317,7 +317,13 @@ impl Editor {
             None
         };
         let anim_deadline = self.active_window().animations.next_deadline();
-        [lsp_progress_deadline, anim_deadline]
+        // Paste-pending deadline: the editor tick falls back to the
+        // internal clipboard if the async arboard read doesn't return
+        // by this point. Including it here makes the main loop wake
+        // exactly when the timeout needs to fire, so a hung clipboard
+        // owner can't block the UI past `PASTE_ASYNC_DEADLINE`.
+        let paste_deadline = self.next_paste_deadline();
+        [lsp_progress_deadline, anim_deadline, paste_deadline]
             .into_iter()
             .flatten()
             .min()

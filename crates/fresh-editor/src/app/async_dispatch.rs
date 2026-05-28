@@ -440,6 +440,9 @@ impl Editor {
                 AsyncMessage::FileOpenShortcutsLoaded(shortcuts) => {
                     self.handle_file_open_shortcuts_loaded(shortcuts);
                 }
+                AsyncMessage::ClipboardPasteResult { request_id, text } => {
+                    self.resolve_pending_paste(request_id, text);
+                }
                 AsyncMessage::TerminalOutput { terminal } => {
                     // The message carries its owning window: terminal ids
                     // collide across windows, so we trust the tag rather

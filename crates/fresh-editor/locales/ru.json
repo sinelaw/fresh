@@ -457,6 +457,7 @@
   "clipboard.no_selection": "Нет выделения для копирования",
   "clipboard.no_text": "Нет текста для копирования",
   "clipboard.pasted": "Вставлено",
+  "clipboard.pasting": "Вставка…",
   "clipboard.yanked": "Скопировано %{count} символов",
   "cmd.add_cursor_above": "Добавить курсор выше",
   "cmd.add_cursor_above_desc": "Добавить курсор на строку выше",

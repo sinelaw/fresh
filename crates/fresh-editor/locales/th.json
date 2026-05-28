@@ -457,6 +457,7 @@
   "clipboard.no_selection": "ไม่มีส่วนที่เลือกให้คัดลอก",
   "clipboard.no_text": "ไม่มีข้อความให้คัดลอก",
   "clipboard.pasted": "วางแล้ว",
+  "clipboard.pasting": "กำลังวาง…",
   "clipboard.yanked": "ดึงแล้ว %{count} ตัวอักษร",
   "cmd.add_cursor_above": "เพิ่มเคอร์เซอร์ด้านบน",
   "cmd.add_cursor_above_desc": "เพิ่มเคอร์เซอร์ในบรรทัดด้านบน",

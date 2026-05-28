@@ -457,6 +457,7 @@
   "clipboard.no_selection": "복사할 선택 영역 없음",
   "clipboard.no_text": "복사할 텍스트가 없습니다",
   "clipboard.pasted": "붙여넣기됨",
+  "clipboard.pasting": "붙여넣는 중…",
   "clipboard.yanked": "%{count}자 복사됨",
   "cmd.add_cursor_above": "위에 커서 추가",
   "cmd.add_cursor_above_desc": "위 줄에 커서 추가",

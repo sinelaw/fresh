@@ -6,8 +6,7 @@
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{
-    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
-    MouseEvent,
+    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEventKind,
 };
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
@@ -4309,37 +4308,24 @@ where
             continue;
         }
 
-        match event {
-            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                let _span = tracing::trace_span!(
+        // All raw-event dispatch now lives on `Editor` so the
+        // paste-pending input queue can intercept keys/mouse/paste
+        // events in exactly one place. The match below only handles
+        // tracing spans + key-translation that depend on
+        // event-loop-local state.
+        let _span = match &event {
+            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => Some(
+                tracing::trace_span!(
                     "handle_key",
                     code = ?key_event.code,
                     modifiers = ?key_event.modifiers,
                 )
-                .entered();
-                // Apply key translation (for input calibration)
-                // Use editor's translator so calibration changes take effect immediately
-                let translated_event = editor.key_translator().translate(key_event);
-                handle_key_event(editor, translated_event)?;
-                needs_render = true;
-            }
-            CrosstermEvent::Mouse(mouse_event) if handle_mouse_event(editor, mouse_event)? => {
-                needs_render = true;
-            }
-            CrosstermEvent::Resize(w, h) => {
-                editor.resize(w, h);
-                needs_render = true;
-            }
-            CrosstermEvent::Paste(text) => {
-                // External paste from terminal (bracketed paste mode)
-                editor.paste_text(text);
-                needs_render = true;
-            }
-            CrosstermEvent::FocusGained => {
-                editor.focus_gained();
-                needs_render = true;
-            }
-            _ => {}
+                .entered(),
+            ),
+            _ => None,
+        };
+        if editor.handle_input_event(event)? {
+            needs_render = true;
         }
     }
 
@@ -4433,47 +4419,6 @@ fn poll_with_gpm(
     }
 
     Ok(None)
-}
-
-/// Handle a keyboard event
-fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> AnyhowResult<()> {
-    // Trace the full key event
-    tracing::trace!(
-        "Key event received: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
-        key_event.code,
-        key_event.modifiers,
-        key_event.kind,
-        key_event.state
-    );
-
-    // Log the keystroke
-    let key_code = format!("{:?}", key_event.code);
-    let modifiers = format!("{:?}", key_event.modifiers);
-    editor
-        .active_window_mut()
-        .log_keystroke(&key_code, &modifiers);
-
-    // Delegate to the editor's handle_key method
-    editor.handle_key(key_event.code, key_event.modifiers)?;
-
-    Ok(())
-}
-
-/// Handle a mouse event
-/// Returns true if a re-render is needed
-fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> AnyhowResult<bool> {
-    tracing::trace!(
-        "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
-        mouse_event.kind,
-        mouse_event.column,
-        mouse_event.row,
-        mouse_event.modifiers
-    );
-
-    // Delegate to the editor's handle_mouse method
-    editor
-        .handle_mouse(mouse_event)
-        .context("Failed to handle mouse event")
 }
 
 /// Skip stale mouse move events, return the latest one.

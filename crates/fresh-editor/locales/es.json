@@ -457,6 +457,7 @@
   "clipboard.no_selection": "No hay selección para copiar",
   "clipboard.no_text": "No hay texto para copiar",
   "clipboard.pasted": "Pegado",
+  "clipboard.pasting": "Pegando…",
   "clipboard.yanked": "%{count} caracteres copiados",
   "cmd.add_cursor_above": "Añadir cursor arriba",
   "cmd.add_cursor_above_desc": "Añadir un cursor en la línea superior",

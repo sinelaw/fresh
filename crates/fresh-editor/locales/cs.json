@@ -457,6 +457,7 @@
   "clipboard.no_selection": "Žádný výběr ke kopírování",
   "clipboard.no_text": "Žádný text ke kopírování",
   "clipboard.pasted": "Vloženo",
+  "clipboard.pasting": "Vkládání…",
   "clipboard.yanked": "Vytaženo %{count} znaků",
   "cmd.add_cursor_above": "Přidat kurzor výše",
   "cmd.add_cursor_above_desc": "Přidat kurzor na řádek výše",

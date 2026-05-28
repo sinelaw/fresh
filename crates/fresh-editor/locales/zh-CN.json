@@ -457,6 +457,7 @@
   "clipboard.no_selection": "无选择内容",
   "clipboard.no_text": "没有要复制的文本",
   "clipboard.pasted": "已粘贴",
+  "clipboard.pasting": "正在粘贴…",
   "clipboard.yanked": "已拉取",
   "cmd.add_cursor_above": "在上方添加光标",
   "cmd.add_cursor_above_desc": "在上一行添加光标",

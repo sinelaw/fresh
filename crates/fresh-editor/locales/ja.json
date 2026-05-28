@@ -457,6 +457,7 @@
   "clipboard.no_selection": "選択範囲がありません",
   "clipboard.no_text": "コピーするテキストがありません",
   "clipboard.pasted": "貼り付けました",
+  "clipboard.pasting": "貼り付け中…",
   "clipboard.yanked": "%{count} 文字ヤンクしました",
   "cmd.add_cursor_above": "カーソルを上に追加",
   "cmd.add_cursor_above_desc": "上の行にカーソルを追加します",

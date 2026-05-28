@@ -457,6 +457,7 @@
   "clipboard.no_selection": "Không có vùng chọn để sao chép",
   "clipboard.no_text": "Không có văn bản để sao chép",
   "clipboard.pasted": "Đã dán",
+  "clipboard.pasting": "Đang dán…",
   "clipboard.yanked": "Đã sao chép %{count} ký tự",
   "cmd.add_cursor_above": "Thêm con trỏ phía trên",
   "cmd.add_cursor_above_desc": "Thêm con trỏ trên dòng phía trên",

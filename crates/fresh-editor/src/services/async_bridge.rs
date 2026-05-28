@@ -223,6 +223,17 @@ pub enum AsyncMessage {
         terminal: fresh_core::WindowTerminalId,
     },
 
+    /// Result of an asynchronous system-clipboard read. The main loop
+    /// blocks input dispatch while a paste is in flight; the matching
+    /// `request_id` ensures a late result that arrived after the
+    /// timeout fallback fired is discarded as stale. `text` is `None`
+    /// when the read errored, returned empty, or was cancelled by the
+    /// deadline.
+    ClipboardPasteResult {
+        request_id: u64,
+        text: Option<String>,
+    },
+
     /// File watcher delivered an event for a path under a
     /// `WatchPath`-registered watcher. Routed to the
     /// `path_changed` plugin hook by the main loop.

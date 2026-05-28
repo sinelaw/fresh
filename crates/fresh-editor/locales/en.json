@@ -431,6 +431,7 @@
   "clipboard.no_selection": "No selection to copy",
   "clipboard.no_text": "No text to copy",
   "clipboard.pasted": "Pasted",
+  "clipboard.pasting": "Pasting…",
   "clipboard.yanked": "Yanked %{count} chars",
   "calibration.abort": "Abort",
   "calibration.aborted": "Calibration aborted",

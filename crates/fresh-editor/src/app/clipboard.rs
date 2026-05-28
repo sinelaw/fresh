@@ -6,6 +6,8 @@
 //! - Multi-cursor add above/below/at next match
 
 use rust_i18n::t;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::input::multi_cursor::{
     add_cursor_above, add_cursor_at_next_match, add_cursor_below, line_end_positions_in_selection,
@@ -17,8 +19,43 @@ use crate::model::event::{CursorId, Event};
 use crate::primitives::word_navigation::{
     find_vi_word_end, find_word_start_left, find_word_start_right,
 };
+use crate::services::async_bridge::AsyncMessage;
 
 use super::Editor;
+
+/// Async-paste deadline. After this, the editor synthesizes a `None`
+/// result and falls back to the internal clipboard, so a hung X11/
+/// Wayland clipboard owner can't freeze the UI longer than the budget
+/// the user perceives as "snappy paste". Chosen to comfortably exceed
+/// typical remote-X round trips (a few tens of ms) while staying well
+/// under the threshold where users notice a stall.
+pub(crate) const PASTE_ASYNC_DEADLINE: Duration = Duration::from_millis(500);
+
+/// Cap on input events queued while a paste is in flight. With the
+/// 500ms deadline, even an aggressive autorepeat (~30 keys/s) tops out
+/// around 15 events; 256 is two orders of magnitude of headroom for
+/// pathological cases (key macros, mouse drags during a frozen tick)
+/// without unbounded memory growth.
+const PENDING_INPUT_QUEUE_CAP: usize = 256;
+
+/// State for an in-flight async clipboard paste. Held in
+/// `Editor::paste_pending` between dispatching the background read and
+/// receiving the matching `AsyncMessage::ClipboardPasteResult`.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingPaste {
+    /// Monotonic id stamped into both the request and the result so we
+    /// can drop a late reply whose deadline already fired.
+    pub request_id: u64,
+    /// When the editor will give up on the background read and fall
+    /// back to the internal clipboard.
+    pub deadline: Instant,
+}
+
+static NEXT_PASTE_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn allocate_paste_request_id() -> u64 {
+    NEXT_PASTE_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 // These are the clipboard and multi-cursor operations on Editor.
 //
@@ -514,14 +551,168 @@ impl Editor {
     /// - Selection replacement (deletes selection before inserting)
     /// - Atomic undo (single undo step for entire operation)
     pub fn paste(&mut self) {
-        // Get content from clipboard (tries system first, falls back to internal)
-        let text = match self.clipboard.paste() {
-            Some(text) => text,
-            None => return,
+        // If a paste is already in flight, ignore. Don't queue another:
+        // Ctrl+V autorepeat would otherwise dispatch a flood of arboard
+        // reads behind a single stuck owner.
+        if self.paste_pending.is_some() {
+            return;
+        }
+
+        // Fast-path #1: no async machinery (early bootstrap, headless
+        // test harness). Falling back to the synchronous read here is
+        // safe because the no-bridge configuration also implies no
+        // system display, so arboard returns immediately.
+        let sender = match self.async_bridge.as_ref() {
+            Some(bridge) => bridge.sender(),
+            None => {
+                if let Some(text) = self.clipboard.paste() {
+                    self.paste_text(text);
+                }
+                return;
+            }
         };
 
-        // Use paste_text which handles line ending normalization
-        self.paste_text(text);
+        // Fast-path #2: system clipboard disabled (internal-only mode
+        // for tests, or user opted out via config). No reason to spin
+        // up a thread for a read that will never touch the OS.
+        if !self.clipboard.uses_system_clipboard() || self.clipboard.is_internal_only() {
+            if let Some(text) = self.clipboard.paste_internal() {
+                self.paste_text(text);
+            }
+            return;
+        }
+
+        // Slow path: dispatch the arboard read on a background thread
+        // so the main loop can keep rendering and accept user input
+        // (which we queue — see `Editor::handle_input_event`). The
+        // result is delivered through the same `AsyncBridge` that LSP
+        // and plugin callbacks use, so it's processed on the next
+        // tick exactly like any other async message.
+        let request_id = allocate_paste_request_id();
+        let deadline = Instant::now() + PASTE_ASYNC_DEADLINE;
+        self.paste_pending = Some(PendingPaste {
+            request_id,
+            deadline,
+        });
+        self.set_status_message(t!("clipboard.pasting").to_string());
+
+        std::thread::Builder::new()
+            .name("clipboard-paste".into())
+            .spawn(move || {
+                // Fresh `arboard::Clipboard` per read. Sharing the
+                // long-lived static handle would mean holding its
+                // mutex across the (potentially multi-second) X11
+                // selection wait, blocking concurrent copy/paste; the
+                // static handle is only critical for *writes* where
+                // it maintains X11 selection ownership for OSC 52.
+                let text = arboard::Clipboard::new()
+                    .and_then(|mut cb| cb.get_text())
+                    .ok()
+                    .filter(|s| !s.is_empty());
+                // If the receiver is gone the editor has already
+                // shut down — nothing to do, the late thread will
+                // just exit when arboard finally returns.
+                if let Err(e) =
+                    sender.send(AsyncMessage::ClipboardPasteResult { request_id, text })
+                {
+                    tracing::trace!("clipboard paste result delivery failed: {}", e);
+                }
+            })
+            .ok();
+    }
+
+    /// Stash an input event for replay after the in-flight paste
+    /// resolves. Bounded by `PENDING_INPUT_QUEUE_CAP`; past the cap
+    /// new events are dropped (see the doc on the constant for why
+    /// silent loss is the chosen failure mode).
+    pub(crate) fn enqueue_pending_input(&mut self, event: crossterm::event::Event) {
+        if self.pending_input_queue.len() >= PENDING_INPUT_QUEUE_CAP {
+            tracing::warn!(
+                "pending_input_queue at cap ({}), dropping event",
+                PENDING_INPUT_QUEUE_CAP
+            );
+            return;
+        }
+        self.pending_input_queue.push_back(event);
+    }
+
+    /// Resolve an in-flight async paste.
+    ///
+    /// - Drops the result if `request_id` doesn't match the current
+    ///   `paste_pending` — that means the deadline already fired and
+    ///   we already fell back to the internal clipboard; this is the
+    ///   late reply arriving after the fact.
+    /// - On a real result, inserts the text. On `None` (error / empty
+    ///   / deadline), falls back to the internal clipboard so an
+    ///   in-editor copy still works as expected.
+    /// - Either way, drains any input events queued during the wait
+    ///   so the user's keystrokes land in order at the post-paste
+    ///   cursor position.
+    pub(crate) fn resolve_pending_paste(&mut self, request_id: u64, text: Option<String>) {
+        let Some(pending) = self.paste_pending else {
+            return;
+        };
+        if pending.request_id != request_id {
+            return; // stale: deadline fallback already handled this paste
+        }
+        self.paste_pending = None;
+
+        let text = text.or_else(|| self.clipboard.paste_internal());
+        if let Some(t) = text {
+            // `paste_text` sets its own "Pasted" status, overwriting
+            // the "Pasting…" placeholder we left up during the wait.
+            self.paste_text(t);
+        } else {
+            // No clipboard contents (read failed *and* internal
+            // clipboard is empty). Clear the stale "Pasting…" status
+            // so the user doesn't think the paste is still in flight.
+            self.active_window_mut().status_message = None;
+        }
+
+        // Drain the queue under the now-cleared pending flag so
+        // dispatch_input_event_immediate doesn't re-enqueue.
+        let queue = std::mem::take(&mut self.pending_input_queue);
+        for ev in queue {
+            if let Err(e) = self.dispatch_input_event_immediate(ev) {
+                tracing::warn!("error dispatching queued input event: {}", e);
+            }
+        }
+    }
+
+    /// If a paste is pending and its deadline has passed, synthesize
+    /// a None result so the editor stops waiting. Called from the
+    /// editor tick so the timeout fires even when no other async
+    /// message wakes the loop. Returns true when the deadline fired
+    /// (and the caller should redraw — the queued input drain and
+    /// status-message clear both want a frame).
+    pub(crate) fn check_paste_deadline(&mut self) -> bool {
+        let Some(pending) = self.paste_pending else {
+            return false;
+        };
+        if Instant::now() < pending.deadline {
+            return false;
+        }
+        tracing::debug!(
+            "paste request {} hit {}ms deadline, falling back to internal clipboard",
+            pending.request_id,
+            PASTE_ASYNC_DEADLINE.as_millis()
+        );
+        let request_id = pending.request_id;
+        self.resolve_pending_paste(request_id, None);
+        true
+    }
+
+    /// Earliest deadline the editor needs the tick loop to wake for,
+    /// limited to paste-related deadlines. Returned alongside other
+    /// time-driven deadlines from `next_periodic_redraw_deadline`.
+    pub(crate) fn next_paste_deadline(&self) -> Option<Instant> {
+        self.paste_pending.as_ref().map(|p| p.deadline)
+    }
+
+    /// Whether a paste is currently in flight. Used by the input loop
+    /// to know whether to queue rather than dispatch.
+    pub fn is_paste_pending(&self) -> bool {
+        self.paste_pending.is_some()
     }
 
     /// Paste text directly into the editor

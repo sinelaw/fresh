@@ -106,6 +106,14 @@ pub fn editor_tick(
 ) -> AnyhowResult<bool> {
     let mut needs_render = false;
 
+    // Run the paste-deadline check *before* draining async messages
+    // so a deadline-fired fallback and a real result that came in
+    // the same tick are both handled in a single pass (the first to
+    // touch `paste_pending` wins; the other is silently dropped).
+    if editor.check_paste_deadline() {
+        needs_render = true;
+    }
+
     let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
         editor.process_async_messages()
@@ -525,6 +533,22 @@ pub struct Editor {
 
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
+
+    /// In-flight async system-clipboard read. While `Some`, input events
+    /// (keys, mouse, bracketed-paste) are stashed into
+    /// `pending_input_queue` instead of dispatched, so the editor never
+    /// blocks on a slow/unresponsive X11/Wayland clipboard owner.
+    /// Cleared when a matching `ClipboardPasteResult` arrives or the
+    /// deadline fires (synthesized into the same channel by the tick).
+    pub(super) paste_pending: Option<crate::app::clipboard::PendingPaste>,
+
+    /// Input events queued while `paste_pending` is `Some`. Drained in
+    /// FIFO order from `process_async_messages` once the paste resolves.
+    /// Bounded to avoid unbounded growth if a deadline somehow never
+    /// fires; new events past the cap are dropped (the user has already
+    /// seen the editor visibly stall, so silent loss is the best of two
+    /// bad options).
+    pub(super) pending_input_queue: std::collections::VecDeque<crossterm::event::Event>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
