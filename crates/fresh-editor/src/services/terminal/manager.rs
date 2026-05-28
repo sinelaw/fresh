@@ -730,81 +730,8 @@ pub fn detect_shell() -> String {
     }
     #[cfg(windows)]
     {
-        select_windows_shell()
+        super::windows_shell::select_windows_shell()
     }
-}
-
-/// Pick a Windows shell, preferring PowerShell for its ConPTY/ANSI support.
-///
-/// Candidates are resolved to a concrete on-disk path and any Microsoft
-/// Store **App Execution Alias** stub is skipped (see
-/// [`is_app_execution_alias`]). Returning the fully-resolved path — rather
-/// than a bare name — also keeps spawn-time PATH resolution from re-finding
-/// the alias.
-#[cfg(windows)]
-fn select_windows_shell() -> String {
-    // Prefer a real PowerShell 7 install over a Store alias, then bare
-    // `pwsh.exe`/`powershell.exe` from PATH, then Windows PowerShell 5.
-    let mut candidates: Vec<String> = Vec::new();
-    for var in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
-        if let Ok(base) = std::env::var(var) {
-            if !base.is_empty() {
-                candidates.push(format!(r"{base}\PowerShell\7\pwsh.exe"));
-            }
-        }
-    }
-    candidates.push("pwsh.exe".to_string());
-    candidates.push("powershell.exe".to_string());
-    candidates.push(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string());
-
-    for candidate in &candidates {
-        if let Some(resolved) = resolve_shell_candidate(candidate) {
-            if is_app_execution_alias(&resolved) {
-                // A zero-byte WindowsApps stub crashes under ConPTY with
-                // 0xc0000142 (STATUS_DLL_INIT_FAILED); skip it. (issue #2077)
-                continue;
-            }
-            return resolved.to_string_lossy().into_owned();
-        }
-    }
-
-    // Fall back to COMSPEC (cmd.exe)
-    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
-}
-
-/// Resolve a shell candidate to a concrete file path.
-///
-/// Candidates containing a path separator are checked directly; bare names
-/// are looked up on `PATH`. Returns `None` when no matching file exists.
-#[cfg(windows)]
-fn resolve_shell_candidate(cmd: &str) -> Option<std::path::PathBuf> {
-    if cmd.contains('\\') || cmd.contains('/') {
-        let p = std::path::PathBuf::from(cmd);
-        return p.is_file().then_some(p);
-    }
-    let path_var = std::env::var("PATH").ok()?;
-    path_var
-        .split(';')
-        .filter(|d| !d.is_empty())
-        .find_map(|dir| {
-            let full = std::path::Path::new(dir).join(cmd);
-            full.is_file().then_some(full)
-        })
-}
-
-/// Detect a Microsoft Store **App Execution Alias** stub.
-///
-/// These aliases (e.g. the Store build of `pwsh.exe` under
-/// `%LOCALAPPDATA%\Microsoft\WindowsApps`) are zero-byte `APPEXECLINK`
-/// reparse points, not real executables. Spawning one through ConPTY makes
-/// the target crash with `0xc0000142` (STATUS_DLL_INIT_FAILED), so callers
-/// must never hand one to the PTY. A genuine shell binary is always
-/// non-empty. (issue #2077)
-#[cfg(windows)]
-fn is_app_execution_alias(path: &std::path::Path) -> bool {
-    std::fs::metadata(path)
-        .map(|m| m.len() == 0)
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -829,40 +756,6 @@ mod tests {
         use std::path::Path;
         let p = Path::new("/home/user/project");
         assert_eq!(strip_verbatim_prefix(p).as_ref(), p);
-    }
-
-    // A Microsoft Store App Execution Alias is a zero-byte stub that crashes
-    // under ConPTY with 0xc0000142; detect_shell must skip it. (issue #2077)
-    #[cfg(windows)]
-    #[test]
-    fn app_execution_alias_is_detected_and_skipped() {
-        use std::io::Write;
-
-        let dir = tempfile::tempdir().unwrap();
-
-        // Zero-byte stub mimicking a WindowsApps App Execution Alias.
-        let alias = dir.path().join("pwsh.exe");
-        std::fs::File::create(&alias).unwrap();
-        assert!(is_app_execution_alias(&alias));
-
-        // A real (non-empty) executable must not be treated as an alias.
-        let real = dir.path().join("powershell.exe");
-        let mut f = std::fs::File::create(&real).unwrap();
-        f.write_all(b"MZ\x90\x00").unwrap();
-        drop(f);
-        assert!(!is_app_execution_alias(&real));
-
-        // resolve_shell_candidate honors explicit paths and reports the stub.
-        let resolved = resolve_shell_candidate(&alias.to_string_lossy()).unwrap();
-        assert!(is_app_execution_alias(&resolved));
-        assert!(!is_app_execution_alias(
-            &resolve_shell_candidate(&real.to_string_lossy()).unwrap()
-        ));
-
-        // A missing path resolves to nothing.
-        assert!(
-            resolve_shell_candidate(&dir.path().join("missing.exe").to_string_lossy()).is_none()
-        );
     }
 
     #[cfg(windows)]

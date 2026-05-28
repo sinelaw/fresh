@@ -412,6 +412,7 @@ impl Merge for PartialClipboardConfig {
 pub struct PartialTerminalConfig {
     pub jump_to_end_on_output: Option<bool>,
     pub shell: Option<crate::config::TerminalShellConfig>,
+    pub skip_app_execution_alias: Option<bool>,
 }
 
 impl Merge for PartialTerminalConfig {
@@ -419,6 +420,8 @@ impl Merge for PartialTerminalConfig {
         self.jump_to_end_on_output
             .merge_from(&other.jump_to_end_on_output);
         self.shell.merge_from(&other.shell);
+        self.skip_app_execution_alias
+            .merge_from(&other.skip_app_execution_alias);
     }
 }
 
@@ -886,6 +889,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
         Self {
             jump_to_end_on_output: Some(cfg.jump_to_end_on_output),
             shell: cfg.shell.clone(),
+            skip_app_execution_alias: Some(cfg.skip_app_execution_alias),
         }
     }
 }
@@ -897,6 +901,9 @@ impl PartialTerminalConfig {
                 .jump_to_end_on_output
                 .unwrap_or(defaults.jump_to_end_on_output),
             shell: self.shell.or_else(|| defaults.shell.clone()),
+            skip_app_execution_alias: self
+                .skip_app_execution_alias
+                .unwrap_or(defaults.skip_app_execution_alias),
         }
     }
 }
