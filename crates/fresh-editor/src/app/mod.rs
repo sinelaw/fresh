@@ -1598,7 +1598,10 @@ mod tests {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
-        editor.dock = Some(test_panel(PanelPlacement::LeftDock { width_cols: 30 }, true));
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
         assert_eq!(editor.get_key_context(), KeyContext::Dock);
 
         editor.dock.as_mut().unwrap().focused = false;
@@ -1612,7 +1615,10 @@ mod tests {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
-        editor.dock = Some(test_panel(PanelPlacement::LeftDock { width_cols: 30 }, true));
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
         editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
         // The centered modal resolves as Normal (not Dock).
         assert_eq!(editor.get_key_context(), KeyContext::Normal);

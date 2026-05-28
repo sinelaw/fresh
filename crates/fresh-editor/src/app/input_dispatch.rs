@@ -20,26 +20,14 @@ impl Editor {
     /// Returns `Some(InputResult)` if terminal mode handled the input,
     /// `None` if not in terminal mode or if a modal is active.
     pub fn dispatch_terminal_input(&mut self, event: &KeyEvent) -> Option<InputResult> {
-        // Skip if we're in a prompt/popup (those need to handle keys normally)
-        // — including the floating widget panel (Orchestrator picker,
-        // new-session form, plugin overlays), which is the editor-wide
-        // modal owner of the keyboard while it's up. Without this skip,
-        // a terminal-buffer-active window with `terminal_mode=true` would
-        // route keys to the PTY child even when the user's keystrokes
-        // are meant for the picker on top of it.
-        let in_modal = self.is_prompting()
-            || self.global_popups.is_visible()
-            || self.active_state().popups.is_visible()
-            || self.menu_state.active_menu.is_some()
-            || self.settings_state.as_ref().is_some_and(|s| s.visible)
-            || self.calibration_wizard.is_some()
-            || self.keybinding_editor.is_some()
-            || self.floating_widget_panel.is_some()
-            // The dock blocks PTY routing only while it owns the keyboard;
-            // a blurred dock leaves the dived-into terminal usable.
-            || self.dock.as_ref().is_some_and(|f| f.focused);
-
-        if in_modal {
+        // Skip if any overlay layer is blocking — a prompt, popup, menu,
+        // settings/calibration/keybinding modal, the floating widget panel
+        // (Orchestrator picker / new-session form / plugin overlays), or a
+        // *focused* dock. A blurred dock leaves the dived-into terminal
+        // usable, which is why this is a per-layer `blocks_terminal_input`
+        // property and not just "any overlay present." See
+        // `Editor::overlay_layers` for the per-layer rationale.
+        if self.presents_blocking_overlay() {
             return None;
         }
 

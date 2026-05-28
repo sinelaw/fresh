@@ -244,12 +244,12 @@ impl Editor {
     /// keyboard-focus precedence first), ending with the always-present
     /// editor base layer.
     ///
-    /// This is the single source of truth for focus precedence: it
-    /// reproduces the historical ladder (Settings > Menu > Prompt > Popup
-    /// (only when capturing) > focused centered modal > focused dock >
-    /// CompositeBuffer / current context) as a list of
-    /// [`crate::app::overlay::Layer`]s. `get_key_context` walks it; render
-    /// and mouse dispatch are migrated onto the same list in later steps.
+    /// This is the single source of truth for overlay precedence: focus
+    /// resolution (`get_key_context`), the unfocused-popup modal guard
+    /// (`resolve_unfocused_popup_action`) and the terminal-input gate
+    /// (`dispatch_terminal_input`) all read from this list rather than
+    /// keeping their own conditional ladders. Render and mouse dispatch
+    /// are migrated onto it in later steps.
     pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
         use crate::app::overlay::{FocusPolicy, Layer, LayerKind, LayerRegion};
         use crate::input::keybindings::KeyContext;
@@ -263,7 +263,33 @@ impl Editor {
                 region: LayerRegion::FullScreen,
                 policy: FocusPolicy::Modal,
                 owns_keyboard: true,
-                key_context: KeyContext::Settings,
+                key_context: Some(KeyContext::Settings),
+                blocks_terminal_input: true,
+            });
+        }
+        // Keybinding editor and calibration wizard install their *own*
+        // input dispatchers (see `input_dispatch.rs`), so they are
+        // transparent to `KeyContext`-driven keybinding resolution
+        // (`key_context: None`) — but they fully own the keyboard while
+        // present and block PTY routing.
+        if self.keybinding_editor.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::KeybindingEditor,
+                region: LayerRegion::FullScreen,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        if self.calibration_wizard.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::CalibrationWizard,
+                region: LayerRegion::FullScreen,
+                policy: FocusPolicy::Modal,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
             });
         }
         if self.menu_state.active_menu.is_some() {
@@ -272,7 +298,8 @@ impl Editor {
                 region: LayerRegion::FullScreen,
                 policy: FocusPolicy::Modal,
                 owns_keyboard: true,
-                key_context: KeyContext::Menu,
+                key_context: Some(KeyContext::Menu),
+                blocks_terminal_input: true,
             });
         }
         if self.is_prompting() {
@@ -281,44 +308,52 @@ impl Editor {
                 region: LayerRegion::FullScreen,
                 policy: FocusPolicy::Modal,
                 owns_keyboard: true,
-                key_context: KeyContext::Prompt,
+                key_context: Some(KeyContext::Prompt),
+                blocks_terminal_input: true,
             });
         }
         // A popup is *present* whenever visible, but only *owns* the
         // keyboard while capturing (`popups_capture_keys`); a merely-visible
-        // unfocused popup falls through to the layers below it.
+        // unfocused popup falls through to the layers below it. Either way
+        // a visible popup blocks PTY routing — it covers the active buffer.
         if self.global_popups.is_visible() || self.active_state().popups.is_visible() {
             layers.push(Layer {
                 kind: LayerKind::Popup,
                 region: LayerRegion::Anchored,
                 policy: FocusPolicy::NonModal,
                 owns_keyboard: self.popups_capture_keys(),
-                key_context: KeyContext::Popup,
+                key_context: Some(KeyContext::Popup),
+                blocks_terminal_input: true,
             });
         }
         // The centered widget modal (picker / new-session form / plugin
         // overlay) owns the keyboard when focused. It resolves as `Normal`
         // regardless of the underlying buffer's (possibly stale) context so
         // mode-keybinding lookups still fire for the panel's own chords.
+        // It blocks PTY routing whenever present — the modal sits on top of
+        // (and obscures) the active terminal buffer.
         if let Some(f) = self.floating_widget_panel.as_ref() {
             layers.push(Layer {
                 kind: LayerKind::FloatingModal,
                 region: LayerRegion::Centered,
                 policy: FocusPolicy::Modal,
                 owns_keyboard: f.focused,
-                key_context: KeyContext::Normal,
+                key_context: Some(KeyContext::Normal),
+                blocks_terminal_input: true,
             });
         }
         // The editor-global dock owns the keyboard only while focused; a
         // blurred dock stays visible but lets the buffer underneath keep
-        // the keyboard.
+        // the keyboard *and* receive PTY routing (the dock lives beside the
+        // chrome, not over it).
         if let Some(d) = self.dock.as_ref() {
             layers.push(Layer {
                 kind: LayerKind::Dock,
                 region: LayerRegion::LeftDock,
                 policy: FocusPolicy::NonModal,
                 owns_keyboard: d.focused,
-                key_context: KeyContext::Dock,
+                key_context: Some(KeyContext::Dock),
+                blocks_terminal_input: d.focused,
             });
         }
         // The editor content is the keyboard owner of last resort.
@@ -335,10 +370,18 @@ impl Editor {
             region: LayerRegion::EditorContent,
             policy: FocusPolicy::Base,
             owns_keyboard: true,
-            key_context: base_context,
+            key_context: Some(base_context),
+            blocks_terminal_input: false,
         });
 
         layers
+    }
+
+    /// True iff any overlay layer is currently blocking key routing to a
+    /// terminal buffer's PTY child. The single source of truth for the
+    /// "is anything modal up?" question.
+    pub(crate) fn presents_blocking_overlay(&self) -> bool {
+        crate::app::overlay::any_layer_blocks_terminal_input(&self.overlay_layers())
     }
 
     /// Determine the current keybinding context based on UI state.
