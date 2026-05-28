@@ -6,6 +6,7 @@ use rust_i18n::t;
 
 use crate::primitives::display_width::str_width;
 
+use super::entry_dialog::EntryDialogState;
 use super::items::SettingControl;
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
@@ -1352,7 +1353,6 @@ fn render_control(
                 // Use settings colors for focused items in settings UI
                 focused_bg: theme.settings_selected_bg,
                 focused_fg: theme.settings_selected_fg,
-                delete_fg: theme.diagnostic_error_fg,
                 add_fg: theme.syntax_string,
             };
             let kb_layout = render_keybinding_list_partial(frame, area, state, &colors, skip_rows);
@@ -2042,7 +2042,6 @@ fn render_keybinding_list_partial(
 
     let empty_layout = crate::view::controls::KeybindingListLayout {
         entry_rects: Vec::new(),
-        delete_rects: Vec::new(),
         add_rect: None,
     };
 
@@ -2053,7 +2052,6 @@ fn render_keybinding_list_partial(
     let indent = 2u16;
     let is_focused = state.focus == FocusState::Focused;
     let mut entry_rects = Vec::new();
-    let mut delete_rects = Vec::new();
     let mut content_row = 0u16;
     let mut y = area.y;
 
@@ -2102,9 +2100,8 @@ fn render_keybinding_list_partial(
 
             let indicator = if is_entry_focused { "> " } else { "  " };
             // Use focused_fg for all text when entry is focused for good contrast
-            let (indicator_fg, key_fg, arrow_fg, action_fg, delete_fg) = if is_entry_focused {
+            let (indicator_fg, key_fg, arrow_fg, action_fg) = if is_entry_focused {
                 (
-                    colors.focused_fg,
                     colors.focused_fg,
                     colors.focused_fg,
                     colors.focused_fg,
@@ -2116,21 +2113,16 @@ fn render_keybinding_list_partial(
                     colors.key_fg,
                     colors.label_fg,
                     colors.action_fg,
-                    colors.delete_fg,
                 )
             };
             // The KeybindingList widget is reused for non-keybinding
             // ObjectArrays (e.g. LSP servers under a language), where the
-            // `key_combo` column is always empty — a single LSP entry then
-            // rendered as `                           → clangd [x]`, with
-            // the empty Name column padding and an unexplained arrow. When
-            // there's nothing to put left of the arrow, collapse to just
-            // `action [x]` so the row reads like the form field it is.
+            // `key_combo` column is always empty. Collapse to just the
+            // action so the row reads as a single value.
             let line = if key_combo.trim().is_empty() {
                 Line::from(vec![
                     Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
                     Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-                    Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
                 ])
             } else {
                 Line::from(vec![
@@ -2141,14 +2133,9 @@ fn render_keybinding_list_partial(
                     ),
                     Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
                     Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-                    Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
                 ])
             };
             frame.render_widget(Paragraph::new(line), entry_area);
-
-            // Track delete button area
-            let delete_x = entry_area.x + entry_area.width.saturating_sub(4);
-            delete_rects.push(Rect::new(delete_x, y, 3, 1));
 
             y += 1;
         }
@@ -2184,7 +2171,6 @@ fn render_keybinding_list_partial(
 
     crate::view::controls::KeybindingListLayout {
         entry_rects,
-        delete_rects,
         add_rect,
     }
 }
@@ -3360,6 +3346,30 @@ fn render_entry_discard_confirm(
     );
 }
 
+/// Compute the footer Delete-button label for an entry dialog.
+///
+/// Schema-driven: shows the map key for map entries (e.g.
+/// `[ Delete "rust" ]`), a generic "item" for array items (the
+/// numeric index isn't meaningful to the user), or a bare fallback
+/// when neither is available. The key is truncated so a very long
+/// identifier can't blow out the dialog footer.
+fn entry_delete_button_label(dialog: &EntryDialogState) -> String {
+    const MAX_KEY_IN_LABEL: usize = 24;
+    if dialog.is_array_item {
+        "[ Delete item ]".to_string()
+    } else if dialog.entry_key.is_empty() {
+        "[ Delete entry ]".to_string()
+    } else {
+        let key = if dialog.entry_key.chars().count() > MAX_KEY_IN_LABEL {
+            let truncated: String = dialog.entry_key.chars().take(MAX_KEY_IN_LABEL - 1).collect();
+            format!("{}…", truncated)
+        } else {
+            dialog.entry_key.clone()
+        };
+        format!("[ Delete \"{}\" ]", key)
+    }
+}
+
 /// Render the "Delete <name>?" prompt that appears when the user
 /// activates the Delete button on an entry dialog.
 fn render_entry_delete_confirm(
@@ -3376,10 +3386,12 @@ fn render_entry_delete_confirm(
 
     frame.render_widget(Clear, dialog_area);
 
-    let title = if state.entry_delete_target_name.is_empty() {
-        " Delete entry? ".to_string()
-    } else {
+    let title = if !state.entry_delete_target_name.is_empty() {
         format!(" Delete \"{}\"? ", state.entry_delete_target_name)
+    } else if state.entry_delete_target_is_array_item {
+        " Delete item? ".to_string()
+    } else {
+        " Delete entry? ".to_string()
     };
 
     let block = Block::default()
@@ -3397,13 +3409,15 @@ fn render_entry_delete_confirm(
         dialog_area.height.saturating_sub(2),
     );
 
-    let body = if state.entry_delete_target_name.is_empty() {
-        "This will permanently remove the entry.".to_string()
-    } else {
+    let body = if !state.entry_delete_target_name.is_empty() {
         format!(
             "This will permanently remove \"{}\".",
             state.entry_delete_target_name
         )
+    } else if state.entry_delete_target_is_array_item {
+        "This will permanently remove this item.".to_string()
+    } else {
+        "This will permanently remove the entry.".to_string()
     };
     let prompt_style = Style::default().fg(theme.popup_text_fg);
     frame.render_widget(
@@ -3775,12 +3789,19 @@ fn render_entry_dialog_inner(
     // destructive action is impossible to hit by accidentally
     // tabbing one too many times. Delete keeps its red Danger
     // styling whether focused or not.
+    //
+    // The Delete label is scoped to the entry it acts on so the user
+    // can tell what gets removed without committing first. For map
+    // entries the entry_key (the map key) is shown; for array items
+    // the numeric index is useless to the user, so a generic "item"
+    // label is shown instead.
     let button_y = dialog_area.y + dialog_area.height - 2;
     let has_delete = !dialog.is_new && !dialog.no_delete;
-    let buttons: Vec<&str> = if has_delete {
-        vec!["[ Save ]", "[ Cancel ]", "[ Delete ]"]
+    let delete_label = entry_delete_button_label(dialog);
+    let buttons: Vec<String> = if has_delete {
+        vec!["[ Save ]".to_string(), "[ Cancel ]".to_string(), delete_label]
     } else {
-        vec!["[ Save ]", "[ Cancel ]"]
+        vec!["[ Save ]".to_string(), "[ Cancel ]".to_string()]
     };
     // Index of Delete (last entry, when present). Used for the
     // visual gap between safe buttons and Delete.
@@ -3861,7 +3882,7 @@ fn render_entry_dialog_inner(
             Style::default().fg(theme.editor_fg)
         };
         frame.render_widget(
-            Paragraph::new(*label).style(style),
+            Paragraph::new(label.as_str()).style(style),
             Rect::new(x, button_y, label.len() as u16, 1),
         );
         x += label.len() as u16;

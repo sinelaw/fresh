@@ -39,10 +39,6 @@ impl KeybindingListState {
         if let MouseEventKind::Down(MouseButton::Left) = event.kind {
             if let Some(hit) = layout.hit_test(event.column, event.row) {
                 match hit {
-                    KeybindingListHit::DeleteButton(index) => {
-                        self.remove_binding(index);
-                        return Some(KeybindingListEvent::BindingRemoved(index));
-                    }
                     KeybindingListHit::Entry(index) => {
                         self.focus_entry(index);
                         return Some(KeybindingListEvent::FocusChanged(Some(index)));
@@ -104,7 +100,6 @@ mod tests {
     fn make_layout() -> KeybindingListLayout {
         KeybindingListLayout {
             entry_rects: vec![(0, Rect::new(2, 1, 40, 1)), (1, Rect::new(2, 2, 40, 1))],
-            delete_rects: vec![Rect::new(38, 1, 3, 1), Rect::new(38, 2, 3, 1)],
             add_rect: Some(Rect::new(2, 3, 40, 1)),
         }
     }
@@ -116,17 +111,6 @@ mod tests {
             row: y,
             modifiers: KeyModifiers::empty(),
         }
-    }
-
-    #[test]
-    fn test_click_delete_button() {
-        let mut state = KeybindingListState::new("Test");
-        state.add_binding(serde_json::json!({"key": "a", "action": "test"}));
-        let layout = make_layout();
-
-        let result = state.handle_mouse(mouse_down(38, 1), &layout);
-        assert_eq!(result, Some(KeybindingListEvent::BindingRemoved(0)));
-        assert!(state.bindings.is_empty());
     }
 
     #[test]

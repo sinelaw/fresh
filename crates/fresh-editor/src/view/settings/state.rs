@@ -137,6 +137,11 @@ pub struct SettingsState {
     pub entry_delete_confirm_selection: usize,
     /// Key being deleted, displayed in the confirm prompt.
     pub entry_delete_target_name: String,
+    /// True when the entry-delete prompt is targeting an array item.
+    /// The confirm uses a generic "item" phrasing in this case since a
+    /// numeric index in `entry_delete_target_name` would mean nothing
+    /// to the user.
+    pub entry_delete_target_is_array_item: bool,
     /// Whether the help overlay is showing
     pub showing_help: bool,
     /// Scrollable panel for settings items
@@ -303,6 +308,7 @@ impl SettingsState {
             showing_entry_delete_confirm: false,
             entry_delete_confirm_selection: 0,
             entry_delete_target_name: String::new(),
+            entry_delete_target_is_array_item: false,
             showing_help: false,
             scroll_panel: ScrollablePanel::new(),
             sub_focus: None,
@@ -966,6 +972,19 @@ impl SettingsState {
     /// Apply pending changes to a config
     pub fn apply_changes(&self, config: &Config) -> Result<Config, serde_json::Error> {
         let mut config_value = serde_json::to_value(config)?;
+
+        // Process deletions first so a `pending_changes` write on the
+        // same path (rare but possible) still wins.
+        //
+        // Writing `null` at a map-entry path would fail to round-trip
+        // through the Config schema whenever the map's value type is
+        // non-nullable (e.g. `HashMap<String, LspLanguageConfig>`) —
+        // hence the dedicated removal path here, mirroring the
+        // remove-then-write order used by `save_changes_to_layer` when
+        // writing to disk.
+        for path in &self.pending_deletions {
+            crate::config_io::remove_json_pointer(&mut config_value, path);
+        }
 
         for (path, value) in &self.pending_changes {
             // `pointer_mut` only succeeds when the path already exists,
@@ -1928,11 +1947,15 @@ impl SettingsState {
     /// Cancel (selection 0) is the safe default, so a misplaced
     /// Tab+Enter on the Delete button no longer destroys data.
     pub fn request_entry_delete_confirm(&mut self) {
-        let name = self
+        let (name, is_array_item) = self
             .entry_dialog()
-            .map(|d| d.entry_key.clone())
+            .map(|d| (d.entry_key.clone(), d.is_array_item))
             .unwrap_or_default();
-        self.entry_delete_target_name = name;
+        // For array items the entry_key is a numeric index — meaningless
+        // to the user. Drop it and let the confirm render fall back to
+        // the generic "item" phrasing.
+        self.entry_delete_target_name = if is_array_item { String::new() } else { name };
+        self.entry_delete_target_is_array_item = is_array_item;
         self.entry_delete_confirm_selection = 0;
         self.showing_entry_delete_confirm = true;
     }
@@ -1983,8 +2006,15 @@ impl SettingsState {
             }
         }
 
-        // Record the pending change (null value signals deletion)
-        self.set_pending_change(&path, serde_json::Value::Null);
+        // Record the deletion. Earlier this wrote `null` via
+        // `set_pending_change`, but that round-trips through the Config
+        // schema as `<map>/<key> = null` — invalid whenever the map's
+        // value type is non-nullable. Routing through `pending_deletions`
+        // both removes the key cleanly from the in-memory Config (via
+        // `apply_changes`) and writes the removal to disk (via
+        // `save_changes_to_layer`'s `remove_json_pointer` step).
+        self.pending_changes.remove(&path);
+        self.pending_deletions.insert(path);
     }
 
     /// Get the maximum scroll offset for the current page (in rows)
