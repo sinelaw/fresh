@@ -1754,16 +1754,29 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     hideTrivial: lastHideTrivial,
     bulkInFlight: null,
   };
+  // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
+  // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
+  // dock wants stable lex order, the modal picker wants current-first.
+  // Doing the filter first (when `dockMode` is still its previous /
+  // initial `false` value) made the dock's INITIAL render use current-
+  // first ordering, while every subsequent `refreshOpenDialog`
+  // (active_window_changed, window_created, …) used the stable lex
+  // sort. Switching the active project then visibly reordered the
+  // dock list — precisely what the dock comment forbids.
+  openPanel = new FloatingWidgetPanel();
+  if (asDock) {
+    dockMode = true;
+    dockBlurred = false;
+  } else {
+    dockMode = false;
+  }
   openDialog.filteredIds = filterSessions("");
   const activeIdx = openDialog.filteredIds.indexOf(activeId);
   openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-  openPanel = new FloatingWidgetPanel();
   if (asDock) {
     // Persistent, non-modal full-height left column. Mount, then
     // re-anchor to the dock (which sets the content-wrap width to the
     // dock columns) and re-render so the spec lays out at dock width.
-    dockMode = true;
-    dockBlurred = false;
     // Mount straight into the host's dedicated dock slot so it
     // coexists with a centered modal (the New-Session form) instead
     // of being replaced by it. `asDock` carves the left column and
@@ -1776,7 +1789,6 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     editor.floatingPanelControl(openPanel.id(), "dock", DOCK_WIDTH_COLS);
     openPanel.update(buildDockSpec());
   } else {
-    dockMode = false;
     // 90% × 90% of the terminal — the open dialog wants room for
     // a real session list + preview pane, unlike the new-session
     // form which stays compact.

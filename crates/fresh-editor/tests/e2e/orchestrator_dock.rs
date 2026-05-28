@@ -551,3 +551,68 @@ fn click_un_dive_switches_to_clicked_session() {
     h.wait_until(|h| !h.screen_to_string().contains("ZZ"))
         .unwrap();
 }
+
+#[test]
+fn dock_initial_sort_is_lex_stable_not_current_first() {
+    // Smoking-gun reproducer for the dock-reorder hypothesis behind the
+    // Windows-only failure of `dock_list_order_is_stable_across_active_window_switch`.
+    //
+    // `openControlRoom` in `orchestrator.ts` runs the *first*
+    // `filterSessions("")` at line 1757, BEFORE the `dockMode = true`
+    // assignment at line 1765. So the dock's initial render uses
+    // `pinCurrentFirst = !dockMode = true` — current-first ordering —
+    // while every `refreshOpenDialog` afterward (active_window_changed,
+    // window_created, …) uses `pinCurrentFirst = false` — the lex
+    // ordering the dock comment explicitly mandates ("the dock is
+    // persistent and switches the active session constantly, so it
+    // must NOT reorder as the active project changes").
+    //
+    // Trigger: make the active window NOT the lex-first session, then
+    // open the dock. The initial render puts the active session on top;
+    // the stable order (which any subsequent active-change refresh
+    // would have produced) is the lex order with aaa first.
+    //
+    // This bug is invisible to the existing
+    // `dock_list_order_is_stable_across_active_window_switch` because
+    // its launch session (aaa_project) is BOTH active and lex-first —
+    // current-first and lex-first agree on the initial render. The
+    // user-reported Windows failure of that test is consistent with
+    // this bug surfacing through some environmental difference.
+    let (_tmp_a, root_a) = setup_project("aaa_project");
+    let parent = root_a.parent().unwrap().to_path_buf();
+    let root_b = parent.join("zzz_project");
+    fs::create_dir(&root_b).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root_b)
+        .status()
+        .unwrap()
+        .success());
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+            .unwrap();
+    let zzz_id = h
+        .editor_mut()
+        .create_window_at(root_b.clone(), "zzz_project".to_string());
+    // Make zzz active BEFORE opening the dock — that's the trigger.
+    h.editor_mut().set_active_window(zzz_id);
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("aaa_project") && s.contains("zzz_project")
+    })
+    .unwrap();
+
+    let aaa_row = row_of(&h, "aaa_project");
+    let zzz_row = row_of(&h, "zzz_project");
+    assert!(
+        aaa_row < zzz_row,
+        "dock initial order should be lex-stable (aaa above zzz); got \
+         aaa at {aaa_row}, zzz at {zzz_row}. This means `filterSessions` \
+         ran with pinCurrentFirst=true (dockMode was still false), \
+         which is the line-1757-before-1765 bug in `openControlRoom`."
+    );
+}
