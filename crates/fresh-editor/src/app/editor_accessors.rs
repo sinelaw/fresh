@@ -531,6 +531,16 @@ impl Editor {
         self.active_window
     }
 
+    /// True iff the editor-global dock is open AND currently holds
+    /// keyboard focus. Test helpers use this to wait for `Toggle Dock`'s
+    /// async focus-grab to settle before dispatching subsequent keys;
+    /// without that readiness check, keys can race into the editor
+    /// during the gap and the test silently waits for a dock response
+    /// that never comes.
+    pub fn is_dock_focused(&self) -> bool {
+        self.dock.as_ref().is_some_and(|d| d.focused)
+    }
+
     /// Allocate the next globally-unique `BufferId`. Use this in
     /// `impl Editor` handler bodies that mint new buffer ids. Handlers
     /// that have already moved to `impl Window` use

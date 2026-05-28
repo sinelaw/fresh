@@ -40,7 +40,16 @@ fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
     (temp_dir, root)
 }
 
-/// Toggle the dock open via the command palette and wait for it to render.
+/// Toggle the dock open via the command palette and wait for it to render
+/// *and* take keyboard focus.
+///
+/// `Toggle Dock` sets focus asynchronously through the plugin→host
+/// bridge (the plugin issues `setFocusKey("sessions")` after the dock
+/// mounts), so a key event dispatched after just `wait_until("ORCHESTRATOR")`
+/// can land *before* `dock.focused = true` — falling through to the
+/// editor base and leaving any follow-up `wait_until` to block forever
+/// on a dock response that never comes. Polling `is_dock_focused()`
+/// closes that race deterministically.
 fn open_dock(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -49,7 +58,7 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -144,10 +153,20 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     assert!(aaa_before < zzz_before, "expected aaa above zzz initially");
 
     // Arrow down to the second row, which live-switches the active window
-    // to the zzz project. Let the switch settle.
+    // to the zzz project. The previous `wait_until_stable(contains("zzz_project"))`
+    // was race-tolerant, not race-free: `contains("zzz_project")` is true
+    // *from the initial render* (both projects are listed), so phase 1
+    // returns on the first tick and phase 2 only waits for ~50 ms of
+    // quiescence. Down kicks an async chain (plugin `dock_focus` event
+    // → `scheduleDockSwitch`'s 30 ms `editor.delay` → `setActiveWindow`)
+    // whose effect can land *after* the dock side-paints settle, so the
+    // stability check fires mid-transition. Wait on an unambiguous
+    // post-switch signal — the editor's active_window root flipping to
+    // the zzz project — before reading the list order.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until_stable(|h| h.screen_to_string().contains("zzz_project"))
+    h.wait_until(|h| h.editor().active_window().root == root_b)
         .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
 
     // Order must be unchanged — aaa still above zzz (the bug floated the
     // now-current zzz project to the top).
