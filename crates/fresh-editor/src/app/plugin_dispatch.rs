@@ -1259,6 +1259,9 @@ impl Editor {
             } => {
                 self.handle_get_buffer_line_count(buffer_id, request_id);
             }
+            PluginCommand::GetCompositeCursorInfo { request_id } => {
+                self.handle_get_composite_cursor_info(request_id);
+            }
             PluginCommand::OpenFileStreaming { path, request_id } => {
                 self.handle_open_file_streaming(path, request_id);
             }
@@ -1901,6 +1904,23 @@ impl Editor {
         };
 
         self.resolve_json_callback(request_id, result);
+    }
+
+    /// Resolve cursor info for the active composite (side-by-side diff)
+    /// buffer. Returns `null` to the plugin when the active buffer isn't a
+    /// composite buffer; otherwise an object with the focused pane index,
+    /// pane count, and the 0-indexed source line shown in each pane on the
+    /// cursor's aligned row (`null` per-pane where that side is blank).
+    fn handle_get_composite_cursor_info(&mut self, request_id: u64) {
+        let info = self.active_window().active_composite_cursor_info();
+        let value = info.map(|(focused_pane, pane_count, lines)| {
+            serde_json::json!({
+                "focusedPane": focused_pane,
+                "paneCount": pane_count,
+                "lines": lines,
+            })
+        });
+        self.resolve_json_callback(request_id, value);
     }
 
     /// Open `path` as a regular buffer for plugin-driven streaming

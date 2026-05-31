@@ -139,6 +139,33 @@ impl crate::app::window::Window {
         self.composite_buffers.get_mut(&buffer_id)
     }
 
+    /// Cursor info for the active composite (diff-view) buffer.
+    ///
+    /// Returns `None` when the active buffer is not a composite buffer.
+    /// Otherwise yields `(focused_pane, pane_count, per_pane_source_line)`
+    /// where each entry of `per_pane_source_line` is the 0-indexed source
+    /// line shown in that pane on the cursor's aligned row (`None` where the
+    /// pane has no content on that row — e.g. the blank side of an insertion
+    /// or deletion). Plugins use this to map a side-by-side cursor back to a
+    /// concrete (file version, line) so they can open it on disk.
+    pub fn active_composite_cursor_info(&self) -> Option<(usize, usize, Vec<Option<usize>>)> {
+        let (split_id, buffer_id) = self.effective_active_pair();
+        if !self.is_composite_buffer(buffer_id) {
+            return None;
+        }
+        let composite = self.composite_buffers.get(&buffer_id)?;
+        let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
+        let row = composite.alignment.get_row(view_state.cursor_row);
+        let pane_count = composite.sources.len();
+        let lines: Vec<Option<usize>> = (0..pane_count)
+            .map(|i| {
+                row.and_then(|r| r.get_pane_line(i))
+                    .map(|line_ref| line_ref.line)
+            })
+            .collect();
+        Some((view_state.focused_pane, pane_count, lines))
+    }
+
     /// Set the line alignment for a composite buffer
     pub fn set_composite_alignment(&mut self, buffer_id: BufferId, alignment: LineAlignment) {
         if let Some(composite) = self.composite_buffers.get_mut(&buffer_id) {

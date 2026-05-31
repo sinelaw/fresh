@@ -3213,6 +3213,14 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Get cursor info for the active composite (side-by-side diff) buffer
+    /// (async). Resolves with `{ focusedPane, paneCount, lines }` or `null`
+    /// when the active buffer is not a composite buffer.
+    GetCompositeCursorInfo {
+        /// Request ID for async response
+        request_id: u64,
+    },
+
     /// Open `path` as a regular buffer in forced large-file (file-backed)
     /// mode regardless of file size. Designed for buffers whose backing
     /// file will grow under them (e.g. a temp file fed by `spawnProcess`

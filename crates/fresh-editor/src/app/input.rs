@@ -592,8 +592,18 @@ impl Editor {
         // Only check buffer mode keybindings when the editor buffer has focus.
         // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
         // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
-        let should_check_mode_bindings =
-            matches!(context, crate::input::keybindings::KeyContext::Normal);
+        //
+        // CompositeBuffer is included so a composite buffer's plugin-defined
+        // mode (e.g. the review-diff `diff-view` mode) can bind keys the core
+        // composite handling leaves free — like Enter / Alt+O to open the file
+        // under the cursor. Keys the mode does not bind fall through unchanged
+        // to the composite router and the CompositeBuffer keymap below, so
+        // built-in hunk navigation (n/p/]/[) and close (q) are unaffected.
+        let should_check_mode_bindings = matches!(
+            context,
+            crate::input::keybindings::KeyContext::Normal
+                | crate::input::keybindings::KeyContext::CompositeBuffer
+        );
 
         if should_check_mode_bindings {
             // effective_mode() returns buffer-local mode if present, else global mode.

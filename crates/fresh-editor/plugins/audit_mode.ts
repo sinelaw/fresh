@@ -1170,8 +1170,10 @@ function buildToolbar(W: number): TextPropertyEntry[] {
     const row2: HintItem[][] = [
         [{ key: "Tab", label: "fold" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
         inRange
-            ? [{ key: "Enter", label: "jump" }, { key: "e", label: "export" }, { key: "q", label: "close" }]
+            ? [{ key: "Enter", label: "jump" }, { key: "Alt+o", label: "open file" },
+               { key: "e", label: "export" }, { key: "q", label: "close" }]
             : [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
+               { key: "Alt+o", label: "open file" },
                { key: "e", label: "export" }, { key: "q", label: "close" }],
     ];
     return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
@@ -2019,6 +2021,52 @@ function review_enter_dispatch() {
     }
 }
 registerHandler("review_enter_dispatch", review_enter_dispatch);
+
+/**
+ * Alt+O in the unified review-diff stream: open the editable working-tree
+ * file at the line under the cursor. Mirrors the side-by-side Alt+O so the
+ * shortcut is uniform across both review surfaces.
+ *
+ * The working-tree line is the row's `newLine` (added / context rows). For
+ * a pure-removed row (`newLine` undefined) we scan forward to the next row
+ * that carries a `newLine`, landing the cursor where the deletion happened.
+ */
+function review_open_working_file() {
+    if (state.groupId === null) return;
+    const file = currentFileFromCursor();
+    if (!file) return;
+    // Untracked files have no on-disk-vs-HEAD distinction, but the working
+    // file still exists — open it. Deleted files have no working copy.
+    if (file.status === 'D') {
+        editor.setStatus(editor.t("status.file_deleted_no_open") || "File was deleted — no working copy to open");
+        return;
+    }
+    const props = propsAtCursorRow();
+    let line: number | undefined;
+    if (props) {
+        const t = props["type"];
+        if (t === 'add' || t === 'remove' || t === 'context') {
+            const nl = props["newLine"];
+            if (typeof nl === 'number') {
+                line = nl;
+            } else {
+                // Pure-removed row: scan forward to the next row carrying a
+                // newLine, so we land where the deletion happened. Stop at the
+                // end of the stream or when we leave this file's diff body.
+                const maxRow = state.diffLineByteOffsets.length - 1;
+                for (let r = state.diffCursorRow + 1; r <= maxRow; r++) {
+                    const p = state.entryPropsByRow[r];
+                    if (!p) continue;
+                    if (typeof p["newLine"] === 'number') { line = p["newLine"] as number; break; }
+                    if (p["type"] === 'file-header' || p["type"] === 'section-header') break;
+                }
+            }
+        }
+    }
+    const absPath = state.repoRoot ? editor.pathJoin(state.repoRoot, file.path) : file.path;
+    editor.openFile(absPath, line ?? 1, 1);
+}
+registerHandler("review_open_working_file", review_open_working_file);
 
 function review_comments_select_prev() {
     if (state.groupId === null) return;
@@ -2982,7 +3030,16 @@ interface CompositeDiffState {
     compositeBufferId: number;
     oldBufferId: number;
     newBufferId: number;
-    filePath: string;
+    filePath: string;        // path relative to the git root
+    gitRoot: string;         // absolute git top-level dir
+    absPath: string;         // absolute path of the working-tree file
+    // True when there is no HEAD version of this file (untracked / added).
+    // Opening the OLD (HEAD) side is then a no-op with a status message.
+    isUntracked: boolean;
+    // 1-indexed (old, new) line of each hunk's first line, used to map an
+    // OLD-side line with no NEW counterpart (a pure deletion) onto the
+    // nearest working-tree line for Alt+O. Sorted by old line ascending.
+    hunkLineMap: Array<{ oldStart: number; newStart: number }>;
 }
 
 let activeCompositeDiffState: CompositeDiffState | null = null;
@@ -3121,7 +3178,7 @@ async function review_drill_down() {
         sources: [
             {
                 bufferId: oldBufferId,
-                label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
+                label: "OLD (HEAD)  [Enter] open this version  [n/p] hunks  [q] close",
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -3129,7 +3186,7 @@ async function review_drill_down() {
             },
             {
                 bufferId: newBufferId,
-                label: "NEW (Working)",
+                label: "NEW (Working)  [Enter/Alt+o] open file",
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -3140,12 +3197,18 @@ async function review_drill_down() {
         initialFocusHunk: compositeHunks.length > 0 ? 0 : undefined
     });
 
-    // Store state for cleanup
+    // Store state for cleanup + the Enter/Alt+O "open on disk" actions.
     activeCompositeDiffState = {
         compositeBufferId,
         oldBufferId,
         newBufferId,
-        filePath: h.file
+        filePath: h.file,
+        gitRoot,
+        absPath: absoluteFilePath,
+        isUntracked: selectedFile.category === 'untracked',
+        hunkLineMap: fileHunks
+            .map(fh => ({ oldStart: fh.oldRange.start, newStart: fh.range.start }))
+            .sort((a, b) => a.oldStart - b.oldStart),
     };
 
     // Show the composite buffer (replaces the review diff buffer)
@@ -3309,16 +3372,138 @@ function review_prev_hunk() {
 }
 registerHandler("review_prev_hunk", review_prev_hunk);
 
-// Define the diff-view mode - inherits from "normal" for all standard navigation/selection/copy
-// Only adds diff-specific keybindings (close, hunk navigation)
+// --- Open the real file from the side-by-side diff view ---
+//
+// Two entry points, both keyed off the composite cursor:
+//   * Enter — side-aware. On the NEW (working) pane it opens the editable
+//     on-disk file at that line. On the OLD (HEAD) pane it opens that
+//     historical version read-only at the old line ("jump to THAT version").
+//   * Alt+O — uniform. Always opens the editable working-tree file at the
+//     corresponding line, regardless of which pane the cursor is on.
+//
+// The composite's panes are always [OLD (HEAD), NEW (working)], so pane
+// index 0 is the historical side and the last pane is the working side.
+
+interface CompositeCursor {
+    focusedPane: number;
+    paneCount: number;
+    lines: Array<number | null>;  // 0-indexed source line per pane (null = blank side)
+}
+
+/** Map an OLD-side line (1-indexed) to the nearest working-tree line using
+ *  the hunk offsets, for the case where a pure deletion has no NEW line. */
+function mapOldLineToWorking(oldLine: number, st: CompositeDiffState): number {
+    let delta = 0;
+    for (const h of st.hunkLineMap) {
+        if (h.oldStart <= oldLine) delta = h.newStart - h.oldStart;
+        else break;
+    }
+    return Math.max(1, oldLine + delta);
+}
+
+/** Resolve the working-tree line (1-indexed) the cursor maps to, preferring
+ *  the NEW pane's line and falling back to mapping the OLD pane's line. */
+function workingLineFromCursor(info: CompositeCursor, st: CompositeDiffState): number | null {
+    const newPane = info.paneCount - 1;  // working side is the last pane
+    const newLine0 = info.lines[newPane];
+    if (newLine0 !== null && newLine0 !== undefined) return newLine0 + 1;
+    const oldLine0 = info.lines[0];
+    if (oldLine0 !== null && oldLine0 !== undefined) return mapOldLineToWorking(oldLine0 + 1, st);
+    return null;
+}
+
+/** Open the editable working-tree file at the cursor's mapped line. */
+async function openWorkingFileAtCursor(info: CompositeCursor, st: CompositeDiffState): Promise<void> {
+    const line = workingLineFromCursor(info, st);
+    if (line === null) {
+        editor.setStatus(editor.t("status.open_no_line") || "No corresponding line on disk");
+        return;
+    }
+    editor.openFile(st.absPath, line, 1);
+}
+
+/** Open the HEAD version of the file read-only, at the given 1-indexed line. */
+async function openHeadVersionReadOnly(st: CompositeDiffState, oldLine: number): Promise<void> {
+    if (st.isUntracked) {
+        editor.setStatus(editor.t("status.no_head_version") || "No HEAD version (file is untracked)");
+        return;
+    }
+    const gitShow = await editor.spawnProcess("git", ["-C", st.gitRoot, "show", `HEAD:${st.filePath}`]);
+    if (gitShow.exit_code !== 0) {
+        editor.setStatus(editor.t("status.no_head_version") || "No HEAD version of this file");
+        return;
+    }
+    const content = gitShow.stdout;
+    const lines = content.split('\n');
+    const entries: TextPropertyEntry[] = lines.map((line, idx) => ({
+        text: line + '\n',
+        properties: { type: 'line', lineNum: idx + 1 },
+    }));
+    const base = editor.pathBasename(st.filePath);
+    const result = await editor.createVirtualBuffer({
+        name: `*HEAD: ${base}*`,
+        mode: "normal",
+        readOnly: true,
+        entries,
+        showLineNumbers: true,
+        editingDisabled: true,
+    });
+    const bufferId = result.bufferId;
+    editor.showBuffer(bufferId);
+    // Jump to the requested line: walk byte offsets to the line start.
+    const targetIdx = Math.max(0, Math.min(lines.length - 1, oldLine - 1));
+    let byteOffset = 0;
+    for (let i = 0; i < targetIdx; i++) byteOffset += getByteLength(lines[i] + '\n');
+    editor.setBufferCursor(bufferId, byteOffset);
+    editor.scrollBufferToLine(bufferId, targetIdx);
+    editor.setStatus(editor.t("status.opened_head_version", { line: String(oldLine) })
+        || `Opened HEAD version (read-only) at line ${oldLine}`);
+}
+
+/** Enter in the side-by-side view: open the file for the side under the
+ *  cursor — working file (editable) on the NEW pane, HEAD version
+ *  (read-only) on the OLD pane. */
+async function review_diff_open_at_cursor() {
+    const st = activeCompositeDiffState;
+    if (!st) return;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return;
+    const onOldPane = info.focusedPane === 0;
+    if (onOldPane) {
+        const oldLine0 = info.lines[0];
+        if (oldLine0 === null || oldLine0 === undefined) {
+            // Blank OLD side (a pure insertion) — fall back to the working file.
+            await openWorkingFileAtCursor(info, st);
+            return;
+        }
+        await openHeadVersionReadOnly(st, oldLine0 + 1);
+    } else {
+        await openWorkingFileAtCursor(info, st);
+    }
+}
+registerHandler("review_diff_open_at_cursor", review_diff_open_at_cursor);
+
+/** Alt+O in the side-by-side view: always open the editable working file. */
+async function review_diff_open_working_at_cursor() {
+    const st = activeCompositeDiffState;
+    if (!st) return;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return;
+    await openWorkingFileAtCursor(info, st);
+}
+registerHandler("review_diff_open_working_at_cursor", review_diff_open_working_at_cursor);
+
+// Define the diff-view mode for the side-by-side composite buffer.
+//
+// Close (q) and hunk navigation (n/p/]/[) are provided by the core
+// CompositeBuffer keymap, so they are intentionally NOT bound here — only
+// the keys the core leaves free are added: Enter and Alt+O, which open the
+// real file under the cursor. Enter is side-aware (working file on the NEW
+// pane, read-only HEAD version on the OLD pane); Alt+O always opens the
+// editable working-tree file.
 editor.defineMode("diff-view", [
-    // Close the diff view
-    ["q", "close"],
-    // Hunk navigation (diff-specific)
-    ["n", "review_next_hunk"],
-    ["p", "review_prev_hunk"],
-    ["]", "review_next_hunk"],
-    ["[", "review_prev_hunk"],
+    ["Enter", "review_diff_open_at_cursor"],
+    ["M-o", "review_diff_open_working_at_cursor"],
 ], true);
 
 // --- Review Comment Actions ---
@@ -4381,7 +4566,7 @@ async function side_by_side_diff_current_file() {
         sources: [
             {
                 bufferId: oldBufferId,
-                label: "OLD (HEAD)  [n/] next  [p/[] prev  [q] close",
+                label: "OLD (HEAD)  [Enter] open this version  [n/p] hunks  [q] close",
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -4389,7 +4574,7 @@ async function side_by_side_diff_current_file() {
             },
             {
                 bufferId: newBufferId,
-                label: "NEW (Working)",
+                label: "NEW (Working)  [Enter/Alt+o] open file",
                 editable: false,
                 style: {
                     gutterStyle: "diff-markers"
@@ -4399,12 +4584,18 @@ async function side_by_side_diff_current_file() {
         hunks: compositeHunks.length > 0 ? compositeHunks : null
     });
 
-    // Store state for cleanup
+    // Store state for cleanup + the Enter/Alt+O "open on disk" actions.
     activeCompositeDiffState = {
         compositeBufferId,
         oldBufferId,
         newBufferId,
-        filePath
+        filePath,
+        gitRoot,
+        absPath: absolutePath,
+        isUntracked,
+        hunkLineMap: fileHunks
+            .map(h => ({ oldStart: h.oldRange.start, newStart: h.range.start }))
+            .sort((a, b) => a.oldStart - b.oldStart),
     };
 
     // Show the composite buffer
@@ -4967,6 +5158,9 @@ editor.defineMode("review-mode", [
     // unless focus is in the comments panel, in which case Enter opens
     // the selected comment.
     ["Enter", "review_enter_dispatch"],
+    // Open the editable working-tree file at the line under the cursor.
+    // Uniform with the side-by-side view's Alt+O.
+    ["M-o", "review_open_working_file"],
     // Comments-nav: cycle through comments, jump diff cursor, expand
     // the file if needed. Works regardless of which panel has focus.
     ["]", "review_next_comment"],

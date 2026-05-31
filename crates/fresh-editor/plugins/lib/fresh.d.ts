@@ -464,14 +464,19 @@ type WindowInfo = {
 	*/
 	root: string;
 	/**
-	* Project this session belongs to — the canonical repo
-	* root (or arbitrary directory) the user pointed the
-	* new-session form at. `null` for legacy sessions that
-	* predate the Project Path field. The Orchestrator Open
-	* dialog filters by this so the "this project's sessions"
-	* view is one keystroke away from the all-projects view.
+	* Project this session belongs to — the canonical repo root
+	* (or arbitrary directory) the user pointed the new-session
+	* form at. For sessions without an explicit project (legacy
+	* sessions, the launch session, sessions created outside the
+	* orchestrator's new-session form) this equals `root` — the
+	* host normalises at the API boundary so plugins never have
+	* to deal with `null`/`undefined`/`""` ambiguity (`??` only
+	* falls through on `null`, but the orchestrator's
+	* `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
+	* which then becomes a poisoned lex sort key — observed as
+	* the Windows-only dock reorder).
 	*/
-	project_path?: string | null;
+	project_path: string;
 	/**
 	* `true` when the session shares its working tree with
 	* other sessions (worktree-creation was off at session
@@ -1750,6 +1755,20 @@ interface EditorAPI {
 	* Returns null if buffer not found
 	*/
 	getBufferLineCount(): Promise<number | null>;
+	/**
+	* Cursor info for the active composite (side-by-side diff) buffer.
+	* 
+	* Resolves with `null` when the active buffer is not a composite
+	* buffer, otherwise an object describing the focused pane and the
+	* 0-indexed source line shown in each pane on the cursor's aligned
+	* row (`null` where a pane has no content on that row). Lets a plugin
+	* map a side-by-side cursor back to a concrete file version + line.
+	*/
+	getCompositeCursorInfo(): Promise<{
+		focusedPane: number;
+		paneCount: number;
+		lines: Array<number | null>;
+	} | null>;
 	/**
 	* Scroll a split to center a specific line in the viewport
 	* Line is 0-indexed (0 = first line)

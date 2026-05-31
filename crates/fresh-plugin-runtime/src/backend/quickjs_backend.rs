@@ -1652,6 +1652,27 @@ impl JsEditorApi {
         id
     }
 
+    /// Cursor info for the active composite (side-by-side diff) buffer.
+    ///
+    /// Resolves with `null` when the active buffer is not a composite
+    /// buffer, otherwise an object describing the focused pane and the
+    /// 0-indexed source line shown in each pane on the cursor's aligned
+    /// row (`null` where a pane has no content on that row). Lets a plugin
+    /// map a side-by-side cursor back to a concrete file version + line.
+    #[plugin_api(
+        async_promise,
+        js_name = "getCompositeCursorInfo",
+        ts_return = "{ focusedPane: number, paneCount: number, lines: Array<number | null> } | null"
+    )]
+    #[qjs(rename = "_getCompositeCursorInfoStart")]
+    pub fn get_composite_cursor_info_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetCompositeCursorInfo { request_id: id });
+        id
+    }
+
     /// Scroll a split to center a specific line in the viewport
     /// Line is 0-indexed (0 = first line)
     pub fn scroll_to_line_center(&self, split_id: u32, buffer_id: u32, line: u32) -> bool {
@@ -6942,6 +6963,7 @@ impl QuickJsBackend {
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
+                editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");
                 editor.loadPlugin = _wrapAsync("_loadPluginStart", "loadPlugin");
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
