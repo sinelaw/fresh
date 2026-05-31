@@ -372,13 +372,21 @@ fn dock_right_border_drag_resizes_and_persists() {
 
     // The menu bar ("Edit") sits right of the dock on row 0; its index in
     // the row string shifts right as the dock widens. (We can't match the
-    // box-drawing border char — the harness renders multi-byte glyphs as
-    // raw bytes — but the menu word is ASCII and its delta tracks width.)
-    // Default dock width is 32 → right border at col 31.
+    // box-drawing border char in `screen_row_text` — it collapses multi-
+    // byte glyphs — but the menu word is ASCII and its delta tracks width.)
     let edit_before = col_in_row(&h, 0, "Edit");
 
-    // Drag the right border (col 31) out to col 60 to widen the dock.
-    h.mouse_drag(31, 6, 60, 6).unwrap();
+    // Find the dock's right-border column by scanning row 0 for the `│`
+    // glyph (`get_cell` returns the real cell symbol, unlike
+    // `screen_row_text`). Don't hard-code a width: the default dock width
+    // is responsive (scales with the terminal), so it isn't a fixed 32.
+    // The press must land exactly on the border column for the host to
+    // start a resize drag (see `handle_mouse_drag`).
+    let row0_cols = h.screen_row_text(0).chars().count() as u16;
+    let border_col = (0..row0_cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("dock right border (│) should be on row 0 when docked");
+    h.mouse_drag(border_col, 6, border_col + 29, 6).unwrap();
     h.render().unwrap();
     let edit_after = col_in_row(&h, 0, "Edit");
     assert!(
