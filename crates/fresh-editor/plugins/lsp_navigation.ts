@@ -97,10 +97,20 @@ function clearOverlay(bufferId: number | null): void {
 }
 
 /**
- * Reveal a symbol in the buffer.
+ * Reveal a symbol in the buffer by moving the cursor to its name.
  *
- * - "preview" (browsing the list): paint an overlay marker over the name.
- * - "select" (confirming with Enter): drop the marker; the move sticks.
+ * - "preview" (browsing the list): also scroll the name toward the top
+ *   third and paint an overlay marker over it.
+ * - "select" (confirming with Enter): move the cursor and drop the marker.
+ *
+ * Why scroll only on preview: `scrollBufferToLine` latches the viewport's
+ * "skip ensure-visible" flag so a plugin scroll isn't immediately undone.
+ * That's right while the prompt is open and re-previewing each keystroke,
+ * but on confirm the prompt tears down and the latch would stay stuck —
+ * freezing the viewport so it no longer follows the cursor. On confirm we
+ * rely on `setBufferCursor` alone, which runs the normal ensure-visible
+ * pass (no latch): the cursor lands on the name and the viewport tracks it
+ * normally afterward.
  *
  * Synchronous and addressed to an explicit buffer id (not the active
  * buffer) so it lands correctly even when invoked on confirm, after the
@@ -114,15 +124,14 @@ function navigateToSymbol(
   if (bufferId === null || sym.lineStartByte < 0) return;
 
   const pos = sym.lineStartByte + sym.nameCharacter;
-  // Move the cursor in both modes: the editor keeps the cursor on screen
-  // every frame, so a scroll without a cursor move is immediately undone
-  // for off-screen symbols. Moving the cursor is what makes the viewport
-  // follow. The pre-open cursor is restored if the user cancels.
   editor.setBufferCursor(bufferId, pos);
-  editor.scrollBufferToLine(bufferId, sym.nameLine);
 
   clearOverlay(bufferId);
   if (mode === "preview") {
+    // The cursor move alone doesn't reposition the viewport while the
+    // prompt owns focus, so scroll explicitly to keep the previewed
+    // symbol visible.
+    editor.scrollBufferToLine(bufferId, sym.nameLine);
     editor.addOverlay(bufferId, OVERLAY_NS, pos, pos + sym.name.length, MATCH_STYLE);
   }
 }
@@ -267,10 +276,12 @@ const finder = new Finder(editor, {
   onClose: () => {
     // Cancelled: drop the marker and restore the cursor to where it was
     // before the finder opened (preview moved it as the user browsed).
+    // Only setBufferCursor — it ensure-visibles the restored position
+    // without latching skip-ensure-visible, so the viewport keeps
+    // following the cursor afterward (see navigateToSymbol).
     clearOverlay(cachedBufferId);
     if (!confirmed && cachedBufferId !== null) {
       editor.setBufferCursor(cachedBufferId, cachedCursorPosition);
-      editor.scrollBufferToLine(cachedBufferId, cachedCursorLine);
     }
   },
 });
