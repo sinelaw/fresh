@@ -2829,9 +2829,7 @@ fn run_open_files_command(
     wait: bool,
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
-    use fresh::server::protocol::{
-        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
-    };
+    use fresh::server::protocol::{ClientControl, ServerControl};
     use fresh::server::spawn_server_detached;
 
     if files.is_empty() {
@@ -2892,38 +2890,9 @@ fn run_open_files_command(
     // Connect to server
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
 
-    // Perform handshake
-    let hello = ClientHello::new(TermSize::new(80, 24)); // Size doesn't matter, we're not rendering
-    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
-    conn.write_control(&hello_json)?;
-
-    // Read server response
-    let response = conn
-        .read_control()?
-        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
-
-    let server_msg: ServerControl = serde_json::from_str(&response)?;
-
-    match server_msg {
-        ServerControl::Hello(server_hello) => {
-            if server_hello.protocol_version != PROTOCOL_VERSION {
-                eprintln!(
-                    "Version mismatch: server is v{}",
-                    server_hello.server_version
-                );
-                return Ok(());
-            }
-        }
-        ServerControl::VersionMismatch(mismatch) => {
-            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
-            return Ok(());
-        }
-        ServerControl::Error { message } => {
-            return Err(anyhow::anyhow!("Server error: {}", message));
-        }
-        _ => {
-            return Err(anyhow::anyhow!("Unexpected server response"));
-        }
+    // Perform handshake; a version mismatch aborts quietly.
+    if !client_handshake(&conn)? {
+        return Ok(());
     }
 
     // Send OpenFiles command
@@ -2971,6 +2940,162 @@ fn run_open_files_command(
         eprintln!("Opened {} file(s) in session.", file_requests.len());
     }
     Ok(())
+}
+
+/// Perform the client side of the handshake on an established connection.
+///
+/// Sends `Hello` and reads the server's reply. Returns `Ok(true)` when the
+/// server accepted the handshake, `Ok(false)` on a version mismatch (the
+/// caller should abort quietly — a message has already been printed), and
+/// `Err` on a protocol-level error.
+fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult<bool> {
+    use fresh::server::protocol::{
+        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
+    };
+
+    // Size doesn't matter — these clients never render.
+    let hello = ClientHello::new(TermSize::new(80, 24));
+    conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello))?)?;
+
+    let response = conn
+        .read_control()?
+        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
+
+    match serde_json::from_str::<ServerControl>(&response)? {
+        ServerControl::Hello(server_hello) => {
+            if server_hello.protocol_version != PROTOCOL_VERSION {
+                eprintln!(
+                    "Version mismatch: server is v{}",
+                    server_hello.server_version
+                );
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        ServerControl::VersionMismatch(mismatch) => {
+            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
+            Ok(false)
+        }
+        ServerControl::Error { message } => Err(anyhow::anyhow!("Server error: {}", message)),
+        _ => Err(anyhow::anyhow!("Unexpected server response")),
+    }
+}
+
+/// When launched from inside Fresh's own embedded terminal, forward the
+/// file/dir arguments to the parent editor (identified by `FRESH_SESSION`)
+/// instead of starting a second editor in the terminal.
+///
+/// Returns:
+/// - `Some(Ok(()))` — forwarded; the caller should exit.
+/// - `None` — not a nested launch, nothing to forward, or the parent
+///   socket is unreachable; the caller should launch inline as usual.
+fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
+    // Only plain interactive file/dir opens are forwarded. Subcommands,
+    // --server and --attach are already handled before we get here;
+    // --stdin pipes content into a real editor and can't be forwarded.
+    if args.server || args.attach || args.stdin || args.files.is_empty() {
+        return None;
+    }
+
+    let session = std::env::var("FRESH_SESSION").ok()?;
+    if session.trim().is_empty() {
+        return None;
+    }
+
+    match forward_to_session(&session, &args.files) {
+        Ok(true) => Some(Ok(())),
+        Ok(false) => None, // unreachable parent → fall back to inline
+        Err(e) => {
+            // Never fail the launch over a forwarding hiccup: fall back to
+            // opening inline, which is exactly the pre-feature behavior.
+            tracing::warn!("Nested forward failed ({}); opening inline", e);
+            None
+        }
+    }
+}
+
+/// Forward `files` (a mix of files and directories) to the parent session.
+///
+/// Files open in the parent's current window and the call blocks until the
+/// (last) buffer is closed, so `git commit`/`$EDITOR` semantics hold.
+/// Directories pop a new orchestrator window each and don't block.
+///
+/// Returns `Ok(true)` once a connection to the parent was established and
+/// the requests were sent; `Ok(false)` if the parent isn't reachable (the
+/// caller should open inline instead).
+fn forward_to_session(session: &str, files: &[String]) -> AnyhowResult<bool> {
+    use fresh::server::protocol::{ClientControl, ServerControl};
+
+    let socket_paths = resolve_session(Some(session))?;
+    socket_paths.cleanup_if_stale();
+    if !socket_paths.is_server_alive() {
+        return Ok(false);
+    }
+
+    // Partition arguments into directories (→ new windows) and files (→
+    // buffers in the current window). `build_file_requests` already drops
+    // directories, so it yields exactly the file set.
+    let working_dir = std::env::current_dir()?;
+    let mut dir_paths: Vec<PathBuf> = Vec::new();
+    for f in files {
+        let loc = parse_file_location(f);
+        let abs = if loc.path.is_relative() {
+            working_dir.join(&loc.path)
+        } else {
+            loc.path.clone()
+        };
+        let canonical = abs.canonicalize().unwrap_or(abs);
+        if canonical.is_dir() {
+            dir_paths.push(canonical);
+        }
+    }
+    let file_requests = build_file_requests(files, &working_dir);
+
+    // Establishing the connection is the commit point: once we're talking
+    // to the parent we own the request and never fall back (which would
+    // double-open). A failure to connect means "no reachable parent".
+    let conn = match fresh::server::ipc::ClientConnection::connect(&socket_paths) {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+    if !client_handshake(&conn)? {
+        // Version mismatch already reported; don't open inline on top of it.
+        return Ok(true);
+    }
+
+    // Directories first: each becomes a new focused window.
+    for dir in dir_paths {
+        let msg = ClientControl::OpenWindow {
+            path: dir.to_string_lossy().into_owned(),
+        };
+        conn.write_control(&serde_json::to_string(&msg)?)?;
+    }
+
+    // Files: open them and block until the (last) buffer is closed.
+    if !file_requests.is_empty() {
+        let msg = ClientControl::OpenFiles {
+            files: file_requests,
+            wait: true,
+        };
+        conn.write_control(&serde_json::to_string(&msg)?)?;
+
+        loop {
+            match conn.read_control() {
+                Ok(Some(line)) => {
+                    if let Ok(msg) = serde_json::from_str::<ServerControl>(&line) {
+                        match msg {
+                            ServerControl::WaitComplete | ServerControl::Quit { .. } => break,
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(None) => break, // parent closed the connection
+                Err(_) => break,
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 /// Attach to an existing session, starting a server if needed
@@ -3561,6 +3686,15 @@ fn real_main() -> AnyhowResult<()> {
         return result;
     }
 
+    // If launched from inside Fresh's own embedded terminal (FRESH_SESSION
+    // is set), forward file/dir opens to that parent editor instead of
+    // starting a second editor in the terminal. Returns Some(..) when the
+    // request was forwarded (we're done); None to fall through and launch
+    // inline (no reachable parent, or nothing to forward).
+    if let Some(result) = try_forward_nested(&args) {
+        return result;
+    }
+
     // Save the original console mode BEFORE anything modifies it (raw mode,
     // enable_vt_input, etc.). Restored at the very end after all cleanup.
     #[cfg(windows)]
@@ -3620,6 +3754,14 @@ fn real_main() -> AnyhowResult<()> {
     let mut warning_log_slot: Option<(std::sync::mpsc::Receiver<()>, PathBuf)> = tracing_handles
         .take()
         .map(|h| (h.warning.receiver, h.warning.path));
+
+    // Bind this process's local control socket so a `fresh` launched from
+    // inside an embedded terminal forwards opens back here (see
+    // `try_forward_nested` / `server::local_control`). Best-effort: if it
+    // fails, the editor runs normally and nested launches just open inline.
+    if let Err(e) = fresh::server::local_control::start() {
+        tracing::warn!("Local control socket unavailable: {}", e);
+    }
 
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
@@ -4024,6 +4166,13 @@ where
     let mut pending_event: Option<CrosstermEvent> = None;
 
     loop {
+        // Apply any nested-forward requests (file/dir opens from a `fresh`
+        // run inside an embedded terminal) before housekeeping, so the
+        // queued opens are drained by `editor_tick` on this same iteration.
+        if fresh::server::local_control::pump(editor) {
+            needs_render = true;
+        }
+
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
         {
             let _span = tracing::info_span!("editor_tick").entered();

@@ -16,6 +16,7 @@ pub mod daemon;
 pub mod editor_server;
 pub mod input_parser;
 pub mod ipc;
+pub mod local_control;
 pub mod protocol;
 
 #[cfg(test)]
