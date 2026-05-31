@@ -982,12 +982,14 @@ impl EditorServer {
         }
 
         // Process control messages
-        eprintln!(
-            "[server] Processing {} control messages",
-            control_messages.len()
-        );
+        if !control_messages.is_empty() {
+            tracing::debug!(
+                "[server] Processing {} control messages",
+                control_messages.len()
+            );
+        }
         for (idx, msg) in control_messages {
-            eprintln!("[server] Control message from client {}: {:?}", idx, msg);
+            tracing::debug!("[server] Control message from client {}: {:?}", idx, msg);
             // Always process Quit, even from disconnected clients
             if let ClientControl::Quit = msg {
                 tracing::info!("Client requested quit, shutting down");
