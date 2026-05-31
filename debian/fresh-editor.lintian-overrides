@@ -4,4 +4,4 @@
 # heuristic matches that against libyaml. Unbundling is not viable for Rust
 # applications, and Debian's Rust-app practice (ripgrep, fd-find, bat …)
 # accepts the override.
-fresh-editor: embedded-library [usr/bin/fresh] libyaml
+fresh-editor: embedded-library libyaml [usr/bin/fresh]
