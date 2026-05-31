@@ -61,7 +61,21 @@ pub(crate) fn screen_to_buffer_position(
     allow_gutter_click: bool,
     compose_width: Option<u16>,
 ) -> Option<usize> {
-    let content_rect = adjust_content_rect_for_compose(content_rect, compose_width);
+    let orig_content_rect = content_rect;
+    let mut content_rect = adjust_content_rect_for_compose(content_rect, compose_width);
+
+    // Mirror the render-time gutter reclaim (issue #2146): in compose mode the
+    // indicator gutter is drawn in the reclaimed left margin, so the view-line
+    // mappings' origin sits `gutter_width` columns left of the centered paper.
+    // Apply the same shift here (only when there was margin room to reclaim,
+    // matching `calculate_compose_layout` + the reclaim in render_buffer).
+    if compose_width.is_some() && gutter_width > 0 {
+        let left_pad = content_rect.x.saturating_sub(orig_content_rect.x);
+        if left_pad >= gutter_width {
+            content_rect.x -= gutter_width;
+            content_rect.width += gutter_width;
+        }
+    }
 
     // Calculate relative position in content area
     let content_col = col.saturating_sub(content_rect.x);

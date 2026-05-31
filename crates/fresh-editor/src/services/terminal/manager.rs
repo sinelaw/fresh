@@ -730,37 +730,8 @@ pub fn detect_shell() -> String {
     }
     #[cfg(windows)]
     {
-        // On Windows, prefer PowerShell for better ConPTY and ANSI escape support
-        // Check for PowerShell Core (pwsh) first, then Windows PowerShell
-        let powershell_paths = [
-            "pwsh.exe",
-            "powershell.exe",
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        ];
-
-        for ps in &powershell_paths {
-            if std::path::Path::new(ps).exists() || which_exists(ps) {
-                return ps.to_string();
-            }
-        }
-
-        // Fall back to COMSPEC (cmd.exe)
-        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        super::windows_shell::select_windows_shell()
     }
-}
-
-/// Check if command exists in PATH (Windows)
-#[cfg(windows)]
-fn which_exists(cmd: &str) -> bool {
-    if let Ok(path_var) = std::env::var("PATH") {
-        for path in path_var.split(';') {
-            let full_path = std::path::Path::new(path).join(cmd);
-            if full_path.exists() {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]

@@ -653,10 +653,18 @@ impl MarginManager {
     /// line number state.
     pub fn configure_for_line_numbers(&mut self, show_line_numbers: bool) {
         if !show_line_numbers {
+            // Hide the line-number digits and the separator, but keep the gutter
+            // enabled with a zero-width number column so the 1-char indicator
+            // slot survives. This lets diagnostic / git / fold indicators still
+            // render in compose mode (issue #2146) without showing line numbers
+            // or the `│` separator. The render layer draws this slot in the
+            // compose desk margin so it doesn't shrink the text width.
             self.left_config.width = 0;
-            self.left_config.enabled = false;
+            self.left_config.enabled = true;
+            self.left_config.show_separator = false;
         } else {
             self.left_config.enabled = true;
+            self.left_config.show_separator = true;
             if self.left_config.width == 0 {
                 self.left_config.width = MIN_LINE_NUMBER_DIGITS;
             }

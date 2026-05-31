@@ -484,6 +484,55 @@ impl OverlayManager {
         self.rebuild_marker_index();
     }
 
+    /// Like [`remove_in_range`], but only removes overlays belonging to
+    /// `namespace`. Overlays in other namespaces (e.g. editor-owned LSP
+    /// diagnostics) that happen to overlap the range are left intact.
+    ///
+    /// [`remove_in_range`]: Self::remove_in_range
+    pub fn remove_in_range_for_namespace(
+        &mut self,
+        range: &Range<usize>,
+        namespace: &OverlayNamespace,
+        marker_list: &mut MarkerList,
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+        let hits = marker_list.query_range(range.start, range.end);
+        if hits.is_empty() {
+            return;
+        }
+        let mut candidates: Vec<usize> = hits
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut to_remove: Vec<usize> = candidates
+            .into_iter()
+            .filter(|&idx| {
+                let o = &self.overlays[idx];
+                if o.namespace.as_ref() != Some(namespace) {
+                    return false;
+                }
+                let start = marker_list.get_position(o.start_marker).unwrap_or(0);
+                let end = marker_list.get_position(o.end_marker).unwrap_or(0);
+                start < range.end && range.start < end
+            })
+            .collect();
+        if to_remove.is_empty() {
+            return;
+        }
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            self.swap_remove_at(idx, marker_list);
+        }
+        // Restore priority order broken by swap_removes.
+        self.overlays.sort_by_key(|o| o.priority);
+        self.rebuild_marker_index();
+    }
+
     /// Clear all overlays and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
         for overlay in &self.overlays {

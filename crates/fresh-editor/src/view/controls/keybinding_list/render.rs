@@ -18,7 +18,6 @@ pub fn render_keybinding_list(
 ) -> KeybindingListLayout {
     let mut layout = KeybindingListLayout {
         entry_rects: Vec::new(),
-        delete_rects: Vec::new(),
         add_rect: None,
     };
 
@@ -62,9 +61,8 @@ pub fn render_keybinding_list(
 
         let indicator = if is_entry_focused { "> " } else { "  " };
         // Use focused_fg for all text when entry is focused for good contrast
-        let (indicator_fg, key_fg, arrow_fg, action_fg, delete_fg) = if is_entry_focused {
+        let (indicator_fg, key_fg, arrow_fg, action_fg) = if is_entry_focused {
             (
-                colors.focused_fg,
                 colors.focused_fg,
                 colors.focused_fg,
                 colors.focused_fg,
@@ -76,7 +74,6 @@ pub fn render_keybinding_list(
                 colors.key_fg,
                 colors.label_fg,
                 colors.action_fg,
-                colors.delete_fg,
             )
         };
         let line = Line::from(vec![
@@ -87,13 +84,8 @@ pub fn render_keybinding_list(
             ),
             Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
             Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-            Span::styled(" [x]", Style::default().fg(delete_fg).bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(line), entry_area);
-
-        // Track delete button area
-        let delete_x = entry_area.x + entry_area.width.saturating_sub(4);
-        layout.delete_rects.push(Rect::new(delete_x, y, 3, 1));
     }
 
     // Render add-new row

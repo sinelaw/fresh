@@ -66,6 +66,43 @@ fn test_file_outside_data_dir_is_editable() {
     );
 }
 
+/// A session working tree (conductor / orchestrator) physically lives under
+/// the data dir, but its files are real working files — opening one must stay
+/// editable. The read-only rule applies only to artifacts outside the window's
+/// own root. Drives real keystrokes and observes the typed text on screen.
+#[test]
+fn test_file_in_session_tree_under_data_dir_is_editable() {
+    let temp_dir = TempDir::new().unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Project root sits under the data dir, mirroring a conductor session.
+    let project = dir_context
+        .data_dir
+        .join("conductor")
+        .join("proj")
+        .join("session-1");
+    std::fs::create_dir_all(&project).unwrap();
+    let changelog = project.join("CHANGELOG.md");
+    std::fs::write(&changelog, "# Release Notes\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_shared_dir_context(
+        100,
+        24,
+        Config::default(),
+        project,
+        dir_context,
+    )
+    .unwrap();
+    harness.open_file(&changelog).unwrap();
+    harness.render().unwrap();
+
+    // Typing must land in the buffer: if the data-dir guard wrongly disabled
+    // editing, the keystrokes are dropped and the marker never renders.
+    harness.type_text("ZZEDITABLEZZ").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("ZZEDITABLEZZ");
+}
+
 /// Test that PNG files are detected as binary and opened in read-only mode
 #[test]
 fn test_png_file_detected_as_binary() {

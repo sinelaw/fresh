@@ -775,6 +775,18 @@ impl Prompt {
         }
     }
 
+    /// Delete from the cursor back to the start of the line (Ctrl+U).
+    ///
+    /// Mirrors the standard readline kill-to-start behavior so the
+    /// command palette can be cleared without holding Backspace.
+    pub fn delete_to_start(&mut self) {
+        if self.cursor_pos > 0 {
+            self.push_undo_snapshot();
+            self.input.drain(..self.cursor_pos);
+            self.cursor_pos = 0;
+        }
+    }
+
     /// Get the current input text (for copy operation).
     ///
     /// Returns a copy of the entire input. In future, this could be extended

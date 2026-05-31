@@ -2406,6 +2406,17 @@ pub enum PluginCommand {
         end: usize,
     },
 
+    /// Remove overlays in a namespace that overlap with a byte range.
+    /// Like [`ClearOverlaysInRange`] but scoped to a single namespace, so a
+    /// plugin can invalidate its own decorations for a line without clobbering
+    /// editor-owned overlays (e.g. LSP diagnostics) in the same range.
+    ClearOverlaysInRangeForNamespace {
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    },
+
     /// Add virtual text (inline text that doesn't exist in the buffer)
     /// Used for color swatches, type hints, parameter hints, etc.
     AddVirtualText {
@@ -2732,7 +2743,10 @@ pub enum PluginCommand {
 
     /// Update the suggestions list for the current prompt
     /// Uses the editor's Suggestion type
-    SetPromptSuggestions { suggestions: Vec<Suggestion> },
+    SetPromptSuggestions {
+        suggestions: Vec<Suggestion>,
+        selected_index: Option<u32>,
+    },
 
     /// When enabled, navigating suggestions updates the prompt input text
     SetPromptInputSync { sync: bool },
@@ -4805,6 +4819,24 @@ impl PluginApi {
         })
     }
 
+    /// Clear overlays in a single namespace that overlap with a byte range.
+    /// Unlike [`clear_overlays_in_range`], overlays in other namespaces
+    /// (e.g. editor-owned LSP diagnostics) are left untouched.
+    pub fn clear_overlays_in_range_for_namespace(
+        &self,
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::ClearOverlaysInRangeForNamespace {
+            buffer_id,
+            namespace: OverlayNamespace::from_string(namespace),
+            start,
+            end,
+        })
+    }
+
     /// Set the status message
     pub fn set_status(&self, message: String) -> Result<(), String> {
         self.send_command(PluginCommand::SetStatus { message })
@@ -4853,7 +4885,10 @@ impl PluginApi {
     /// Set the suggestions for the current prompt
     /// This updates the prompt's autocomplete/selection list
     pub fn set_prompt_suggestions(&self, suggestions: Vec<Suggestion>) -> Result<(), String> {
-        self.send_command(PluginCommand::SetPromptSuggestions { suggestions })
+        self.send_command(PluginCommand::SetPromptSuggestions {
+            suggestions,
+            selected_index: None,
+        })
     }
 
     /// Enable/disable syncing prompt input text when navigating suggestions
@@ -5939,6 +5974,21 @@ mod tests {
                 if buffer_id == BufferId(4) && start == 10 && end == 20
         );
 
+        // clear_overlays_in_range_for_namespace
+        assert_dispatches!(
+            |a: &PluginApi| a.clear_overlays_in_range_for_namespace(
+                BufferId(5),
+                "md-emphasis".into(),
+                10,
+                20
+            ),
+            PluginCommand::ClearOverlaysInRangeForNamespace { buffer_id, namespace, start, end }
+                if buffer_id == BufferId(5)
+                    && namespace.as_str() == "md-emphasis"
+                    && start == 10
+                    && end == 20
+        );
+
         // open_file_at_location
         assert_dispatches!(
             |a: &PluginApi| a.open_file_at_location(
@@ -5975,7 +6025,7 @@ mod tests {
                 Suggestion::new("one".into()),
                 Suggestion::new("two".into()),
             ]),
-            PluginCommand::SetPromptSuggestions { suggestions }
+            PluginCommand::SetPromptSuggestions { suggestions, .. }
                 if suggestions.len() == 2
                     && suggestions[0].text == "one"
                     && suggestions[1].text == "two"

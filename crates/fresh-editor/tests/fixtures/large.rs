@@ -5848,7 +5848,7 @@ impl Editor {
             } => {
                 self.handle_start_prompt_async(label, initial_value, callback_id);
             }
-            PluginCommand::SetPromptSuggestions { suggestions } => {
+            PluginCommand::SetPromptSuggestions { suggestions, .. } => {
                 self.handle_set_prompt_suggestions(suggestions);
             }
             PluginCommand::SetPromptInputSync { sync } => {

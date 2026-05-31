@@ -54,6 +54,11 @@ pub struct EntryDialogState {
     /// When true, the dialog wraps a single non-Object value (e.g., an ObjectArray).
     /// `to_value()` returns the raw control value instead of wrapping in an Object.
     pub is_single_value: bool,
+    /// True when the dialog edits an item in an array (constructed via
+    /// `for_array_item`); false for map entries (`from_schema`). Drives
+    /// the Delete button's label/confirmation copy so the prompt doesn't
+    /// show a numeric index as if it were a meaningful name.
+    pub is_array_item: bool,
     /// Set to true on the first user-driven mutation (typed char,
     /// toggled bool, list add/remove, etc.). Drives the dirty
     /// indicator + the Esc discard prompt without relying on a
@@ -160,6 +165,7 @@ impl EntryDialogState {
             first_editable_index,
             no_delete,
             is_single_value,
+            is_array_item: false,
             user_edited: false,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
@@ -237,6 +243,7 @@ impl EntryDialogState {
             first_editable_index,
             no_delete: false, // Arrays typically allow deletion
             is_single_value: false,
+            is_array_item: true,
             user_edited: false,
         }
     }

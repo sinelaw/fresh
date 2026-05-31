@@ -3422,6 +3422,24 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Clear overlays in a namespace that overlap with a byte range
+    pub fn clear_overlays_in_range_for_namespace(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearOverlaysInRangeForNamespace {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+                start: start as usize,
+                end: end as usize,
+            })
+            .is_ok()
+    }
+
     /// Remove an overlay by its handle
     pub fn remove_overlay(&self, buffer_id: u32, handle: String) -> bool {
         use fresh_core::overlay::OverlayHandle;
@@ -4135,12 +4153,22 @@ impl JsEditorApi {
     /// Set suggestions for the current prompt
     ///
     /// Uses typed Vec<Suggestion> - serde validates field names at runtime
+    // Uses `Opt<Option<u32>>` (not `Opt<u32>` or `Option<u32>` alone):
+    //   - `Opt` handles omitted args (fewer params than declared).
+    //   - `Option` handles `undefined` values (which rquickjs treats
+    //     as present but void, failing `u32::from_js`).
+    // Together they accept both `fn(suggestions)` and
+    // `fn(suggestions, undefined)` from JS.
     pub fn set_prompt_suggestions(
         &self,
         suggestions: Vec<fresh_core::command::Suggestion>,
+        selected_index: rquickjs::function::Opt<Option<u32>>,
     ) -> bool {
         self.command_sender
-            .send(PluginCommand::SetPromptSuggestions { suggestions })
+            .send(PluginCommand::SetPromptSuggestions {
+                suggestions,
+                selected_index: selected_index.0.flatten(),
+            })
             .is_ok()
     }
 
@@ -9821,7 +9849,7 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            PluginCommand::SetPromptSuggestions { suggestions } => {
+            PluginCommand::SetPromptSuggestions { suggestions, .. } => {
                 assert_eq!(suggestions.len(), 2);
                 assert_eq!(suggestions[0].text, "Option 1");
                 assert_eq!(suggestions[0].value, Some("opt1".to_string()));

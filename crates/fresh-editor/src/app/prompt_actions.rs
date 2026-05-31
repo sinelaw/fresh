@@ -1723,6 +1723,15 @@ impl Editor {
                 if let Some(line) = line {
                     self.goto_line_col(line, column);
                 }
+                // When this path is reached from the FileExplorer key context
+                // (Quick Open or LiveGrep started while the explorer was
+                // focused), the freshly opened buffer would otherwise stay
+                // unfocused — typing would feed the explorer's search filter
+                // instead of the editor. The native file browser path
+                // (`file_open_open_file_at_location`) already does this reset
+                // for the same reason.
+                self.active_window_mut().key_context =
+                    crate::input::keybindings::KeyContext::Normal;
                 self.set_status_message(
                     t!("buffer.opened", name = full_path.display().to_string()).to_string(),
                 );

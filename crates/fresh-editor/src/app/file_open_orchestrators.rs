@@ -756,18 +756,25 @@ impl crate::app::window::Window {
         self.open_file_no_focus_inner(path, false)
     }
 
-    /// True if `path` resolves to a location under the app data dir.
-    /// Both sides are canonicalized so a symlinked home (e.g. macOS
-    /// `/var` → `/private/var`) doesn't defeat the prefix check.
-    fn path_under_data_dir(&self, path: &Path) -> bool {
-        let data_dir = &self.resources.dir_context.data_dir;
-        let canonical_data = self
-            .resources
-            .authority
-            .filesystem
-            .canonicalize(data_dir)
-            .unwrap_or_else(|_| data_dir.clone());
-        path.starts_with(&canonical_data)
+    /// True if `path` is an internal app artifact (terminal scrollback,
+    /// git-show output, etc.) that the user is inspecting rather than
+    /// editing — i.e. it lives under the app data dir but outside this
+    /// window's own project root. A session working tree can itself live
+    /// under the data dir (conductor / orchestrator sessions); files under
+    /// the window root are real working files, not artifacts.
+    /// Paths are canonicalized so a symlinked home (e.g. macOS
+    /// `/var` → `/private/var`) doesn't defeat the prefix checks.
+    fn is_internal_data_artifact(&self, path: &Path) -> bool {
+        let canonicalize = |p: &Path| {
+            self.resources
+                .authority
+                .filesystem
+                .canonicalize(p)
+                .unwrap_or_else(|_| p.to_path_buf())
+        };
+        let canonical_data = canonicalize(&self.resources.dir_context.data_dir);
+        let canonical_root = canonicalize(&self.root);
+        path.starts_with(&canonical_data) && !path.starts_with(&canonical_root)
     }
 
     fn open_file_no_focus_inner(
@@ -942,11 +949,13 @@ impl crate::app::window::Window {
             tracing::info!("Detected binary file: {}", path.display());
         }
 
-        // Files under the app data dir (e.g. terminal scrollback backing
-        // files surfaced by Universal Search) are internal artifacts the
-        // user is inspecting, not editing — open them read-only so an
-        // accidental keystroke can't corrupt persisted state.
-        if self.path_under_data_dir(&canonical_path) {
+        // Internal app artifacts under the data dir (e.g. terminal scrollback
+        // backing files surfaced by Universal Search) are things the user is
+        // inspecting, not editing — open them read-only so an accidental
+        // keystroke can't corrupt persisted state. Files inside the window's
+        // own root are excluded so session working trees that live under the
+        // data dir stay editable.
+        if self.is_internal_data_artifact(&canonical_path) {
             state.editing_disabled = true;
         }
 

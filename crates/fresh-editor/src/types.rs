@@ -278,9 +278,11 @@ pub struct LspServerConfig {
     #[schemars(extend("x-order" = 4))]
     pub args: Vec<String>,
 
-    /// Whether to auto-start this LSP server when opening matching files
-    /// If false (default), the server must be started manually via command palette
-    #[serde(default)]
+    /// Whether to auto-start this LSP server when opening matching files.
+    /// Defaults to true: a server you configure is normally one you want
+    /// used, so it starts on the next matching file open. Set to false to
+    /// require a manual start via the command palette.
+    #[serde(default = "default_true")]
     #[schemars(extend("x-order" = 5))]
     pub auto_start: bool,
 

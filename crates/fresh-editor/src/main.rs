@@ -1642,6 +1642,7 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     };
 
     tracing::info!("Config loaded");
+    config.apply_runtime_flags();
 
     // CLI flag overrides config
     if args.no_upgrade_check {
@@ -2743,6 +2744,7 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         config::Config::load_with_layers(&dir_context, &config_dir)
     };
     eprintln!("[server] Editor config loaded");
+    editor_config.apply_runtime_flags();
 
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
