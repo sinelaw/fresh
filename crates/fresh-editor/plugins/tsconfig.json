@@ -63,6 +63,7 @@
     "latex-lsp.ts",
     "live_diff.ts",
     "live_grep.ts",
+    "lsp_navigation.ts",
     "lua-lsp.ts",
     "markdown_compose.ts",
     "markdown_source.ts",

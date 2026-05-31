@@ -1541,7 +1541,7 @@ impl Editor {
             let path = self.working_dir().display().to_string();
             let triggers = self.workspace_trust_markers.join(", ");
             let secondary_label = if self.workspace_trust_prompt_cancellable {
-                "Cancel (Esc)".to_string()
+                rust_i18n::t!("trust.dialog.btn_cancel").into_owned()
             } else {
                 let quit_hint = self.keybindings.read().ok().and_then(|kb| {
                     kb.get_keybinding_for_action(
@@ -1550,8 +1550,8 @@ impl Editor {
                     )
                 });
                 match quit_hint {
-                    Some(k) => format!("Quit ({k})"),
-                    None => "Quit".to_string(),
+                    Some(k) => rust_i18n::t!("trust.dialog.btn_quit_key", key = k).into_owned(),
+                    None => rust_i18n::t!("trust.dialog.btn_quit").into_owned(),
                 }
             };
             Some(

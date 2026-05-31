@@ -2602,10 +2602,10 @@ impl KeybindingResolver {
             Action::OpenKeybindingEditor => "Keybinding Editor".into(),
             Action::CompositeNextHunk => t!("action.composite_next_hunk"),
             Action::CompositePrevHunk => t!("action.composite_prev_hunk"),
-            Action::WorkspaceTrustTrust => "Trust This Folder".into(),
-            Action::WorkspaceTrustRestrict => "Restrict This Folder".into(),
-            Action::WorkspaceTrustBlock => "Block Process Execution".into(),
-            Action::WorkspaceTrustPrompt => "Workspace Trust…".into(),
+            Action::WorkspaceTrustTrust => t!("action.workspace_trust_trust"),
+            Action::WorkspaceTrustRestrict => t!("action.workspace_trust_restrict"),
+            Action::WorkspaceTrustBlock => t!("action.workspace_trust_block"),
+            Action::WorkspaceTrustPrompt => t!("action.workspace_trust_prompt"),
             Action::None => t!("action.none"),
         }
         .to_string()

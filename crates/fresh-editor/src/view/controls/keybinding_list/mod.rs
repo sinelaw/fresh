@@ -201,7 +201,6 @@ pub struct KeybindingListColors {
     pub focused_bg: Color,
     /// Foreground color for focused entries (text on focused background)
     pub focused_fg: Color,
-    pub delete_fg: Color,
     pub add_fg: Color,
 }
 
@@ -214,7 +213,6 @@ impl Default for KeybindingListColors {
             row_bg: Color::Reset,
             focused_bg: Color::DarkGray,
             focused_fg: Color::White,
-            delete_fg: Color::Red,
             add_fg: Color::Green,
         }
     }
@@ -225,20 +223,12 @@ impl Default for KeybindingListColors {
 pub struct KeybindingListLayout {
     /// (data_index, screen_area) for each visible entry
     pub entry_rects: Vec<(usize, Rect)>,
-    pub delete_rects: Vec<Rect>,
     pub add_rect: Option<Rect>,
 }
 
 impl KeybindingListLayout {
     /// Find what was clicked at the given coordinates
     pub fn hit_test(&self, x: u16, y: u16) -> Option<KeybindingListHit> {
-        // Check delete buttons first (they overlap entry areas)
-        for (idx, rect) in self.delete_rects.iter().enumerate() {
-            if y == rect.y && x >= rect.x && x < rect.x + rect.width {
-                return Some(KeybindingListHit::DeleteButton(idx));
-            }
-        }
-
         // Check entry areas
         for &(data_idx, rect) in self.entry_rects.iter() {
             if y == rect.y && x >= rect.x && x < rect.x + rect.width {
@@ -262,8 +252,6 @@ impl KeybindingListLayout {
 pub enum KeybindingListHit {
     /// Clicked on an entry
     Entry(usize),
-    /// Clicked on delete button for entry
-    DeleteButton(usize),
     /// Clicked on add row
     AddRow,
 }
@@ -328,14 +316,9 @@ mod tests {
     fn test_keybinding_list_hit_test() {
         let layout = KeybindingListLayout {
             entry_rects: vec![(0, Rect::new(2, 1, 40, 1)), (1, Rect::new(2, 2, 40, 1))],
-            delete_rects: vec![Rect::new(38, 1, 3, 1), Rect::new(38, 2, 3, 1)],
             add_rect: Some(Rect::new(2, 3, 40, 1)),
         };
 
-        assert_eq!(
-            layout.hit_test(38, 1),
-            Some(KeybindingListHit::DeleteButton(0))
-        );
         assert_eq!(layout.hit_test(10, 1), Some(KeybindingListHit::Entry(0)));
         assert_eq!(layout.hit_test(10, 2), Some(KeybindingListHit::Entry(1)));
         assert_eq!(layout.hit_test(10, 3), Some(KeybindingListHit::AddRow));

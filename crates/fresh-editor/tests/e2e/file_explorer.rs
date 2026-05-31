@@ -3282,8 +3282,6 @@ fn test_file_explorer_click_markdown_enter_does_not_modify_buffer() {
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_file_explorer_git_markers_clear_after_external_commit() {
-    use std::process::Command;
-
     let repo = GitTestRepo::new();
     repo.setup_git_explorer_plugin();
     repo.create_file("file1.txt", "hello");
@@ -3312,25 +3310,35 @@ fn test_file_explorer_git_markers_clear_after_external_commit() {
         })
         .unwrap();
 
-    // Ensure initial .git/index mtime is recorded by the file tree poller
+    // Ensure the current .git/index mtime is recorded by the file tree poller.
     harness.advance_time(std::time::Duration::from_secs(5));
     harness.editor_mut().poll_file_tree_changes();
 
-    // Wait for filesystem mtime granularity (1 second) so the commit
-    // produces a different .git/index mtime than what was already recorded.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // Snapshot the seeded .git/index mtime. This is the value the poller just
+    // recorded; the external commit below must yield a *different* mtime for
+    // the change to be detected.
+    let index_path = repo.path.join(".git").join("index");
+    let seeded_mtime = fs::metadata(&index_path).unwrap().modified().unwrap();
 
-    // Commit all changes externally (simulating a user running git in another terminal)
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(&repo.path)
-        .output()
-        .expect("git add failed");
-    Command::new("git")
-        .args(["commit", "-m", "commit changes"])
-        .current_dir(&repo.path)
-        .output()
-        .expect("git commit failed");
+    // Commit all changes externally (simulating a user running git in another
+    // terminal). Use the isolated test git wrapper, not a raw `git` process.
+    repo.git_add_all();
+    repo.git_commit("commit changes");
+
+    // Force .git/index to a deterministically newer mtime. Relying on the real
+    // post-commit mtime is flaky: on filesystems with coarse mtime granularity
+    // the commit can land in the same tick as the seeded value, so the poller
+    // never observes a change and the test hangs (the TIMEOUT this regression
+    // test was failing with). Setting the mtime explicitly removes any
+    // dependence on wall-clock timing or filesystem resolution — no
+    // `thread::sleep` and no real-time waiting.
+    let bumped = seeded_mtime + std::time::Duration::from_secs(10);
+    std::fs::File::options()
+        .write(true)
+        .open(&index_path)
+        .unwrap()
+        .set_modified(bumped)
+        .unwrap();
 
     // Advance time past poll interval — poll_file_tree_changes now also
     // checks .git/index mtime and fires the plugin hook on change.

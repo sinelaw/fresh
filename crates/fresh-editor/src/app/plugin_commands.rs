@@ -161,6 +161,30 @@ impl Editor {
         }
     }
 
+    /// Handle ClearOverlaysInRangeForNamespace command
+    pub(super) fn handle_clear_overlays_in_range_for_namespace(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.overlays.remove_in_range_for_namespace(
+                &(start..end),
+                &namespace,
+                &mut state.marker_list,
+            );
+            // Note: Overlays are ephemeral, not added to event log for undo/redo
+        }
+    }
+
     // ==================== Virtual Text Commands ====================
 
     /// Handle AddVirtualText command
@@ -2039,6 +2063,7 @@ impl Editor {
     pub(super) fn handle_set_prompt_suggestions(
         &mut self,
         suggestions: Vec<fresh_core::command::Suggestion>,
+        selected_index: Option<u32>,
     ) {
         use crate::input::commands::{CommandSource, Suggestion as EditorSuggestion};
 
@@ -2066,11 +2091,14 @@ impl Editor {
             // don't handle their own filtering like theme editor dropdowns)
             prompt.original_suggestions = Some(internal_suggestions.clone());
             prompt.suggestions = internal_suggestions;
-            // Select first suggestion by default
+            // Select first suggestion by default (or the specified index)
             prompt.selected_suggestion = if prompt.suggestions.is_empty() {
                 None
             } else {
-                Some(0)
+                let idx = selected_index
+                    .map(|i| (i as usize).min(prompt.suggestions.len() - 1))
+                    .unwrap_or(0);
+                Some(idx)
             };
             // A fresh result list re-engages keep-selection-visible scrolling
             // (issue #2119): a stale manual-scroll latch from the previous

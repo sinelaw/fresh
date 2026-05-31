@@ -137,6 +137,60 @@ fn test_command_palette_copy() {
     // harness.assert_screen_contains("Command: toggle line wrap");
 }
 
+/// Ctrl+U should clear the command-palette line from the cursor back to the
+/// start (standard readline kill-to-start). Previously Ctrl+U was a no-op and
+/// the only way to clear the line was repeated Backspace (issue #2143, item 6).
+#[test]
+fn test_command_palette_ctrl_u_clears_line() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Open the command palette and type a distinctive query.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("openfilexyz").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">openfilexyz");
+
+    // Ctrl+U clears from the cursor (end) back to the start of the line.
+    harness
+        .send_key(KeyCode::Char('u'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The typed query is gone — the line is empty.
+    harness.assert_screen_not_contains("openfilexyz");
+}
+
+/// Ctrl+U should only clear back to the cursor, leaving text after the cursor
+/// intact — matching readline semantics.
+#[test]
+fn test_command_palette_ctrl_u_keeps_text_after_cursor() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("aaabbb").unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">aaabbb");
+
+    // Move cursor to just before "bbb" (left 3 times), then Ctrl+U.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Char('u'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Text before the cursor ("aaa") is removed; text after it ("bbb")
+    // survives. (The leading mode sigil lives in the input buffer too, so
+    // it is cleared along with "aaa" — only the trailing text is kept.)
+    harness.assert_screen_not_contains("aaabbb");
+    harness.assert_screen_contains("bbb");
+}
+
 /// Test that Ctrl+X cuts text in command palette
 #[test]
 fn test_command_palette_cut() {

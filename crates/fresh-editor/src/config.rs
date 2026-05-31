@@ -1866,6 +1866,20 @@ pub struct TerminalConfig {
     /// (e.g. `docker exec`) keep their own wrapper.
     #[serde(default)]
     pub shell: Option<TerminalShellConfig>,
+
+    /// Workaround for fresh#2077: when auto-detecting a shell on Windows,
+    /// skip Microsoft Store **App Execution Alias** stubs (zero-byte
+    /// `APPEXECLINK` reparse points under `%LOCALAPPDATA%\Microsoft\WindowsApps`).
+    /// Spawning such a stub through ConPTY has been reported to crash with
+    /// `0xc0000142` (STATUS_DLL_INIT_FAILED) on Windows 11 23H2.
+    ///
+    /// Default `true`. Set to `false` to launch whatever `pwsh.exe`
+    /// appears first on `PATH`, including the Store alias — useful if you
+    /// want the old behavior, or if you've confirmed the alias works on
+    /// your Windows build. No effect on non-Windows platforms or when
+    /// `terminal.shell` is set explicitly.
+    #[serde(default = "default_true")]
+    pub skip_app_execution_alias: bool,
 }
 
 impl Default for TerminalConfig {
@@ -1873,6 +1887,7 @@ impl Default for TerminalConfig {
         Self {
             jump_to_end_on_output: true,
             shell: None,
+            skip_app_execution_alias: true,
         }
     }
 }
@@ -3275,6 +3290,19 @@ impl MenuConfig {
 impl Config {
     /// The config filename used throughout the application
     pub(crate) const FILENAME: &'static str = "config.json";
+
+    /// Push config values into process-wide flags that need to be readable
+    /// from contexts which don't carry a `Config` handle (e.g. the
+    /// parameter-less `services::terminal::detect_shell`). Idempotent —
+    /// safe to call multiple times as the config is reloaded.
+    pub fn apply_runtime_flags(&self) {
+        #[cfg(windows)]
+        {
+            crate::services::terminal::set_skip_app_execution_alias(
+                self.terminal.skip_app_execution_alias,
+            );
+        }
+    }
 
     /// Get the local config path (in the working directory)
     pub(crate) fn local_config_path(working_dir: &Path) -> std::path::PathBuf {

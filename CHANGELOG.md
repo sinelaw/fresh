@@ -1,5 +1,33 @@
 # Release Notes
 
+## 0.3.10
+
+A lot of work on bug fixes and polish in this release.
+
+### Improvements
+
+* **Live Grep**: previews highlight all matches and center on the match in wrapped documents; keyboard nav re-reveals the selection after a wheel scroll; prompt text is readable on all themes (new `suggestion_fg` theme key) and toolbar labels readable on light themes.
+* The **Workspace Trust** prompt and the **env-manager** plugin's commands and status messages are now localized across all 14 supported languages (#2158).
+* Session model reworked: **one session per directory**, `windows.json` dropped (sessions are discovered from the per-dir workspace cache), only the foreground window is materialized at startup with the rest lazy-restored, and the **base session is no longer magic — it can be deleted** like any other.
+* Orchestrator picker hides **empty / single-file sessions** by default, with a toggle to show them (#2137).
+* The Live Grep => Quickfix (persisted) list is now a **Finder dock panel** instead of a bespoke buffer: **Enter navigates** to the match, the dock stays open when jumping, and `live_grep_export_quickfix` is bound by default (#2124).
+
+### Bug Fixes
+
+* **Mouse-wheel scrolling** fixed in File Explorer, Live Grep, and Git Log panels (#2119, reported by @brunnerh in #2107).
+* **Search highlights** no longer grow over adjacent typing (#2053, reported by @mandolyte) and stale matches now clear after edits inside a match (#2133).
+* **Search / Replace**: panel no longer gets stuck on "Searching…" with zero matches; *Search and Replace in Current File* now works for unnamed buffers and for files outside the workspace root (#2112).
+* **LSP**: diagnostics now display in Markdown compose/preview mode (#2146); `workspace/configuration` is answered per-server instead of with a fixed rust-analyzer blob; newly configured servers default to `auto_start = true`.
+* **Diagnostics panel** `q` / `a` / `r` shortcuts work again instead of tripping "Editing disabled" (#2125).
+* **Review Diff**: *Discard hunk* now succeeds for files with an unterminated final line (#2117).
+* **Macro replay** is now a **single undo unit** instead of per-char (#2062).
+* **Submenus** align so the first item is inline with the selected parent item (#2118, reported by @RandomGHUser).
+* **File Explorer**: `Ctrl+O` works and keeps focus on the opened buffer.
+* **Settings**: text fields commit and advance focus on `Enter`; `Ctrl+U` clears the prompt.
+* **Gutter** no longer eats text width in non-compose mode when line numbers are off.
+* **Windows**: the Microsoft Store `pwsh` App Execution Alias is skipped when opening a terminal (#2077, reported by @ket000), with an opt-out flag.
+* Session working trees stored under the data dir are now editable.
+
 ## 0.3.9
 
 ### Features

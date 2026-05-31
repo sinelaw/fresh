@@ -1,0 +1,58 @@
+{
+  "en": {
+    "cmd.goto_lsp_symbol": "Go to LSP Symbol",
+    "cmd.goto_lsp_symbol_desc": "List document symbols from LSP and navigate to selected"
+  },
+  "cs": {
+    "cmd.goto_lsp_symbol": "Přejít na symbol LSP",
+    "cmd.goto_lsp_symbol_desc": "Vypsat symboly dokumentu z LSP a přejít na vybraný"
+  },
+  "de": {
+    "cmd.goto_lsp_symbol": "Zu LSP-Symbol gehen",
+    "cmd.goto_lsp_symbol_desc": "Dokumentsymbole vom LSP auflisten und zum ausgewählten navigieren"
+  },
+  "es": {
+    "cmd.goto_lsp_symbol": "Ir a símbolo LSP",
+    "cmd.goto_lsp_symbol_desc": "Listar símbolos del documento desde LSP y navegar al seleccionado"
+  },
+  "fr": {
+    "cmd.goto_lsp_symbol": "Aller au symbole LSP",
+    "cmd.goto_lsp_symbol_desc": "Lister les symboles du document depuis LSP et naviguer vers le sélectionné"
+  },
+  "it": {
+    "cmd.goto_lsp_symbol": "Vai al simbolo LSP",
+    "cmd.goto_lsp_symbol_desc": "Elenca i simboli del documento da LSP e naviga al selezionato"
+  },
+  "ja": {
+    "cmd.goto_lsp_symbol": "LSPシンボルへ移動",
+    "cmd.goto_lsp_symbol_desc": "LSPからドキュメントシンボルをリストし、選択したものに移動"
+  },
+  "ko": {
+    "cmd.goto_lsp_symbol": "LSP 기호로 이동",
+    "cmd.goto_lsp_symbol_desc": "LSP에서 문서 기호를 나열하고 선택한 항목으로 이동"
+  },
+  "pt-BR": {
+    "cmd.goto_lsp_symbol": "Ir para símbolo LSP",
+    "cmd.goto_lsp_symbol_desc": "Listar símbolos do documento do LSP e navegar até o selecionado"
+  },
+  "ru": {
+    "cmd.goto_lsp_symbol": "Перейти к символу LSP",
+    "cmd.goto_lsp_symbol_desc": "Перечислить символы документа из LSP и перейти к выбранному"
+  },
+  "th": {
+    "cmd.goto_lsp_symbol": "ไปที่สัญลักษณ์ LSP",
+    "cmd.goto_lsp_symbol_desc": "แสดงรายการสัญลักษณ์เอกสารจาก LSP และนำทางไปยังสิ่งที่เลือก"
+  },
+  "uk": {
+    "cmd.goto_lsp_symbol": "Перейти до символу LSP",
+    "cmd.goto_lsp_symbol_desc": "Перелічити символи документа з LSP та перейти до вибраного"
+  },
+  "vi": {
+    "cmd.goto_lsp_symbol": "Đến ký hiệu LSP",
+    "cmd.goto_lsp_symbol_desc": "Liệt kê các ký hiệu tài liệu từ LSP và điều hướng đến mục đã chọn"
+  },
+  "zh-CN": {
+    "cmd.goto_lsp_symbol": "转到LSP符号",
+    "cmd.goto_lsp_symbol_desc": "列出LSP中的文档符号并导航到所选符号"
+  }
+}

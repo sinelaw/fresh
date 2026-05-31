@@ -1266,6 +1266,7 @@ mod tests {
             "clearNamespace",
             "clearAllOverlays",
             "clearOverlaysInRange",
+            "clearOverlaysInRangeForNamespace",
             "removeOverlay",
             "addConceal",
             "clearConcealNamespace",

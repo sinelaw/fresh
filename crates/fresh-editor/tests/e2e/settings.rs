@@ -3781,7 +3781,7 @@ fn test_usability_entry_dialog_button_focus_indicator() {
         let screen = harness.screen_to_string();
         // The ">" indicator is rendered with a gap before the button bracket
         if screen.contains("> [ Save ]")
-            || screen.contains("> [ Delete ]")
+            || screen.contains("> [ Delete")
             || screen.contains("> [ Cancel ]")
         {
             has_focused_button = true;
