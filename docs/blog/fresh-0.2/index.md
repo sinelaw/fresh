@@ -1,5 +1,7 @@
 ---
 title: "Fresh 0.2"
+date: 2026-02-11
+description: "Session persistence, keybinding editor, improved line editing, regex capture groups, and more."
 outline: false
 ---
 

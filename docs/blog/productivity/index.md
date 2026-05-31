@@ -1,5 +1,7 @@
 ---
 title: "Productivity Features"
+date: 2026-02-11
+description: "Command palette, split view, file explorer, integrated terminal, and more."
 outline: false
 ---
 

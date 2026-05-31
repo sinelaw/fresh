@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { genFeed } from "./genFeed";
 
 export default defineConfig({
   title: "Fresh",
@@ -9,11 +10,25 @@ export default defineConfig({
   outDir: "../dist/docs",
   srcExclude: ["internal/**"],
 
-  head: [["link", { rel: "icon", href: "/docs/logo.svg" }]],
+  head: [
+    ["link", { rel: "icon", href: "/docs/logo.svg" }],
+    [
+      "link",
+      {
+        rel: "alternate",
+        type: "application/rss+xml",
+        title: "Fresh Blog",
+        href: "/docs/feed.rss",
+      },
+    ],
+  ],
 
   cleanUrls: true,
   lastUpdated: true,
   appearance: "force-dark",
+
+  buildEnd: genFeed,
+
   themeConfig: {
     logo: { light: "/logo.svg", dark: "/logo.svg" },
 

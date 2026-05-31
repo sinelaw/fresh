@@ -1,5 +1,7 @@
 ---
 title: "The Architecture of Fresh: Memory-Efficient from the Ground Up"
+date: 2026-05-27
+description: "A deep dive into the memory-efficient design behind Fresh: piece tree storage, interval trees for markers, and the rendering pipeline."
 outline: false
 ---
 

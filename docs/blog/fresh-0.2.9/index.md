@@ -1,5 +1,7 @@
 ---
 title: "What's New in Fresh (0.2.9)"
+date: 2026-02-25
+description: "Code folding, markdown compose mode, large file line scanning, vertical rulers, auto-save, and more."
 outline: false
 ---
 

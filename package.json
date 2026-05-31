@@ -9,6 +9,7 @@
     "build": "bash scripts/build-site.sh"
   },
   "devDependencies": {
+    "feed": "^4.2.2",
     "vitepress": "^1.6.4"
   }
 }
