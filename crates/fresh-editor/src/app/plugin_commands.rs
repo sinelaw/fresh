@@ -2078,6 +2078,7 @@ impl Editor {
                 EditorSuggestion {
                     text: s.text,
                     description: s.description,
+                    description_spans: s.description_spans,
                     value: s.value,
                     disabled: s.disabled.unwrap_or(false),
                     keybinding: s.keybinding,

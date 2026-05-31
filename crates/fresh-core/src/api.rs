@@ -595,7 +595,7 @@ pub struct LayoutHints {
 ///
 /// When a theme key is used, the color is resolved at render time,
 /// so overlays automatically update when the theme changes.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
 pub enum OverlayColorSpec {
@@ -655,7 +655,7 @@ impl OverlayColorSpec {
 ///
 /// This struct provides a type-safe way to specify overlay styling
 /// with optional theme key references for colors.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 #[derive(Default)]
@@ -708,7 +708,7 @@ pub struct OverlayOptions {
 /// "ui.help_key_fg" } }`. `None` style means "no styling override";
 /// each consumer applies its own default (e.g. the floating-prompt
 /// title uses `prompt_fg` + bold).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct StyledText {

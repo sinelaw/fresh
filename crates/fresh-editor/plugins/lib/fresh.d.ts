@@ -366,6 +366,13 @@ type PromptSuggestion = {
 	*/
 	disabled?: boolean;
 	/**
+	* Optional styled rendering of `description`. When present, these spans
+	* are rendered (in order) in place of the plain `description` text,
+	* letting a row highlight part of itself (e.g. the symbol word inside a
+	* code-line snippet).
+	*/
+	description_spans?: StyledText[];
+	/**
 	* Optional keyboard shortcut
 	*/
 	keybinding?: string;
