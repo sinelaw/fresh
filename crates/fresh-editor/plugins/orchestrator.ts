@@ -625,19 +625,18 @@ function ageString(createdAt: number): string {
 // =============================================================================
 // Status pill
 //
-// Each live session renders its agent state as a small rounded capsule —
-// `◖ ● running ◗` — colour-coded by state. The pill is the row's flexible
-// element: it sheds detail as the column narrows so the session *name* (the
-// thing the user navigates by) is never the first casualty.
+// Each live session renders its agent state as a coloured status dot plus a
+// label — `● running` — keyed off the agent state. The pill is the row's
+// flexible element: it sheds detail as the column narrows so the session
+// *name* (the thing the user navigates by) is never the first casualty.
 //
-//   wide   : ◖ ● running ◗     (cap + dot + word, dimmed cap glyphs)
-//   medium : ● running         (dot + word, no caps)
+//   wide   : ● running         (dot + word)
 //   tight  : ● RUN             (dot + 3-letter code)
 //   minimal: ●                 (dot only)
 //
 // On-disk (discovered) rows have no agent process — `renderListItem`
 // gives them a plain `· on-disk` tag and no pill, so a coloured status
-// capsule never implies a running process where there is none.
+// dot never implies a running process where there is none.
 // =============================================================================
 
 interface PillStyle {
@@ -661,49 +660,35 @@ const STATE_PILL: Record<AgentState, PillStyle> = {
 
 // How a pill should render given the columns available to it. The caller
 // (renderListItem) decides the budget from its content width; the pill
-// picks the richest form that fits. `caps` wraps the body in `◖ … ◗`.
-type PillForm = { caps: boolean; body: "word" | "code" | "dot" };
+// picks the richest form that fits.
+type PillForm = "word" | "code" | "dot";
 
 function pillForm(budget: number): PillForm {
-  // Widths: dot(1) + space(1) = 2 baseline. word adds 1+len(word); code
-  // adds 1+len(code); caps add 4 (`◖ ` + ` ◗`). Longest word is "running"
-  // (7) and longest code "WAIT"/"KILL" (4).
-  if (budget >= 13) return { caps: true, body: "word" }; // ◖ ● running ◗ ≈ 13
-  if (budget >= 9) return { caps: false, body: "word" }; // ● running    ≈ 9
-  if (budget >= 6) return { caps: false, body: "code" }; // ● WAIT       ≈ 6
-  return { caps: false, body: "dot" }; //                   ●            = 1
+  // Widths: dot(1). word adds 1+len(word); code adds 1+len(code). Longest
+  // word is "running" (7) → 9; longest code "WAIT"/"KILL" (4) → 6.
+  if (budget >= 9) return "word"; // ● running ≈ 9
+  if (budget >= 6) return "code"; // ● WAIT    ≈ 6
+  return "dot"; //                   ●         = 1
 }
 
 // Visible width of a pill rendered in `form` for `p`.
 function pillWidth(p: PillStyle, form: PillForm): number {
-  let w = 1; // dot
-  if (form.body === "word") w += 1 + p.word.length;
-  else if (form.body === "code") w += 1 + p.code.length;
-  if (form.caps) w += 4; // "◖ " + " ◗"
-  return w;
+  if (form === "word") return 1 + 1 + p.word.length; // dot + space + word
+  if (form === "code") return 1 + 1 + p.code.length; // dot + space + code
+  return 1; // dot only
 }
 
-// Build the styled segments for a pill. `dim` overrides the cap-glyph
-// colour so the active row's reverse highlight stays legible.
+// Build the styled segments for a pill: a bold coloured dot, then (when
+// there's room) a space + the state label in the same colour.
 function pillSegments(
   p: PillStyle,
   form: PillForm,
 ): { text: string; style?: Record<string, unknown> }[] {
-  const segs: { text: string; style?: Record<string, unknown> }[] = [];
-  if (form.caps) {
-    segs.push({ text: "◖", style: { fg: "ui.menu_disabled_fg" } });
-    segs.push({ text: " " });
-  }
-  segs.push({ text: p.dot, style: { fg: p.fg, bold: true } });
-  if (form.body === "word") {
-    segs.push({ text: " " + p.word, style: { fg: p.fg } });
-  } else if (form.body === "code") {
-    segs.push({ text: " " + p.code, style: { fg: p.fg } });
-  }
-  if (form.caps) {
-    segs.push({ text: " " });
-    segs.push({ text: "◗", style: { fg: "ui.menu_disabled_fg" } });
-  }
+  const segs: { text: string; style?: Record<string, unknown> }[] = [
+    { text: p.dot, style: { fg: p.fg, bold: true } },
+  ];
+  if (form === "word") segs.push({ text: " " + p.word, style: { fg: p.fg } });
+  else if (form === "code") segs.push({ text: " " + p.code, style: { fg: p.fg } });
   return segs;
 }
 
