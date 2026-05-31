@@ -1108,6 +1108,22 @@ function sessionsSeparator(): WidgetSpec {
   return spacer(0);
 }
 
+// A full-width horizontal rule (`────`) used in the dock to divide the
+// header chrome from the session list. Rendered in the dim disabled-menu
+// colour (a quiet grey, not the louder popup-border accent) so it reads
+// as a subtle separator rather than competing with the pills below.
+// `width` is the content width so it stops at the border.
+function dockRule(width: number): WidgetSpec {
+  return {
+    kind: "raw",
+    entries: [
+      styledRow([
+        { text: "─".repeat(Math.max(1, width)), style: { fg: "ui.menu_disabled_fg" } },
+      ]),
+    ],
+  };
+}
+
 // Smallest list height we'll show even when there are only a
 // couple of sessions — keeps the preview pane (which matches the
 // list height) usable rather than collapsing to a sliver.
@@ -2088,8 +2104,9 @@ function buildDockSpec(): WidgetSpec {
     OPEN_MODE,
   );
   const newLabel = newKey ? `+ New ${newKey}` : "+ New";
-  const worktreeKey = editor.getKeybindingLabel("orchestrator_toggle_worktrees", OPEN_MODE);
-  const worktreeLabel = worktreeKey ? `worktrees (${worktreeKey})` : "worktrees";
+  // Dock toggle labels stay terse — the dock is narrow, and the rebind
+  // hints live in the wider modal picker. Just the plain noun here.
+  const worktreeLabel = "worktrees";
   // Checked = show trivial (empty / single-file) sessions; unchecked
   // (default) hides them so the dock focuses on real work. Same
   // `hide-trivial` widget key the modal uses, so the existing
@@ -2136,11 +2153,11 @@ function buildDockSpec(): WidgetSpec {
 
   // Size the list to fill the dock. The dock draws only a right border
   // (no top/bottom), so its content area is the full terminal height.
-  // Fixed top chrome is 7 rows (title, New/scope, worktrees toggle,
-  // empty/1-file toggle, filter, separator, header).
+  // Fixed top chrome is 6 rows (title, New/scope, worktrees toggle,
+  // empty/1-file toggle, filter, rule).
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - 7 - bottomRows);
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - 6 - bottomRows);
   openDialog.listVisibleRows = listRows;
 
   return col(
@@ -2182,8 +2199,7 @@ function buildDockSpec(): WidgetSpec {
       fullWidth: true,
       key: inConfirm ? undefined : "filter",
     }),
-    sessionsSeparator(),
-    sessionsColumnHeader(contentW),
+    dockRule(contentW),
     list({
       items,
       itemKeys,
