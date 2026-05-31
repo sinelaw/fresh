@@ -360,12 +360,34 @@ let dockBlurred = false;
 // Monotonic token so a rapid run of ↑/↓ only commits the *last*
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
+// Default dock width on a "typical" terminal, and the bounds the
+// responsive width is clamped to. The dock scales with the terminal
+// (`dockDefaultWidth`) between these; a user drag still overrides it
+// (the host persists the dragged width — see `handle_floating_panel_control`).
 const DOCK_WIDTH_COLS = 32;
-// Inner content width of the dock column: the host reserves one column
-// for the right border, and the panel content sits flush-left, so list
-// rows get `DOCK_WIDTH_COLS - 2` cells. Drives the width-adaptive pill
-// in `renderListItem` and the aligned `sessionsColumnHeader`.
-const DOCK_CONTENT_COLS = DOCK_WIDTH_COLS - 2;
+const DOCK_MIN_WIDTH_COLS = 24;
+const DOCK_MAX_WIDTH_COLS = 40;
+// Fraction of the terminal width the dock targets by default.
+const DOCK_WIDTH_FRACTION = 0.28;
+
+// Responsive default dock width: ~`DOCK_WIDTH_FRACTION` of the terminal,
+// clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
+// grows/shrinks with the window. Falls back to the fixed default when the
+// screen size isn't known yet.
+function dockDefaultWidth(): number {
+  const w = editor.getScreenSize().width;
+  if (w <= 0) return DOCK_WIDTH_COLS;
+  const target = Math.round(w * DOCK_WIDTH_FRACTION);
+  return Math.max(DOCK_MIN_WIDTH_COLS, Math.min(DOCK_MAX_WIDTH_COLS, target));
+}
+
+// Inner content width for a given dock width: the host reserves one
+// column for the right border plus an editor-side gutter, so list rows
+// get `dockWidth - 2` cells. Floored so a clamped/narrow dock still
+// renders something. Drives name/tag truncation and the `dockRule`.
+function dockContentCols(dockWidth: number): number {
+  return Math.max(8, dockWidth - 2);
+}
 // Which dock zone has keyboard focus: the session list (default) or the
 // filter input. Tracked from the host's `focus` widget_event. The host
 // (dispatch_floating_widget_key) reads the panel focus directly to route
@@ -652,69 +674,39 @@ function ageString(createdAt: number): string {
 }
 
 // =============================================================================
-// Status pill
+// Status symbol
 //
-// Each live session renders its activity as a coloured status dot plus a
-// label — `● working` / `○ idle` — derived from how recently its terminal
-// printed (see `sessionState`). The pill is the row's flexible element: it
-// sheds detail as the column narrows so the session *name* (the thing the
-// user navigates by) is never the first casualty.
+// Each live session shows a single status symbol in the row's left margin —
+// before the checkbox and name — so every name lines up in the same column
+// regardless of state. Activity is derived from how recently the session's
+// terminal printed (see `sessionState`):
 //
-//   wide   : ● working         (dot + word)
-//   narrow : ●                 (dot only — when the word won't fit)
+//   working : `*` in the warning/progress colour — terminal actively printing
+//   idle    : `✓` in the added/green colour       — quiet / waiting / done
 //
-// On-disk (discovered) rows have no agent process — `renderListItem`
-// gives them a plain `· on-disk` tag and no pill, so a status dot never
-// implies activity where there is none.
+// `*` is ASCII; `✓` (U+2713) is a single-cell glyph present in essentially
+// every terminal font — both avoid the box-drawing / half-block / emoji
+// glyphs that render unevenly. Colours are theme keys so they track the
+// active theme. On-disk (discovered) rows have no agent process, so they get
+// no symbol (a blank margin) and keep their `· on-disk` tag instead.
 // =============================================================================
 
-interface PillStyle {
-  // Colour for the dot + word (a theme key, resolved by the host).
+interface StatusSymbol {
+  // The single glyph painted in the left margin.
+  glyph: string;
+  // Theme key for the glyph colour, resolved by the host.
   fg: string;
-  // Filled/hollow status glyph.
-  dot: string;
-  // Lowercase label shown beside the dot when the column has room.
-  word: string;
 }
 
-const STATE_PILL: Record<AgentState, PillStyle> = {
-  // Working: a filled, accent-coloured dot — the terminal is actively
-  // printing.
-  working: { fg: "diagnostic.info_fg", dot: "●", word: "working" },
-  // Idle: a hollow, dim dot — quiet/waiting/done. Deliberately muted so
-  // a screen full of idle sessions doesn't shout.
-  idle: { fg: "ui.menu_disabled_fg", dot: "○", word: "idle" },
+const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
+  // In progress — amber/warning, an asterisk reads as "busy/spinner".
+  working: { glyph: "*", fg: "diagnostic.warning_fg" },
+  // Done/quiet — green check, the universal "complete" mark.
+  idle: { glyph: "✓", fg: "file_status_added_fg" },
 };
 
-// How a pill should render given the columns available to it. Two forms
-// only — the labelled word, or a bare dot when there isn't room for it.
-// (No abbreviated upper-case "code" form: it made the same state read as
-// `idle` on one row and `IDLE` on a longer-named one, purely by how much
-// space was left — confusing for no benefit.)
-type PillForm = "word" | "dot";
-
-// Pick the richest form of `p` that fits in `budget` columns.
-function pillForm(p: PillStyle, budget: number): PillForm {
-  return budget >= pillWidth(p, "word") ? "word" : "dot";
-}
-
-// Visible width of a pill rendered in `form` for `p`.
-function pillWidth(p: PillStyle, form: PillForm): number {
-  return form === "word" ? 1 + 1 + p.word.length : 1; // dot[+ space + word]
-}
-
-// Build the styled segments for a pill: a bold coloured dot, then (when
-// there's room) a space + the state label in the same colour.
-function pillSegments(
-  p: PillStyle,
-  form: PillForm,
-): { text: string; style?: Record<string, unknown> }[] {
-  const segs: { text: string; style?: Record<string, unknown> }[] = [
-    { text: p.dot, style: { fg: p.fg, bold: true } },
-  ];
-  if (form === "word") segs.push({ text: " " + p.word, style: { fg: p.fg } });
-  return segs;
-}
+// Width of the left status margin: glyph + trailing space.
+const STATUS_MARGIN_W = 2;
 
 // =============================================================================
 // Open dialog — widget-based session picker (Phase 1 of the
@@ -863,17 +855,12 @@ function filterSessions(needle: string): number[] {
   return matches.map((m) => m.id);
 }
 
-// Header row above the session list: `NAME … STATUS`, right-aligning
-// the STATUS label over the pill column. `contentWidth` matches the
-// value handed to `renderListItem` so the labels line up. On a very
-// narrow dock the STATUS label is dropped (the pills shrink to dots,
-// which need no header).
-function sessionsColumnHeader(contentWidth: number): WidgetSpec {
-  // 4-space lead aligns NAME under the per-row `[ ] ` checkbox.
-  const left = "    NAME";
-  const right = "STATUS";
-  const gap = contentWidth - left.length - right.length;
-  const text = gap >= 1 ? left + " ".repeat(gap) + right : left;
+// Header row above the session list: a single dim `NAME`, indented to
+// sit over the per-row name (status margin + checkbox = STATUS_MARGIN_W
+// + 4 cols). The status symbol lives in the left margin now, so there's
+// no separate status column to label.
+function sessionsColumnHeader(): WidgetSpec {
+  const text = " ".repeat(STATUS_MARGIN_W + 4) + "NAME";
   return {
     kind: "raw",
     entries: [
@@ -883,15 +870,13 @@ function sessionsColumnHeader(contentWidth: number): WidgetSpec {
 }
 
 // Build one rendered list-item row for `id`:
-//   `[ ] ` <name>  <project basename>          <status pill>
-// The active session's name renders bold; discovered (on-disk,
-// unopened) worktrees render dim. The project basename is filled only
-// for sessions outside the current project. The status pill is
-// right-aligned and *yields first* when the column is narrow: it sheds
-// caps → word → code → bare dot so the name (and the cross-project tag,
-// which other code keys off of) keep their space. `contentWidth` is the
-// list column's inner width in cells — the dock passes ~30, the modal
-// passes its wider session-column width.
+//   `<sym> [ ] <name>  <project basename>`
+// A leading status symbol (working `*` / idle `✓`, blank for on-disk rows)
+// sits in the left margin so every name lines up regardless of state. Then
+// the multi-select checkbox, the name (active bold, discovered dim), and an
+// optional cross-project basename tag. `contentWidth` is the list column's
+// inner width in cells — the dock passes ~30, the modal passes its wider
+// session-column width.
 function renderListItem(
   id: number,
   activeId: number,
@@ -905,9 +890,22 @@ function renderListItem(
   const isDiscovered = !!s.discovered;
   const isChecked = openDialog?.selectedIds.has(id) ?? false;
 
-  // Leading multi-select checkbox. `[x]` when this row is in the
-  // bulk selection, `[ ]` otherwise — toggled with Space (the
-  // rebindable `orchestrator_toggle_select`) or a click.
+  // Left status margin: live sessions get a coloured working/idle symbol
+  // (recomputed from the output timestamp at render time — the stored
+  // `state` can be stale since nothing fires when a session goes quiet).
+  // On-disk rows have no agent, so they get a blank margin of the same
+  // width to keep names aligned.
+  const marginEntry = isDiscovered
+    ? { text: " ".repeat(STATUS_MARGIN_W) }
+    : (() => {
+        const sym = STATE_SYMBOL[sessionState(s)];
+        return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
+      })();
+
+  // Multi-select checkbox. `[x]` when this row is in the bulk selection,
+  // `[ ]` otherwise — toggled with Space (the rebindable
+  // `orchestrator_toggle_select`) or a click. Kept contiguous with the
+  // name (`[ ] <name>`) — other code and tests key off that.
   const checkbox = {
     text: isChecked ? "[x] " : "[ ] ",
     style: isChecked
@@ -916,6 +914,7 @@ function renderListItem(
   };
 
   const entries: { text: string; style?: Record<string, unknown> }[] = [
+    marginEntry,
     checkbox,
     {
       text: s.label,
@@ -926,13 +925,11 @@ function renderListItem(
         : undefined,
     },
   ];
-  // Running tally of the row's left cluster (checkbox + name + tags), so
-  // the pill knows how many columns are left over on the right.
-  let leftWidth = 4 + s.label.length;
+  // Running tally of the row width so far (margin + checkbox + name).
+  let leftWidth = STATUS_MARGIN_W + 4 + s.label.length;
 
-  // Discovered (on-disk, not-yet-opened) worktrees have no live agent —
-  // a coloured status pill would imply a running process. They keep the
-  // plain `· on-disk` tag inline instead, and skip the pill entirely.
+  // On-disk tag for discovered worktrees — they have no live state, so
+  // this is how the row advertises it's an unopened on-disk worktree.
   if (isDiscovered) {
     const tag = " · on-disk";
     if (leftWidth + tag.length <= contentWidth) {
@@ -945,9 +942,8 @@ function renderListItem(
   }
 
   // PROJECT tag: basename for cross-project rows only; current-project
-  // rows leave it blank. Kept in the left cluster (it identifies the
-  // row and its presence/absence is the switch signal other code waits
-  // on) and only dropped if it genuinely doesn't fit.
+  // rows leave it blank. Its presence/absence is the switch signal other
+  // code waits on, so keep it unless it genuinely doesn't fit.
   const proj = projectKeyOf(s);
   if (proj !== currentProjectKey()) {
     const tag = editor.pathBasename(proj);
@@ -961,22 +957,6 @@ function renderListItem(
     }
   }
 
-  // Status pill, right-aligned — live sessions only. Recompute activity
-  // from the output timestamp at render time (the stored `state` can be
-  // stale — nothing fires an event when a session simply goes quiet).
-  // Pick the richest form that fits in the leftover columns (minus a
-  // 1-col gap); drop it entirely if there's no room.
-  if (!isDiscovered) {
-    const pill = STATE_PILL[sessionState(s)];
-    const pillBudget = contentWidth - leftWidth - 1;
-    if (pillBudget >= 1) {
-      const form = pillForm(pill, pillBudget);
-      const w = pillWidth(pill, form);
-      const pad = Math.max(1, contentWidth - leftWidth - w);
-      entries.push({ text: " ".repeat(pad) });
-      for (const seg of pillSegments(pill, form)) entries.push(seg);
-    }
-  }
   return styledRow(entries as Parameters<typeof styledRow>[0]);
 }
 
@@ -1000,7 +980,7 @@ function buildPreviewEntries(
   const isActive = s.id === activeId;
   // The focused window is labelled "active"; everything else shows its
   // live working/idle activity (recomputed from the output timestamp).
-  const stateText = isActive ? "active" : STATE_PILL[sessionState(s)].word;
+  const stateText = isActive ? "active" : sessionState(s);
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: stateText,
@@ -1160,16 +1140,16 @@ function maxListRowsForScreen(): number {
 }
 
 // Inner width (cells) of the modal picker's session column, used to
-// size the width-adaptive pill + header. The panel is 90% of the
-// terminal and the sessions `labeledSection` is `widthPct: 34` of that;
-// subtract the section's border (2) + inner padding (2). Floored so a
-// narrow terminal still renders at least a bare-dot pill.
+// size name/tag truncation. The panel is 90% of the terminal and the
+// sessions `labeledSection` is `widthPct: 34` of that; subtract the
+// section's border (2) + inner padding (2). Floored so a narrow terminal
+// still renders a usable column.
 function modalSessionColWidth(): number {
   const screen = editor.getScreenSize();
   const w = screen.width > 0 ? screen.width : 80;
   const panelW = Math.floor(w * 0.9);
   const sectionW = Math.floor(panelW * 0.34);
-  return Math.max(DOCK_CONTENT_COLS, sectionW - 4);
+  return Math.max(dockContentCols(DOCK_MIN_WIDTH_COLS), sectionW - 4);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -1774,7 +1754,7 @@ function buildOpenSpec(): WidgetSpec {
           trivialFilterRow,
           filterInput,
           sessionsSeparator(),
-          sessionsColumnHeader(colWidth),
+          sessionsColumnHeader(),
           list({
             items,
             itemKeys,
@@ -1958,7 +1938,7 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
       heightPct: 100,
       asDock: true,
     });
-    editor.floatingPanelControl(openPanel.id(), "dock", DOCK_WIDTH_COLS);
+    editor.floatingPanelControl(openPanel.id(), "dock", dockDefaultWidth());
     openPanel.update(buildDockSpec());
   } else {
     // 90% × 90% of the terminal — the open dialog wants room for
@@ -2093,19 +2073,17 @@ function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  // Content width tracks the actual dock width the host will grant.
-  // The host (`compute_dock_split`) keeps EDITOR_MIN (~20) cols for the
-  // buffer, so the dock is `min(DOCK_WIDTH_COLS, screenW - 20)` cols wide
-  // and below that it's hidden entirely. Mirror that here so the pill
-  // sheds down its ladder as the dock narrows, instead of laying out at
-  // full width and being clipped. `-2` drops the dock's right border +
-  // the host's editor-side gutter, matching DOCK_CONTENT_COLS.
+  // Content width tracks the responsive dock width we request from the
+  // host (`dockDefaultWidth`, re-issued on resize), bounded by what the
+  // host can actually grant: it keeps EDITOR_MIN (~20) cols for the
+  // buffer, so on a narrow terminal the real dock is `screenW - 20` and
+  // below that it's hidden. Taking the min keeps name/tag truncation and
+  // the `dockRule` in step with the visible width.
   const EDITOR_MIN_COLS = 20;
   const screenW = editor.getScreenSize().width;
-  const dockW = screenW > 0
-    ? Math.min(DOCK_WIDTH_COLS, screenW - EDITOR_MIN_COLS)
-    : DOCK_WIDTH_COLS;
-  const contentW = Math.max(8, Math.min(DOCK_CONTENT_COLS, dockW - 2));
+  const grantable = screenW > 0 ? screenW - EDITOR_MIN_COLS : DOCK_WIDTH_COLS;
+  const dockW = Math.min(dockDefaultWidth(), grantable);
+  const contentW = dockContentCols(dockW);
   const items = filtered.map((id) => renderListItem(id, activeId, contentW));
   const itemKeys = filtered.map(String);
   const selIdx = filtered.length === 0
@@ -5130,8 +5108,15 @@ editor.on("active_window_changed", () => {
 // viewport at the same time.
 editor.on("resize", () => {
   if (openDialog && openPanel) {
-    // buildOpenSpec refits `listVisibleRows` to the session count
-    // (bounded by the new screen budget) on the refresh below.
+    // Make the dock responsive: re-issue its width on every resize so it
+    // scales with the terminal. Uses the focus-preserving `dock_width`
+    // op (not `dock`, which would steal keyboard focus back from the
+    // editor); the host ignores it unless the panel is docked and still
+    // lets a user-dragged width win. buildOpenSpec/buildDockSpec also
+    // refit `listVisibleRows` + content width on the refresh below.
+    if (dockMode) {
+      editor.floatingPanelControl(openPanel.id(), "dock_width", dockDefaultWidth());
+    }
     refreshOpenDialog();
   }
 });

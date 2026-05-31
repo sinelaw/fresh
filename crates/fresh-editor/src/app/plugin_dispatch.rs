@@ -5933,6 +5933,18 @@ impl Editor {
                 fwp.placement = super::PanelPlacement::LeftDock { width_cols };
                 fwp.focused = true;
             }
+            // Update the dock's width WITHOUT touching focus — used by the
+            // plugin to make the dock responsive (re-issued on terminal
+            // resize). Unlike "dock" this never steals keyboard focus back
+            // from the editor, and it's a no-op unless the panel is already
+            // docked. A user-dragged width still wins (persisted override).
+            "dock_width" => {
+                if let super::PanelPlacement::LeftDock { .. } = fwp.placement {
+                    let requested = persisted.unwrap_or(arg as u16);
+                    let width_cols = requested.clamp(10, max_cols);
+                    fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                }
+            }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;
                 fwp.focused = true;
