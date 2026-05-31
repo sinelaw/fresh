@@ -2106,12 +2106,12 @@ function buildDockSpec(): WidgetSpec {
   const newLabel = newKey ? `+ New ${newKey}` : "+ New";
   // Dock toggle labels stay terse — the dock is narrow, and the rebind
   // hints live in the wider modal picker. Just the plain noun here.
-  const worktreeLabel = "worktrees";
+  const worktreeLabel = "all worktrees";
   // Checked = show trivial (empty / single-file) sessions; unchecked
   // (default) hides them so the dock focuses on real work. Same
   // `hide-trivial` widget key the modal uses, so the existing
   // `widget_event` toggle handler fires for the dock too.
-  const trivialLabel = "show empty/1-file";
+  const trivialLabel = "show empty";
 
   // Pinned bottom block: a confirm prompt (separator + 2 rows) OR
   // detail + actions (separator + 0–2 rows), then the hint bar. The

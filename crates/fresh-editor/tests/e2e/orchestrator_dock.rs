@@ -407,7 +407,7 @@ fn dock_right_border_drag_resizes_and_persists() {
 
 #[test]
 fn dock_show_empty_toggle_flips_on_click() {
-    // The "show empty/1-file" toggle defaults to off (hide trivial
+    // The "show empty" toggle defaults to off (hide trivial
     // sessions). Clicking it flips the checkbox `[ ]` → `[v]`, proving the
     // dock toggle is wired to the shared hide-trivial filter.
     let (_tmp, root) = setup_project("alphaproj");
@@ -416,18 +416,18 @@ fn dock_show_empty_toggle_flips_on_click() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("show empty/1-file"))
+    h.wait_until(|h| h.screen_to_string().contains("show empty"))
         .unwrap();
-    let trow = row_of(&h, "show empty/1-file") as u16;
+    let trow = row_of(&h, "show empty") as u16;
     // Off by default: unchecked.
     assert!(
-        h.screen_row_text(trow).contains("[ ] show empty/1-file"),
+        h.screen_row_text(trow).contains("[ ] show empty"),
         "expected toggle off by default: {:?}",
         h.screen_row_text(trow)
     );
     // Click it → checked.
     h.mouse_click(3, trow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[v] show empty/1-file"))
+    h.wait_until(|h| h.screen_to_string().contains("[v] show empty"))
         .unwrap();
 }
 
