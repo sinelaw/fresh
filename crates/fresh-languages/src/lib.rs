@@ -104,6 +104,7 @@ impl HighlightCategory {
             10 => Some(Self::String),
             11 => Some(Self::Type),
             12 => Some(Self::Variable),
+            13 => Some(Self::VariableBuiltin),
             _ => None,
         }
     }
@@ -827,6 +828,7 @@ const DEFAULT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "string",
     "type",
     "variable",
+    "variable.builtin",
 ];
 
 /// Templ-specific highlight rules, vendored from the upstream

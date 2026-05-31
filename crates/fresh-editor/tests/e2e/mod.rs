@@ -198,6 +198,7 @@ pub mod symlinks;
 pub mod syntax_highlighting_coverage;
 pub mod syntax_highlighting_embedded_offset;
 pub mod syntax_language_case;
+pub mod syntax_variable_builtin;
 pub mod tab_config;
 pub mod tab_drag;
 pub mod terminal;
@@ -225,3 +226,4 @@ pub mod visual_regression;
 pub mod warning_indicators;
 #[cfg(feature = "plugins")]
 pub mod workspace;
+

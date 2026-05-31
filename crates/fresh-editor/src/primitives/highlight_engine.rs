@@ -1941,6 +1941,18 @@ mod tests {
     }
 
     #[test]
+    fn test_variable_builtin_category() {
+        assert_eq!(
+            scope_to_category("variable.language.this"),
+            Some(HighlightCategory::VariableBuiltin)
+        );
+        assert_eq!(
+            scope_to_category("variable.language.super"),
+            Some(HighlightCategory::VariableBuiltin)
+        );
+    }
+
+    #[test]
     fn test_string_delimiter_uses_string_color() {
         // String delimiters (", ', `) should use string color, not operator
         assert_eq!(
