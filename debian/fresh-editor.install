@@ -1,0 +1,16 @@
+crates/fresh-editor/plugins/*.ts          usr/share/fresh-editor/plugins/
+crates/fresh-editor/plugins/*.json        usr/share/fresh-editor/plugins/
+crates/fresh-editor/plugins/*.md          usr/share/fresh-editor/plugins/
+crates/fresh-editor/plugins/lib/*         usr/share/fresh-editor/plugins/lib/
+crates/fresh-editor/plugins/examples/*    usr/share/fresh-editor/plugins/examples/
+crates/fresh-editor/themes/*.json         usr/share/fresh-editor/themes/
+crates/fresh-editor/resources/fresh.desktop  usr/share/applications/
+docs/icons/linux/hicolor/16x16/apps/fresh.png     usr/share/icons/hicolor/16x16/apps/
+docs/icons/linux/hicolor/22x22/apps/fresh.png     usr/share/icons/hicolor/22x22/apps/
+docs/icons/linux/hicolor/24x24/apps/fresh.png     usr/share/icons/hicolor/24x24/apps/
+docs/icons/linux/hicolor/32x32/apps/fresh.png     usr/share/icons/hicolor/32x32/apps/
+docs/icons/linux/hicolor/48x48/apps/fresh.png     usr/share/icons/hicolor/48x48/apps/
+docs/icons/linux/hicolor/64x64/apps/fresh.png     usr/share/icons/hicolor/64x64/apps/
+docs/icons/linux/hicolor/128x128/apps/fresh.png   usr/share/icons/hicolor/128x128/apps/
+docs/icons/linux/hicolor/256x256/apps/fresh.png   usr/share/icons/hicolor/256x256/apps/
+docs/icons/linux/hicolor/512x512/apps/fresh.png   usr/share/icons/hicolor/512x512/apps/

@@ -38,7 +38,11 @@ jobs:
             build-essential \
             binutils \
             pkg-config \
-            libclang-dev
+            libclang-dev \
+            debhelper \
+            dpkg-dev \
+            fakeroot \
+            lintian
 
       - uses: actions/checkout@v6
         with:
@@ -64,9 +68,9 @@ jobs:
             libc6-dev-arm64-cross \
             binutils-aarch64-linux-gnu
 
-      - name: Install cargo-deb and cargo-generate-rpm
+      - name: Install cargo-generate-rpm
         run: |
-          cargo install cargo-deb cargo-generate-rpm
+          cargo install cargo-generate-rpm
 
       - name: Build release binary
         run: |
@@ -87,25 +91,35 @@ jobs:
 
       - name: Setup target symlink for packaging
         run: |
-          # cargo-deb/generate-rpm configs use paths relative to crate dir
-          # Create symlink so target/release paths resolve to workspace target
+          # cargo-generate-rpm's asset paths are relative to the crate dir;
+          # symlink so they resolve to the workspace target/.
           ln -s ../../target crates/fresh-editor/target
 
+      - name: Sync debian/changelog with Cargo.toml version
+        run: ./scripts/update-debian-changelog.sh
+
       - name: Build .deb package
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          BINDGEN_EXTRA_CLANG_ARGS: --sysroot=/usr/aarch64-linux-gnu
         run: |
-          cargo deb --no-build --target ${{ matrix.target }}
+          # -b: binary-only, -d: don't check build-deps (rustup provides
+          # rust, not apt), -us -uc: don't sign. debian/rules reuses the
+          # already-built binary at target/${{ matrix.target }}/release/fresh.
+          dpkg-buildpackage -b -d -us -uc --host-arch ${{ matrix.arch }}
 
       - name: Build .rpm package
         working-directory: crates/fresh-editor
         run: |
           cargo generate-rpm --target ${{ matrix.target }}
 
-      - name: Rename packages with architecture suffix
+      - name: Collect packages
         run: |
           mkdir -p packages
-          # Find and copy deb package
-          find target/${{ matrix.target }}/debian -name "*.deb" -exec cp {} packages/ \;
-          # Find and copy rpm package (symlink makes it end up in workspace target)
+          # dpkg-buildpackage drops the .deb in the parent directory of the
+          # source tree by convention.
+          find .. -maxdepth 1 -name "fresh-editor_*_${{ matrix.arch }}.deb" -exec cp {} packages/ \;
+          # RPM lands in workspace target via the symlink set up above.
           find target/${{ matrix.target }}/generate-rpm -name "*.rpm" -exec cp {} packages/ \;
           ls -la packages/
 
@@ -446,10 +460,135 @@ jobs:
           echo ""
           echo "=== rpm upgrade test PASSED ==="
 
+  # Build the Debian source package (.dsc + .orig.tar.gz + .debian.tar.xz +
+  # _source.changes). Uses the same debian/ tree as the binary build, but
+  # ships cargo-vendored deps inside the orig tarball so the source package
+  # is self-contained and rebuilds offline (what mentors.debian.net / Debian
+  # buildds require).
+  build-deb-source:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libclang-dev \
+            debhelper \
+            dpkg-dev \
+            devscripts \
+            fakeroot \
+            lintian \
+            xz-utils
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Sync debian/changelog with Cargo.toml version
+        run: ./scripts/update-debian-changelog.sh
+
+      - name: Vendor cargo dependencies
+        run: |
+          mkdir -p .cargo
+          # cargo vendor prints a [source] block to stdout; merge into .cargo/config.toml
+          # so the source package rebuilds with --offline against vendor/.
+          cargo vendor vendor >> .cargo/config.toml
+          echo "vendored $(find vendor -maxdepth 1 -mindepth 1 -type d | wc -l) crates"
+
+      - name: Build source package
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+          test -n "$VERSION"
+
+          # dpkg-source expects a directory named <pkg>-<upstream-ver>/ with
+          # a sibling <pkg>_<upstream-ver>.orig.tar.gz. Stage a copy.
+          STAGE=/tmp/build
+          DIR="fresh-editor-${VERSION}"
+          mkdir -p "$STAGE"
+          # Copy everything except the obvious junk and the staging dir itself.
+          # (cp -a inside the source tree to a target outside; .git is huge and unneeded.)
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='target/' \
+            --exclude='node_modules/' \
+            --exclude='.worktrees/' \
+            --exclude='perf.data*' \
+            --exclude='flamegraph.svg' \
+            ./ "$STAGE/$DIR/"
+
+          # Build the orig tarball from the staged tree (excluding debian/,
+          # which lives in the .debian.tar.xz component).
+          tar --create --gzip \
+              --owner=0 --group=0 \
+              --exclude="$DIR/debian" \
+              --file="$STAGE/fresh-editor_${VERSION}.orig.tar.gz" \
+              -C "$STAGE" "$DIR"
+
+          # Build the source package from inside the staged dir.
+          cd "$STAGE/$DIR"
+          dpkg-buildpackage -S -d -us -uc
+
+          echo "=== source-package artifacts ==="
+          ls -la "$STAGE/"
+
+      - name: Verify source package
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+
+          DSC="/tmp/build/fresh-editor_${VERSION}-1.dsc"
+          test -f "$DSC" || { echo "missing .dsc"; ls /tmp/build; exit 1; }
+
+          # Round-trip: extract and ensure the package metadata parses.
+          mkdir -p /tmp/verify
+          dpkg-source -x "$DSC" /tmp/verify/extracted
+          dpkg-parsechangelog -l /tmp/verify/extracted/debian/changelog
+
+      - name: Collect source package artifacts
+        run: |
+          mkdir -p source-package
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+          for ext in dsc orig.tar.gz debian.tar.xz; do
+            find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*.${ext}" -exec cp {} source-package/ \;
+          done
+          find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*_source.changes" -exec cp {} source-package/ \;
+          find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*_source.buildinfo" -exec cp {} source-package/ \;
+          ls -la source-package/
+
+      - name: Upload source package
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-deb-source
+          path: source-package/*
+
   # Final job that depends on all tests to ensure failures propagate to caller
   # This job will fail if any dependent job fails, causing the reusable workflow to fail
   linux-packages-complete:
-    needs: [build-linux-packages, test-deb-package, test-rpm-package, test-deb-upgrade, test-rpm-upgrade]
+    needs: [build-linux-packages, build-deb-source, test-deb-package, test-rpm-package, test-deb-upgrade, test-rpm-upgrade]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
@@ -458,6 +597,7 @@ jobs:
         run: |
           echo "One or more jobs failed:"
           echo "  build-linux-packages: ${{ needs.build-linux-packages.result }}"
+          echo "  build-deb-source: ${{ needs.build-deb-source.result }}"
           echo "  test-deb-package: ${{ needs.test-deb-package.result }}"
           echo "  test-rpm-package: ${{ needs.test-rpm-package.result }}"
           echo "  test-deb-upgrade: ${{ needs.test-deb-upgrade.result }}"

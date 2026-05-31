@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS := hardening=+all
+
+include /usr/share/dpkg/architecture.mk
+
+# Map Debian host arch -> Cargo target triple
+ifeq ($(DEB_HOST_ARCH),amd64)
+  CARGO_TARGET := x86_64-unknown-linux-gnu
+else ifeq ($(DEB_HOST_ARCH),arm64)
+  CARGO_TARGET := aarch64-unknown-linux-gnu
+  export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER := aarch64-linux-gnu-gcc
+  export BINDGEN_EXTRA_CLANG_ARGS := --sysroot=/usr/aarch64-linux-gnu
+else
+  $(error Unsupported architecture: $(DEB_HOST_ARCH))
+endif
+
+CARGO_FLAGS := --release --target $(CARGO_TARGET) --bin fresh
+
+# Use vendored deps when present (source-package builds ship vendor/)
+ifneq ($(wildcard vendor),)
+  CARGO_FLAGS += --offline --frozen
+endif
+
+%:
+	dh $@
+
+# Skip rebuild if CI pre-built the binary (parity with the .rpm path
+# which still uses an explicit cargo build step).
+override_dh_auto_build:
+	test -x target/$(CARGO_TARGET)/release/fresh || cargo build $(CARGO_FLAGS)
+
+override_dh_auto_install:
+	install -D -m 755 target/$(CARGO_TARGET)/release/fresh \
+		debian/fresh-editor/usr/share/fresh-editor/fresh
+
+# Ship the upstream CHANGELOG.md as /usr/share/doc/fresh-editor/changelog.gz
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
+# dpkg-buildpackage runs `debian/rules test`; tests live elsewhere in CI.
+override_dh_auto_test:
+
+# `dh_auto_clean` would `cargo clean` and wipe the user's target/.
+# Leave that alone — buildds start from a fresh dpkg-source -x anyway.
+override_dh_auto_clean:

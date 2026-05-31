@@ -231,41 +231,6 @@ winresource = "0.1"
 # Point dist at the changelog so GitHub Releases get populated
 changelog = "../../CHANGELOG.md"
 
-# Debian package configuration for cargo-deb
-[package.metadata.deb]
-maintainer = "Noam Lewis"
-section = "editors"
-priority = "optional"
-depends = "$auto"
-assets = [
-    # Binary - path must start with "target/release/" for cargo-deb to auto-adjust for --target
-    # CI creates symlink: crates/fresh-editor/target -> ../../target
-    ["target/release/fresh", "usr/share/fresh-editor/", "755"],
-    ["../../README.md", "usr/share/doc/fresh-editor/", "644"],
-    ["plugins/*", "usr/share/fresh-editor/plugins/", "644"],
-    ["plugins/lib/*", "usr/share/fresh-editor/plugins/lib/", "644"],
-    ["plugins/examples/*", "usr/share/fresh-editor/plugins/examples/", "644"],
-    ["themes/*", "usr/share/fresh-editor/themes/", "644"],
-    # Freedesktop hicolor icons
-    ["../../docs/icons/linux/hicolor/16x16/apps/fresh.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/22x22/apps/fresh.png", "usr/share/icons/hicolor/22x22/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/24x24/apps/fresh.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/32x32/apps/fresh.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/48x48/apps/fresh.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/64x64/apps/fresh.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/128x128/apps/fresh.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/256x256/apps/fresh.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
-    ["../../docs/icons/linux/hicolor/512x512/apps/fresh.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
-    # Freedesktop desktop entry
-    ["resources/fresh.desktop", "usr/share/applications/", "644"],
-]
-# Maintainer scripts to create/remove symlink at /usr/bin/fresh
-maintainer-scripts = "debian/"
-extended-description = """
-Fresh is a lightweight, fast terminal-based text editor with LSP support
-and TypeScript plugins. It provides syntax highlighting, code completion,
-and other IDE-like features in a minimal terminal interface."""
-
 # RPM package configuration for cargo-generate-rpm
 [package.metadata.generate-rpm]
 assets = [

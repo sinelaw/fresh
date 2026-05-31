@@ -5,25 +5,35 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CRATE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$CRATE_ROOT/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-echo "=== Building release binary ==="
-cargo build --release
+echo "=== Building release binary (x86_64) ==="
+cargo build --release --target x86_64-unknown-linux-gnu
 
 echo "=== Stripping binary ==="
-strip target/release/fresh
-ls -la target/release/fresh
+strip target/x86_64-unknown-linux-gnu/release/fresh
+ls -la target/x86_64-unknown-linux-gnu/release/fresh
 
-echo "=== Building .deb package ==="
-cargo deb --no-build
-DEB_FILE=$(ls target/debian/*.deb | head -1)
+echo "=== Syncing debian/changelog with Cargo.toml ==="
+"$PROJECT_ROOT/scripts/update-debian-changelog.sh"
+
+echo "=== Building .deb package via dpkg-buildpackage ==="
+# dpkg-buildpackage drops the .deb in the parent of the source tree.
+dpkg-buildpackage -b -d -us -uc --host-arch amd64
+DEB_FILE=$(ls "$PROJECT_ROOT"/../fresh-editor_*_amd64.deb | head -1)
+# Move it into the repo so the Docker volume mount can see it.
+mv "$DEB_FILE" "$PROJECT_ROOT/"
+DEB_FILE="$(basename "$DEB_FILE")"
 echo "Built: $DEB_FILE"
 
 echo "=== Building .rpm package ==="
-cargo generate-rpm
-RPM_FILE=$(ls target/generate-rpm/*.rpm | head -1)
+# RPM still uses cargo-generate-rpm; symlink so its asset paths resolve.
+[ -L "$CRATE_ROOT/target" ] || ln -s ../../target "$CRATE_ROOT/target"
+(cd "$CRATE_ROOT" && cargo generate-rpm --target x86_64-unknown-linux-gnu)
+RPM_FILE=$(ls target/x86_64-unknown-linux-gnu/generate-rpm/*.rpm | head -1)
 echo "Built: $RPM_FILE"
 
 echo ""
