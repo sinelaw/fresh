@@ -30,10 +30,19 @@ use super::{Editor, FloatingWidgetState};
 /// plugin needs them encoded the same way. On Windows that means resolving
 /// 8.3 short names (`RUNNER~1` → `runneradmin`) and stripping the `\\?\`
 /// verbatim prefix `canonicalize` adds. No-op on non-Windows.
+///
+/// `canonicalize` only works on paths that exist on disk. Worktree session
+/// roots created by the orchestrator often point at directories that haven't
+/// been materialized yet (`<repo>/wt-<name>`), so a naïve canonicalize would
+/// leave them in their original 8.3 short-name form while the launch session
+/// — whose root exists — gets the long-name form, and lex compare inverts
+/// on case (`R` 0x52 < `r` 0x72). Walk up to the deepest existing ancestor,
+/// canonicalize that, then re-attach the missing tail so siblings share the
+/// same prefix encoding regardless of which exist.
 fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
     #[cfg(windows)]
     {
-        let canonical = path.canonicalize().unwrap_or(path);
+        let canonical = canonicalize_deepest_existing(&path);
         let s = canonical.to_string_lossy();
         if let Some(stripped) = s.strip_prefix(r"\\?\") {
             return std::path::PathBuf::from(stripped);
@@ -42,6 +51,34 @@ fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
     }
     #[cfg(not(windows))]
     path
+}
+
+#[cfg(windows)]
+fn canonicalize_deepest_existing(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    // Walk up to the deepest ancestor that does canonicalize, then re-attach
+    // the components we walked past. Falls back to the raw path if no
+    // ancestor canonicalizes (drive root missing, etc).
+    let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
+    let mut ancestor = path;
+    loop {
+        let Some(parent) = ancestor.parent() else {
+            return path.to_path_buf();
+        };
+        if let Some(name) = ancestor.file_name() {
+            tail.push(name);
+        }
+        if let Ok(c) = parent.canonicalize() {
+            let mut out = c;
+            for name in tail.iter().rev() {
+                out.push(name);
+            }
+            return out;
+        }
+        ancestor = parent;
+    }
 }
 
 /// Returns the byte offset of the start (want_end=false) or end (want_end=true)
