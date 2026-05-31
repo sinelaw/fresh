@@ -47,11 +47,7 @@ export default defineConfig({
           { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },
           { text: "Fresh 0.2.18", link: "/blog/fresh-0.2.18/" },
-          { text: "Fresh 0.2.9", link: "/blog/fresh-0.2.9/" },
-          { text: "Fresh 0.2", link: "/blog/fresh-0.2/" },
-          { text: "Editing Features", link: "/blog/editing" },
-          { text: "Productivity Features", link: "/blog/productivity" },
-          { text: "Customization & Themes", link: "/blog/themes" },
+          { text: "More…", link: "/blog/" },
         ],
       },
       {
