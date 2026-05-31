@@ -226,4 +226,3 @@ pub mod visual_regression;
 pub mod warning_indicators;
 #[cfg(feature = "plugins")]
 pub mod workspace;
-

@@ -14,7 +14,11 @@ fn test_js_variable_builtin_highlight() {
     let project_dir = harness.project_dir().unwrap();
 
     let js_file = project_dir.join("test.js");
-    std::fs::write(&js_file, "class A {\n    constructor() {\n        this.foo = 1;\n    }\n}\n").unwrap();
+    std::fs::write(
+        &js_file,
+        "class A {\n    constructor() {\n        this.foo = 1;\n    }\n}\n",
+    )
+    .unwrap();
     harness.open_file(&js_file).unwrap();
     harness.render().unwrap();
 
@@ -33,5 +37,8 @@ fn test_js_variable_builtin_highlight() {
         }
     }
 
-    assert!(found, "Did not find expected variable_builtin color for 'this'");
+    assert!(
+        found,
+        "Did not find expected variable_builtin color for 'this'"
+    );
 }
