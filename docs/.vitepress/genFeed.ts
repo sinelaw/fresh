@@ -1,10 +1,28 @@
 import path from "node:path";
-import { writeFileSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { Feed } from "feed";
-import { createContentLoader, type SiteConfig } from "vitepress";
+import { createContentLoader, type ContentData, type SiteConfig } from "vitepress";
 
 // Public origin the docs site is served from (base path is added per-item).
 const hostname = "https://getfresh.dev";
+
+// Map a page url back to its markdown source file so we can fall back to the
+// file's modified time when a post has no explicit `date` in frontmatter.
+function resolveSourceFile(srcDir: string, url: string): string | undefined {
+  const clean = url.replace(/(^\/|\/$)/g, "").replace(/\.html$/, "");
+  return [
+    path.join(srcDir, clean, "index.md"),
+    path.join(srcDir, `${clean}.md`),
+  ].find((candidate) => existsSync(candidate));
+}
+
+// Publish date for a post: explicit frontmatter `date`, otherwise the source
+// file's last-modified time. This guarantees every entry appears in the feed.
+function postDate(srcDir: string, { url, frontmatter }: ContentData): Date {
+  if (frontmatter.date) return new Date(frontmatter.date as string);
+  const file = resolveSourceFile(srcDir, url);
+  return file ? statSync(file).mtime : new Date();
+}
 
 // Rewrite relative href/src attributes to absolute URLs so images and links
 // in the feed content resolve in standalone feed readers.
@@ -37,13 +55,9 @@ export async function genFeed(config: SiteConfig) {
   }).load();
 
   posts
-    .filter((post) => post.frontmatter.date)
-    .sort(
-      (a, b) =>
-        +new Date(b.frontmatter.date as string) -
-        +new Date(a.frontmatter.date as string),
-    )
-    .forEach(({ url, html, frontmatter }) => {
+    .map((post) => ({ post, date: postDate(config.srcDir, post) }))
+    .sort((a, b) => +b.date - +a.date)
+    .forEach(({ post: { url, html, frontmatter }, date }) => {
       // createContentLoader returns route-relative urls (e.g. "/blog/x/");
       // prepend the site base only if it isn't already present.
       const routed = url.startsWith(base)
@@ -57,7 +71,7 @@ export async function genFeed(config: SiteConfig) {
         link,
         description: frontmatter.description,
         content: html ? absolutizeLinks(html, link) : undefined,
-        date: new Date(frontmatter.date as string),
+        date,
       });
     });
 
