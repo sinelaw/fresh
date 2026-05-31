@@ -875,3 +875,65 @@ fn test_current_column_highlight_disabled_is_noop() {
         "No column should be tinted when highlight_current_column is disabled"
     );
 }
+/// Test that hide_current_line_on_selection removes the background color when text is selected.
+#[test]
+fn test_hide_current_line_on_selection() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+    use ratatui::style::Color;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("hide_current_line_test.txt");
+    std::fs::write(&file_path, "abc\ndef\nghi\n").unwrap();
+
+    let mut config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+    config.editor.highlight_current_line = true;
+    config.editor.hide_current_line_on_selection = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let (content_row, _) = harness.content_area_rows();
+    let current_line_bg = Color::Rgb(40, 40, 40);
+    let gutter_width: u16 = 8;
+
+    // Initially with no selection, current_line_bg should be present in the gutter
+    let style_gutter_initial = harness
+        .get_cell_style(1, content_row as u16)
+        .expect("gutter cell should exist");
+    assert_eq!(
+        style_gutter_initial.bg,
+        Some(current_line_bg),
+        "Gutter should have current_line_bg initially"
+    );
+
+    // Create a selection by holding Shift and pressing Right
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.has_selection(), "Should have selection after Shift+Right");
+
+    // After selection, current_line_bg should be hidden
+    let style_past = harness
+        .get_cell_style(gutter_width + 20, content_row as u16)
+        .expect("cell should exist");
+    assert_ne!(
+        style_past.bg,
+        Some(current_line_bg),
+        "Past-text cell should NOT have current_line_bg after selection"
+    );
+
+    let style_gutter = harness
+        .get_cell_style(1, content_row as u16)
+        .expect("gutter cell should exist");
+    assert_ne!(
+        style_gutter.bg,
+        Some(current_line_bg),
+        "Gutter should NOT have current_line_bg after selection"
+    );
+}
