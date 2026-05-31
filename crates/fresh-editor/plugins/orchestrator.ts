@@ -42,7 +42,17 @@ const editor = getEditor();
 // Types
 // =============================================================================
 
-type AgentState = "running" | "awaiting" | "ready" | "errored" | "killed";
+// A session's coarse activity, inferred from its agent terminal:
+//   "working" — the terminal emitted output within the last
+//               IDLE_AFTER_MS (the agent is actively producing).
+//   "idle"    — quiet: waiting for input, finished, exited, or just
+//               sitting. Also the honest default before we've seen any
+//               output, since we have no evidence of work yet.
+// This is deliberately only two states: it's all the terminal-output
+// signal can honestly support. We don't poll the process, so "working"
+// means "printing", not "alive" — an agent that goes quiet to think
+// reads as idle until it prints again.
+type AgentState = "working" | "idle";
 
 // One row in the completion popup. `kind: "history"` items
 // render with a leading `↶` marker + italic styling so the user
@@ -71,9 +81,16 @@ interface AgentSession {
   sharedWorktree: boolean;
   // The terminal id Orchestrator spawned in this session, if any.
   terminalId: number | null;
-  // Last parsed agent state. "active" is computed at render
-  // time from `editor.activeWindow()`, not stored.
+  // Coarse activity, recomputed from `lastOutputAt` at render time
+  // (see `sessionState`). Not authoritative on its own — the timestamp
+  // is. ("active" — the focused window — is computed separately from
+  // `editor.activeWindow()`.)
   state: AgentState;
+  // Wall-clock ms of the most recent terminal_output for this session,
+  // or null if it has never produced output (or has no terminal). This
+  // is the real signal; `state` is just `Date.now() - lastOutputAt`
+  // bucketed against IDLE_AFTER_MS.
+  lastOutputAt: number | null;
   // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
   // `true` when this row is a worktree discovered on disk (via
@@ -474,10 +491,11 @@ function reconcileSessions(): void {
         projectPath: s.project_path,
         sharedWorktree: s.shared_worktree ?? false,
         terminalId: null,
-        // The base session has no agent; everything else
-        // defaults to "running" until a terminal_output /
-        // terminal_exit arrives.
-        state: "running",
+        // Idle until the terminal actually prints something — we have
+        // no evidence of work yet. `lastOutputAt` is the real signal;
+        // `state` is recomputed from it at render time.
+        state: "idle",
+        lastOutputAt: null,
         createdAt: Date.now(),
       });
     } else {
@@ -580,7 +598,10 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
             projectPath: listed.mainRoot,
             sharedWorktree: false,
             terminalId: null,
-            state: "ready",
+            // Discovered on-disk rows have no live terminal; they render
+            // a `· on-disk` tag, not a pill, so state is moot — idle.
+            state: "idle",
+            lastOutputAt: null,
             createdAt: Date.now(),
             discovered: true,
             branch: wt.branch,
@@ -607,13 +628,21 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
 // Session display helpers
 // =============================================================================
 
-const STATE_GLYPH: Record<AgentState, string> = {
-  running: "RUN ",
-  awaiting: "WAIT",
-  ready: "DONE",
-  errored: "ERR ",
-  killed: "KILL",
-};
+// A session counts as "working" only if its terminal printed something
+// within this window. Agents are bursty — they pause to think or wait on
+// the model between chunks — so a few seconds of grace keeps the dot from
+// flickering idle mid-task. Too long and a finished agent reads as busy;
+// 5s is a reasonable middle.
+const IDLE_AFTER_MS = 5000;
+
+// Coarse activity for a session, derived purely from how recently its
+// terminal produced output. This is the single source of truth — the
+// stored `state` field is just a cache of this for persistence/sorting.
+// No output ever (or no terminal) ⇒ idle: we have no evidence of work.
+function sessionState(s: AgentSession): AgentState {
+  if (s.lastOutputAt === null) return "idle";
+  return Date.now() - s.lastOutputAt < IDLE_AFTER_MS ? "working" : "idle";
+}
 
 function ageString(createdAt: number): string {
   const sec = Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
@@ -625,18 +654,19 @@ function ageString(createdAt: number): string {
 // =============================================================================
 // Status pill
 //
-// Each live session renders its agent state as a coloured status dot plus a
-// label — `● running` — keyed off the agent state. The pill is the row's
-// flexible element: it sheds detail as the column narrows so the session
-// *name* (the thing the user navigates by) is never the first casualty.
+// Each live session renders its activity as a coloured status dot plus a
+// label — `● working` / `○ idle` — derived from how recently its terminal
+// printed (see `sessionState`). The pill is the row's flexible element: it
+// sheds detail as the column narrows so the session *name* (the thing the
+// user navigates by) is never the first casualty.
 //
-//   wide   : ● running         (dot + word)
-//   tight  : ● RUN             (dot + 3-letter code)
+//   wide   : ● working         (dot + word)
+//   tight  : ● BUSY            (dot + 4-letter code)
 //   minimal: ●                 (dot only)
 //
 // On-disk (discovered) rows have no agent process — `renderListItem`
-// gives them a plain `· on-disk` tag and no pill, so a coloured status
-// dot never implies a running process where there is none.
+// gives them a plain `· on-disk` tag and no pill, so a status dot never
+// implies activity where there is none.
 // =============================================================================
 
 interface PillStyle {
@@ -651,11 +681,12 @@ interface PillStyle {
 }
 
 const STATE_PILL: Record<AgentState, PillStyle> = {
-  running: { fg: "diagnostic.info_fg", dot: "●", word: "running", code: "RUN" },
-  awaiting: { fg: "diagnostic.warning_fg", dot: "◐", word: "waiting", code: "WAIT" },
-  ready: { fg: "diagnostic.hint_fg", dot: "✓", word: "done", code: "DONE" },
-  errored: { fg: "diagnostic.error_fg", dot: "✗", word: "errored", code: "ERR" },
-  killed: { fg: "ui.menu_disabled_fg", dot: "○", word: "killed", code: "KILL" },
+  // Working: a filled, accent-coloured dot — the terminal is actively
+  // printing.
+  working: { fg: "diagnostic.info_fg", dot: "●", word: "working", code: "BUSY" },
+  // Idle: a hollow, dim dot — quiet/waiting/done. Deliberately muted so
+  // a screen full of idle sessions doesn't shout.
+  idle: { fg: "ui.menu_disabled_fg", dot: "○", word: "idle", code: "IDLE" },
 };
 
 // How a pill should render given the columns available to it. The caller
@@ -937,11 +968,13 @@ function renderListItem(
     }
   }
 
-  // Status pill, right-aligned — live sessions only. Pick the richest
-  // form that fits in the leftover columns (minus a 1-col gap); drop it
-  // entirely if there's no room.
+  // Status pill, right-aligned — live sessions only. Recompute activity
+  // from the output timestamp at render time (the stored `state` can be
+  // stale — nothing fires an event when a session simply goes quiet).
+  // Pick the richest form that fits in the leftover columns (minus a
+  // 1-col gap); drop it entirely if there's no room.
   if (!isDiscovered) {
-    const pill = STATE_PILL[s.state];
+    const pill = STATE_PILL[sessionState(s)];
     const pillBudget = contentWidth - leftWidth - 1;
     if (pillBudget >= 1) {
       const form = pillForm(pillBudget);
@@ -972,7 +1005,9 @@ function buildPreviewEntries(
   }
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
-  const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
+  // The focused window is labelled "active"; everything else shows its
+  // live working/idle activity (recomputed from the output timestamp).
+  const stateText = isActive ? "active" : STATE_PILL[sessionState(s)].word;
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: stateText,
@@ -5106,27 +5141,24 @@ editor.on("resize", () => {
 });
 
 // =============================================================================
-// Agent state inference from terminal output / exit
+// Agent activity tracking from terminal output / exit
+//
+// We only claim what the terminal can prove: a session is "working" while
+// it's actively printing, "idle" once it goes quiet. The signal is the
+// timestamp of the last output; `sessionState` buckets it against
+// IDLE_AFTER_MS at render time. We don't poll the process, so this tracks
+// *output*, not liveness — a wedged agent reads idle, same as a finished
+// one, which is the honest limit of what we can see from here.
 // =============================================================================
 
-// Match common AI-agent prompts: "(Y/n)", "(y/N)", "Press <key>",
-// or a trailing question mark followed by optional whitespace.
-// Conservative — false positives mistakenly classify a busy
-// agent as "awaiting", which is recoverable by next output;
-// false negatives are worse (user thinks agent is busy when
-// it's actually waiting), so we err on the side of detecting.
-const AWAITING_RX = /(\(\s*[YyNn]\s*\/\s*[YyNn]\s*\):?\s*$)|(Press\s+(?:enter|return|any\s+key)[^\n]*$)|(\?\s*$)/i;
-
 editor.on("terminal_output", (payload) => {
-  const last = payload.last_line || "";
   for (const s of orchestratorSessions.values()) {
     if (s.terminalId === payload.terminal_id) {
-      // RUNNING is the default; flip to AWAITING only when the
-      // last visible line matches a prompt pattern. New output
-      // that doesn't match restores RUNNING — agents usually
-      // print their next chunk over the prompt line, so this
-      // gives the right transition even for chatty agents.
-      s.state = AWAITING_RX.test(last) ? "awaiting" : "running";
+      // Stamp the moment of output. `sessionState` turns this into
+      // working/idle; the cached `state` is updated so persistence and
+      // any non-render reader see a fresh value too.
+      s.lastOutputAt = Date.now();
+      s.state = "working";
       break;
     }
   }
@@ -5136,13 +5168,11 @@ editor.on("terminal_output", (payload) => {
 editor.on("terminal_exit", (payload) => {
   for (const s of orchestratorSessions.values()) {
     if (s.terminalId === payload.terminal_id) {
-      const code = payload.exit_code;
-      // exit_code is currently always null (the editor's
-      // wait-status capture is a follow-up). Treat unknown as
-      // ready — Orchestrator doesn't have a better heuristic and
-      // mis-marking a real error as "ready" is recoverable
-      // (the user opens the dive and sees the failure).
-      s.state = code === null || code === 0 ? "ready" : "errored";
+      // The agent process is gone — it can't be working. Clear the
+      // output timestamp so the row reads idle immediately rather than
+      // riding out the IDLE_AFTER_MS tail from its last line.
+      s.lastOutputAt = null;
+      s.state = "idle";
       break;
     }
   }
