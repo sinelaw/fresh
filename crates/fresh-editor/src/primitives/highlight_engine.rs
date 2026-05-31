@@ -2007,6 +2007,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_storage_type_keyword() {
+        assert_eq!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("storage.type.class"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_ne!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Type)
+        );
+    }
+
     /// First parse of a small file populates a whole-file cache; subsequent
     /// scrolls anywhere in the file are exact cache hits with no extra parse
     /// work.

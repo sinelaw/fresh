@@ -683,6 +683,18 @@ mod tests {
             scope_to_category("variable.parameter"),
             Some(HighlightCategory::Variable)
         );
+        assert_eq!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("storage.type.class"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_ne!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Type)
+        );
     }
 
     #[test]
