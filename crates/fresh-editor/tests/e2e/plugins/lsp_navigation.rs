@@ -277,7 +277,7 @@ fn test_lsp_navigation_jumps_to_precise_column() -> anyhow::Result<()> {
 /// moves the cursor — only confirming with Enter does.
 #[test]
 #[cfg_attr(windows, ignore)]
-fn test_lsp_navigation_preview_leaves_cursor_untouched() -> anyhow::Result<()> {
+fn test_lsp_navigation_cancel_restores_cursor() -> anyhow::Result<()> {
     let (mut harness, _temp_dir) = setup_lsp_test()?;
 
     // Move to a known starting position.
@@ -288,23 +288,164 @@ fn test_lsp_navigation_preview_leaves_cursor_untouched() -> anyhow::Result<()> {
 
     open_symbol_navigation(&mut harness)?;
 
-    // Preview-navigate through the list — the cursor must not move.
+    // Browse the list (preview moves the cursor so each symbol scrolls into
+    // view), then cancel — the cursor must return to where it started.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
     harness.process_async_and_render()?;
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+
+    harness.wait_until(|h| h.cursor_position() == before)?;
     assert_eq!(
         harness.cursor_position(),
         before,
-        "Preview navigation must not move the cursor"
+        "Esc should restore the original cursor position"
     );
 
-    // Cancelling leaves it where it was, too.
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    Ok(())
+}
+
+/// A tall file whose second symbol sits far below the fold, used to verify
+/// that preview navigation scrolls the symbol into view.
+const TALL_FAKE_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"top_fn","kind":12,"location":{"uri":"file://tall.ts","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":20}}}},{"name":"deep_fn","kind":12,"location":{"uri":"file://tall.ts","range":{"start":{"line":50,"character":0},"end":{"line":50,"character":20}}}}]}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+fn setup_tall_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
+    let temp_dir = tempfile::TempDir::new()?;
+    let project_root = temp_dir.path().to_path_buf();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir)?;
+    copy_plugin(&plugins_dir, "lsp_navigation");
+    copy_plugin_lib(&plugins_dir);
+
+    let script_path = project_root.join("fake_lsp.sh");
+    fs::write(&script_path, TALL_FAKE_LSP_SCRIPT)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms)?;
+    }
+
+    // `top_fn` at line 0, a long gap, then `deep_fn` at line 50 with a
+    // unique marker on line 51 that only ever appears in the buffer (never
+    // in a symbol label or snippet).
+    let mut content = String::from("function top_fn() {}\n");
+    for _ in 1..=49 {
+        content.push('\n');
+    }
+    content.push_str("function deep_fn() {}\n");
+    content.push_str("// DEEPMARKER\n");
+
+    let test_file = project_root.join("tall.ts");
+    fs::write(&test_file, content)?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "typescript".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root)?;
+
+    harness.open_file(&test_file)?;
     harness.process_async_and_render()?;
-    assert_eq!(
-        harness.cursor_position(),
-        before,
-        "Esc must leave the cursor where it started"
+    harness.wait_until(|h| h.screen_to_string().contains("LSP (on)"))?;
+
+    Ok((harness, temp_dir))
+}
+
+/// Selecting a symbol below the fold scrolls it into view during preview.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_scrolls_offscreen_symbol_into_view() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_tall_lsp_test()?;
+
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.process_async_and_render()?;
+    harness.type_text("Go to LSP Symbol")?;
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.wait_for_prompt()?;
+    harness.wait_until(|h| h.screen_to_string().contains("[fn] deep_fn"))?;
+
+    // deep_fn (line 50) and its marker start far below the initial fold.
+    assert!(
+        !harness.screen_to_string().contains("DEEPMARKER"),
+        "deep_fn region should start off-screen. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Preselection is top_fn (cursor on line 0); move down to deep_fn.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness
+        .wait_until(|h| selected_suggestion_text(h).is_some_and(|t| t.contains("[fn] deep_fn")))?;
+    harness.process_async_and_render()?;
+
+    harness.wait_until(|h| h.screen_to_string().contains("DEEPMARKER"))?;
+    assert!(
+        harness.screen_to_string().contains("DEEPMARKER"),
+        "Previewing deep_fn should scroll it into view. Screen:\n{}",
+        harness.screen_to_string()
     );
 
     Ok(())

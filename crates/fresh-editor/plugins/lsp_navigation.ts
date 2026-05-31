@@ -83,6 +83,7 @@ function getKindLabel(kind: number): string {
 let cachedBufferId: number | null = null;
 let cachedFilePath: string = "";
 let cachedLanguage: string | undefined = undefined;
+let cachedCursorPosition = 0;
 let cachedCursorLine = 0;
 // Set true once the user confirms a result with Enter, so the
 // cursor-restore in onClose doesn't undo the committed jump.
@@ -98,12 +99,8 @@ function clearOverlay(bufferId: number | null): void {
 /**
  * Reveal a symbol in the buffer.
  *
- * - "preview" (browsing the list): scroll the name into view and paint an
- *   overlay marker over it, but leave the cursor untouched. Preview is
- *   non-destructive — nothing about the user's edit state changes, so
- *   cancelling needs nothing to undo beyond clearing the marker.
- * - "select" (confirming with Enter): move the cursor to the name, scroll
- *   to it, and drop the marker.
+ * - "preview" (browsing the list): paint an overlay marker over the name.
+ * - "select" (confirming with Enter): drop the marker; the move sticks.
  *
  * Synchronous and addressed to an explicit buffer id (not the active
  * buffer) so it lands correctly even when invoked on confirm, after the
@@ -117,9 +114,11 @@ function navigateToSymbol(
   if (bufferId === null || sym.lineStartByte < 0) return;
 
   const pos = sym.lineStartByte + sym.nameCharacter;
-  if (mode === "select") {
-    editor.setBufferCursor(bufferId, pos);
-  }
+  // Move the cursor in both modes: the editor keeps the cursor on screen
+  // every frame, so a scroll without a cursor move is immediately undone
+  // for off-screen symbols. Moving the cursor is what makes the viewport
+  // follow. The pre-open cursor is restored if the user cancels.
+  editor.setBufferCursor(bufferId, pos);
   editor.scrollBufferToLine(bufferId, sym.nameLine);
 
   clearOverlay(bufferId);
@@ -266,11 +265,11 @@ const finder = new Finder(editor, {
     navigateToSymbol(cachedBufferId, sym, "preview");
   },
   onClose: () => {
-    // Cancelled: drop the marker and scroll the original cursor line back
-    // into view. The cursor itself never moved during preview, so there's
-    // nothing to restore.
+    // Cancelled: drop the marker and restore the cursor to where it was
+    // before the finder opened (preview moved it as the user browsed).
     clearOverlay(cachedBufferId);
     if (!confirmed && cachedBufferId !== null) {
+      editor.setBufferCursor(cachedBufferId, cachedCursorPosition);
       editor.scrollBufferToLine(cachedBufferId, cachedCursorLine);
     }
   },
@@ -312,6 +311,7 @@ async function openSymbolsListHandler(): Promise<void> {
     return;
   }
 
+  cachedCursorPosition = editor.getCursorPosition();
   cachedCursorLine = editor.getCursorLine();
   confirmed = false;
   clearOverlay(cachedBufferId);
