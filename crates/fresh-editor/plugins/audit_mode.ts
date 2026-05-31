@@ -3439,25 +3439,36 @@ async function openHeadVersionReadOnly(st: CompositeDiffState, oldLine: number):
         text: line + '\n',
         properties: { type: 'line', lineNum: idx + 1 },
     }));
-    const base = editor.pathBasename(st.filePath);
-    const result = await editor.createVirtualBuffer({
-        name: `*HEAD: ${base}*`,
+    // Name ends with the file path so the host detects syntax from the
+    // trailing extension (same convention git_log uses for its revision
+    // views).
+    const view = await editor.createVirtualBuffer({
+        name: `*HEAD:${st.filePath}*`,
         mode: "normal",
         readOnly: true,
         entries,
         showLineNumbers: true,
         editingDisabled: true,
     });
-    const bufferId = result.bufferId;
+    if (!view) {
+        editor.setStatus(editor.t("status.no_head_version") || "No HEAD version of this file");
+        return;
+    }
+    const bufferId = view.bufferId;
     editor.showBuffer(bufferId);
-    // Jump to the requested line: walk byte offsets to the line start.
-    const targetIdx = Math.max(0, Math.min(lines.length - 1, oldLine - 1));
+    // Compute the target line's byte offset directly from the content we
+    // already have (buffer-independent, no reliance on which buffer is
+    // "active"). Yield one tick first so the freshly-shown buffer's view
+    // state is initialized — otherwise its first render resets the cursor
+    // to 0 after we set it. Then anchor the cursor and recenter.
+    const targetLine = Math.max(1, Math.min(lines.length, oldLine));
     let byteOffset = 0;
-    for (let i = 0; i < targetIdx; i++) byteOffset += getByteLength(lines[i] + '\n');
+    for (let i = 0; i < targetLine - 1; i++) byteOffset += getByteLength(lines[i] + '\n');
+    await editor.delay(16);
     editor.setBufferCursor(bufferId, byteOffset);
-    editor.scrollBufferToLine(bufferId, targetIdx);
-    editor.setStatus(editor.t("status.opened_head_version", { line: String(oldLine) })
-        || `Opened HEAD version (read-only) at line ${oldLine}`);
+    editor.scrollBufferToLine(bufferId, targetLine - 1);
+    editor.setStatus(editor.t("status.opened_head_version", { line: String(targetLine) })
+        || `Opened HEAD version (read-only) at line ${targetLine}`);
 }
 
 /** Enter in the side-by-side view: open the file for the side under the
