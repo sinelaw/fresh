@@ -3816,14 +3816,29 @@ impl Editor {
         &self,
         size: ratatui::layout::Rect,
     ) -> (Option<ratatui::layout::Rect>, ratatui::layout::Rect) {
-        let width = match self.dock.as_ref().map(|f| f.placement) {
+        // The editor is the priority. Reserve at least EDITOR_MIN columns
+        // for the buffer, and once the terminal is too narrow to fit a
+        // worthwhile dock alongside that editor, hide the dock entirely
+        // (it reappears when the terminal grows). Previously the dock kept
+        // ALL but 4 columns, squishing the editor to a useless sliver on a
+        // narrow terminal.
+        const EDITOR_MIN: u16 = 20;
+        const DOCK_MIN: u16 = 24;
+        let requested = match self.dock.as_ref().map(|f| f.placement) {
             Some(super::PanelPlacement::LeftDock { width_cols }) => width_cols,
             _ => return (None, size),
         };
-        let width = width.min(size.width.saturating_sub(4)).max(1);
-        if width == 0 || size.width <= width {
+        // Widest the dock may be while leaving the editor its minimum.
+        let max_dock = size.width.saturating_sub(EDITOR_MIN);
+        if max_dock < DOCK_MIN {
+            // Not enough room for a usable dock + editor — give the editor
+            // the whole frame this render.
             return (None, size);
         }
+        // Honor the requested (drag-set) width, but never crowd the editor
+        // below EDITOR_MIN. In the shrink band the dock narrows from its
+        // requested width down to DOCK_MIN before it hides.
+        let width = requested.min(max_dock).max(1);
         let dock = ratatui::layout::Rect {
             x: size.x,
             y: size.y,

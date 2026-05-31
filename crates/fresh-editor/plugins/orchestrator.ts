@@ -2100,16 +2100,19 @@ function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  // Content width tracks the actual dock width: normally `DOCK_CONTENT_COLS`,
-  // but when the terminal is narrower than the dock the host clips the panel
-  // (it keeps a few columns for the editor sliver + the dock's right border —
-  // measured at ~4 cols beyond the content). Clamp to that real width so the
-  // pill sheds down its ladder on a narrow terminal instead of running off
-  // the clipped edge.
+  // Content width tracks the actual dock width the host will grant.
+  // The host (`compute_dock_split`) keeps EDITOR_MIN (~20) cols for the
+  // buffer, so the dock is `min(DOCK_WIDTH_COLS, screenW - 20)` cols wide
+  // and below that it's hidden entirely. Mirror that here so the pill
+  // sheds down its ladder as the dock narrows, instead of laying out at
+  // full width and being clipped. `-2` drops the dock's right border +
+  // the host's editor-side gutter, matching DOCK_CONTENT_COLS.
+  const EDITOR_MIN_COLS = 20;
   const screenW = editor.getScreenSize().width;
-  const contentW = screenW > 0
-    ? Math.max(8, Math.min(DOCK_CONTENT_COLS, screenW - 5))
-    : DOCK_CONTENT_COLS;
+  const dockW = screenW > 0
+    ? Math.min(DOCK_WIDTH_COLS, screenW - EDITOR_MIN_COLS)
+    : DOCK_WIDTH_COLS;
+  const contentW = Math.max(8, Math.min(DOCK_CONTENT_COLS, dockW - 2));
   const items = filtered.map((id) => renderListItem(id, activeId, contentW));
   const itemKeys = filtered.map(String);
   const selIdx = filtered.length === 0
