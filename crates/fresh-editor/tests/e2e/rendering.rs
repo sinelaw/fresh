@@ -916,7 +916,10 @@ fn test_hide_current_line_on_selection() {
         .send_key(KeyCode::Right, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-    assert!(harness.has_selection(), "Should have selection after Shift+Right");
+    assert!(
+        harness.has_selection(),
+        "Should have selection after Shift+Right"
+    );
 
     // After selection, current_line_bg should be hidden
     let style_past = harness
