@@ -2060,14 +2060,33 @@ function buildDockSpec(): WidgetSpec {
 // every session in between. `fromEdge` drives the directional wipe.
 function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   const token = ++dockSwitchToken;
+  console.log(`[dock-switch] scheduled token=${token} fromEdge=${fromEdge}`);
   void (async () => {
     await editor.delay(30);
-    if (token !== dockSwitchToken) return;
-    if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
+    if (token !== dockSwitchToken) {
+      console.log(`[dock-switch] token=${token} superseded by ${dockSwitchToken}`);
+      return;
+    }
+    if (!openDialog || !openPanel || !dockMode || dockBlurred) {
+      console.log(
+        `[dock-switch] token=${token} skipped: openDialog=${!!openDialog} openPanel=${!!openPanel} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
+      );
+      return;
+    }
     const id = openDialog.filteredIds[openDialog.selectedIndex];
-    if (typeof id !== "number" || id <= 0) return;
-    if (orchestratorSessions.get(id)?.discovered) return;
-    if (id === editor.activeWindow()) return;
+    if (typeof id !== "number" || id <= 0) {
+      console.log(`[dock-switch] token=${token} no valid id: ${id}`);
+      return;
+    }
+    if (orchestratorSessions.get(id)?.discovered) {
+      console.log(`[dock-switch] token=${token} id=${id} is discovered, skipping`);
+      return;
+    }
+    if (id === editor.activeWindow()) {
+      console.log(`[dock-switch] token=${token} id=${id} already active`);
+      return;
+    }
+    console.log(`[dock-switch] token=${token} firing setActiveWindow(${id}) fromEdge=${fromEdge}`);
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
   })();

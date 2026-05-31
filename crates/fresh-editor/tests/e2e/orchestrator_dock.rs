@@ -16,6 +16,7 @@
 //!   new-session form).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use std::path::PathBuf;
@@ -547,6 +548,7 @@ fn settings_dialog_does_not_overlap_dock() {
 
 #[test]
 fn click_un_dive_switches_to_clicked_session() {
+    init_tracing_from_env();
     // The Rust mouse handler sets `dock.focused = true` when a click
     // lands inside a blurred dock — the un-dive transition. The
     // existing `set_panel_focus_and_notify` it then calls only fires a
