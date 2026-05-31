@@ -169,6 +169,25 @@
 }
 
 /* Blog showcase styles */
+.blog-rss {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding: 6px 14px;
+    border: 1px solid #2d2d2d;
+    border-radius: 8px;
+    font-size: 0.9em;
+    color: #d4d4d4 !important;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+}
+
+.blog-rss:hover {
+    border-color: #00d9a3;
+    color: #00d9a3 !important;
+}
+
 .blog-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
