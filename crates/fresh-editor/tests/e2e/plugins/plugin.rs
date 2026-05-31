@@ -1435,3 +1435,120 @@ editor.setStatus("Uppercase plugin loaded");
         screen
     );
 }
+
+#[test]
+fn test_plugin_has_active_search() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+
+    // Create a simple plugin that provides a command to query hasActiveSearch()
+    let test_plugin = r###"
+const editor = getEditor();
+
+globalThis.test_has_active_search = function(): void {
+    let isActive = editor.hasActiveSearch();
+    editor.insertAtCursor(`[SearchActive=${isActive}]`);
+};
+
+editor.registerCommand(
+    "Test: Verify Active Search",
+    "Check if search is active",
+    "test_has_active_search",
+    null
+);
+"###;
+
+    let test_plugin_path = plugins_dir.join("test_search_plugin.ts");
+    fs::write(&test_plugin_path, test_plugin).unwrap();
+
+    let test_file_content = "hello world\nfoo bar\nhello again\nbaz\n";
+    let test_file_path = project_root.join("test.txt");
+    fs::write(&test_file_path, test_file_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 24, Config::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&test_file_path).unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.sleep(std::time::Duration::from_millis(200)); // ensure plugin loaded
+    harness.process_async_and_render().unwrap();
+
+    // Check initial state
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("Test: Verify Active Search").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[SearchActive=false]"))
+        .expect("Command 1");
+
+    // Trigger search
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // IMPORTANT: Wait for search highlights
+    harness.sleep(std::time::Duration::from_millis(200));
+    harness.process_async_and_render().unwrap();
+
+    // Verify search is active
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("Test: Verify Active Search").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[SearchActive=true]"))
+        .expect("Command 2");
+
+    // Clear search
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("Clear Search Highlights").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // Verify search is inactive again
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    harness.type_text("Test: Verify Active Search").unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("[SearchActive=false]"))
+        .expect("Command 3");
+}
