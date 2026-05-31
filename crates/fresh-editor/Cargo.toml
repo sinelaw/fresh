@@ -234,17 +234,11 @@ changelog = "../../CHANGELOG.md"
 # RPM package configuration for cargo-generate-rpm
 [package.metadata.generate-rpm]
 assets = [
-    # Binary - CI creates symlink: crates/fresh-editor/target -> ../../target
-    { source = "target/release/fresh", dest = "/usr/share/fresh-editor/fresh", mode = "755" },
-    # Wrapper script in /usr/bin for PATH access
-    { source = "scripts/fresh-wrapper.sh", dest = "/usr/bin/fresh", mode = "755" },
+    # Binary directly in /usr/bin (CI creates symlink: crates/fresh-editor/target -> ../../target).
+    # Plugins and themes are compiled into the binary (embed-plugins feature +
+    # build.rs BUILTIN_THEMES), so nothing under /usr/share/fresh-editor/ ships.
+    { source = "target/release/fresh", dest = "/usr/bin/fresh", mode = "755" },
     { source = "../../README.md", dest = "/usr/share/doc/fresh-editor/README.md", mode = "644" },
-    { source = "plugins/*.ts", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/*.json", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/*.md", dest = "/usr/share/fresh-editor/plugins/", mode = "644" },
-    { source = "plugins/lib/*", dest = "/usr/share/fresh-editor/plugins/lib/", mode = "644" },
-    { source = "plugins/examples/*", dest = "/usr/share/fresh-editor/plugins/examples/", mode = "644" },
-    { source = "themes/*.json", dest = "/usr/share/fresh-editor/themes/", mode = "644" },
     # Freedesktop hicolor icons
     { source = "../../docs/icons/linux/hicolor/16x16/apps/fresh.png", dest = "/usr/share/icons/hicolor/16x16/apps/fresh.png", mode = "644" },
     { source = "../../docs/icons/linux/hicolor/22x22/apps/fresh.png", dest = "/usr/share/icons/hicolor/22x22/apps/fresh.png", mode = "644" },
@@ -257,16 +251,6 @@ assets = [
     { source = "../../docs/icons/linux/hicolor/512x512/apps/fresh.png", dest = "/usr/share/icons/hicolor/512x512/apps/fresh.png", mode = "644" },
     # Freedesktop desktop entry
     { source = "resources/fresh.desktop", dest = "/usr/share/applications/fresh.desktop", mode = "644" },
+    # Man page
+    { source = "resources/fresh.1", dest = "/usr/share/man/man1/fresh.1", mode = "644" },
 ]
-# posttrans runs after ALL transaction operations complete - needed because older versions
-# (<=0.1.56) had a preuninstall script that removes /usr/bin/fresh, which deletes our wrapper
-# during upgrades. This script restores it.
-post_trans_script = """
-if [ ! -e /usr/bin/fresh ]; then
-    cat > /usr/bin/fresh << 'WRAPPER'
-#!/bin/sh
-exec /usr/share/fresh-editor/fresh "$@"
-WRAPPER
-    chmod 755 /usr/bin/fresh
-fi
-"""

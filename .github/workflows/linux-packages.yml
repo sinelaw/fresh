@@ -170,37 +170,36 @@ jobs:
 
           echo ""
           echo "=== Verifying binary location ==="
-          ls -la /usr/share/fresh-editor/fresh
-          test -x /usr/share/fresh-editor/fresh || { echo "Binary not executable"; exit 1; }
-
-          echo ""
-          echo "=== Verifying symlink ==="
           ls -la /usr/bin/fresh
-          test -L /usr/bin/fresh || { echo "/usr/bin/fresh is not a symlink"; exit 1; }
-          readlink /usr/bin/fresh | grep -q "/usr/share/fresh-editor/fresh" || { echo "Symlink points to wrong location"; exit 1; }
+          test -x /usr/bin/fresh || { echo "Binary not executable"; exit 1; }
+          test -f /usr/bin/fresh || { echo "/usr/bin/fresh is not a regular file"; exit 1; }
+          test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
 
           echo ""
-          echo "=== Testing binary via symlink ==="
+          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
+          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+
+          echo ""
+          echo "=== Testing binary ==="
           fresh --version
           /usr/bin/fresh --version
-          /usr/share/fresh-editor/fresh --version
 
           echo ""
-          echo "=== Checking plugins directory ==="
-          ls -la /usr/share/fresh-editor/plugins/
-          ls -la /usr/share/fresh-editor/plugins/lib/
+          echo "=== Verifying man page installed ==="
+          ls -la /usr/share/man/man1/fresh.1.gz || { echo "Man page missing"; exit 1; }
 
           echo ""
-          echo "=== Verifying binary and plugins are in same directory ==="
-          test -f /usr/share/fresh-editor/fresh && test -d /usr/share/fresh-editor/plugins || { echo "Binary and plugins not in same dir"; exit 1; }
+          echo "=== Verifying desktop entry + icons ==="
+          ls -la /usr/share/applications/fresh.desktop
+          ls /usr/share/icons/hicolor/*/apps/fresh.png | head
 
           echo ""
           echo "=== Testing uninstall ==="
           apt-get remove -y fresh-editor
 
           echo ""
-          echo "=== Verifying symlink removed ==="
-          test ! -e /usr/bin/fresh || { echo "Symlink not removed after uninstall"; exit 1; }
+          echo "=== Verifying binary removed ==="
+          test ! -e /usr/bin/fresh || { echo "Binary not removed after uninstall"; exit 1; }
 
           echo ""
           echo "deb package test PASSED on ${{ matrix.name }}"
@@ -243,37 +242,38 @@ jobs:
 
           echo ""
           echo "=== Verifying binary location ==="
-          ls -la /usr/share/fresh-editor/fresh
-          test -x /usr/share/fresh-editor/fresh || { echo "Binary not executable"; exit 1; }
-
-          echo ""
-          echo "=== Verifying wrapper script ==="
           ls -la /usr/bin/fresh
-          test -x /usr/bin/fresh || { echo "/usr/bin/fresh is not executable"; exit 1; }
-          head -1 /usr/bin/fresh | grep -q "#!/bin/sh" || { echo "/usr/bin/fresh is not a shell script"; exit 1; }
+          test -x /usr/bin/fresh || { echo "Binary not executable"; exit 1; }
+          test -f /usr/bin/fresh || { echo "/usr/bin/fresh is not a regular file"; exit 1; }
+          test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
+          # First bytes are the ELF magic, not "#!/bin/sh" — confirms binary, not wrapper.
+          file /usr/bin/fresh | grep -q ELF || { echo "/usr/bin/fresh is not an ELF binary"; exit 1; }
 
           echo ""
-          echo "=== Testing binary via wrapper ==="
+          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
+          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+
+          echo ""
+          echo "=== Testing binary ==="
           fresh --version
           /usr/bin/fresh --version
-          /usr/share/fresh-editor/fresh --version
 
           echo ""
-          echo "=== Checking plugins directory ==="
-          ls -la /usr/share/fresh-editor/plugins/
-          ls -la /usr/share/fresh-editor/plugins/lib/
+          echo "=== Verifying man page installed ==="
+          ls -la /usr/share/man/man1/fresh.1* || { echo "Man page missing"; exit 1; }
 
           echo ""
-          echo "=== Verifying binary and plugins are in same directory ==="
-          test -f /usr/share/fresh-editor/fresh && test -d /usr/share/fresh-editor/plugins || { echo "Binary and plugins not in same dir"; exit 1; }
+          echo "=== Verifying desktop entry + icons ==="
+          ls -la /usr/share/applications/fresh.desktop
+          ls /usr/share/icons/hicolor/*/apps/fresh.png | head
 
           echo ""
           echo "=== Testing uninstall ==="
           dnf remove -y fresh-editor
 
           echo ""
-          echo "=== Verifying wrapper removed ==="
-          test ! -e /usr/bin/fresh || { echo "Wrapper not removed after uninstall"; exit 1; }
+          echo "=== Verifying binary removed ==="
+          test ! -e /usr/bin/fresh || { echo "Binary not removed after uninstall"; exit 1; }
 
           echo ""
           echo "rpm package test PASSED on ${{ matrix.name }}"

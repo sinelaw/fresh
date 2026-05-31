@@ -32,7 +32,7 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	install -D -m 755 target/$(CARGO_TARGET)/release/fresh \
-		debian/fresh-editor/usr/share/fresh-editor/fresh
+		debian/fresh-editor/usr/bin/fresh
 
 # Ship the upstream CHANGELOG.md as /usr/share/doc/fresh-editor/changelog.gz
 override_dh_installchangelogs:

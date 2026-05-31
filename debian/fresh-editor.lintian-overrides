@@ -1,0 +1,7 @@
+# Rust binaries statically link all dependencies — there is no shared-library
+# Rust ABI to dynamically link against. The syntect dep pulls in a YAML parser
+# (yaml-rust) so it can load .sublime-syntax definitions; lintian's symbol
+# heuristic matches that against libyaml. Unbundling is not viable for Rust
+# applications, and Debian's Rust-app practice (ripgrep, fd-find, bat …)
+# accepts the override.
+fresh-editor: embedded-library [usr/bin/fresh] libyaml

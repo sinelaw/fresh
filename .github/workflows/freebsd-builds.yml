@@ -47,8 +47,7 @@ jobs:
             # 4. Package assets
             cp target/release/fresh "${ARCHIVE_NAME}/"
             cp README.md LICENSE CHANGELOG.md "${ARCHIVE_NAME}/" || true
-            cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/" || true
-            cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/" || true
+            # Plugins/themes are embedded in the binary; no on-disk copy needed.
             cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" || true
             cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" || true
 

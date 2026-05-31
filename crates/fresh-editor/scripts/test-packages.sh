@@ -48,15 +48,14 @@ docker run --rm -v "$PROJECT_ROOT:/workspace" ubuntu:22.04 bash -c "
     dpkg -L fresh-editor
 
     echo ''
-    echo 'Testing binary...'
+    echo 'Testing binary at /usr/bin/fresh...'
+    test -f /usr/bin/fresh && test -x /usr/bin/fresh
+    test ! -L /usr/bin/fresh
+    test ! -d /usr/share/fresh-editor
     fresh --version
 
     echo ''
-    echo 'Checking plugins directory...'
-    ls -la /usr/share/fresh-editor/plugins/ || echo 'Plugins dir not found'
-
-    echo ''
-    echo '✓ .deb package test PASSED'
+    echo '.deb package test PASSED'
 "
 
 echo ""
@@ -71,15 +70,14 @@ docker run --rm -v "$PROJECT_ROOT:/workspace" fedora:39 bash -c "
     rpm -ql fresh-editor
 
     echo ''
-    echo 'Testing binary...'
+    echo 'Testing binary at /usr/bin/fresh...'
+    test -f /usr/bin/fresh && test -x /usr/bin/fresh
+    test ! -L /usr/bin/fresh
+    test ! -d /usr/share/fresh-editor
     fresh --version
 
     echo ''
-    echo 'Checking plugins directory...'
-    ls -la /usr/share/fresh-editor/plugins/ || echo 'Plugins dir not found'
-
-    echo ''
-    echo '✓ .rpm package test PASSED'
+    echo '.rpm package test PASSED'
 "
 
 echo ""
