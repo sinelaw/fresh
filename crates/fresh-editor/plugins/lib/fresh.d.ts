@@ -366,12 +366,12 @@ type PromptSuggestion = {
 	*/
 	disabled?: boolean;
 	/**
-	* Optional styled rendering of `description`. When present, these spans
-	* are rendered (in order) in place of the plain `description` text,
-	* letting a row highlight part of itself (e.g. the symbol word inside a
-	* code-line snippet).
+	* Optional styled rendering of `description`. When present, the
+	* suggestion list renders these spans (in order) in place of the
+	* plain `description` text — letting a plugin highlight a portion
+	* of the row, e.g. the symbol word inside a code-line snippet.
 	*/
-	description_spans?: StyledText[];
+	description_spans?: Array<StyledText>;
 	/**
 	* Optional keyboard shortcut
 	*/
@@ -2297,9 +2297,7 @@ interface EditorAPI {
 	*/
 	clearOverlaysInRange(bufferId: number, start: number, end: number): boolean;
 	/**
-	* Clear overlays in a single namespace that overlap with a byte range.
-	* Unlike clearOverlaysInRange, overlays in other namespaces (e.g.
-	* editor-owned LSP diagnostics) are left untouched.
+	* Clear overlays in a namespace that overlap with a byte range
 	*/
 	clearOverlaysInRangeForNamespace(bufferId: number, namespace: string, start: number, end: number): boolean;
 	/**
@@ -2485,7 +2483,7 @@ interface EditorAPI {
 	* 
 	* Uses typed Vec<Suggestion> - serde validates field names at runtime
 	*/
-	setPromptSuggestions(suggestions: PromptSuggestion[], selectedIndex?: number): boolean;
+	setPromptSuggestions(suggestions: PromptSuggestion[], selectedIndex?: number | null): boolean;
 	setPromptInputSync(sync: boolean): boolean;
 	/**
 	* Set the title shown in the floating-overlay prompt's frame
