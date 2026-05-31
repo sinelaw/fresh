@@ -1412,7 +1412,7 @@ fn connect_remote(
     // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
     let reconnect_handle = {
         let _guard = rt.enter();
-        remote::spawn_reconnect_task(channel, reconnect_params)
+        remote::spawn_reconnect_task(channel, reconnect_params.clone())
     };
 
     // SSH authority: leave the display label empty so the status bar
@@ -1423,6 +1423,8 @@ fn connect_remote(
             filesystem,
             process_spawner,
             long_running_spawner,
+            &reconnect_params,
+            Some(remote.path.as_str()),
             trust.clone(),
             env.clone(),
         ),
