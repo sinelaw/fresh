@@ -25,6 +25,15 @@ pub fn relay_loop(
     let stdin_fd = stdin.as_raw_fd();
     let (data_fd, ctrl_fd) = conn.as_raw_fds();
 
+    // The control socket is polled, so read it via try_read() (which reads
+    // non-blocking and restores blocking mode for writes) and accumulate bytes
+    // here until we have a complete newline-delimited message. A blocking
+    // BufReader::read_line() would hang the whole relay if a control message
+    // ever arrived split across reads (e.g. a large SetClipboard), and a fresh
+    // BufReader per read would silently drop bytes buffered past the newline.
+    let mut ctrl_buf: Vec<u8> = Vec::new();
+    let mut ctrl_read = [0u8; 4096];
+
     loop {
         // Check for resize
         if resize_flag.swap(false, Ordering::SeqCst) {
@@ -104,9 +113,32 @@ pub fn relay_loop(
             .map(|r| r.contains(PollFlags::POLLIN))
             .unwrap_or(false)
         {
-            if let Ok(Some(msg)) = conn.read_control() {
+            // Drain whatever is available without blocking, then process every
+            // complete newline-delimited message. Partial trailing bytes stay
+            // in `ctrl_buf` for the next iteration.
+            loop {
+                match conn.control.try_read(&mut ctrl_read) {
+                    Ok(0) => {
+                        // Control stream closed by the server.
+                        return Ok(ClientExitReason::ServerQuit);
+                    }
+                    Ok(n) => ctrl_buf.extend_from_slice(&ctrl_read[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => return Err(e),
+                }
+            }
+
+            while let Some(pos) = ctrl_buf.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = ctrl_buf.drain(..=pos).collect();
+                let Ok(msg) = std::str::from_utf8(&line) else {
+                    continue;
+                };
+                let msg = msg.trim();
+                if msg.is_empty() {
+                    continue;
+                }
                 if let Ok(ctrl) =
-                    serde_json::from_str::<crate::server::protocol::ServerControl>(&msg)
+                    serde_json::from_str::<crate::server::protocol::ServerControl>(msg)
                 {
                     match ctrl {
                         crate::server::protocol::ServerControl::Quit { reason } => {
