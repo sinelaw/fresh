@@ -36,6 +36,7 @@
         "relative_line_numbers": false,
         "highlight_current_line": true,
         "highlight_occurrences": true,
+        "hide_current_line_on_selection": false,
         "highlight_current_column": false,
         "line_wrap": true,
         "wrap_indent": true,
@@ -319,6 +320,12 @@
           "description": "Highlight all occurrences of the word under the cursor",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "hide_current_line_on_selection": {
+          "description": "Hide the current-line background highlight whenever a selection is\nvisible.  When `true` (default: `false`), the `current_line_bg` fill\nis suppressed for the active split as soon as any cursor has a\nnon-empty selection, reducing visual clutter while text is selected.",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "highlight_current_column": {
