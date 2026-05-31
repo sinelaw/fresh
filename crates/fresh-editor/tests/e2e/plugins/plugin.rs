@@ -1476,10 +1476,20 @@ editor.registerCommand(
 
     harness.open_file(&test_file_path).unwrap();
     harness.process_async_and_render().unwrap();
-    harness.sleep(std::time::Duration::from_millis(200)); // ensure plugin loaded
-    harness.process_async_and_render().unwrap();
 
     // Check initial state
+    // Wait until the command is registered by the plugin
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .command_registry()
+                .read()
+                .unwrap()
+                .find_by_name("Test: Verify Active Search")
+                .is_some()
+        })
+        .expect("Wait for plugin to register command");
+
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -1507,8 +1517,9 @@ editor.registerCommand(
     harness.process_async_and_render().unwrap();
 
     // IMPORTANT: Wait for search highlights
-    harness.sleep(std::time::Duration::from_millis(200));
-    harness.process_async_and_render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("F..."))
+        .expect("Wait for search highlights");
 
     // Verify search is active
     harness

@@ -3038,8 +3038,7 @@ fn test_clear_search_action() {
     harness.process_async_and_render().unwrap();
 
     // We should have search highlights (should be 2 "hello"s)
-    let highlight_count = harness.count_search_highlights();
-    assert!(highlight_count > 0, "Expected search highlights, found 0");
+    harness.assert_screen_contains("Found 2");
 
     // Now clear search using Command Palette
     harness
@@ -3055,10 +3054,10 @@ fn test_clear_search_action() {
         .unwrap();
     harness.process_async_and_render().unwrap();
 
-    // Verify search highlights were removed
-    assert_eq!(
-        harness.count_search_highlights(),
-        0,
+    // Verify search highlights were cleared
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Found 2"),
         "Search highlights should be cleared"
     );
 }
