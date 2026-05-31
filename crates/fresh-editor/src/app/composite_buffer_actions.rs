@@ -148,6 +148,15 @@ impl crate::app::window::Window {
     /// pane has no content on that row — e.g. the blank side of an insertion
     /// or deletion). Plugins use this to map a side-by-side cursor back to a
     /// concrete (file version, line) so they can open it on disk.
+    ///
+    /// The cursor can rest on a hunk-header / spacer alignment row that has no
+    /// source content on any pane (e.g. at the very top of the diff, before
+    /// the first context line). From such a row "open the file" should still
+    /// target a real line, so the cursor row is first resolved to the nearest
+    /// row that carries content — scanning down (into the hunk the header
+    /// introduces) before up. Rows that already have content on at least one
+    /// pane are used as-is, preserving per-pane `None` for the blank side of
+    /// an add/delete.
     pub fn active_composite_cursor_info(&self) -> Option<(usize, usize, Vec<Option<usize>>)> {
         let (split_id, buffer_id) = self.effective_active_pair();
         if !self.is_composite_buffer(buffer_id) {
@@ -155,8 +164,38 @@ impl crate::app::window::Window {
         }
         let composite = self.composite_buffers.get(&buffer_id)?;
         let view_state = self.composite_view_states.get(&(split_id, buffer_id))?;
-        let row = composite.alignment.get_row(view_state.cursor_row);
         let pane_count = composite.sources.len();
+        let row_count = composite.alignment.row_count();
+
+        let row_has_content = |r: usize| -> bool {
+            composite
+                .alignment
+                .get_row(r)
+                .map(|row| (0..pane_count).any(|i| row.get_pane_line(i).is_some()))
+                .unwrap_or(false)
+        };
+
+        let start = view_state.cursor_row;
+        let resolved_row = if row_has_content(start) {
+            Some(start)
+        } else {
+            let mut found = None;
+            let mut delta = 1;
+            while delta < row_count {
+                if start + delta < row_count && row_has_content(start + delta) {
+                    found = Some(start + delta);
+                    break;
+                }
+                if start >= delta && row_has_content(start - delta) {
+                    found = Some(start - delta);
+                    break;
+                }
+                delta += 1;
+            }
+            found
+        };
+
+        let row = resolved_row.and_then(|r| composite.alignment.get_row(r));
         let lines: Vec<Option<usize>> = (0..pane_count)
             .map(|i| {
                 row.and_then(|r| r.get_pane_line(i))
