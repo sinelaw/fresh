@@ -62,7 +62,7 @@
   "action.block_select_up": "Blokový výběr nahoru",
   "action.calibrate_input": "Kalibrovat vstup klávesnice",
   "action.clear_bookmark": "Vymazat záložku '%{key}'",
-  "action.clear_search": "Clear Search Highlights",
+  "action.clear_search": "Vymazat zvýraznění hledání",
   "action.clear_warnings": "Vymazat varování",
   "action.close": "Zavřít soubor",
   "action.close_settings": "Zavřít nastavení",
