@@ -188,6 +188,15 @@
     color: #00d9a3 !important;
 }
 
+.blog-rss-icon {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    display: inline-block;
+    vertical-align: middle;
+    border-radius: 0;
+}
+
 .blog-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
