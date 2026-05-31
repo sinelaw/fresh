@@ -661,8 +661,7 @@ function ageString(createdAt: number): string {
 // user navigates by) is never the first casualty.
 //
 //   wide   : ● working         (dot + word)
-//   tight  : ● BUSY            (dot + 4-letter code)
-//   minimal: ●                 (dot only)
+//   narrow : ●                 (dot only — when the word won't fit)
 //
 // On-disk (discovered) rows have no agent process — `renderListItem`
 // gives them a plain `· on-disk` tag and no pill, so a status dot never
@@ -674,39 +673,34 @@ interface PillStyle {
   fg: string;
   // Filled/hollow status glyph.
   dot: string;
-  // Long form shown when the column is wide.
+  // Lowercase label shown beside the dot when the column has room.
   word: string;
-  // 3–4 char code shown when the column is tight.
-  code: string;
 }
 
 const STATE_PILL: Record<AgentState, PillStyle> = {
   // Working: a filled, accent-coloured dot — the terminal is actively
   // printing.
-  working: { fg: "diagnostic.info_fg", dot: "●", word: "working", code: "BUSY" },
+  working: { fg: "diagnostic.info_fg", dot: "●", word: "working" },
   // Idle: a hollow, dim dot — quiet/waiting/done. Deliberately muted so
   // a screen full of idle sessions doesn't shout.
-  idle: { fg: "ui.menu_disabled_fg", dot: "○", word: "idle", code: "IDLE" },
+  idle: { fg: "ui.menu_disabled_fg", dot: "○", word: "idle" },
 };
 
-// How a pill should render given the columns available to it. The caller
-// (renderListItem) decides the budget from its content width; the pill
-// picks the richest form that fits.
-type PillForm = "word" | "code" | "dot";
+// How a pill should render given the columns available to it. Two forms
+// only — the labelled word, or a bare dot when there isn't room for it.
+// (No abbreviated upper-case "code" form: it made the same state read as
+// `idle` on one row and `IDLE` on a longer-named one, purely by how much
+// space was left — confusing for no benefit.)
+type PillForm = "word" | "dot";
 
-function pillForm(budget: number): PillForm {
-  // Widths: dot(1). word adds 1+len(word); code adds 1+len(code). Longest
-  // word is "running" (7) → 9; longest code "WAIT"/"KILL" (4) → 6.
-  if (budget >= 9) return "word"; // ● running ≈ 9
-  if (budget >= 6) return "code"; // ● WAIT    ≈ 6
-  return "dot"; //                   ●         = 1
+// Pick the richest form of `p` that fits in `budget` columns.
+function pillForm(p: PillStyle, budget: number): PillForm {
+  return budget >= pillWidth(p, "word") ? "word" : "dot";
 }
 
 // Visible width of a pill rendered in `form` for `p`.
 function pillWidth(p: PillStyle, form: PillForm): number {
-  if (form === "word") return 1 + 1 + p.word.length; // dot + space + word
-  if (form === "code") return 1 + 1 + p.code.length; // dot + space + code
-  return 1; // dot only
+  return form === "word" ? 1 + 1 + p.word.length : 1; // dot[+ space + word]
 }
 
 // Build the styled segments for a pill: a bold coloured dot, then (when
@@ -719,7 +713,6 @@ function pillSegments(
     { text: p.dot, style: { fg: p.fg, bold: true } },
   ];
   if (form === "word") segs.push({ text: " " + p.word, style: { fg: p.fg } });
-  else if (form === "code") segs.push({ text: " " + p.code, style: { fg: p.fg } });
   return segs;
 }
 
@@ -977,7 +970,7 @@ function renderListItem(
     const pill = STATE_PILL[sessionState(s)];
     const pillBudget = contentWidth - leftWidth - 1;
     if (pillBudget >= 1) {
-      const form = pillForm(pillBudget);
+      const form = pillForm(pill, pillBudget);
       const w = pillWidth(pill, form);
       const pad = Math.max(1, contentWidth - leftWidth - w);
       entries.push({ text: " ".repeat(pad) });
