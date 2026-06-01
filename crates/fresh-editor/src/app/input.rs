@@ -470,6 +470,25 @@ impl Editor {
         {
             return Ok(());
         }
+        // A focused dock swallows keys in the dispatch below, so the global
+        // focus-toggle (default Alt+O) would never be able to hand focus back
+        // to the editor once you've dived in. Resolve it here, ahead of the
+        // dock's own key handling, so the toggle is symmetric (same key in and
+        // out). Only the blur-out direction needs this early hook — focusing a
+        // blurred/hidden dock is handled by ordinary keybinding resolution
+        // since the editor owns the keyboard in that state.
+        if self.dock.as_ref().is_some_and(|f| f.focused) {
+            let ctx = self.get_key_context();
+            let resolved = self
+                .keybindings
+                .read()
+                .ok()
+                .map(|kb| kb.resolve(&key_event, ctx));
+            if matches!(resolved, Some(Action::ToggleDockFocus)) {
+                self.handle_action(Action::ToggleDockFocus)?;
+                return Ok(());
+            }
+        }
         if self.dock.as_ref().is_some_and(|f| f.focused)
             && self.dispatch_floating_widget_key(super::PanelSlot::Dock, code, modifiers)
         {
@@ -1918,6 +1937,24 @@ impl Editor {
             Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.active_window_mut().focus_editor(),
+            Action::ToggleDockFocus => {
+                // Bounce keyboard focus between the editor/explorer area and
+                // the orchestrator dock. `dock` is `Some` whenever the dock is
+                // mounted (focused or merely visible-but-blurred); the helpers
+                // flip `focused` and fire the matching `focus`/`blur`
+                // widget_event so the plugin's mirror stays in sync.
+                match self.dock.as_ref().map(|d| d.focused) {
+                    Some(true) => self.blur_floating_panel(super::PanelSlot::Dock),
+                    Some(false) => self.refocus_floating_panel(super::PanelSlot::Dock),
+                    // Dock hidden: hand off to the orchestrator plugin's
+                    // show-dock command so one key both opens and focuses it.
+                    None => {
+                        return self.handle_action(Action::PluginAction(
+                            "orchestrator_dock_toggle".to_string(),
+                        ));
+                    }
+                }
+            }
             Action::FileExplorerUp => self.file_explorer_navigate_up(),
             Action::FileExplorerDown => self.file_explorer_navigate_down(),
             Action::FileExplorerPageUp => self.file_explorer_page_up(),

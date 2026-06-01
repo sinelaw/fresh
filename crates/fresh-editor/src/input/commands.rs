@@ -168,7 +168,7 @@ struct CommandDef {
     custom_contexts: &'static [&'static str],
 }
 
-use KeyContext::{FileExplorer, Normal, Terminal};
+use KeyContext::{CompositeBuffer, Dock, FileExplorer, Normal, Terminal};
 
 /// All builtin command definitions as static data.
 /// Translation happens at runtime via the loop in get_all_commands().
@@ -805,6 +805,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         desc_key: "cmd.focus_editor_desc",
         action: || Action::FocusEditor,
         contexts: &[FileExplorer],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_dock_focus",
+        desc_key: "cmd.toggle_dock_focus_desc",
+        action: || Action::ToggleDockFocus,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
         custom_contexts: &[],
     },
     CommandDef {

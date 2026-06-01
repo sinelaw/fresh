@@ -631,6 +631,10 @@ pub enum Action {
     ToggleHorizontalScrollbar,
     FocusFileExplorer,
     FocusEditor,
+    /// Toggle keyboard focus between the editor/explorer area and the
+    /// persistent orchestrator dock (the left session column). When the
+    /// dock is hidden, this opens and focuses it.
+    ToggleDockFocus,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -1090,6 +1094,7 @@ impl Action {
             "toggle_horizontal_scrollbar" => ToggleHorizontalScrollbar,
             "focus_file_explorer" => FocusFileExplorer,
             "focus_editor" => FocusEditor,
+            "toggle_dock_focus" => ToggleDockFocus,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -1699,6 +1704,7 @@ impl KeybindingResolver {
                 | Action::ResumeLiveGrep
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
+                | Action::ToggleDockFocus
                 | Action::CycleLiveGrepProvider
                 | Action::OpenSettings
                 | Action::MenuActivate
@@ -2491,6 +2497,7 @@ impl KeybindingResolver {
             Action::ToggleHorizontalScrollbar => t!("action.toggle_horizontal_scrollbar"),
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
+            Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),
