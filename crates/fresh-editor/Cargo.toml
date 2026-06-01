@@ -36,7 +36,7 @@ name = "fresh"
 path = "src/lib.rs"
 
 [features]
-default = ["plugins", "runtime", "embed-plugins", "tree-sitter"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http"]
 plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros"]
 # Tree-sitter language grammars + AST-based features (precise indent,
 # semantic reference highlighting, tree-sitter syntax highlighting for the
@@ -81,13 +81,17 @@ runtime = [
     "syntect/default-syntaxes",
     "syntect/default-themes",
 
-    "dep:ureq",
     "dep:alacritty_terminal",
     "dep:portable-pty",
     "dep:trash",
     "dep:open",
 
 ]
+# HTTP(S) networking: the update/release checker, anonymous open-count
+# telemetry, and the `editor.httpFetch` plugin API. Enabled by default.
+# When disabled, those paths become no-ops / return errors and the whole
+# TLS stack (ureq + rustls + ring + webpki) is dropped from the binary.
+http = ["dep:ureq"]
 # GUI mode - native window with GPU-accelerated rendering via wgpu
 # All windowing/GPU dependencies live in the fresh-gui crate.
 gui = [

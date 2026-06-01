@@ -806,6 +806,10 @@ impl std::fmt::Display for Language {
     }
 }
 
+// Used by every per-language `highlight_config` arm; each arm is gated by its
+// own grammar feature, so with zero grammars enabled this is (legitimately)
+// unused.
+#[allow(dead_code)]
 const DEFAULT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "attribute",
     "comment",
@@ -835,6 +839,8 @@ const DEFAULT_HIGHLIGHT_CAPTURES: &[&str] = &[
 #[cfg(feature = "tree-sitter-templ")]
 const TEMPL_HIGHLIGHTS_QUERY: &str = include_str!("../queries/templ/highlights.scm");
 
+// Only referenced by the TypeScript arm; unused when that grammar is disabled.
+#[allow(dead_code)]
 const TYPESCRIPT_HIGHLIGHT_CAPTURES: &[&str] = &[
     "attribute",
     "comment",

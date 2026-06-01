@@ -3560,9 +3560,10 @@ impl Editor {
             let process_id = callback_id.as_u64();
 
             runtime.spawn(async move {
-                let fetch =
-                    tokio::task::spawn_blocking(move || fetch_url_to_file(&url, &target_path))
-                        .await;
+                let fetch = tokio::task::spawn_blocking(move || {
+                    crate::services::http::download_to_file(&url, &target_path)
+                })
+                .await;
 
                 let (stdout, stderr, exit_code) = match fetch {
                     Ok(Ok(status)) => {
@@ -6863,53 +6864,5 @@ impl Window {
     }
 }
 
-/// Maximum size of a body downloaded via `editor.httpFetch`. 64 MB is well
-/// above any reasonable theme/plugin asset (themes are tens of KB) while
-/// still capping a misbehaving server's blast radius.
-const HTTP_FETCH_MAX_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Fetch a URL over HTTP(S) and stream the response body into `target`.
-///
-/// Returns the HTTP status code on success. Non-2xx responses are returned
-/// as their status code without writing to the target file. Transport
-/// errors (DNS, TLS, timeout, …) are returned as `Err`.
-fn fetch_url_to_file(url: &str, target: &std::path::Path) -> Result<u16, String> {
-    // Use the platform's native certificate verifier so requests work in
-    // environments with TLS-intercepting proxies or custom enterprise root
-    // CAs that aren't in Mozilla's bundled webpki-roots.
-    let tls_config = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .build();
-
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .tls_config(tls_config)
-        .build()
-        .new_agent();
-
-    let response = agent
-        .get(url)
-        .header("User-Agent", "fresh-editor")
-        .call()
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status().as_u16();
-    if !(200..300).contains(&status) {
-        return Ok(status);
-    }
-
-    let mut file = std::fs::File::create(target)
-        .map_err(|e| format!("failed to create {}: {}", target.display(), e))?;
-
-    let mut reader = response
-        .into_body()
-        .into_with_config()
-        .limit(HTTP_FETCH_MAX_BYTES)
-        .reader();
-
-    std::io::copy(&mut reader, &mut file)
-        .map_err(|e| format!("failed to write response body: {}", e))?;
-
-    Ok(status)
-}
+// `editor.httpFetch` downloads stream through `services::http::download_to_file`,
+// which keeps all ureq/TLS usage in one place (gated by the `http` feature).
