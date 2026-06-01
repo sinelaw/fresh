@@ -982,3 +982,50 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
         .unwrap();
     h.assert_screen_contains("] beta");
 }
+
+/// F4 characterization: with a non-terminal active window, selecting
+/// rows, Tabbing to the bulk-action buttons, and pressing Esc leaves the
+/// dock cleanly — and the list is fully operable again after re-focusing
+/// (Space toggles a row). The interactive "list became unreachable"
+/// report was a manifestation of the terminal-shadow focus desync (the
+/// active window was a terminal), not a separate dock-focus bug: the
+/// host's dock Esc handler always blurs when focus isn't on the filter.
+#[test]
+fn dock_esc_from_bulk_buttons_leaves_dock_and_list_stays_operable() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // Select two rows so the bulk-action bar (Stop/Arch/Del) is live.
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().matches("[x]").count() >= 2)
+        .unwrap();
+
+    // Tab toward the bulk-action buttons, then Esc.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+
+    // Re-focus the dock and confirm the list still responds to Space —
+    // toggle a third row on, lifting the [x] count to 3.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().matches("[x]").count() >= 3)
+        .unwrap();
+}
