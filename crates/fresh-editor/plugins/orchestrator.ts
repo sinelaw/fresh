@@ -3533,19 +3533,33 @@ async function listLinkedWorktrees(
   return { mainRoot, worktrees };
 }
 
+/// Slugify a project basename into a git-ref-safe, label-friendly stem
+/// for auto session names. git refs forbid spaces, `~^:?*[\` etc., so
+/// collapse anything outside `[A-Za-z0-9._-]` to a dash; the name
+/// doubles as the worktree branch.
+function sessionNameBaseFor(repoRoot: string): string {
+  const raw = editor.pathBasename(repoRoot) || "";
+  const slug = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "session";
+}
+
 async function nextAutoSessionName(
   repoRoot: string,
   options?: { persist?: boolean },
 ): Promise<string> {
-  // Persisted counter so consecutive empty submits produce
-  // session-1, session-2, … even across plugin reloads. But the
-  // counter alone isn't sufficient: a previous run may have left a
-  // branch / worktree behind (orchestrator's archive / external git
-  // delete / interrupted submit), so `session-${counter+1}` can
-  // collide and `git worktree add` would fail with the noisy
-  // "already used by worktree at …" message. Probe the local git
-  // refs once and increment past any reserved name before
-  // returning.
+  // Root the auto-name in the project (`<project>-1`, `<project>-2`, …)
+  // rather than a bare `session-N`, so a dock row tells you which
+  // project the session belongs to (F6). The name also seeds the
+  // worktree branch.
+  //
+  // Persisted counter so consecutive empty submits keep incrementing
+  // even across plugin reloads. But the counter alone isn't
+  // sufficient: a previous run may have left a branch / worktree behind
+  // (orchestrator's archive / external git delete / interrupted
+  // submit), so `<project>-${counter+1}` can collide and
+  // `git worktree add` would fail with the noisy "already used by
+  // worktree at …" message. Probe the local git refs once and
+  // increment past any reserved `<project>-N` name before returning.
   //
   // `persist: false` (the default) computes the name without
   // advancing the persisted counter — for placeholder previews
@@ -3553,14 +3567,16 @@ async function nextAutoSessionName(
   // path passes `persist: true` so consecutive submissions
   // increment normally.
   const persist = options?.persist === true;
+  const base = sessionNameBaseFor(repoRoot);
   const counterBefore = (editor.getGlobalState("orchestrator.session_counter") as
     | number
     | undefined) ?? 0;
   let next = counterBefore + 1;
 
-  // Collect existing branch names that look like `session-N` so we
+  // Collect existing branch names that look like `<project>-N` so we
   // can skip past them. `git for-each-ref` is faster and tighter
-  // than parsing `git worktree list` output.
+  // than parsing `git worktree list` output. `.` is the only
+  // regex-special char the slug can contain, so escape it.
   const refs = await spawnCollect(
     "git",
     ["-C", repoRoot, "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
@@ -3568,8 +3584,9 @@ async function nextAutoSessionName(
   );
   const taken = new Set<number>();
   if (refs.exit_code === 0) {
+    const re = new RegExp(`^${base.replace(/[.]/g, "\\.")}-(\\d+)$`);
     for (const line of (refs.stdout || "").split(/\r?\n/)) {
-      const m = /^session-(\d+)$/.exec(line.trim());
+      const m = re.exec(line.trim());
       if (m) {
         taken.add(parseInt(m[1], 10));
       }
@@ -3581,7 +3598,7 @@ async function nextAutoSessionName(
   if (persist) {
     editor.setGlobalState("orchestrator.session_counter", next);
   }
-  return `session-${next}`;
+  return `${base}-${next}`;
 }
 
 // Three distinct styles for the header line: section keyword

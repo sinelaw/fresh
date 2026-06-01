@@ -1034,3 +1034,27 @@ fn dock_esc_from_bulk_buttons_leaves_dock_and_list_stays_operable() {
     h.wait_until(|h| h.screen_to_string().matches("[x]").count() >= 3)
         .unwrap();
 }
+
+/// F6: the auto-generated session name is rooted in the project
+/// (`<project>-N`) rather than a bare `session-N`, so a dock row tells
+/// you which project a session belongs to.
+#[test]
+fn dock_new_session_name_is_rooted_in_the_project() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // The Session Name field's auto-default carries the project basename
+    // and a numeric suffix ("alphaproj-…"). Without the fix it reads
+    // "session-N", which has no "alphaproj-" stem.
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj-"))
+        .unwrap();
+    h.assert_screen_contains("alphaproj-");
+}
