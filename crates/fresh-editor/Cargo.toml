@@ -37,7 +37,15 @@ path = "src/lib.rs"
 
 [features]
 default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http"]
-plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros"]
+plugins = [
+    "dep:fresh-plugin-runtime",
+    "dep:fresh-parser-js",
+    "dep:fresh-plugin-api-macros",
+    # oxc parses init.ts, which only the plugin runtime can execute.
+    "dep:oxc_allocator",
+    "dep:oxc_parser",
+    "dep:oxc_span",
+]
 # Tree-sitter language grammars + AST-based features (precise indent,
 # semantic reference highlighting, tree-sitter syntax highlighting for the
 # languages syntect doesn't cover). Enabled by default. When disabled, the
@@ -127,10 +135,13 @@ fresh-parser-js = { workspace = true, optional = true }
 fresh-languages = { workspace = true, optional = true }
 fresh-plugin-runtime = { workspace = true, optional = true }
 
-# oxc for user init.ts syntax checking (fresh --cmd init check)
-oxc_allocator.workspace = true
-oxc_parser.workspace = true
-oxc_span.workspace = true
+# oxc syntax-checks the user's `init.ts` (`fresh --cmd init check` and the
+# pre-load check). `init.ts` is config-as-code executed by the QuickJS plugin
+# runtime, so it is only meaningful when `plugins` is enabled — these deps are
+# pulled in by that feature and dropped from plugin-less builds.
+oxc_allocator = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
 
 # Always required (for schema generation and runtime)
 serde.workspace = true
