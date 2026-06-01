@@ -18,6 +18,8 @@ architectural decision records for Fresh development.
 | [ORCHESTRATOR_DOCK_NNG_FINDINGS.md](ORCHESTRATOR_DOCK_NNG_FINDINGS.md) | Findings from running the dock usability test interactively (tmux): scorecard + severity-ranked defects (terminal shadows dock focus, dive lands in file tree, stale gutter on hide, …) with heuristics, evidence captures, and fixes |
 | [PLAN-git-log-streaming.md](PLAN-git-log-streaming.md) | Plan to stream `git show` into a file-backed buffer (extend `spawnProcess` with `stdoutTo`; add lightweight `refreshBufferFromDisk`); eliminates 43 MB JS string + 1 M-entry FFI marshal on giant commits |
 | [PLAN-git-log-diff-folding-and-highlighting.md](PLAN-git-log-diff-folding-and-highlighting.md) | Plan for incremental per-file/per-hunk folding (toggleable via standard `toggle_fold` key) and principled syntect-driven diff highlighting (extend `HighlightCategory` + theme bg keys; per-chunk through existing lazy-load), scalable to 2 GB diffs |
+| [AUTHORITY_DESIGN.md](AUTHORITY_DESIGN.md) | The `Authority` pattern — the single backend slot ("where does the editor act?") behind which local / SSH / docker-exec filesystem + spawner + terminal wrapper all live; one per `Editor`, opaque to core, destructive transitions |
+| [EKS_S3_AUTHORITY_DESIGN.md](EKS_S3_AUTHORITY_DESIGN.md) | Design for a full cloud `Authority`: `S3FileSystem` (object store → POSIX `FileSystem` trait, ranged GET for lazy multi-GB loads, multipart `write_patched`, block-on bridge à la `AgentChannel`) + `EksExecSpawner` (`kubectl exec` into an EKS pod, modeled on `docker_spawner.rs`); mount-based path translation, no byte sync |
 
 Individual design documents for specific features are preserved alongside
 the unified summary for deep-dive reference.
