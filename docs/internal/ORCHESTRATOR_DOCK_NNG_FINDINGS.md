@@ -19,6 +19,21 @@ parallel sessions). Protocol: [`ORCHESTRATOR_DOCK_NNG_USABILITY_GUIDE.md`](ORCHE
 
 ---
 
+## Fix status (2026-06-01, branch `claude/orchestrator-dock-ux-test-dsXNW`)
+
+| ID | Status | Notes |
+|----|--------|-------|
+| **F7** | ✅ **Fixed** | Unborn-HEAD detected up front with a friendly message instead of raw `git worktree add` errors. e2e regression test. |
+| **F5** | ✅ **Fixed** | Dock filter resets when focus leaves the dock, so re-entry shows the full list. e2e regression test. |
+| **F4** | ✅ **Reclassified** | Not a separate bug — a manifestation of **F1**. The host's dock Esc handler always blurs when focus isn't on the filter; the "Esc → +New / list unreachable" reading happened only while a *terminal* was active (F1 key-leakage). Guard test added with a non-terminal active window. |
+| **F2** | 🔎 **Root-caused; fix deferred (focus-model decision)** | `show_file_explorer()` → `toggle_file_explorer()` → `take_focus_for_file_explorer()` sets `key_context = FileExplorer`, so *showing* the explorer also *focuses* it. The launch session is opened this way at startup (`main.rs` `show_file_explorer()`), so it starts explorer-focused; a dock dive then preserves that per-window focus (intentional, documented on `Window::key_context`), landing the first keystrokes in the tree. There is **no `focusEditor` plugin API**, so a contained plugin fix isn't available. A correct fix either (a) shows the explorer without focusing it at startup/dive, or (b) is the gaps-doc **P1** refactor (dock as `KeyContext` chrome, where dive is a normal context transition). Both change documented focus semantics → needs a deliberate decision, not a drive-by patch. |
+| **F1** | ⏳ **Open (large)** | The principled fix is the gaps-doc **P1** (dock as an editor-global `KeyContext` chrome region) so a terminal buffer's mode can't shadow dock keys and the focus indicator can't disagree with the keyboard target. Sizeable refactor; F4 also resolves once this lands. |
+| **F3** | ◑ **Partly covered** | The **buffer** active-window case already reflows on dock-close (existing test `dock_close_reflows_buffer_to_full_width`). The **terminal** active-window case (my repro) still leaves a stale gutter until a resize — host terminal-reflow on dock hide. |
+| **F6** | ⏸ **Deferred (low ROI)** | The project tag already conveys the project for non-active rows; the tag's presence/absence is a load-bearing switch signal (plugin comment), and the alternative (name = basename) changes branch naming. P1 severity doesn't justify the blast radius yet. |
+| **F8** | ⏸ **Deferred (debatable)** | The Tab re-pop is the intentional directory-descent affordance (complete to `foo/` → show its contents). The annoyance is the popup overlaying the next fields (a host placement concern), not the re-trigger itself. |
+
+---
+
 ## Scorecard
 
 | Task | Goal | Result |
