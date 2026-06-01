@@ -546,6 +546,58 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
     );
 }
 
+/// Invoking `Orchestrator: Open` while the dock is visible must not be a
+/// silent no-op. The dock and the modal picker share one panel + state
+/// today, so the modal can't render on top; the command refocuses the
+/// dock and surfaces a hint instead. Before the fix `openControlRoom`
+/// bailed at `if (openPanel) return` and nothing happened at all.
+#[test]
+fn open_command_gives_feedback_when_dock_is_visible() {
+    // Wide terminal so the dock (left column) still leaves the status bar
+    // room to show the full hint text.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Ctrl+P falls through (blurs the dock) and opens the palette; run
+    // "Orchestrator: Open" from it.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // With the fix the command refocuses the dock (Ctrl+P had blurred it)
+    // and surfaces a status hint. Without the fix `openControlRoom` bails
+    // at `if (openPanel) return` — nothing happens and the dock stays
+    // blurred, so this wait times out.
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+
+    let screen = h.screen_to_string();
+    // The status bar carries the hint (feedback, not silence)...
+    assert!(
+        screen.contains("the dock already lists sessions"),
+        "Open should surface a hint when the dock is visible.\nScreen:\n{screen}"
+    );
+    // ...the dock is still there...
+    assert!(
+        screen.contains("ORCHESTRATOR"),
+        "the dock must stay visible.\nScreen:\n{screen}"
+    );
+    // ...and the centered modal picker did NOT open on top of it (the
+    // dock header is "ORCHESTRATOR"; the modal title is the longer
+    // "ORCHESTRATOR :: Sessions").
+    assert!(
+        !screen.contains("ORCHESTRATOR :: Sessions"),
+        "the modal picker must not open over the dock.\nScreen:\n{screen}"
+    );
+}
+
 #[test]
 fn settings_dialog_does_not_overlap_dock() {
     // Open the dock, then open the Settings modal via the command

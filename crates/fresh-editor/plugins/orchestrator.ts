@@ -1877,8 +1877,24 @@ function refreshOpenDialog(): void {
 }
 
 function openControlRoom(opts: { dock?: boolean } = {}): void {
-  if (openPanel) return;
   const asDock = opts?.dock === true;
+  if (openPanel) {
+    // A panel already occupies the shared dock/dialog slot. If the dock
+    // is showing and the user asked for the modal picker (Orchestrator:
+    // Open), the dock already *is* the live session list — refocus it
+    // and say so, rather than silently doing nothing. The modal and the
+    // dock share one panel + state today, so they can't both render at
+    // once; full coexistence is the deferred P1 redesign (see
+    // docs/internal/orchestrator-dock-gaps.md). An `asDock` re-entry
+    // (Toggle Dock) never reaches here — `toggleDock` handles it first.
+    if (!asDock && dockMode) {
+      restoreDockAfterForm();
+      editor.setStatus(
+        "Orchestrator: the dock already lists sessions — hide it (Toggle Dock) to open the full picker",
+      );
+    }
+    return;
+  }
   reconcileSessions();
   // Summarise on-disk session content up front so the trivial filter
   // has data on the first render.
