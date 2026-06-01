@@ -1,6 +1,5 @@
 use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
-use crate::primitives::display_width::{char_width, str_width};
 use crate::primitives::line_wrapping::WrapConfig;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 /// The viewport - what portion of the buffer is visible
@@ -1465,22 +1464,26 @@ impl Viewport {
 
             // Only handle horizontal scroll if cursor is actually within this line
             if cursor.position < line_end_byte {
-                let cursor_byte_offset = cursor.position.saturating_sub(line_start);
+                // Visual column of the cursor, taken from the canonical
+                // char→column map on the ViewLine. This accounts for tab
+                // expansion, wide/CJK characters, AND inline inlay-hint
+                // cells spliced before wrapping — so horizontal scroll
+                // follows the cursor's true on-screen column instead of a
+                // hint-blind byte walk. When the cursor sits one past the
+                // last source char (end of line), fall back to the line's
+                // full visual width.
+                let cursor_visual_col = line
+                    .char_source_bytes
+                    .iter()
+                    .position(|b| *b == Some(cursor.position))
+                    .map(|ci| line.visual_col_at_char(ci))
+                    .unwrap_or_else(|| line.visual_width());
 
-                // Calculate visual column by walking through characters and summing widths
-                // until we've consumed cursor_byte_offset bytes
-                let line_text = line.text.trim_end_matches('\n');
-                let mut bytes_consumed = 0usize;
-                let mut cursor_visual_col = 0usize;
-                for ch in line_text.chars() {
-                    if bytes_consumed >= cursor_byte_offset {
-                        break;
-                    }
-                    cursor_visual_col += char_width(ch);
-                    bytes_consumed += ch.len_utf8();
-                }
-
-                let line_visual_width = str_width(line_text);
+                // Line width for scroll clamping, excluding the trailing
+                // newline cell (width 1) the ViewLine carries.
+                let line_visual_width = line
+                    .visual_width()
+                    .saturating_sub(usize::from(line.ends_with_newline));
                 self.ensure_column_visible_simple(
                     cursor_visual_col,
                     line_visual_width,

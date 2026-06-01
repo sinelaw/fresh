@@ -8,14 +8,14 @@
 //!
 //! None of these depend on any shared render-time "mega struct".
 
-use super::style::create_wrapped_virtual_lines;
+use super::style::{create_wrapped_virtual_lines, token_style_from_ratatui};
 use crate::primitives::{ansi, display_width, visual_layout};
 use crate::state::EditorState;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::virtual_text::VirtualTextPosition;
-use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-use std::collections::HashSet;
+use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
+use std::collections::{HashMap, HashSet};
 
 /// Wrap tokens to fit within `content_width` columns (accounting for a
 /// leading gutter on the first visual line). Emits `Break` tokens where
@@ -976,4 +976,160 @@ pub(super) fn inject_virtual_lines(
     }
 
     result
+}
+
+/// One inline inlay-hint cell to splice into the token stream, already
+/// padded to match the legacy render-time spacing and resolved to a wire
+/// style.
+struct InlineHintCell {
+    text: String,
+    style: Option<ViewTokenStyle>,
+}
+
+/// Splice inline virtual text (`BeforeChar` / `AfterChar` inlay hints) into
+/// the token stream as styled `source_offset: None` Text cells, **before**
+/// wrapping.
+///
+/// This is the heart of the canonical layout model: by turning hints into
+/// real cells up front, their display width participates in line wrapping,
+/// in the per-character visual-column map ([`ViewLine`]), and therefore in
+/// horizontal scrolling and cursor math — all from a single source of
+/// truth. Previously hints were drawn only at render time, invisible to
+/// wrapping and h-scroll, which dropped wrapped characters (the hint width
+/// pushed real text past the row edge) and clipped the end of hinted lines
+/// when scrolling.
+///
+/// Padding mirrors the old render-time injection exactly so output is
+/// unchanged except for the bug fix:
+///   - `BeforeChar`: `"{text} "`, or `" {text} "` when anchored on a
+///     newline (an end-of-line hint).
+///   - `AfterChar`:  `" {text}"`.
+///
+/// `theme` is `Some` on the draw path (so hint colours resolve) and `None`
+/// on the wrap-cache / scroll-math path, where only cell *width* matters and
+/// the output is never drawn.
+pub fn splice_inline_virtual_text(
+    tokens: Vec<ViewTokenWire>,
+    state: &EditorState,
+    theme: Option<&Theme>,
+    start: usize,
+    end: usize,
+) -> Vec<ViewTokenWire> {
+    let inline = state
+        .virtual_texts
+        .query_inline_in_range(&state.marker_list, start, end);
+    if inline.is_empty() {
+        return tokens;
+    }
+
+    // Group by anchor byte, preserving the query's (position, priority)
+    // order. `before` stores the raw hint text — its leading-space padding
+    // depends on whether the anchor cell is a newline, decided while
+    // walking the token stream below.
+    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>)>> = HashMap::new();
+    let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
+    for (pos, vtext) in inline {
+        let style = theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t)));
+        match vtext.position {
+            VirtualTextPosition::BeforeChar => {
+                before
+                    .entry(pos)
+                    .or_default()
+                    .push((vtext.text.clone(), style));
+            }
+            VirtualTextPosition::AfterChar => {
+                after.entry(pos).or_default().push(InlineHintCell {
+                    text: format!(" {}", vtext.text),
+                    style,
+                });
+            }
+            // Line-level positions are handled by `inject_virtual_lines`.
+            _ => {}
+        }
+    }
+
+    let virt = |text: String, style: Option<ViewTokenStyle>| ViewTokenWire {
+        source_offset: None,
+        kind: ViewTokenWireKind::Text(text),
+        style,
+    };
+
+    let mut out: Vec<ViewTokenWire> = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let src = token.source_offset;
+        match (&token.kind, src) {
+            (ViewTokenWireKind::Text(s), Some(token_start)) => {
+                // Split the (possibly coalesced) Text token at each hint
+                // anchor so before/after cells land in the right place and
+                // source-byte mapping stays exact for the surrounding text.
+                let mut seg = String::new();
+                let mut seg_start = token_start;
+                let mut byte_idx = 0usize;
+                for ch in s.chars() {
+                    let anchor = token_start + byte_idx;
+                    if let Some(hints) = before.get(&anchor) {
+                        if !seg.is_empty() {
+                            out.push(ViewTokenWire {
+                                source_offset: Some(seg_start),
+                                kind: ViewTokenWireKind::Text(std::mem::take(&mut seg)),
+                                style: token.style.clone(),
+                            });
+                        }
+                        seg_start = anchor;
+                        for (text, style) in hints {
+                            out.push(virt(format!("{text} "), style.clone()));
+                        }
+                    }
+                    seg.push(ch);
+                    byte_idx += ch.len_utf8();
+                    if let Some(hints) = after.get(&anchor) {
+                        out.push(ViewTokenWire {
+                            source_offset: Some(seg_start),
+                            kind: ViewTokenWireKind::Text(std::mem::take(&mut seg)),
+                            style: token.style.clone(),
+                        });
+                        seg_start = token_start + byte_idx;
+                        for hint in hints {
+                            out.push(virt(hint.text.clone(), hint.style.clone()));
+                        }
+                    }
+                }
+                if !seg.is_empty() {
+                    out.push(ViewTokenWire {
+                        source_offset: Some(seg_start),
+                        kind: ViewTokenWireKind::Text(seg),
+                        style: token.style.clone(),
+                    });
+                }
+            }
+            (kind, Some(anchor)) => {
+                // Atomic source cell (Newline / Space / BinaryByte): hints
+                // anchor around the whole cell. A `BeforeChar` hint on a
+                // newline is an end-of-line hint and gets a leading space.
+                let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
+                if let Some(hints) = before.get(&anchor) {
+                    for (text, style) in hints {
+                        let padded = if anchor_is_newline {
+                            format!(" {text} ")
+                        } else {
+                            format!("{text} ")
+                        };
+                        out.push(virt(padded, style.clone()));
+                    }
+                }
+                let after_hints = after.get(&anchor);
+                out.push(token);
+                if let Some(hints) = after_hints {
+                    for hint in hints {
+                        out.push(virt(hint.text.clone(), hint.style.clone()));
+                    }
+                }
+            }
+            // Injected tokens (Break, or any `source_offset: None`) carry no
+            // anchor and pass through untouched.
+            _ => out.push(token),
+        }
+    }
+
+    out
 }

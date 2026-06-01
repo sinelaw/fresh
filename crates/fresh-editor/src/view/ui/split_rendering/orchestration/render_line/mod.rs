@@ -28,7 +28,6 @@ use crate::state::EditorState;
 use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{should_show_line_number, LineStart, ViewLine};
-use crate::view::virtual_text::VirtualTextPosition;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -167,7 +166,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     let semantic_token_spans = &decorations.semantic_token_spans;
     let viewport_overlays = &decorations.viewport_overlays;
     let overlay_position_index = &decorations.overlay_position_index;
-    let virtual_text_lookup = &decorations.virtual_text_lookup;
     let diagnostic_lines = &decorations.diagnostic_lines;
     let line_indicators = &decorations.line_indicators;
 
@@ -689,28 +687,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     style = style.fg(theme.whitespace_indicator_fg);
                 }
 
-                if let Some(bp) = byte_pos {
-                    if let Some(vtexts) = virtual_text_lookup.get(&bp) {
-                        for vtext in vtexts
-                            .iter()
-                            .filter(|v| v.position == VirtualTextPosition::BeforeChar)
-                        {
-                            // Flush accumulated text before inserting virtual text
-                            span_acc.flush(&mut line_spans, &mut line_view_map);
-                            // Add extra space if at end of line (before newline)
-                            let extra_space = if ch == '\n' { " " } else { "" };
-                            let text_with_space = format!("{}{} ", extra_space, vtext.text);
-                            push_span_with_map(
-                                &mut line_spans,
-                                &mut line_view_map,
-                                text_with_space,
-                                vtext.resolved_style(theme),
-                                None,
-                            );
-                        }
-                    }
-                }
-
                 if !display_char.is_empty() {
                     // Debug mode: insert opening tags for spans starting at this position
                     if let Some(ref mut tracker) = debug_tracker {
@@ -764,31 +740,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                                 gutter_width as u16 + col_offset.saturating_sub(left_col) as u16;
                             cursor_screen_y = lines.len() as u16;
                             have_cursor = true;
-                        }
-                    }
-                }
-
-                if let Some(bp) = byte_pos {
-                    if let Some(vtexts) = virtual_text_lookup.get(&bp) {
-                        for vtext in vtexts
-                            .iter()
-                            .filter(|v| v.position == VirtualTextPosition::AfterChar)
-                        {
-                            // Flush the accumulated text so the virtual
-                            // text is placed *after* the current char
-                            // rather than sneaking in front of the next
-                            // flush of `span_acc`. Without this flush,
-                            // AfterChar hints render at the start of the
-                            // buffered run (issue #1572).
-                            span_acc.flush(&mut line_spans, &mut line_view_map);
-                            let text_with_space = format!(" {}", vtext.text);
-                            push_span_with_map(
-                                &mut line_spans,
-                                &mut line_view_map,
-                                text_with_space,
-                                vtext.resolved_style(theme),
-                                None,
-                            );
                         }
                     }
                 }

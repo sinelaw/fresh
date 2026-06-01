@@ -10,6 +10,24 @@ use fresh_core::api::{TokenColor, ViewTokenStyle};
 use ratatui::style::{Color, Modifier, Style};
 use std::collections::HashSet;
 
+/// Lossy-but-faithful conversion of a resolved ratatui [`Style`] into a
+/// wire [`ViewTokenStyle`], so styled content can flow through the token
+/// stream (which only carries `ViewTokenStyle`).
+///
+/// `TokenColor::from_ratatui` captures every `ratatui::Color` variant (RGB,
+/// named ANSI, indexed, `Reset`); the bold/italic/underline modifiers are
+/// the subset `ViewTokenStyle` can represent. Used for plugin-injected
+/// virtual lines and for inline inlay-hint cells spliced before wrapping.
+pub(super) fn token_style_from_ratatui(style: Style) -> ViewTokenStyle {
+    ViewTokenStyle {
+        fg: style.fg.and_then(TokenColor::from_ratatui),
+        bg: style.bg.and_then(TokenColor::from_ratatui),
+        bold: style.add_modifier.contains(Modifier::BOLD),
+        italic: style.add_modifier.contains(Modifier::ITALIC),
+        underline: style.add_modifier.contains(Modifier::UNDERLINED),
+    }
+}
+
 /// Style for inline diagnostic text, selected from overlay priority (severity).
 /// Priority values: 100=error, 50=warning, 30=info, 10=hint.
 pub(super) fn inline_diagnostic_style(priority: i32, theme: &Theme) -> Style {
@@ -151,13 +169,7 @@ pub(super) fn create_wrapped_virtual_lines(
     // round-tripping through `ViewTokenStyle` and reach the renderer
     // intact. Previously only `Color::Rgb` survived, so virtual lines
     // dropped the bg on ANSI-only themes.
-    let token_style = ViewTokenStyle {
-        fg: style.fg.and_then(TokenColor::from_ratatui),
-        bg: style.bg.and_then(TokenColor::from_ratatui),
-        bold: style.add_modifier.contains(Modifier::BOLD),
-        italic: style.add_modifier.contains(Modifier::ITALIC),
-        underline: style.add_modifier.contains(Modifier::UNDERLINED),
-    };
+    let token_style = token_style_from_ratatui(style);
 
     let chunk_ranges = match wrap_width {
         Some(w) if w > 0 => wrap_str_to_width(text, w),

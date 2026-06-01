@@ -222,13 +222,6 @@ pub(crate) fn decoration_context(
         HashMap::new()
     };
 
-    let virtual_text_lookup: HashMap<usize, Vec<crate::view::virtual_text::VirtualText>> = state
-        .virtual_texts
-        .build_lookup(&state.marker_list, viewport_start, viewport_end)
-        .into_iter()
-        .map(|(position, texts)| (position, texts.into_iter().cloned().collect()))
-        .collect();
-
     // Pre-compute line indicators for the viewport.
     let mut line_indicators =
         state
@@ -251,7 +244,6 @@ pub(crate) fn decoration_context(
         semantic_token_spans,
         viewport_overlays,
         overlay_position_index,
-        virtual_text_lookup,
         diagnostic_lines,
         diagnostic_inline_texts,
         line_indicators,

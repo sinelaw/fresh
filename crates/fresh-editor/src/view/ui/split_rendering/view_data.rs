@@ -10,6 +10,7 @@ use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
+    splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -144,6 +145,34 @@ pub(super) fn build_view_data(
         MAX_SAFE_LINE_WIDTH
     };
     let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
+
+    // Splice inline virtual text (inlay hints) into the stream BEFORE
+    // wrapping so its display width participates in wrap boundaries, the
+    // per-character visual-column map, and horizontal scrolling. Done here
+    // (not at draw time) so wrapping, ViewLine, cursor, and scroll all see
+    // one canonical cell layout. `theme` is passed so hint colours resolve.
+    if !state.virtual_texts.is_empty() {
+        // Exclusive end of the byte range covered by these tokens. Each
+        // token's `source_offset` is its START, so we must add the token's
+        // byte length — otherwise a hint anchored inside the last (often
+        // coalesced) token would fall outside the query range and never be
+        // spliced.
+        let viewport_end = tokens
+            .iter()
+            .filter_map(|t| {
+                let start = t.source_offset?;
+                let len = match &t.kind {
+                    fresh_core::api::ViewTokenWireKind::Text(s) => s.len(),
+                    _ => 1,
+                };
+                Some(start + len)
+            })
+            .max()
+            .unwrap_or(viewport.top_byte);
+        tokens =
+            splice_inline_virtual_text(tokens, state, Some(theme), viewport.top_byte, viewport_end);
+    }
+
     tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
 
     // Convert tokens to display lines using the view pipeline.
