@@ -4879,7 +4879,25 @@ editor.on("widget_event", (e) => {
       // Host fired this because focus left the dock (Enter/Esc dive or
       // leave, editor click, or an unhandled chord like Ctrl+P). The
       // dock stays visible; the host stops routing keys to it.
-      if (dockMode) dockBlurred = true;
+      if (dockMode) {
+        dockBlurred = true;
+        // Leaving the dock resets the filter so re-entering always
+        // shows the full session list. A stale filter (e.g. an old
+        // "/gamma") otherwise silently hides sessions on the next
+        // focus, with only the filter box as a clue — and there is no
+        // one-key clear from the list. (See F5.)
+        if (openDialog.filter.value !== "") {
+          openDialog.filter.value = "";
+          openDialog.filter.cursor = 0;
+          dockFocus = "list";
+          const activeId = editor.activeWindow();
+          const all = filterSessions("");
+          openDialog.filteredIds = all;
+          const activeIdx = all.indexOf(activeId);
+          openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+          refreshOpenDialog();
+        }
+      }
       return;
     }
     if (e.event_type === "focus") {

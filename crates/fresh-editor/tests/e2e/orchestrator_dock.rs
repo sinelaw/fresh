@@ -944,3 +944,41 @@ fn dock_new_session_in_uncommitted_repo_explains_unborn_head() {
     h.assert_screen_contains("make an initial commit");
     h.assert_screen_not_contains("invalid reference");
 }
+
+/// F5: the dock filter must reset when focus leaves the dock, so
+/// re-entering always shows the full session list. A stale filter
+/// otherwise silently hides sessions on the next focus (only the filter
+/// box hints why), with no one-key clear from the list.
+#[test]
+fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // Filter to "gamma" — the "beta" row drops out of the list.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("] beta"))
+        .unwrap();
+
+    // Enter returns to the list (filter still applied); Esc then leaves
+    // the dock. Leaving must clear the filter, so the previously hidden
+    // "beta" row is back the moment the dock is shown again.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("] beta"))
+        .unwrap();
+    h.assert_screen_contains("] beta");
+}
