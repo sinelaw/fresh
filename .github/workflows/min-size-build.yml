@@ -24,6 +24,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,14 +48,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
+          # aarch64 is cross-compiled inside a container via `cross`.
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            cargo install cross --git https://github.com/cross-rs/cross
+          fi
 
       - name: Build min-size binary
         run: |
-          cargo build \
-            --profile min-size \
-            --no-default-features --features runtime \
-            --target ${{ matrix.target }} \
-            --bin fresh
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            cross build \
+              --profile min-size \
+              --no-default-features --features runtime \
+              --target ${{ matrix.target }} \
+              --bin fresh
+          else
+            cargo build \
+              --profile min-size \
+              --no-default-features --features runtime \
+              --target ${{ matrix.target }} \
+              --bin fresh
+          fi
 
       - name: Create archive
         run: |
