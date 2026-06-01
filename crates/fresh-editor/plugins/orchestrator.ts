@@ -4895,6 +4895,12 @@ editor.on("widget_event", (e) => {
           openDialog.filteredIds = all;
           const activeIdx = all.indexOf(activeId);
           openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+          // The filter input is a controlled widget: clearing our
+          // local state only changes what we *filter by*. The text
+          // box keeps its own buffer until we push the empty value
+          // back, so reset it explicitly — otherwise the list shows
+          // every session while the box still reads "gamma".
+          openPanel?.setValue("filter", "", 0);
           refreshOpenDialog();
         }
       }

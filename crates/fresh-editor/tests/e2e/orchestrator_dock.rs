@@ -981,6 +981,11 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     h.wait_until(|h| h.screen_to_string().contains("] beta"))
         .unwrap();
     h.assert_screen_contains("] beta");
+    // The filter *input* must clear too, not just the filtering: the box
+    // is a controlled widget, so without resetting its value it would
+    // still read the old query while the list shows everything. The
+    // empty box shows its placeholder ("…to search…").
+    h.assert_screen_contains("to search");
 }
 
 /// F4 characterization: with a non-terminal active window, selecting
