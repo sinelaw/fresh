@@ -1,0 +1,96 @@
+# Minimal-size static Linux build.
+#
+# Produces a single, portable, statically-linked musl binary built with the
+# `min-size` profile (opt-level=z, fat LTO, panic=abort, stripped) and a
+# trimmed feature set (`--no-default-features --features runtime`): no plugin
+# runtime, no embedded plugins, no tree-sitter grammars (syntect-only
+# highlighting), no oxc, and no HTTP/TLS (so no update checker / telemetry /
+# httpFetch). The result is distributed as a single compressed archive.
+#
+# This is a size-focused alternative to the full-featured musl build in
+# `musl-builds.yml`; both are attached to the GitHub release.
+
+name: Min-size Build
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build-min-size:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # rust-toolchain.toml overrides the targets parameter above, so add it explicitly.
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build min-size binary
+        run: |
+          cargo build \
+            --profile min-size \
+            --no-default-features --features runtime \
+            --target ${{ matrix.target }} \
+            --bin fresh
+
+      - name: Create archive
+        run: |
+          ARCHIVE_NAME="fresh-min-size-${{ matrix.target }}"
+          mkdir -p "${ARCHIVE_NAME}"
+          cp "target/${{ matrix.target }}/min-size/fresh" "${ARCHIVE_NAME}/"
+          cp LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cat > "${ARCHIVE_NAME}/MINIMAL-BUILD.txt" <<'NOTE'
+          This is the minimal-size build of Fresh.
+
+          It is a statically-linked (musl) binary built with the `min-size`
+          profile and a trimmed feature set for the smallest possible size.
+          Compared to the standard release it OMITS:
+
+            * the TypeScript plugin runtime and embedded plugins
+            * all tree-sitter language grammars (highlighting falls back to
+              the bundled syntect / TextMate grammars; indentation uses the
+              pattern-based heuristics)
+            * the oxc-based init.ts syntax checker
+            * all HTTP/TLS networking: the update/release checker, anonymous
+              telemetry, and the editor.httpFetch plugin API
+
+          Syntax highlighting (syntect), themes, LSP, the integrated terminal,
+          file watching and the rest of the core editor are unaffected. If you
+          need plugins or tree-sitter highlighting, use the standard release
+          artifact instead.
+          NOTE
+
+          tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+
+          ls -la "${ARCHIVE_NAME}.tar.xz"*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-min-size-${{ matrix.target }}
+          path: |
+            fresh-min-size-${{ matrix.target }}.tar.xz
+            fresh-min-size-${{ matrix.target }}.tar.xz.sha256

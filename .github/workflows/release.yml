@@ -205,6 +205,13 @@ jobs:
     uses: ./.github/workflows/musl-builds.yml
     secrets: inherit
 
+  # Build the minimal-size static binary (min-size profile, trimmed features)
+  build-min-size:
+    needs: plan
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    uses: ./.github/workflows/min-size-build.yml
+    secrets: inherit
+
   # Build Linux packages (.deb, .rpm) - builds from source, can run in parallel
   build-linux-packages:
     needs: [plan]
@@ -366,7 +373,7 @@ jobs:
   # Only runs if ALL needed jobs succeed - uses !cancelled() to run after all jobs complete,
   # then !failure() ensures none failed
   release:
-    needs: [plan, build, build-freebsd, build-musl, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
+    needs: [plan, build, build-freebsd, build-musl, build-min-size, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
     if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
