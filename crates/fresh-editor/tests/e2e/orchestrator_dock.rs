@@ -1105,11 +1105,21 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     );
 
     // Tab accepts the highlighted `aaa_dir/`. Path completion is
-    // synchronous, so the old re-pop (listing `inner`) would land on the
-    // very next render. `wait_until_stable` then lets the form's async
-    // git re-probe settle so a late render can't change the verdict.
+    // synchronous (the old re-pop runs `computePathCompletions` inline),
+    // so the accepted path — and, without the fix, the re-popped dropdown
+    // listing `inner` — is present on the very next render.
+    //
+    // We wait for the accepted path (`aaa_dir/`) to land in the field —
+    // a specific, semantic state change — rather than for the screen to
+    // *stop changing*. An earlier version used `wait_until_stable`, which
+    // blocks until two consecutive renders are byte-identical; but this
+    // form fires asynchronous `git`-subprocess probes (and sits over the
+    // live dock), so the screen does not reliably quiesce under CI load
+    // and the wait hung to the 180s external timeout. "Wait for no
+    // change" is exactly the non-semantic wait CONTRIBUTING §3 warns
+    // against; waiting for a named state is deterministic.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until_stable(|h| h.screen_to_string().contains("aaa_dir"))
+    h.wait_until(|h| h.screen_to_string().contains("aaa_dir/"))
         .unwrap();
 
     // With the fix the dropdown is closed, so `aaa_dir`'s child never
