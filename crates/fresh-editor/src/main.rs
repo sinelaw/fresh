@@ -3464,6 +3464,18 @@ fn build_localized_after_help() -> String {
     ));
     out.push('\n');
 
+    out.push_str(&format!("{}\n", t("cli.section.remote")));
+    out.push_str(&format!(
+        "  fresh ssh://[user@]host[:port]/path[:line[:col]]   {}\n",
+        t("cli.example.remote_url")
+    ));
+    out.push_str(&format!(
+        "  fresh user@host:path[:line[:col]]                  {}\n",
+        t("cli.example.remote_scp")
+    ));
+    out.push_str(&format!("  {}\n", t("cli.remote.note")));
+    out.push('\n');
+
     out.push_str(&format!("{}\n", t("cli.section.guided")));
     out.push_str(&format!("  {}\n\n", t("cli.guided.wait_intro")));
     out.push_str(&format!("  {}\n\n", t("cli.guided.session_dot")));
