@@ -102,6 +102,7 @@
     "function": [255, 255, 0],
     "type": [0, 255, 0],
     "variable": [255, 255, 85],
+    "variable_builtin": [255, 0, 255],
     "constant": [255, 0, 255],
     "operator": [170, 170, 170]
   }

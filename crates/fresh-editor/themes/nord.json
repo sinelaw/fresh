@@ -72,6 +72,7 @@
     "function": [136, 192, 208],
     "type": [143, 188, 187],
     "variable": [216, 222, 233],
+    "variable_builtin": [129, 161, 193],
     "constant": [180, 142, 173],
     "operator": [129, 161, 193],
     "punctuation_bracket": [180, 188, 200],

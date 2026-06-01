@@ -104,6 +104,7 @@
     "function": [220, 220, 170],
     "type": [78, 201, 176],
     "variable": [156, 220, 254],
+    "variable_builtin": [86, 156, 214],
     "constant": [79, 193, 255],
     "operator": [212, 212, 212]
   }

@@ -86,6 +86,7 @@
     "function": [80, 250, 123],
     "type": [139, 233, 253],
     "variable": [248, 248, 242],
+    "variable_builtin": [189, 147, 249],
     "constant": [189, 147, 249],
     "operator": [255, 121, 198]
   }
