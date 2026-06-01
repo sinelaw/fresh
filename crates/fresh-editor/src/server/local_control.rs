@@ -205,6 +205,10 @@ pub fn pump(editor: &mut Editor) -> bool {
                         .unwrap_or_else(|| path.to_string_lossy().into_owned());
                     let id = editor.create_window_at(path, label);
                     editor.set_active_window(id);
+                    // Match a normal `fresh <dir>` launch, which opens the
+                    // file explorer for a directory argument (see `main.rs`),
+                    // rather than leaving the new window on an empty buffer.
+                    editor.show_file_explorer();
                     changed = true;
                 } else {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);
@@ -278,9 +282,6 @@ fn handle_connection(
     // whole connection: the client sends several commands back-to-back
     // (one OpenWindow per directory, then a final OpenFiles), and a fresh
     // reader per message would drop lines already buffered from the socket.
-    #[cfg(not(windows))]
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = conn.control.set_nonblocking(false);
     let mut reader = std::io::BufReader::new(&conn.control);
 
     if let Err(e) = handshake(&conn, &mut reader) {
@@ -289,6 +290,16 @@ fn handle_connection(
     }
 
     loop {
+        // Re-assert blocking mode before every read. `accept()` leaves the
+        // socket non-blocking, and `ServerConnection::write_control` (shared
+        // with the poll-driven session server) flips it back to non-blocking
+        // after each reply — so without this a blocking `read_line` would
+        // return `WouldBlock` immediately, drop the connection, and leave the
+        // nested client to fall back to inline. We read blocking here.
+        #[cfg(not(windows))]
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = conn.control.set_nonblocking(false);
+
         let msg = match read_msg(&mut reader) {
             Ok(Some(m)) => m,
             Ok(None) => return, // client disconnected
@@ -353,6 +364,12 @@ fn handshake(
     conn: &ServerConnection,
     reader: &mut std::io::BufReader<&StreamWrapper>,
 ) -> std::io::Result<()> {
+    // `accept()` hands us a non-blocking control socket; the Hello read must
+    // block until the client sends it (see the command loop for the same
+    // reason `write_control` requires re-asserting this).
+    #[cfg(not(windows))]
+    conn.control.set_nonblocking(false)?;
+
     let hello_json = read_msg(reader)?
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no hello"))?;
 
@@ -606,6 +623,50 @@ mod tests {
                 assert!(wait_id.is_none());
             }
             other => panic!("expected OpenFiles, got {}", req_kind(&other)),
+        }
+
+        bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Regression test for the blocking-mode bug: a real nested `fresh` sends
+    /// its command some time *after* the handshake completes (process startup
+    /// + socket round-trip), so the server's post-handshake read runs against
+    /// an empty socket. `accept()` leaves the socket non-blocking and
+    /// `write_control` flips it back to non-blocking after the `ServerHello`,
+    /// so without re-asserting blocking mode the handler's `read_line` would
+    /// return `WouldBlock`, drop the connection, and the command would never
+    /// be forwarded (the client would then fall back to opening inline).
+    ///
+    /// The earlier tests sent their command immediately, so the bytes were
+    /// usually already buffered when the read ran — masking the bug. The
+    /// explicit delay here makes the empty-socket read deterministic.
+    #[test]
+    fn command_sent_after_a_delay_is_still_received() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("delayed-cmd-test", dir.path());
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+
+        let conn = connect_client(&paths);
+        // Long enough that the server has finished the handshake and is
+        // parked in the command-loop read before the command arrives.
+        std::thread::sleep(Duration::from_millis(150));
+        let msg = ClientControl::OpenWindow {
+            path: "/abs/delayed".to_string(),
+        };
+        conn.write_control(&serde_json::to_string(&msg).unwrap())
+            .unwrap();
+
+        // Bounded so a regressed (connection-dropping) build fails fast
+        // instead of hanging forever on a request that never arrives.
+        match bound
+            .req_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("delayed request must still be forwarded")
+        {
+            LocalControlRequest::OpenWindow { path } => {
+                assert_eq!(path, PathBuf::from("/abs/delayed"));
+            }
+            other => panic!("expected OpenWindow, got {}", req_kind(&other)),
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);
