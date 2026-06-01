@@ -102,6 +102,7 @@ pub fn start() -> std::io::Result<&'static str> {
 
     // Records are set last so `local_session_id()` only ever reports a
     // socket that is actually bound and accepting.
+    #[allow(clippy::let_underscore_must_use)]
     let _ = GLOBAL.set(Shared {
         req_rx: Mutex::new(bound.req_rx),
         waiters: bound.waiters,
