@@ -367,7 +367,13 @@ impl Editor {
             let active_id = self.active_window;
             // Read window-state inputs before taking the &mut borrow on the
             // window for the explorer/buffer access below.
-            let is_focused = self.active_window().key_context == KeyContext::FileExplorer;
+            // The explorer reads as focused only when it actually owns the
+            // keyboard — not when a focused orchestrator dock has stolen it
+            // out from under the (still-FileExplorer) window context. Without
+            // this guard the explorer keeps its accent border while the dock
+            // is driving, making it ambiguous which panel is focused.
+            let is_focused = self.active_window().key_context == KeyContext::FileExplorer
+                && !self.dock.as_ref().is_some_and(|d| d.focused);
             let key_context_clone = self.active_window().key_context.clone();
             let close_button_hovered = matches!(
                 &self.active_window().mouse_state.hover_target,
@@ -719,6 +725,7 @@ impl Editor {
         let hide_cursor = self.menu_state.active_menu.is_some()
             || self.active_window_mut().key_context == KeyContext::FileExplorer
             || self.active_window().terminal_mode
+            || self.dock.as_ref().is_some_and(|d| d.focused)
             || settings_visible
             || self.keybinding_editor.is_some();
 
@@ -3931,13 +3938,24 @@ impl Editor {
         // no top/left/bottom — so it reclaims those rows/cols for content
         // and reads as a panel attached to the left edge. The centered
         // modal keeps a full box.
+        //
+        // A focused dock lights its divider with the accent `theme.cursor`
+        // (the same colour the file explorer uses for its focused border),
+        // so exactly one chrome region wears the accent at a time. A blurred
+        // dock falls back to the muted `popup_border_fg`, matching every
+        // other unfocused panel and making "who has the keyboard" obvious.
+        let dock_border_fg = if is_dock && panel_focused {
+            theme.cursor
+        } else {
+            theme.popup_border_fg
+        };
         let block = Block::default()
             .borders(if is_dock {
                 Borders::RIGHT
             } else {
                 Borders::ALL
             })
-            .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
+            .border_style(ratatui::style::Style::default().fg(dock_border_fg))
             .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);
         frame.render_widget(block, overlay_rect);
