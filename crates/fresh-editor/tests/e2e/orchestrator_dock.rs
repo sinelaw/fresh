@@ -909,3 +909,38 @@ fn dock_close_reflows_buffer_to_full_width() {
         after_close_col.1,
     );
 }
+
+/// F7: creating a worktree session in a repo with no commits (unborn
+/// HEAD) must explain what to do — `git worktree add` otherwise fails
+/// with the cryptic "fatal: invalid reference: HEAD", which the form
+/// used to surface verbatim.
+#[test]
+fn dock_new_session_in_uncommitted_repo_explains_unborn_head() {
+    // `setup_project` runs `git init` but never commits, so HEAD is
+    // unborn — exactly the condition that produced the raw git error.
+    let (_tmp, root) = setup_project("freshrepo");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Open the new-session form. The "Create a new git worktree" box
+    // defaults on for a git repo, so submitting attempts a worktree add.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // Shift+Tab from the first field wraps straight to the "Create
+    // Session" button (and closes any path-completion popup), so we
+    // submit without fighting the forward-Tab completion. Enter submits.
+    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The friendly explanation appears; the raw git error must not.
+    h.wait_until(|h| h.screen_to_string().contains("no commits yet"))
+        .unwrap();
+    h.assert_screen_contains("make an initial commit");
+    h.assert_screen_not_contains("invalid reference");
+}

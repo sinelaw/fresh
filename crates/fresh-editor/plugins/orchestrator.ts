@@ -4332,6 +4332,26 @@ async function submitForm(): Promise<void> {
       return;
     }
 
+    // A freshly `git init`'d repo has an unborn HEAD (no commits), and
+    // `git worktree add` then fails with the cryptic, un-actionable
+    // "fatal: invalid reference: HEAD". Detect that specific case up
+    // front and tell the user what to do, instead of surfacing two
+    // layers of raw git error from the add + fallback below.
+    const headProbe = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "rev-parse", "--verify", "--quiet", "HEAD"],
+      repoRoot,
+    );
+    if (headProbe.exit_code !== 0) {
+      if (!form) return;
+      form.submitting = false;
+      form.lastError =
+        "This repository has no commits yet — make an initial commit before creating a worktree session.";
+      editor.setStatus(`Orchestrator: ${form.lastError}`);
+      renderForm();
+      return;
+    }
+
     const defaultBranch = await detectDefaultBranch(repoRoot);
     const branchName = branchInput || sessionName;
     // Try `-b <new>` first; if it fails because the branch
