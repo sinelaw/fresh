@@ -531,6 +531,21 @@ impl Editor {
         self.active_window
     }
 
+    /// Find the window that owns `terminal_id`, if any. Terminals live in
+    /// their owning window's `terminal_manager`, so a background session's
+    /// terminal is invisible from `active_window()` — this scans every
+    /// window. Used to attribute `TerminalOutput`/`TerminalExited` to the
+    /// right session even when it isn't the focused one.
+    pub fn window_id_of_terminal(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> Option<fresh_core::WindowId> {
+        self.windows
+            .iter()
+            .find(|(_, w)| w.terminal_manager.get(terminal_id).is_some())
+            .map(|(id, _)| *id)
+    }
+
     /// True iff the editor-global dock is open AND currently holds
     /// keyboard focus. Test helpers use this to wait for `Toggle Dock`'s
     /// async focus-grab to settle before dispatching subsequent keys;

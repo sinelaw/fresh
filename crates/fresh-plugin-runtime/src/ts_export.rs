@@ -579,8 +579,12 @@ interface HookEventMap {
   keyboard_shortcuts: { bindings: { key: string; action: string }[] };
 
   // ── PTY terminals (see crates/fresh-core/src/hooks.rs) ───────────────────
-  terminal_output: { terminal_id: number; last_line: string };
-  terminal_exit: { terminal_id: number; exit_code: number | null };
+  // `window_id` is the editor window owning the terminal (== session id),
+  // so a plugin can attribute output to a session: output from ANY terminal
+  // in the window counts, and it fires on every PTY read (in-place redraws
+  // and carriage-return progress bars register, not just newlines).
+  terminal_output: { terminal_id: number; window_id: number; last_line: string };
+  terminal_exit: { terminal_id: number; window_id: number; exit_code: number | null };
 
   // ── filesystem watching (watchPath plugin API) ────────────────────────────
   path_changed: {

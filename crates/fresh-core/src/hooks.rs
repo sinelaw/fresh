@@ -356,6 +356,13 @@ pub enum HookArgs {
     TerminalOutput {
         /// Stable terminal session id (matches `TerminalId.0`).
         terminal_id: u64,
+        /// Editor window that owns this terminal (matches `WindowId.0`).
+        /// Lets a plugin attribute output to a *session* — Orchestrator
+        /// keys activity off the window, so output from ANY terminal in
+        /// the window (not just the one the plugin spawned) counts. Fires
+        /// on every PTY read, so in-place redraws and carriage-return
+        /// progress bars register as activity too, not just newlines.
+        window_id: u64,
         /// Snapshot of the cursor row's text content. May be empty
         /// (just-resized terminal, cleared screen). Trailing whitespace
         /// is preserved because prompt detection often depends on it
@@ -369,6 +376,8 @@ pub enum HookArgs {
     TerminalExited {
         /// Stable terminal session id (matches `TerminalId.0`).
         terminal_id: u64,
+        /// Editor window that owned this terminal (matches `WindowId.0`).
+        window_id: u64,
         /// Process exit code if known. `None` when the platform did
         /// not report a status (signal, detach, kill before wait).
         /// Plugins that can't distinguish should treat `None` as
@@ -664,10 +673,12 @@ mod tests {
     fn hook_args_to_json_terminal_output_fields_are_flat() {
         let json = hook_args_to_json(&HookArgs::TerminalOutput {
             terminal_id: 7,
+            window_id: 2,
             last_line: "Do you want me to attempt a fix? (Y/n): ".into(),
         })
         .unwrap();
         assert_eq!(json["terminal_id"], 7);
+        assert_eq!(json["window_id"], 2);
         assert_eq!(
             json["last_line"],
             "Do you want me to attempt a fix? (Y/n): "
@@ -678,14 +689,17 @@ mod tests {
     fn hook_args_to_json_terminal_exited_serializes_exit_code() {
         let json_some = hook_args_to_json(&HookArgs::TerminalExited {
             terminal_id: 3,
+            window_id: 1,
             exit_code: Some(0),
         })
         .unwrap();
         assert_eq!(json_some["terminal_id"], 3);
+        assert_eq!(json_some["window_id"], 1);
         assert_eq!(json_some["exit_code"], 0);
 
         let json_err = hook_args_to_json(&HookArgs::TerminalExited {
             terminal_id: 4,
+            window_id: 1,
             exit_code: Some(2),
         })
         .unwrap();
@@ -693,6 +707,7 @@ mod tests {
 
         let json_none = hook_args_to_json(&HookArgs::TerminalExited {
             terminal_id: 5,
+            window_id: 1,
             exit_code: None,
         })
         .unwrap();

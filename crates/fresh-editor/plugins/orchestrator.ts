@@ -5130,34 +5130,39 @@ editor.on("resize", () => {
 // IDLE_AFTER_MS at render time. We don't poll the process, so this tracks
 // *output*, not liveness — a wedged agent reads idle, same as a finished
 // one, which is the honest limit of what we can see from here.
+//
+// Keyed by `window_id`, not the one terminal id Orchestrator spawned: a
+// session is its editor window (its id == the session id), so output from
+// ANY terminal in that window counts — a second shell the user opened, an
+// agent that re-execs, etc. The host fires `terminal_output` on every PTY
+// read, so this also lights up for in-place redraws and carriage-return
+// progress bars, not just newline-terminated lines.
 // =============================================================================
 
 editor.on("terminal_output", (payload) => {
-  for (const s of orchestratorSessions.values()) {
-    if (s.terminalId === payload.terminal_id) {
-      // Stamp the moment of output. `sessionState` turns this into
-      // working/idle; the cached `state` is updated so persistence and
-      // any non-render reader see a fresh value too.
-      s.lastOutputAt = Date.now();
-      s.state = "working";
-      break;
-    }
+  const s = orchestratorSessions.get(payload.window_id);
+  if (s) {
+    // Stamp the moment of output. `sessionState` turns this into
+    // working/idle; the cached `state` is updated so persistence and
+    // any non-render reader see a fresh value too.
+    s.lastOutputAt = Date.now();
+    s.state = "working";
+    refreshOpenDialog();
   }
-  refreshOpenDialog();
 });
 
 editor.on("terminal_exit", (payload) => {
-  for (const s of orchestratorSessions.values()) {
-    if (s.terminalId === payload.terminal_id) {
-      // The agent process is gone — it can't be working. Clear the
-      // output timestamp so the row reads idle immediately rather than
-      // riding out the IDLE_AFTER_MS tail from its last line.
-      s.lastOutputAt = null;
-      s.state = "idle";
-      break;
-    }
+  const s = orchestratorSessions.get(payload.window_id);
+  if (s) {
+    // A terminal in this session ended — it can't be the source of work
+    // anymore. Drop to idle and clear the timestamp so the row reads idle
+    // immediately rather than riding out the IDLE_AFTER_MS tail. If another
+    // terminal in the same window is still printing, the next
+    // `terminal_output` re-marks it working within the debounce window.
+    s.lastOutputAt = null;
+    s.state = "idle";
+    refreshOpenDialog();
   }
-  refreshOpenDialog();
 });
 
 // =============================================================================

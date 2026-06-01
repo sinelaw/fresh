@@ -456,20 +456,24 @@ impl Editor {
                         }
                     }
 
-                    // Notify plugins. Snapshot the cursor row's text so the
-                    // listener can match prompt patterns without a separate
-                    // readback API. The grid lock is released before
+                    // Notify plugins. Resolve the owning window so a plugin
+                    // can attribute output to a *session* even when it's a
+                    // background one (terminals live in their own window's
+                    // manager, not the active window's). Snapshot the cursor
+                    // row's text from that same window so prompt detection
+                    // works off-focus too. The grid lock is released before
                     // `run_hook` runs to avoid holding it across plugin code.
-                    let last_line = self
-                        .active_window()
-                        .terminal_manager
-                        .get(terminal_id)
+                    let owner = self.window_id_of_terminal(terminal_id);
+                    let last_line = owner
+                        .and_then(|wid| self.windows.get(&wid))
+                        .and_then(|w| w.terminal_manager.get(terminal_id))
                         .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
                         .unwrap_or_default();
                     self.plugin_manager.read().unwrap().run_hook(
                         "terminal_output",
                         crate::services::plugins::hooks::HookArgs::TerminalOutput {
                             terminal_id: terminal_id.0 as u64,
+                            window_id: owner.map(|w| w.0).unwrap_or(0),
                             last_line,
                         },
                     );
@@ -490,6 +494,9 @@ impl Editor {
                     exit_code,
                 } => {
                     tracing::info!("Terminal {:?} exited", terminal_id);
+                    // Resolve the owning window before the cleanup below
+                    // closes the terminal (which would make the lookup fail).
+                    let exited_window_id = self.window_id_of_terminal(terminal_id);
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
                         .active_window()
@@ -595,6 +602,7 @@ impl Editor {
                         "terminal_exit",
                         crate::services::plugins::hooks::HookArgs::TerminalExited {
                             terminal_id: terminal_id.0 as u64,
+                            window_id: exited_window_id.map(|w| w.0).unwrap_or(0),
                             exit_code,
                         },
                     );
