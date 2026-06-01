@@ -1058,3 +1058,58 @@ fn dock_new_session_name_is_rooted_in_the_project() {
         .unwrap();
     h.assert_screen_contains("alphaproj-");
 }
+
+/// F8: accepting a directory path-completion with Tab now CLOSES the
+/// dropdown instead of re-popping it over the next fields. Because Tab
+/// *accepts* while a popup is open, the old re-pop trapped a
+/// Tab-to-advance user in a loop of re-accepting. With the fix the
+/// dropdown closes, so the next Tab advances to the worktree checkbox
+/// (where Space unchecks it). Descending deeper still works by typing.
+#[test]
+fn dock_form_tab_advances_after_accepting_directory_completion() {
+    let (_tmp, root) = setup_project("alphaproj");
+    // A directory child that sorts first, so the path-completion's top
+    // (highlighted) candidate is a directory (rendered with a trailing
+    // "/"). Give it its own child so that, *without* the fix, accepting
+    // `aaa_dir/` re-pops a non-empty dropdown that the second Tab would
+    // descend into — making this test discriminating.
+    fs::create_dir(root.join("aaa_dir")).unwrap();
+    fs::create_dir(root.join("aaa_dir").join("inner")).unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // The Project Path field is empty on open (it only *shows* the
+    // detected root as a placeholder). Type the project root + "/" so the
+    // dropdown lists the directory's children; the top one is `aaa_dir/`.
+    h.type_text(&format!("{}/", root.display())).unwrap();
+    // The open dropdown OVERLAYS the worktree checkbox — which is exactly
+    // the F8 complaint — so we can't see "[v] Create…" until it closes.
+    h.wait_until(|h| h.screen_to_string().contains("aaa_dir"))
+        .unwrap();
+
+    // Tab accepts the highlighted directory. With the fix the dropdown
+    // CLOSES — so the worktree checkbox becomes visible, the next Tab
+    // advances to it, and Space unchecks it. Without the fix the dropdown
+    // re-pops `aaa_dir/inner/` (still overlaying the checkbox) and the
+    // second Tab descends instead, so "[ ] Create…" never appears.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("[v] Create a new git worktree")
+    })
+    .unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("[ ] Create a new git worktree")
+    })
+    .unwrap();
+}

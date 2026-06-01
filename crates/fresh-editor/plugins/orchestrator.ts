@@ -4231,11 +4231,14 @@ function applyAcceptedCompletion(
   if (formPanel) formPanel.setValue(field, slot.value, slot.cursor);
   if (field === "project_path") {
     scheduleProjectPathReprobe();
-    if (item.endsWith("/")) {
-      scheduleCompletionRefresh("project_path");
-      return;
-    }
   }
+  // Always close the dropdown on accept — including when the accepted
+  // item is a directory. Re-popping it here (the old behaviour) left the
+  // popup covering the worktree / name fields and, because Tab *accepts*
+  // while a popup is open, a Tab-to-advance user got stuck re-accepting
+  // instead of moving to the next field (F8). Descending deeper still
+  // works by typing — the field's `change` handler re-pops the
+  // completion — and the next Tab now advances as expected.
   closeCompletion();
 }
 
