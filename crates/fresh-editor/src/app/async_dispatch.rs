@@ -39,9 +39,6 @@ impl Editor {
             let _s = tracing::info_span!("try_recv_all").entered();
             bridge.try_recv_all()
         };
-        if !messages.is_empty() {
-            tracing::info!(target: "paste_timing", "process_async_messages drained {} editor-global msgs", messages.len());
-        }
         for window in self.windows.values() {
             messages.extend(window.bridge.try_recv_all());
         }

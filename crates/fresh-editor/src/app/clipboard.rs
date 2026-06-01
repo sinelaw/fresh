@@ -39,14 +39,18 @@ pub(crate) const PASTE_ASYNC_DEADLINE: Duration = Duration::from_millis(500);
 /// system, ~3ms), we paste inline and skip the placeholder entirely
 /// — the user sees zero perceptible latency, indistinguishable from
 /// the old synchronous path. Only when arboard takes longer than
-/// this do we fall through to the placeholder/event-bridge path,
-/// which keeps the UI unblocked at the cost of one async round trip
-/// (~16ms+ until the next editor tick picks up the result).
+/// this do we fall through to the placeholder/event-bridge path.
 ///
-/// 20ms is below the ~50ms human latency-perception threshold, so a
-/// worst-case inline wait still feels instant; on a hung clipboard
-/// it's a short, bounded stall before the async path takes over.
-pub(crate) const PASTE_INLINE_WAIT: Duration = Duration::from_millis(20);
+/// 50ms catches typical X11/Wayland clipboard round trips even on
+/// slower systems (the prior 20ms budget was missing them — anything
+/// in the 20-50ms band fell into the slow placeholder+bridge path,
+/// which a slow renderer compounds into hundreds of ms of perceived
+/// latency since each render frame is gated on the render itself).
+/// It's at the edge of the ~50ms human latency-perception threshold,
+/// so a worst-case inline wait still feels nearly instant; on a hung
+/// clipboard it's a short, bounded stall before the async path takes
+/// over.
+pub(crate) const PASTE_INLINE_WAIT: Duration = Duration::from_millis(50);
 
 /// Hard cap on concurrent pending pastes. Each entry costs one virtual
 /// text + one marker + one OS thread; in practice the deadline keeps
@@ -859,6 +863,39 @@ impl Editor {
                 dispatched_at: dispatch_at,
             },
         );
+
+        // Signal the input dispatcher to skip the immediate render
+        // for this keystroke, AND set a hard render-suppression
+        // deadline that the main loop checks. The placeholder is in
+        // the buffer; the next render that fires after the deadline
+        // (or after the paste resolves, whichever is first) will
+        // pick it up. For a common fast-ish clipboard the resolve
+        // beats the deadline by a wide margin and that single
+        // post-resolve render is the only frame the user sees —
+        // instead of paying for two full `terminal.draw` cycles.
+        // The suppression window is bounded by the paste deadline
+        // so a wedged clipboard can't permanently veto rendering.
+        self.paste_slow_path_just_armed = true;
+        self.paste_render_suppress_until = Some(deadline);
+    }
+
+    /// Consume the "paste just went async" flag set by the slow
+    /// placeholder path of `paste()`. Returns whether it was set
+    /// (so the caller can suppress the otherwise-automatic render).
+    pub(crate) fn take_paste_slow_path_armed(&mut self) -> bool {
+        std::mem::take(&mut self.paste_slow_path_just_armed)
+    }
+
+    /// True when the main loop should hold off on rendering a frame
+    /// because an async paste is in flight and its placeholder
+    /// shouldn't get its own (expensive) render before the paste
+    /// itself resolves. The suppression auto-expires at the paste
+    /// deadline so a hung clipboard can't permanently veto renders.
+    pub fn should_suppress_render(&self) -> bool {
+        match self.paste_render_suppress_until {
+            Some(until) => Instant::now() < until,
+            None => false,
+        }
     }
 
     /// Resolve an in-flight async paste keyed by `request_id`.
@@ -887,6 +924,14 @@ impl Editor {
             "[req {}] resolving after {}ms ({} bytes from clipboard)",
             request_id, total_ms, text_len
         );
+
+        // Clear the render-suppression window if this was the last
+        // pending paste (so the about-to-be-applied insertion can
+        // render in this frame). If other pastes are still in flight
+        // the suppression stays so we keep batching their renders.
+        if self.paste_pending.is_empty() {
+            self.paste_render_suppress_until = None;
+        }
 
         // Bail out if the buffer is gone (closed during the wait).
         // The buffer's drop took its `virtual_texts` and `marker_list`
@@ -1021,9 +1066,30 @@ impl Editor {
     }
 
     /// Earliest deadline across all in-flight pastes, used by the
-    /// tick loop to know when to wake. `None` when nothing is pending.
+    /// tick loop to know when to wake.
+    ///
+    /// Returns the SOONER of:
+    ///  - the actual cancel deadline of the earliest pending paste
+    ///    (`PASTE_ASYNC_DEADLINE` from dispatch), and
+    ///  - a 1 ms drain hint, so the loop wakes ~1ms after the
+    ///    background `clipboard-paste` thread sends its result on
+    ///    the `AsyncBridge`. The bridge is an mpsc channel with no
+    ///    wake mechanism, so the editor only sees the result when
+    ///    `editor_tick` next runs — without the 1 ms hint the loop
+    ///    could sleep for up to 50ms (idle poll) or 16ms (frame
+    ///    budget) per iteration, and a slow render env (which gates
+    ///    the next render on `FRAME_DURATION`) compounds that into
+    ///    a several-hundred-millisecond perceived paste latency.
+    ///
+    /// CPU cost is bounded: the deadline cap of
+    /// `PASTE_ASYNC_DEADLINE` (500 ms) means at most ~500 extra tick
+    /// iterations per paste cycle. Each iteration is a `try_recv_all`
+    /// on the bridge plus a few cheap checks; no rendering work
+    /// happens unless something actually changed.
     pub(crate) fn next_paste_deadline(&self) -> Option<Instant> {
-        self.paste_pending.values().map(|p| p.deadline).min()
+        let cancel_deadline = self.paste_pending.values().map(|p| p.deadline).min()?;
+        let drain_hint = Instant::now() + Duration::from_millis(1);
+        Some(cancel_deadline.min(drain_hint))
     }
 
     /// Whether at least one async paste is in flight. Exposed mainly
@@ -1043,6 +1109,9 @@ impl Editor {
     pub fn cancel_pending_pastes_for_buffer(&mut self, buffer_id: BufferId) {
         self.paste_pending
             .retain(|_, pending| pending.buffer_id != buffer_id);
+        if self.paste_pending.is_empty() {
+            self.paste_render_suppress_until = None;
+        }
     }
 
     /// Paste text directly into the editor

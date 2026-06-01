@@ -207,6 +207,8 @@ impl Editor {
             tokio_runtime: parts.tokio_runtime,
             async_bridge: Some(parts.async_bridge),
             paste_pending: std::collections::HashMap::new(),
+            paste_slow_path_just_armed: false,
+            paste_render_suppress_until: None,
             fs_manager: parts.fs_manager,
             authority: parts.authority,
             local_filesystem: parts.local_filesystem,

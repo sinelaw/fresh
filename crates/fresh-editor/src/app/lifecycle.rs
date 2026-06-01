@@ -284,7 +284,20 @@ impl Editor {
                     .log_keystroke(&key_code, &modifiers);
                 let translated = self.key_translator().translate(key_event);
                 self.handle_key(translated.code, translated.modifiers)?;
-                Ok(true)
+                // If `paste()` just took the async placeholder path,
+                // skip the otherwise-automatic render for this
+                // keystroke. The placeholder is sitting in the
+                // buffer; the next render that fires for any other
+                // reason (typing, mouse, the paste resolving, the
+                // deadline expiring) will pick it up. Saves one full
+                // `terminal.draw` cycle per Ctrl+V — on a slow
+                // renderer that's the dominant component of the
+                // user-visible paste latency.
+                if self.take_paste_slow_path_armed() {
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
             }
             Ev::Mouse(mouse_event) => self.handle_mouse(mouse_event),
             Ev::Resize(w, h) => {

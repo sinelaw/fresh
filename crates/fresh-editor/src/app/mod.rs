@@ -545,6 +545,25 @@ pub struct Editor {
     /// its own background thread starts.
     pub(super) paste_pending: std::collections::HashMap<u64, crate::app::clipboard::PendingPaste>,
 
+    /// Set by `paste()` when it took the slow placeholder path. The
+    /// input dispatch reads and clears this to suppress the
+    /// otherwise-automatic render for the Ctrl+V keystroke, and the
+    /// main loop also reads `paste_render_suppress_until` (below)
+    /// to actively veto frame rendering until that deadline.
+    pub(super) paste_slow_path_just_armed: bool,
+
+    /// While `Some` and the instant is in the future, the main loop
+    /// holds off on rendering even when `needs_render` is set. Used
+    /// by the async paste path: when arboard doesn't return inside
+    /// the inline budget we plant a placeholder, but on a slow
+    /// renderer (LSP-active, remote terminal, dense diagnostics)
+    /// each `terminal.draw` is hundreds of ms, so rendering the
+    /// placeholder before the paste itself resolves *doubles* the
+    /// user-visible latency. Setting this suppresses renders until
+    /// the paste deadline; the paste resolve clears it and triggers
+    /// a single render with the final text.
+    pub(super) paste_render_suppress_until: Option<std::time::Instant>,
+
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
     // `Editor::split_view_states()` / `split_view_states_mut()`.

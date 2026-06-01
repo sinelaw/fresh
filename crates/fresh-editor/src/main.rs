@@ -4253,15 +4253,20 @@ where
             needs_render = true;
         }
 
-        if needs_render && last_render.elapsed() >= FRAME_DURATION {
+        if needs_render
+            && last_render.elapsed() >= FRAME_DURATION
+            && !editor.should_suppress_render()
+        {
+            let r0 = Instant::now();
+            let was_paste_pending = editor.is_paste_pending();
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
-                tracing::info!(target: "paste_timing", "FRAME render starting");
                 use crossterm::ExecutableCommand;
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
                 terminal.draw(|frame| editor.render(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }
+            tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
             needs_render = false;
         }
@@ -4285,7 +4290,6 @@ where
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
                 timeout = timeout.min(until_deadline);
             }
-
             poll_event(timeout)?
         };
 
