@@ -1242,6 +1242,7 @@ impl Editor {
     // =========================================================================
 
     /// Handle the CreateCompositeBuffer plugin command
+    #[cfg(feature = "plugins")]
     pub(crate) fn handle_create_composite_buffer(
         &mut self,
         name: String,
@@ -1370,6 +1371,7 @@ impl Editor {
     }
 
     /// Handle the UpdateCompositeAlignment plugin command
+    #[cfg(feature = "plugins")]
     pub(crate) fn handle_update_composite_alignment(
         &mut self,
         buffer_id: BufferId,

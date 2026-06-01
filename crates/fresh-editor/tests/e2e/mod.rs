@@ -1,3 +1,4 @@
+#[cfg(feature = "plugins")]
 pub mod action_popup_global;
 pub mod altgr_shift;
 pub mod ansi_cursor;
@@ -9,6 +10,7 @@ pub mod binary_file;
 pub mod block_selection;
 pub mod blog_showcases;
 pub mod buffer_groups;
+#[cfg(feature = "plugins")]
 pub mod buffer_lifecycle;
 pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
@@ -96,6 +98,7 @@ pub mod lsp_cross_language_diagnostic_pull;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
 pub mod lsp_goto_definition_readonly;
+#[cfg(feature = "plugins")]
 pub mod lsp_indicator_click_bugs;
 pub mod lsp_indicator_click_to_open;
 pub mod lsp_inlay_hints_capability;
@@ -129,6 +132,7 @@ pub mod on_save_actions;
 pub mod open_folder;
 pub mod orchestrator_dock;
 pub mod overlay_extend_to_line_end;
+#[cfg(feature = "plugins")]
 pub mod panel_mode_window_switch_leak;
 pub mod paste;
 #[cfg(feature = "plugins")]
@@ -160,6 +164,7 @@ pub mod search_viewport_stall_after_wrap;
 pub mod selection;
 pub mod server_session_lifecycle;
 pub mod session_hot_exit;
+#[cfg(feature = "plugins")]
 pub mod sessions;
 pub mod settings;
 pub mod settings_config_issue_806;
@@ -183,6 +188,7 @@ pub mod split_view;
 pub mod split_view_expectations;
 pub mod split_view_markdown_compose;
 pub mod status_bar_config;
+#[cfg(feature = "plugins")]
 pub mod status_bar_message_click;
 pub mod stdin_input;
 pub mod sudo_save_prompt;
@@ -216,4 +222,5 @@ pub mod vi_mode;
 pub mod vi_mode_bugs;
 pub mod visual_regression;
 pub mod warning_indicators;
+#[cfg(feature = "plugins")]
 pub mod workspace;

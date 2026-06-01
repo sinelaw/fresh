@@ -706,6 +706,7 @@ impl Editor {
     }
 
     /// Which slot currently holds the panel with this id, if any.
+    #[cfg(feature = "plugins")]
     pub(crate) fn slot_of_panel(&self, panel_id: u64) -> Option<crate::app::PanelSlot> {
         if self
             .floating_widget_panel

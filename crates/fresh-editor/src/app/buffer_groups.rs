@@ -4,13 +4,21 @@
 //! Each panel is a real buffer with its own viewport and scrollbar.
 //! The group appears as one entry in the tab bar and buffer list.
 
-use crate::app::types::{BufferGroup, BufferGroupId, GroupLayoutNode};
-use crate::model::event::{BufferId, LeafId, SplitDirection};
+use crate::app::types::BufferGroupId;
+#[cfg(feature = "plugins")]
+use crate::app::types::{BufferGroup, GroupLayoutNode};
+#[cfg(feature = "plugins")]
+use crate::model::event::SplitDirection;
+use crate::model::event::{BufferId, LeafId};
+#[cfg(feature = "plugins")]
 use crate::view::split::SplitViewState;
+#[cfg(feature = "plugins")]
 use fresh_core::api::BufferGroupResult;
+#[cfg(feature = "plugins")]
 use std::collections::HashMap;
 
 /// Layout description deserialized from plugin JSON.
+#[cfg(feature = "plugins")]
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type")]
 enum LayoutDesc {
@@ -48,6 +56,7 @@ impl super::Editor {
     /// entry to the current split's tab bar. The main split tree is NOT
     /// modified — the group's subtree is dispatched to at render time when
     /// the current split's active target is this group.
+    #[cfg(feature = "plugins")]
     pub(super) fn create_buffer_group(
         &mut self,
         name: String,
@@ -214,6 +223,7 @@ impl super::Editor {
 
     /// Build a SplitNode tree directly from a GroupLayoutNode.
     /// Populates panel_splits with leaf_id for each panel.
+    #[cfg(feature = "plugins")]
     fn build_split_tree(
         &mut self,
         node: &GroupLayoutNode,
@@ -282,6 +292,7 @@ impl super::Editor {
     }
 
     /// Build a GroupLayoutNode from a LayoutDesc, creating buffers for each leaf.
+    #[cfg(feature = "plugins")]
     fn build_group_layout(
         &mut self,
         desc: &LayoutDesc,
@@ -370,6 +381,7 @@ impl super::Editor {
     }
 
     /// Set content on a panel within a buffer group.
+    #[cfg(feature = "plugins")]
     pub(super) fn set_panel_content(
         &mut self,
         group_id: usize,
@@ -477,6 +489,7 @@ impl super::Editor {
     /// If the panel's inner leaf is not in the main split tree (side-map
     /// approach), this activates the group tab on whichever split hosts it
     /// and marks the panel's leaf as the focused inner leaf.
+    #[cfg(feature = "plugins")]
     pub(super) fn focus_panel(&mut self, group_id: usize, panel_name: String) {
         let bg_id = BufferGroupId(group_id);
         let (group_leaf_id, inner_leaf) = match self.active_window_mut().buffer_groups.get(&bg_id) {
@@ -552,6 +565,7 @@ impl super::Editor {
     ///
     /// Returns `true` on success, `false` if the group, panel, or
     /// buffer was missing.
+    #[cfg(feature = "plugins")]
     pub(super) fn set_buffer_group_panel_buffer(
         &mut self,
         group_id: usize,
@@ -858,6 +872,7 @@ impl crate::app::window::Window {
 }
 
 /// Get the fixed height of a layout node if it's a Fixed leaf.
+#[cfg(feature = "plugins")]
 fn fixed_height_of(node: &GroupLayoutNode) -> Option<u16> {
     match node {
         GroupLayoutNode::Fixed { height, .. } => Some(*height),
@@ -869,6 +884,7 @@ fn fixed_height_of(node: &GroupLayoutNode) -> Option<u16> {
 // callers reach it via `self.active_window().is_non_scrollable_buffer(...)`.
 
 /// Find the first scrollable leaf in the layout tree.
+#[cfg(feature = "plugins")]
 fn find_first_scrollable_name(node: &GroupLayoutNode) -> Option<String> {
     match node {
         GroupLayoutNode::Scrollable { id, .. } => Some(id.clone()),
@@ -880,6 +896,7 @@ fn find_first_scrollable_name(node: &GroupLayoutNode) -> Option<String> {
 }
 
 /// Find the first scrollable leaf's LeafId from the panel_splits map.
+#[cfg(feature = "plugins")]
 fn find_first_scrollable_leaf(
     node: &GroupLayoutNode,
     panel_splits: &HashMap<String, LeafId>,

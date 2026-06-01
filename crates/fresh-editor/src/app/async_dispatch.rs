@@ -768,6 +768,9 @@ impl Editor {
         }
 
         // Process TypeScript plugin commands
+        #[cfg(not(feature = "plugins"))]
+        let processed_any_commands = false;
+        #[cfg(feature = "plugins")]
         let processed_any_commands = {
             let _s = tracing::info_span!("process_plugin_commands").entered();
             self.process_plugin_commands()

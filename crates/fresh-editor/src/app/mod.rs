@@ -51,7 +51,9 @@ mod on_save_actions;
 mod orchestrator_persistence;
 mod overlay;
 mod path_utils;
+#[cfg(feature = "plugins")]
 mod plugin_commands;
+#[cfg(feature = "plugins")]
 mod plugin_dispatch;
 mod popup_actions;
 mod popup_dialogs;
@@ -85,6 +87,7 @@ mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
 pub mod warning_domains;
+mod widget_runtime;
 pub mod window;
 mod window_actions;
 pub mod window_resources;
@@ -796,6 +799,7 @@ pub struct Editor {
     /// the underlying notify backend spawns a thread, so it's
     /// nicer to defer until the first `watchPath` call). See
     /// `services/file_watcher.rs`.
+    #[cfg(feature = "plugins")]
     file_watcher_manager: crate::services::file_watcher::FileWatcherManager,
 
     /// Test-only sink for `path_changed` plugin events. Captured
@@ -995,6 +999,12 @@ impl PanelSlot {
 /// the overlay rect at draw time instead of being written into a
 /// virtual buffer.
 /// Where a floating widget panel is anchored on screen.
+//
+// The variants are only *constructed* by the plugin-gated floating-panel
+// handlers, but they are matched throughout the shared widget runtime and
+// render/input code, so the enum itself stays un-gated. Suppress the
+// "never constructed" lint in plugin-less builds.
+#[cfg_attr(not(any(feature = "plugins", test)), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PanelPlacement {
     /// Centered modal overlay sized by `width_pct`/`height_pct`
@@ -1409,6 +1419,7 @@ impl Editor {
 /// - Special keys: "RET", "TAB", "ESC", "SPC", "DEL", "BS"
 /// - Modifiers: "C-" (Control), "M-" (Alt/Meta), "S-" (Shift)
 /// - Combinations: "C-n", "M-x", "C-M-s", etc.
+#[cfg(any(feature = "plugins", test))]
 fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     use crossterm::event::{KeyCode, KeyModifiers};
 

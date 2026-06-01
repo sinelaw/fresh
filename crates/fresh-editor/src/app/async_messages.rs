@@ -1470,6 +1470,7 @@ impl Editor {
     ///
     /// Returns true if any visual commands were processed (i.e. a re-render is needed).
     /// No-op sentinels like `HookCompleted` do not count.
+    #[cfg(feature = "plugins")]
     pub(super) fn process_plugin_commands(&mut self) -> bool {
         let commands = self.plugin_manager.write().unwrap().process_commands();
         if commands.is_empty() {

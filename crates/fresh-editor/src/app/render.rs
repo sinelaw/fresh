@@ -64,15 +64,18 @@ impl Editor {
         // `self.dock = Some(_)`, the chrome paints into the post-dock
         // offset column, and the freed columns render as blank
         // whitespace until the next user input forces another render.
-        let early_commands = self.plugin_manager.write().unwrap().process_commands();
-        if !early_commands.is_empty() {
-            tracing::trace!(
-                count = early_commands.len(),
-                "process_commands at top of render (pre-layout drain)"
-            );
-            for command in early_commands {
-                if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+        #[cfg(feature = "plugins")]
+        {
+            let early_commands = self.plugin_manager.write().unwrap().process_commands();
+            if !early_commands.is_empty() {
+                tracing::trace!(
+                    count = early_commands.len(),
+                    "process_commands at top of render (pre-layout drain)"
+                );
+                for command in early_commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+                    }
                 }
             }
         }
@@ -602,18 +605,24 @@ impl Editor {
             // load), the response arrives one frame late, which is imperceptible
             // at 60fps. The plugin's own refreshLines() call from cursor_moved
             // ensures a follow-up render cycle picks up any missed commands.
-            let commands = self.plugin_manager.write().unwrap().process_commands();
-            let dispatched_any = !commands.is_empty();
-            if dispatched_any {
-                let cmd_names: Vec<String> =
-                    commands.iter().map(|c| c.debug_variant_name()).collect();
-                tracing::trace!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
-            }
-            for command in commands {
-                if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling plugin command: {}", e);
+            #[cfg(not(feature = "plugins"))]
+            let dispatched_any = false;
+            #[cfg(feature = "plugins")]
+            let dispatched_any = {
+                let commands = self.plugin_manager.write().unwrap().process_commands();
+                let dispatched_any = !commands.is_empty();
+                if dispatched_any {
+                    let cmd_names: Vec<String> =
+                        commands.iter().map(|c| c.debug_variant_name()).collect();
+                    tracing::trace!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
                 }
-            }
+                for command in commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command: {}", e);
+                    }
+                }
+                dispatched_any
+            };
 
             // Flush any deferred grammar rebuilds as a single batch
             self.flush_pending_grammars();

@@ -260,6 +260,7 @@ impl Editor {
             plugin_global_state: parts.plugin_global_state,
             warning_log: None,
             status_log_path: None,
+            #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             last_path_change_for_test: None,
             last_watch_response_for_test: None,
