@@ -1189,6 +1189,16 @@ impl Window {
                     view_state.cursors.primary_mut().move_to(position, false);
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
+                // Keep the cached primary-cursor line (what the status bar
+                // reads) in sync so "Ln" reflects the jump immediately,
+                // matching `jump_to_line_column`. Without this the status bar
+                // shows a stale line until the next cursor movement — most
+                // visible right after a plugin opens a virtual buffer and
+                // jumps the cursor to a line.
+                if let Some(pos) = state.buffer.offset_to_position(position) {
+                    state.primary_cursor_line_number =
+                        crate::model::buffer::LineNumber::Absolute(pos.line);
+                }
             });
     }
 

@@ -3454,19 +3454,15 @@ async function openHeadVersionReadOnly(st: CompositeDiffState, oldLine: number):
         editor.setStatus(editor.t("status.no_head_version") || "No HEAD version of this file");
         return;
     }
-    const bufferId = view.bufferId;
-    editor.showBuffer(bufferId);
-    // Compute the target line's byte offset directly from the content we
-    // already have (buffer-independent, no reliance on which buffer is
-    // "active"). Yield one tick first so the freshly-shown buffer's view
-    // state is initialized — otherwise its first render resets the cursor
-    // to 0 after we set it. Then anchor the cursor and recenter.
+    // createVirtualBuffer makes the new buffer active, so setBufferCursor
+    // lands on it directly and scrolls the line into view via the host's
+    // ensure-cursor-visible pass — no showBuffer / delay / extra scroll
+    // needed. The byte offset is computed from the content we already have,
+    // so it doesn't depend on host line-lookup timing.
     const targetLine = Math.max(1, Math.min(lines.length, oldLine));
     let byteOffset = 0;
     for (let i = 0; i < targetLine - 1; i++) byteOffset += getByteLength(lines[i] + '\n');
-    await editor.delay(16);
-    editor.setBufferCursor(bufferId, byteOffset);
-    editor.scrollBufferToLine(bufferId, targetLine - 1);
+    editor.setBufferCursor(view.bufferId, byteOffset);
     editor.setStatus(editor.t("status.opened_head_version", { line: String(targetLine) })
         || `Opened HEAD version (read-only) at line ${targetLine}`);
 }

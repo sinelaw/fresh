@@ -2308,3 +2308,71 @@ fn test_review_diff_alt_o_opens_working_file() {
         screen
     );
 }
+
+/// Opening the read-only HEAD version jumps the cursor to the diff line, and
+/// the status bar's `Ln` reflects that line *immediately* — not a stale
+/// `Ln 1`. Regression test for `setBufferCursor` not refreshing the cached
+/// primary-cursor line. Uses a long file so the landing line is well past 1.
+#[test]
+fn test_diff_old_pane_head_view_status_line_matches_jump() {
+    let repo = GitTestRepo::new();
+    create_repo_with_long_file(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("long.rs");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // OLD pane focused; move well down into the file, then open that version.
+    for _ in 0..20 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // Wait for the *final* state: opening the HEAD buffer, then jumping the
+    // cursor and setting the status are separate async steps — the "at line
+    // N" status is set last, so it gates on the cursor jump having landed.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*HEAD:") && s.contains("at line ")
+        })
+        .unwrap();
+
+    // The status message reports "…at line N"; the status bar's "Ln N" must
+    // match it (and N must be > 1, i.e. the cursor really jumped). Without
+    // the cached-line fix the bar would read "Ln 1" while the message says
+    // a higher line.
+    let screen = harness.screen_to_string();
+    let opened_line: usize = screen
+        .split("at line ")
+        .nth(1)
+        .and_then(|tail| {
+            let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse().ok()
+        })
+        .unwrap_or_else(|| panic!("could not find 'at line N' in status. Screen:\n{}", screen));
+    assert!(
+        opened_line > 1,
+        "cursor should have jumped past line 1 (got {}). Screen:\n{}",
+        opened_line,
+        screen
+    );
+    assert!(
+        screen.contains(&format!("Ln {},", opened_line)),
+        "status bar should read 'Ln {}' to match the opened line, not a stale line. Screen:\n{}",
+        opened_line,
+        screen
+    );
+}
