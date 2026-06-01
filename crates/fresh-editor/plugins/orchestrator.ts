@@ -1078,8 +1078,9 @@ function bulkEligible(action: BulkAction, id: number): boolean {
   // Delete forgets any session. When it owns a worktree the worktree is
   // removed too; otherwise (launch/in-place) it's just dropped.
   if (action === "delete") return id > 0 || !!s.discovered;
-  // Archive moves the worktree to the graveyard, so it needs one.
-  return ownsWorktree(s);
+  // Archive applies to any session: a worktree session moves to the
+  // graveyard; a launch/in-place session is recorded at its own root.
+  return id > 0 || !!s.discovered;
 }
 
 function eligibleSelected(action: BulkAction): number[] {
@@ -1300,16 +1301,15 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   //
   //  * Stop: only a live session with an agent terminal can be
   //    stopped (the launch session has none).
-  //  * Archive: needs an owned worktree to move to the graveyard.
+  //  * Archive: every session can be archived — a worktree session moves
+  //    to the graveyard; a launch/in-place session is recorded at its own
+  //    root. Closing the last live window opens a replacement first.
   //  * Delete: forgets the session, removing the worktree only when one
-  //    is owned (otherwise the directory is left untouched).
-  //  * Archive/Delete are both refused on the last live window — the
-  //    editor must always host at least one.
-  const hasWorktree = ownsWorktree(s);
-  const isLastWindow = s.id > 0 && liveWindowCount() <= 1;
+  //    is owned (otherwise the directory is left untouched); the last
+  //    live window likewise gets a replacement before it closes.
   const stopDisabled = s.discovered || !s.terminalId;
-  const archiveDisabled = !hasWorktree || isLastWindow;
-  const deleteDisabled = isLastWindow;
+  const archiveDisabled = false;
+  const deleteDisabled = false;
   const buttonRow = row(
     button("Visit", { intent: "primary", key: "visit" }),
     spacer(2),
@@ -2388,13 +2388,55 @@ function pickNextActiveSession(excludeId: number): number {
 
 // Number of real editor windows. Discovered on-disk rows have negative
 // ids and are not windows. The editor must always host at least one
-// window, so deleting/archiving the last live window is refused.
+// window; archiving/deleting the last live window therefore opens a
+// replacement first (see `ensureReplacementWindow`).
 function liveWindowCount(): number {
   let n = 0;
   for (const s of orchestratorSessions.values()) {
     if (s.id > 0) n += 1;
   }
   return n;
+}
+
+// Closing the last live window would leave the editor with nothing to
+// show, so before archiving/deleting the sole remaining session we open
+// a fresh terminal session in `projectRoot` — the project that session
+// belonged to, i.e. "the last project" — and dive into it. The new
+// window becomes active, so the caller can then close the old one
+// normally. No-op when another live window already exists (the caller
+// just switches to it instead). Returns true when a replacement opened.
+async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
+  if (liveWindowCount() > 1) return false;
+  const label = editor.pathBasename(projectRoot) || "session";
+  try {
+    const result = await editor.createWindowWithTerminal({
+      root: projectRoot,
+      label,
+      cwd: projectRoot,
+    });
+    // `createWindowWithTerminal` fires `window_created`, which reconciles
+    // the new window into the model; set it eagerly too so the immediate
+    // close-and-switch below sees a second live window.
+    orchestratorSessions.set(result.windowId, {
+      id: result.windowId,
+      label,
+      root: projectRoot,
+      projectPath: projectRoot,
+      sharedWorktree: false,
+      terminalId: result.terminalId,
+      state: "idle",
+      lastOutputAt: null,
+      createdAt: Date.now(),
+    });
+    return true;
+  } catch (e) {
+    editor.setStatus(
+      `Orchestrator: could not open a replacement session — ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    return false;
+  }
 }
 
 // Resolve the *main* repo root a session's worktree belongs to, so
@@ -2433,76 +2475,86 @@ interface LifecycleResult {
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  // Archive moves the worktree to the graveyard — only sessions that
-  // own one can be archived. A launch/in-place session has no separate
-  // worktree, so there's nothing to move; use Delete to forget it.
-  if (!ownsWorktree(s)) {
-    return { ok: false, err: "no worktree to archive — use Delete to forget this session" };
-  }
-  // The editor must keep at least one window; closing the last one
-  // would orphan the move. Refuse before touching the worktree.
-  if (s.id > 0 && liveWindowCount() <= 1) {
-    return { ok: false, err: "cannot archive the last window — open another session first" };
-  }
-  const repoRoot = await worktreeRepoRoot(s);
-  if (!repoRoot) return { ok: false, err: "not a git repository" };
+  const removable = ownsWorktree(s);
 
-  // Live session: close_window refuses to close the active window, so
-  // switch away first, then SIGKILL the process group (so pty
-  // children release worktree locks) and close the editor session.
+  // Live session: the editor must always host a window. If this is the
+  // only one, open a replacement in its project first; then switch away
+  // (close_window refuses the active window), SIGKILL the process group
+  // so pty children release any worktree locks, and close the session.
   if (!s.discovered && id > 0) {
+    await ensureReplacementWindow(s.projectPath ?? s.root);
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
     if (s.terminalId) editor.signalWindow(id, "SIGKILL");
     editor.closeWindow(id);
-    // Brief settle so the filesystem reflects the pty's exit before
-    // we move the worktree out from under it.
-    await editor.delay(250);
+    // Brief settle so the filesystem reflects the pty's exit before we
+    // move the worktree out from under it.
+    if (removable) await editor.delay(250);
   }
 
-  const archivedRoot = editor.pathJoin(
-    editor.getDataDir(),
-    "orchestrator",
-    slugify(repoRoot),
-    ".archived",
-    s.label,
-  );
-  const parent = editor.pathDirname(archivedRoot);
-  if (!editor.createDir(parent)) {
-    return { ok: false, err: `could not create ${parent}`, repoRoot };
-  }
-  // git worktree move keeps git's internal bookkeeping consistent
-  // (the new path stays registered as a worktree).
-  const moveRes = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
-    repoRoot,
-  );
-  if (moveRes.exit_code !== 0) {
-    return {
-      ok: false,
-      err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+  if (removable) {
+    // Owns a worktree: move it to the `.archived/` graveyard so git's
+    // bookkeeping stays consistent and Unarchive can move it back.
+    const repoRoot = await worktreeRepoRoot(s);
+    if (!repoRoot) return { ok: false, err: "not a git repository" };
+    const archivedRoot = editor.pathJoin(
+      editor.getDataDir(),
+      "orchestrator",
+      slugify(repoRoot),
+      ".archived",
+      s.label,
+    );
+    const parent = editor.pathDirname(archivedRoot);
+    if (!editor.createDir(parent)) {
+      return { ok: false, err: `could not create ${parent}`, repoRoot };
+    }
+    const moveRes = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
       repoRoot,
-    };
+    );
+    if (moveRes.exit_code !== 0) {
+      return {
+        ok: false,
+        err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+        repoRoot,
+      };
+    }
+    const manifest = loadArchiveManifest(repoRoot);
+    manifest.sessions.push({
+      label: s.label,
+      root: archivedRoot,
+      original_root: s.root,
+      branch: s.branch || s.label,
+      archived_at: new Date().toISOString(),
+    });
+    saveArchiveManifest(repoRoot, manifest);
+    // A discovered row has no window_closed hook to drop it — remove it
+    // from the model directly.
+    if (s.discovered) {
+      orchestratorSessions.delete(id);
+      discoveredIdByPath.delete(s.root);
+    }
+    return { ok: true, repoRoot };
   }
 
+  // In-place / launch session: there's no separate worktree to move, so
+  // archiving just records the session at its own root (original_root ===
+  // root, no graveyard move) — listing it as archived and letting a
+  // future Unarchive reopen a window there — then drops the live record.
+  // The window was already closed above.
+  const repoRoot = (await resolveCanonicalRepoRoot(s.root)) ?? s.root;
   const manifest = loadArchiveManifest(repoRoot);
   manifest.sessions.push({
     label: s.label,
-    root: archivedRoot,
+    root: s.root,
     original_root: s.root,
     branch: s.branch || s.label,
     archived_at: new Date().toISOString(),
   });
   saveArchiveManifest(repoRoot, manifest);
-
-  // A discovered row has no window_closed hook to drop it — remove it
-  // from the model directly.
-  if (s.discovered) {
-    orchestratorSessions.delete(id);
-    discoveredIdByPath.delete(s.root);
-  }
+  orchestratorSessions.delete(id);
   return { ok: true, repoRoot };
 }
 
@@ -2717,19 +2769,16 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 async function deleteOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  // The editor must keep at least one window. Refuse before any
-  // close/worktree-removal so a removable session can't `git worktree
-  // remove` the tree the live editor is still sitting in.
-  if (s.id > 0 && liveWindowCount() <= 1) {
-    return { ok: false, err: "cannot delete the last window — open another session first" };
-  }
   const removable = ownsWorktree(s);
 
   if (!s.discovered && id > 0) {
-    // close_window refuses to close the active (and the last) window,
-    // so swap away first. SIGKILL only when there's an agent terminal —
-    // a launch/in-place session has none, and signalling it must never
-    // touch the editor itself.
+    // The editor must keep at least one window. If this is the only live
+    // one, open a replacement in its project first (so a removable
+    // session can't `git worktree remove` the tree the editor is still
+    // sitting in, and the editor never goes empty). Then swap away
+    // (close_window refuses the active window), SIGKILL only when there's
+    // an agent terminal — a launch/in-place session has none — and close.
+    await ensureReplacementWindow(s.projectPath ?? s.root);
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
@@ -2771,6 +2820,12 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   if (s.discovered) {
     orchestratorSessions.delete(id);
     discoveredIdByPath.delete(s.root);
+  } else if (id > 0) {
+    // Drop the live record explicitly. `close_window` fires
+    // `window_closed` → reconcile, which also prunes it, but an in-place
+    // / launch session left the directory untouched, so without this it
+    // could linger in the model and "come back" when the dialog reopens.
+    orchestratorSessions.delete(id);
   }
   return { ok: true, repoRoot };
 }
@@ -4653,33 +4708,12 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   if (!openDialog || !openPanel) return;
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
-  // Archive moves the worktree to the graveyard, so it only applies to
-  // a session that owns one. A launch/in-place session runs inside a
-  // real checkout with no `git worktree` entry — Archive would have
-  // nothing to move (and must never rm-rf the user's actual project).
-  // Delete forgets the session and removes the worktree only when one
-  // is owned. Both refuse the last live window (the editor must keep at
-  // least one) — surface that before the confirm step.
-  if (action === "archive" || action === "delete") {
-    const session = orchestratorSessions.get(id);
-    if (session && session.id > 0 && liveWindowCount() <= 1) {
-      setDialogError(
-        `cannot ${action} session [${id}] ${session.label} — it's the last window; open another session first`,
-      );
-      refreshOpenDialog();
-      return;
-    }
-  }
-  if (action === "archive") {
-    const session = orchestratorSessions.get(id);
-    if (session && !ownsWorktree(session)) {
-      setDialogError(
-        `cannot archive session [${id}] ${session.label} — it has no dedicated worktree; use Delete to forget it`,
-      );
-      refreshOpenDialog();
-      return;
-    }
-  }
+  // Every live session can be stopped/archived/deleted now: Archive
+  // records a launch/in-place session at its own root (no worktree to
+  // move) and worktree sessions move to the graveyard; closing the last
+  // live window opens a replacement first (see `ensureReplacementWindow`
+  // in `archiveOne` / `deleteOne`). So no eligibility refusal here — just
+  // confirm and run.
   openDialog.pendingConfirm = { action, ids: [id] };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");

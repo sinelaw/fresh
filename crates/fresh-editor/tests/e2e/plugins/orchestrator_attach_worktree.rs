@@ -824,3 +824,81 @@ fn dock_enter_attaches_discovered_worktree() {
             )
         });
 }
+
+/// Archiving the *last* session — which is also the launch / in-place
+/// session (no dedicated worktree) — must not be refused. Every session
+/// is archivable now: the launch session is recorded at its own root and,
+/// because it's the only live window, a replacement terminal session is
+/// opened in its project first so the editor is never left empty.
+///
+/// Before the fix this was doubly blocked: `enterConfirm` refused both
+/// "no worktree to archive" and "last window", so the confirm step never
+/// even appeared.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // replacement spawns a Unix shell terminal.
+fn archive_last_in_place_session_opens_replacement() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    // Only the launch session exists (the on-disk worktree is never
+    // attached here) — an in-place session with no dedicated worktree.
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    // The launch session is a trivial (empty) session, hidden by default;
+    // Alt+I reveals it so it can be selected.
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("launch session"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the launch session should be listed after Alt+I.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Focus opens on Visit; Tab to the Archive button (Stop is disabled
+    // for the terminal-less launch session, so the cycle skips it:
+    // visit -> toggle-details -> archive). Activate it to open the
+    // confirm. Without the fix Archive is disabled (dropped from the Tab
+    // cycle) and the action is refused, so the confirm never shows.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Archive"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "archiving the launch session should reach the confirm step.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Confirm (Cancel is focused first; Tab -> Confirm Archive).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The launch session is archived; because it was the only window, a
+    // replacement terminal session was opened in its project — so the
+    // editor still hosts a live session, now a *Terminal*.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Terminal"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "archiving the last session should open a replacement terminal \
+                 session.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
