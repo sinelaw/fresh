@@ -115,6 +115,61 @@ fn ctrl_p_opens_palette_while_dock_focused_and_dock_stays() {
     h.assert_screen_contains("ORCHESTRATOR");
 }
 
+/// Alt+O toggles keyboard focus between the editor and the dock, and the
+/// shift is *visible*: the dock's right-edge divider lights with the accent
+/// colour while focused and dims when focus leaves. Drives only the keyboard
+/// and asserts on rendered output (the divider cell's colour) per
+/// CONTRIBUTING §2.
+///
+/// This single flow exercises both halves of the feature — without the
+/// `toggle_dock_focus` binding Alt+O is inert and the divider never dims
+/// (the `assert_ne!` fails); without the focus indicator the divider colour
+/// is constant regardless of focus (the same `assert_ne!` fails).
+#[test]
+fn alt_o_toggles_dock_focus_with_visible_indicator() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h); // the dock mounts with keyboard focus
+
+    // The dock's right border (`│`) is a full-height divider; sample its
+    // colour on a content row. The default width is responsive, so scan for
+    // the glyph rather than hard-coding a column.
+    const ROW: u16 = 6;
+    let border_col = |h: &EditorTestHarness| -> u16 {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, ROW).as_deref() == Some("│"))
+            .expect("dock right border (│) should be present on a content row")
+    };
+    let divider_fg = |h: &EditorTestHarness| h.get_cell_style(border_col(h), ROW).unwrap().fg;
+
+    // FOCUSED on mount: the divider wears its focused (accent) colour.
+    let focused_fg = divider_fg(&h);
+
+    // Alt+O → hand focus back to the editor. The dock stays visible
+    // (non-modal), but its divider dims to the muted colour.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.assert_screen_contains("ORCHESTRATOR");
+    let blurred_fg = divider_fg(&h);
+    assert_ne!(
+        focused_fg, blurred_fg,
+        "the dock divider must change colour when keyboard focus leaves it"
+    );
+
+    // Alt+O again → dive back into the dock: the divider relights with the
+    // original focused colour.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.assert_screen_contains("ORCHESTRATOR");
+    assert_eq!(
+        divider_fg(&h),
+        focused_fg,
+        "re-focusing the dock must restore the focused divider colour"
+    );
+}
+
 #[test]
 fn dock_list_order_is_stable_across_active_window_switch() {
     // Two sessions in *different* projects: switching the active window
