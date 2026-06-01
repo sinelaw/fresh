@@ -543,7 +543,7 @@
   "cmd.focus_editor": "편집기 포커스",
   "cmd.focus_editor_desc": "편집기로 포커스 이동",
   "cmd.toggle_dock_focus": "Orchestrator 독 포커스 전환",
-  "cmd.toggle_dock_focus_desc": "키보드 포커스를 편집기/탐색기 영역과 Orchestrator 세션 독 사이에서 전환합니다(숨겨져 있으면 엽니다)",
+  "cmd.toggle_dock_focus_desc": "키보드 포커스를 Orchestrator 세션 독으로 또는 독에서 이동합니다(숨겨져 있으면 엽니다)",
   "cmd.focus_file_explorer": "파일 탐색기 포커스",
   "cmd.focus_file_explorer_desc": "파일 탐색기로 포커스 이동",
   "cmd.focus_terminal": "터미널 포커스",

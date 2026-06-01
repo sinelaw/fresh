@@ -567,7 +567,7 @@
   "cmd.focus_terminal": "Focus Terminal",
   "cmd.focus_terminal_desc": "Switch to terminal input mode",
   "cmd.toggle_dock_focus": "Toggle Orchestrator Dock Focus",
-  "cmd.toggle_dock_focus_desc": "Move keyboard focus between the editor/explorer area and the orchestrator session dock (opens it if hidden)",
+  "cmd.toggle_dock_focus_desc": "Move keyboard focus to or from the orchestrator session dock (opens it if hidden)",
   "cmd.format_buffer": "Format Buffer",
   "cmd.format_buffer_desc": "Format the current buffer with the configured formatter",
   "cmd.trim_trailing_whitespace": "Trim Trailing Whitespace",

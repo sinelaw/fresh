@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Mettre l'accent sur l'éditeur",
   "cmd.focus_editor_desc": "Ramener l'accent sur l'éditeur",
   "cmd.toggle_dock_focus": "Basculer l'accent sur le dock Orchestrator",
-  "cmd.toggle_dock_focus_desc": "Déplacer l'accent du clavier entre la zone éditeur/explorateur et le dock de sessions Orchestrator (l'ouvre s'il est masqué)",
+  "cmd.toggle_dock_focus_desc": "Déplacer l'accent du clavier vers ou depuis le dock de sessions Orchestrator (l'ouvre s'il est masqué)",
   "cmd.focus_file_explorer": "Mettre l'accent sur l'explorateur de fichiers",
   "cmd.focus_file_explorer_desc": "Mettre l'accent sur l'explorateur de fichiers",
   "cmd.focus_terminal": "Mettre l'accent sur le terminal",

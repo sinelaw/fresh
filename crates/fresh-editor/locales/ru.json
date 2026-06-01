@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Фокус на редактор",
   "cmd.focus_editor_desc": "Переместить фокус обратно на редактор",
   "cmd.toggle_dock_focus": "Переключить фокус на док Orchestrator",
-  "cmd.toggle_dock_focus_desc": "Переключить фокус клавиатуры между областью редактора/проводника и доком сессий Orchestrator (открывает его, если скрыт)",
+  "cmd.toggle_dock_focus_desc": "Переместить фокус клавиатуры на док сессий Orchestrator или с него (открывает его, если скрыт)",
   "cmd.focus_file_explorer": "Фокус на проводник",
   "cmd.focus_file_explorer_desc": "Переместить фокус на проводник файлов",
   "cmd.focus_terminal": "Фокус на терминал",

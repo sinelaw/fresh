@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Editor fokussieren",
   "cmd.focus_editor_desc": "Fokus zurück zum Editor bewegen",
   "cmd.toggle_dock_focus": "Orchestrator-Dock-Fokus umschalten",
-  "cmd.toggle_dock_focus_desc": "Tastaturfokus zwischen Editor/Explorer und dem Orchestrator-Dock umschalten (öffnet es, falls ausgeblendet)",
+  "cmd.toggle_dock_focus_desc": "Tastaturfokus zum oder vom Orchestrator-Dock bewegen (öffnet es, falls ausgeblendet)",
   "cmd.focus_file_explorer": "Datei-Explorer fokussieren",
   "cmd.focus_file_explorer_desc": "Fokus zum Datei-Explorer bewegen",
   "cmd.focus_terminal": "Terminal fokussieren",

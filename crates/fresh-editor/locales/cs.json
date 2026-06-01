@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Zaměřit editor",
   "cmd.focus_editor_desc": "Přesunout zaměření zpět na editor",
   "cmd.toggle_dock_focus": "Přepnout zaměření Orchestrator doku",
-  "cmd.toggle_dock_focus_desc": "Přepnout zaměření klávesnice mezi editorem/průzkumníkem a Orchestrator dokem (otevře jej, pokud je skrytý)",
+  "cmd.toggle_dock_focus_desc": "Přesunout zaměření klávesnice na Orchestrator dok nebo z něj (otevře jej, pokud je skrytý)",
   "cmd.focus_file_explorer": "Zaměřit průzkumník souborů",
   "cmd.focus_file_explorer_desc": "Přesunout zaměření na průzkumník souborů",
   "cmd.focus_terminal": "Zaměřit terminál",

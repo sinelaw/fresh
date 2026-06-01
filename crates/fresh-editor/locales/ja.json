@@ -543,7 +543,7 @@
   "cmd.focus_editor": "エディタにフォーカス",
   "cmd.focus_editor_desc": "フォーカスをエディタに戻します",
   "cmd.toggle_dock_focus": "Orchestrator ドックのフォーカスを切り替え",
-  "cmd.toggle_dock_focus_desc": "キーボードフォーカスをエディタ/エクスプローラと Orchestrator セッションドックの間で切り替えます（非表示の場合は開きます）",
+  "cmd.toggle_dock_focus_desc": "キーボードフォーカスを Orchestrator セッションドックとの間で移動します（非表示の場合は開きます）",
   "cmd.focus_file_explorer": "ファイルエクスプローラにフォーカス",
   "cmd.focus_file_explorer_desc": "フォーカスをファイルエクスプローラに移動します",
   "cmd.focus_terminal": "ターミナルにフォーカス",

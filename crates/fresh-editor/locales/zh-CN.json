@@ -543,7 +543,7 @@
   "cmd.focus_editor": "聚焦编辑器",
   "cmd.focus_editor_desc": "将焦点移回编辑器",
   "cmd.toggle_dock_focus": "切换 Orchestrator 停靠栏焦点",
-  "cmd.toggle_dock_focus_desc": "在编辑器/文件资源管理器区域与 Orchestrator 会话停靠栏之间切换键盘焦点（若已隐藏则打开）",
+  "cmd.toggle_dock_focus_desc": "将键盘焦点移到 Orchestrator 会话停靠栏或从中移出（若已隐藏则打开）",
   "cmd.focus_file_explorer": "聚焦文件资源管理器",
   "cmd.focus_file_explorer_desc": "将焦点移到文件资源管理器",
   "cmd.focus_terminal": "聚焦终端",

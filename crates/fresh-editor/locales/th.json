@@ -543,7 +543,7 @@
   "cmd.focus_editor": "โฟกัสโปรแกรมแก้ไข",
   "cmd.focus_editor_desc": "ย้ายโฟกัสกลับไปยังโปรแกรมแก้ไข",
   "cmd.toggle_dock_focus": "สลับโฟกัสด็อก Orchestrator",
-  "cmd.toggle_dock_focus_desc": "ย้ายโฟกัสคีย์บอร์ดระหว่างพื้นที่โปรแกรมแก้ไข/สำรวจไฟล์กับด็อกเซสชัน Orchestrator (เปิดขึ้นหากถูกซ่อน)",
+  "cmd.toggle_dock_focus_desc": "ย้ายโฟกัสคีย์บอร์ดไปยังหรือออกจากด็อกเซสชัน Orchestrator (เปิดขึ้นหากถูกซ่อน)",
   "cmd.focus_file_explorer": "โฟกัสโปรแกรมสำรวจไฟล์",
   "cmd.focus_file_explorer_desc": "ย้ายโฟกัสไปยังโปรแกรมสำรวจไฟล์",
   "cmd.focus_terminal": "โฟกัสเทอร์มินัล",

@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Chuyển focus đến trình soạn thảo",
   "cmd.focus_editor_desc": "Di chuyển focus quay lại trình soạn thảo",
   "cmd.toggle_dock_focus": "Chuyển focus dock Orchestrator",
-  "cmd.toggle_dock_focus_desc": "Di chuyển focus bàn phím giữa vùng trình soạn thảo/trình duyệt tệp và dock phiên Orchestrator (mở nó nếu đang ẩn)",
+  "cmd.toggle_dock_focus_desc": "Di chuyển focus bàn phím đến hoặc rời khỏi dock phiên Orchestrator (mở nó nếu đang ẩn)",
   "cmd.focus_file_explorer": "Chuyển focus đến trình duyệt tệp",
   "cmd.focus_file_explorer_desc": "Di chuyển focus đến trình duyệt tệp",
   "cmd.focus_terminal": "Chuyển focus đến Terminal",

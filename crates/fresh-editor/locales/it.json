@@ -543,7 +543,7 @@
   "cmd.focus_editor": "Focus editor",
   "cmd.focus_editor_desc": "Sposta il focus sull'editor",
   "cmd.toggle_dock_focus": "Attiva/disattiva il focus sul dock Orchestrator",
-  "cmd.toggle_dock_focus_desc": "Sposta il focus della tastiera tra l'area editor/esplora file e il dock delle sessioni Orchestrator (lo apre se nascosto)",
+  "cmd.toggle_dock_focus_desc": "Sposta il focus della tastiera da o verso il dock delle sessioni Orchestrator (lo apre se nascosto)",
   "cmd.focus_file_explorer": "Focus esplora file",
   "cmd.focus_file_explorer_desc": "Sposta il focus sull'esplora file",
   "cmd.focus_terminal": "Focus terminale",
