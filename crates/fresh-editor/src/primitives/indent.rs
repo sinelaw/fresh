@@ -50,7 +50,12 @@ const MAX_PARSE_BYTES: usize = 2000;
 
 /// Indent calculator using tree-sitter queries
 pub struct IndentCalculator {
-    /// Map of language to (parser, query)
+    /// Map of language to (parser, query).
+    ///
+    /// Only populated when the `tree-sitter` feature is enabled; without it
+    /// `get_config` always returns `None` and indentation falls back to the
+    /// pattern-based heuristics, leaving this map unused.
+    #[cfg_attr(not(feature = "tree-sitter"), allow(dead_code))]
     configs: HashMap<&'static str, (Parser, Query)>,
 }
 
@@ -64,137 +69,148 @@ impl IndentCalculator {
 
     /// Get or create parser and query for a language
     fn get_config(&mut self, language: &Language) -> Option<(&mut Parser, &Query)> {
-        let (lang_name, ts_language, query_str) = match language {
-            Language::Rust => (
-                "rust",
-                fresh_languages::tree_sitter_rust::LANGUAGE.into(),
-                include_str!("../../queries/rust/indents.scm"),
-            ),
-            Language::Python => (
-                "python",
-                fresh_languages::tree_sitter_python::LANGUAGE.into(),
-                include_str!("../../queries/python/indents.scm"),
-            ),
-            Language::JavaScript => (
-                "javascript",
-                fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
-                include_str!("../../queries/javascript/indents.scm"),
-            ),
-            Language::TypeScript => (
-                "typescript",
-                fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                include_str!("../../queries/typescript/indents.scm"),
-            ),
-            Language::C => (
-                "c",
-                fresh_languages::tree_sitter_c::LANGUAGE.into(),
-                include_str!("../../queries/c/indents.scm"),
-            ),
-            Language::Cpp => (
-                "cpp",
-                fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
-                include_str!("../../queries/cpp/indents.scm"),
-            ),
-            Language::Go => (
-                "go",
-                fresh_languages::tree_sitter_go::LANGUAGE.into(),
-                include_str!("../../queries/go/indents.scm"),
-            ),
-            Language::Java => (
-                "java",
-                fresh_languages::tree_sitter_java::LANGUAGE.into(),
-                include_str!("../../queries/java/indents.scm"),
-            ),
-            Language::HTML => (
-                "html",
-                fresh_languages::tree_sitter_html::LANGUAGE.into(),
-                include_str!("../../queries/html/indents.scm"),
-            ),
-            Language::CSS => (
-                "css",
-                fresh_languages::tree_sitter_css::LANGUAGE.into(),
-                include_str!("../../queries/css/indents.scm"),
-            ),
-            Language::Bash => (
-                "bash",
-                fresh_languages::tree_sitter_bash::LANGUAGE.into(),
-                include_str!("../../queries/bash/indents.scm"),
-            ),
-            Language::Json => (
-                "json",
-                fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                include_str!("../../queries/json/indents.scm"),
-            ),
-            Language::Jsonc => (
-                "jsonc",
-                fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                include_str!("../../queries/json/indents.scm"),
-            ),
-            Language::Ruby => (
-                "ruby",
-                fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
-                include_str!("../../queries/ruby/indents.scm"),
-            ),
-            Language::Php => (
-                "php",
-                fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
-                include_str!("../../queries/php/indents.scm"),
-            ),
-            Language::Lua => (
-                "lua",
-                fresh_languages::tree_sitter_lua::LANGUAGE.into(),
-                include_str!("../../queries/lua/indents.scm"),
-            ),
-            Language::CSharp => (
-                "csharp",
-                fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
-                include_str!("../../queries/csharp/indents.scm"),
-            ),
-            Language::Pascal => (
-                "pascal",
-                fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
-                include_str!("../../queries/pascal/indents.scm"),
-            ),
-            Language::Odin => (
-                "odin",
-                fresh_languages::tree_sitter_odin::LANGUAGE.into(),
-                include_str!("../../queries/odin/indents.scm"),
-            ),
-            Language::Templ => (
-                // Templ extends Go's grammar; Go's indent rules apply to the
-                // Go portions of a templ file. The HTML/CSS portions
-                // currently fall back to copy-current-line indent, which is
-                // good enough as an initial heuristic.
-                "templ",
-                fresh_languages::tree_sitter_templ::LANGUAGE.into(),
-                include_str!("../../queries/go/indents.scm"),
-            ),
-        };
-
-        // Check if we already have this config
-        if !self.configs.contains_key(lang_name) {
-            // Create parser
-            let mut parser = Parser::new();
-            if parser.set_language(&ts_language).is_err() {
-                tracing::error!("Failed to set language for {}", lang_name);
-                return None;
-            }
-
-            // Create query
-            let query = match Query::new(&ts_language, query_str) {
-                Ok(q) => q,
-                Err(e) => {
-                    tracing::error!("Failed to create query for {}: {:?}", lang_name, e);
-                    return None;
-                }
+        // Without the tree-sitter grammars compiled in, there is no parser to
+        // build. Returning `None` makes `calculate_indent` fall back to the
+        // pure-Rust pattern-based indentation heuristics.
+        #[cfg(not(feature = "tree-sitter"))]
+        {
+            let _ = language;
+            return None;
+        }
+        #[cfg(feature = "tree-sitter")]
+        {
+            let (lang_name, ts_language, query_str) = match language {
+                Language::Rust => (
+                    "rust",
+                    fresh_languages::tree_sitter_rust::LANGUAGE.into(),
+                    include_str!("../../queries/rust/indents.scm"),
+                ),
+                Language::Python => (
+                    "python",
+                    fresh_languages::tree_sitter_python::LANGUAGE.into(),
+                    include_str!("../../queries/python/indents.scm"),
+                ),
+                Language::JavaScript => (
+                    "javascript",
+                    fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
+                    include_str!("../../queries/javascript/indents.scm"),
+                ),
+                Language::TypeScript => (
+                    "typescript",
+                    fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                    include_str!("../../queries/typescript/indents.scm"),
+                ),
+                Language::C => (
+                    "c",
+                    fresh_languages::tree_sitter_c::LANGUAGE.into(),
+                    include_str!("../../queries/c/indents.scm"),
+                ),
+                Language::Cpp => (
+                    "cpp",
+                    fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
+                    include_str!("../../queries/cpp/indents.scm"),
+                ),
+                Language::Go => (
+                    "go",
+                    fresh_languages::tree_sitter_go::LANGUAGE.into(),
+                    include_str!("../../queries/go/indents.scm"),
+                ),
+                Language::Java => (
+                    "java",
+                    fresh_languages::tree_sitter_java::LANGUAGE.into(),
+                    include_str!("../../queries/java/indents.scm"),
+                ),
+                Language::HTML => (
+                    "html",
+                    fresh_languages::tree_sitter_html::LANGUAGE.into(),
+                    include_str!("../../queries/html/indents.scm"),
+                ),
+                Language::CSS => (
+                    "css",
+                    fresh_languages::tree_sitter_css::LANGUAGE.into(),
+                    include_str!("../../queries/css/indents.scm"),
+                ),
+                Language::Bash => (
+                    "bash",
+                    fresh_languages::tree_sitter_bash::LANGUAGE.into(),
+                    include_str!("../../queries/bash/indents.scm"),
+                ),
+                Language::Json => (
+                    "json",
+                    fresh_languages::tree_sitter_json::LANGUAGE.into(),
+                    include_str!("../../queries/json/indents.scm"),
+                ),
+                Language::Jsonc => (
+                    "jsonc",
+                    fresh_languages::tree_sitter_json::LANGUAGE.into(),
+                    include_str!("../../queries/json/indents.scm"),
+                ),
+                Language::Ruby => (
+                    "ruby",
+                    fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
+                    include_str!("../../queries/ruby/indents.scm"),
+                ),
+                Language::Php => (
+                    "php",
+                    fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
+                    include_str!("../../queries/php/indents.scm"),
+                ),
+                Language::Lua => (
+                    "lua",
+                    fresh_languages::tree_sitter_lua::LANGUAGE.into(),
+                    include_str!("../../queries/lua/indents.scm"),
+                ),
+                Language::CSharp => (
+                    "csharp",
+                    fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
+                    include_str!("../../queries/csharp/indents.scm"),
+                ),
+                Language::Pascal => (
+                    "pascal",
+                    fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
+                    include_str!("../../queries/pascal/indents.scm"),
+                ),
+                Language::Odin => (
+                    "odin",
+                    fresh_languages::tree_sitter_odin::LANGUAGE.into(),
+                    include_str!("../../queries/odin/indents.scm"),
+                ),
+                Language::Templ => (
+                    // Templ extends Go's grammar; Go's indent rules apply to the
+                    // Go portions of a templ file. The HTML/CSS portions
+                    // currently fall back to copy-current-line indent, which is
+                    // good enough as an initial heuristic.
+                    "templ",
+                    fresh_languages::tree_sitter_templ::LANGUAGE.into(),
+                    include_str!("../../queries/go/indents.scm"),
+                ),
             };
 
-            self.configs.insert(lang_name, (parser, query));
-        }
+            // Check if we already have this config
+            if !self.configs.contains_key(lang_name) {
+                // Create parser
+                let mut parser = Parser::new();
+                if parser.set_language(&ts_language).is_err() {
+                    tracing::error!("Failed to set language for {}", lang_name);
+                    return None;
+                }
 
-        // Return mutable references
-        let (parser, query) = self.configs.get_mut(lang_name)?;
-        Some((parser, query))
+                // Create query
+                let query = match Query::new(&ts_language, query_str) {
+                    Ok(q) => q,
+                    Err(e) => {
+                        tracing::error!("Failed to create query for {}: {:?}", lang_name, e);
+                        return None;
+                    }
+                };
+
+                self.configs.insert(lang_name, (parser, query));
+            }
+
+            // Return mutable references
+            let (parser, query) = self.configs.get_mut(lang_name)?;
+            Some((parser, query))
+        }
     }
 
     /// Calculate indent for a new line at the given position

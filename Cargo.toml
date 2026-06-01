@@ -79,6 +79,30 @@ opt-level = "z"
 [profile.dist]
 inherits = "release"
 
+# Size-optimized profile for producing a minimal `fresh` binary.
+#
+# Inherits everything from `release` (opt-level = "z", fat LTO,
+# codegen-units = 1, no debug info) and adds the two flags that trade a
+# little runtime/ergonomics for a smaller binary:
+#
+#   * panic = "abort" — drops the unwinding tables and landing pads. The
+#     only `catch_unwind` in the tree is in `#[cfg(test)]` code, and the
+#     plugin runtime signals errors without relying on Rust unwinding, so
+#     aborting on panic does not change editor behaviour.
+#   * strip = true     — strips symbols + debuginfo from the final binary.
+#
+# This profile does NOT change the normal `release` build. Pair it with a
+# trimmed feature set for the smallest result, e.g.:
+#
+#   cargo build --profile min-size --no-default-features --features runtime
+#
+# which drops plugins, embedded plugins and all tree-sitter grammars while
+# keeping syntect-based highlighting. See `crates/fresh-editor/Cargo.toml`.
+[profile.min-size]
+inherits = "release"
+panic = "abort"
+strip = true
+
 # Optimize the critical dependencies in the plugin-load path at -O3 even
 # in dev/test builds. These are the only deps where unoptimized code
 # materially slows test wall time:

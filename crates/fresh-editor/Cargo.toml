@@ -36,8 +36,15 @@ name = "fresh"
 path = "src/lib.rs"
 
 [features]
-default = ["plugins", "runtime", "embed-plugins"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter"]
 plugins = ["dep:fresh-plugin-runtime", "dep:fresh-parser-js", "dep:fresh-plugin-api-macros"]
+# Tree-sitter language grammars + AST-based features (precise indent,
+# semantic reference highlighting, tree-sitter syntax highlighting for the
+# languages syntect doesn't cover). Enabled by default. When disabled, the
+# editor falls back to syntect (TextMate) highlighting and pattern-based
+# indentation only — this drops ~19 generated grammar crates from the
+# binary. Requires `runtime` (which provides the `fresh-languages` types).
+tree-sitter = ["fresh-languages/all-languages"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
@@ -109,7 +116,11 @@ wasm = [
 # Local crates
 fresh-core.workspace = true
 fresh-parser-js = { workspace = true, optional = true }
-fresh-languages = { workspace = true, optional = true, features = ["all-languages"] }
+# Provides the shared `Language` / `HighlightCategory` types (small, always
+# needed by the syntect grammar catalog). The heavy tree-sitter grammar
+# crates are pulled in separately via the `tree-sitter` feature so they can
+# be dropped from minimal builds.
+fresh-languages = { workspace = true, optional = true }
 fresh-plugin-runtime = { workspace = true, optional = true }
 
 # oxc for user init.ts syntax checking (fresh --cmd init check)
