@@ -226,6 +226,26 @@ a file like a normal editor — then bring the sidebar back."
   key-capture; cursor correct; re-show is clean. Repeat ×2 — no drift.
 - **Record:** any residual dim, stuck mode, wrong cursor, or stale list.
 
+### T11 — The core loop: work → list → switch → work, repeatedly  *(RQ2, RQ3)*
+**Scenario:** "This is the thing you'll do all day. Work in one session,
+hop to your session list, switch to a different session, work there, and
+keep going back and forth."
+- *Expected path:* the focus-toggle loop — **Alt+O** to jump from the
+  session you're working in to the list, **↑/↓** to live-switch to
+  another session, **Alt+O** to drop into it, work, **Alt+O** back to the
+  list, ↑/↓ again… for several cycles across a mix of editor and
+  terminal/agent sessions.
+- **Success:** every Alt+O reliably toggles focus session↔list; every
+  ↑/↓ live-switches and the active window re-roots; you can **start
+  typing immediately** in whichever session you land in; each session's
+  buffer/terminal state is preserved as you cycle away and back; you
+  always know whether the list or a session has the keyboard.
+- **Record:** does focusing a session land you somewhere you can type, or
+  on a side panel (file tree) so your first keystrokes go astray? Does
+  the highlighted row always match the active window after a switch? Does
+  the list re-order under you as you navigate? Any cycle where focus or
+  cursor drifts.
+
 ---
 
 ## 7. Debrief questions

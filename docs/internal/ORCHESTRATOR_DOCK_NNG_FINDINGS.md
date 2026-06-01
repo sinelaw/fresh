@@ -33,12 +33,53 @@ parallel sessions). Protocol: [`ORCHESTRATOR_DOCK_NNG_USABILITY_GUIDE.md`](ORCHE
 | T8 | Toggle scope/worktrees/empty | ✔ |
 | T9 | Coexist w/ palette/Settings/explorer | ✔ no overlap, no swallowed keys |
 | T10 | Hide & round-trip | ◑ **stale gutter on hide** → F3 |
+| T11 | **Core loop** (work→list→switch→work ×N) | ✔ mechanics solid; editor sessions hit F2 on first touch |
 | RQ2 | Focus indicator | ✔ divider cyan↔muted on Alt+O |
 
 Two task-blocking issues (F2, F1) and a state where the dock becomes
 keyboard-unusable (F1) are the headline results. Everything *visual*
 about the dock — layout, coexistence, the focus indicator, live-switch —
 is solid; the problems cluster in **focus/input routing**.
+
+---
+
+## The core loop (T11) — focus session → list → switch → focus, repeated
+
+This is the dock's bread-and-butter: work in a session, **Alt+O** to the
+list, **↑/↓** to another session, **Alt+O** to drop into it, work, and
+back again. I ran it for several cycles across a mix — `alphaproj`
+(editor), `betaproj` + `gammaproj` (terminal/agent sessions).
+
+**The switching machinery is solid.** Every Alt+O toggled focus
+session↔list; every ↑/↓ live-switched and the active window re-rooted
+(alpha↔beta↔gamma↔alpha); each session's content **persisted** as I
+cycled away and back (alpha's buffer kept its edits the whole time —
+caps 96–102); the focus indicator flipped each time. For
+**terminal/agent sessions the loop is seamless**: Alt+O into the session
+and you're typing in its terminal immediately (`echo BETAMARK` landed in
+the betaproj shell — cap 98).
+
+**The one rough edge is F2, and the loop is where it bites hardest.** The
+*first* time you Alt+O into an **editor** session, focus lands on its
+file explorer, so your first keystrokes filter the tree instead of
+editing: typing `MARKA` after dropping into `alphaproj` put `/MARKA` in
+the explorer header, the buffer untouched (cap 96). It is a **one-time
+papercut per session**, not every cycle — once you `Ctrl+E`/click into
+the buffer, that session *remembers* buffer focus, and later Alt+O
+round-trips (even after switching all the way out to beta and back) land
+you straight in the buffer: `PROBE` then `RETURN` both inserted into
+alpha's document on re-entry (caps 101–102). So the loop is fluent for
+agent sessions and fluent for editor sessions *after the first touch* —
+the cost is the surprising first-keystrokes-filter-the-tree moment each
+new editor session inflicts before you've trained it. (Full fix = F2.)
+
+**Minor wrinkle:** right after a switch I twice saw the list **re-order**
+(the active session jumping toward the top) and, momentarily, the
+highlighted row not matching the active window (caps "Down→alphaproj");
+it settled to a stable order and a matched selection within the same
+interaction, so it reads as a transient re-sort rather than a persistent
+desync — but on a fast loop it can make the next ↑/↓ land on an
+unexpected row. Worth watching; folded into F4's focus-consistency note.
 
 ---
 
@@ -101,10 +142,20 @@ Editing itself is fine once a buffer is focused (cap 23: opening
 `readme.txt` then typing `XYZZY` inserted correctly, dock stayed
 visible), so the defect is purely the **focus landing site** on dive.
 
-*Fix:* on dive / `set_active_window`, restore focus to the last editor
-pane (the buffer), not the explorer. Confirmed as an open gap in
-`orchestrator-dock-gaps.md`; the gaps-doc P1 refactor resolves it as a
-normal context transition.
+**Scope (from the T11 loop):** this is a **first-touch papercut per
+session**, not an every-cycle one. The very first focus of an editor
+session lands on the explorer; once you `Ctrl+E`/click into the buffer,
+that session *remembers* buffer focus and subsequent Alt+O round-trips —
+even after switching out to other sessions and back — land in the buffer
+(`PROBE`/`RETURN` inserted on re-entry, caps 101–102). It still hits the
+user on every *new* editor session, silently, exactly when they expect to
+type — so it stays P3 (surprise + a stray-keystroke / mild
+data-confusion risk), just bounded.
+
+*Fix:* on the **first** dive / `set_active_window` for a session, seed
+focus on the editor pane (the buffer), not the explorer. Confirmed as an
+open gap in `orchestrator-dock-gaps.md`; the gaps-doc P1 refactor
+resolves it as a normal context transition.
 
 ---
 
@@ -262,3 +313,8 @@ field without immediately reopening the popup.
   dock stays visible/blurred (cap 23).
 - **Re-show (T10 tail):** "Toggle Dock" re-opens the dock at the left
   edge with the session list intact (cap 82).
+- **Core loop (T11):** the focus-toggle loop (Alt+O ↔ list, ↑/↓ switch)
+  is reliable across many cycles and a mix of editor + terminal sessions;
+  active window re-roots every time and per-session state persists
+  (caps 96–102). Seamless for agent/terminal sessions; for editor
+  sessions it's seamless after the one-time F2 first-touch.
