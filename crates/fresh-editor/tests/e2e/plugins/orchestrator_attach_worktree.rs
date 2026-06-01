@@ -732,3 +732,95 @@ fn worktrees_hidden_by_default_until_show_toggled() {
             )
         });
 }
+
+/// Toggle the global dock open via the command palette and wait for it
+/// to render *and* take keyboard focus (focus is set asynchronously
+/// through the plugin→host bridge, so poll `is_dock_focused`).
+fn open_dock(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Orchestrator: Toggle Dock").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("ORCHESTRATOR") && h.editor().is_dock_focused()
+        })
+        .unwrap();
+}
+
+/// 0-based screen row containing `needle`, or panic with the screen.
+fn dock_row_of(harness: &EditorTestHarness, needle: &str) -> usize {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
+}
+
+/// Pressing Enter on a discovered (on-disk) worktree row in the *dock*
+/// attaches a managed session at that worktree — the same outcome the
+/// Open dialog produces. Before the fix the dock's Enter always blurred
+/// to the editor, so the on-disk attach was silently dropped: diving a
+/// worktree worked from the dialog but did nothing from the dock.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
+fn dock_enter_attaches_discovered_worktree() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Toggle Dock");
+
+    open_dock(&mut harness);
+
+    // Alt+T reveals the discovered on-disk worktree in the dock.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Click the discovered row to select it, then Enter to activate.
+    let row = dock_row_of(&harness, "· on-disk") as u16;
+    harness.mouse_click(3, row).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Attach is async (`createWindowWithTerminal`). It opens a live
+    // session rooted at the worktree, so the dock's discovered row turns
+    // into a live `feature-x` row (no longer `· on-disk`).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && !s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Enter on the dock's discovered worktree row should attach a live \
+                 session (row loses `· on-disk`).\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}

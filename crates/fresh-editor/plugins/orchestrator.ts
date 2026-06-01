@@ -4842,6 +4842,45 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
+    if (e.event_type === "dock_activate") {
+      // Host Enter on the dock's session list. Mirrors the dialog's
+      // `activate` branch: a discovered (on-disk) worktree has no live
+      // window to switch to, so attach a fresh session at it; any other
+      // row is already active via the arrow live-switch, so Enter just
+      // hands keyboard focus to the editor (the dock stays visible).
+      if (!dockMode || !openPanel || !openDialog) return;
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
+      if (sel && sel.discovered) {
+        void attachToWorktree({
+          root: sel.root,
+          projectPath: sel.projectPath ?? sel.root,
+          label: sel.label,
+          branch: sel.branch,
+          discoveredId: sel.id,
+        });
+        return;
+      }
+      dockBlurred = true;
+      editor.floatingPanelControl(openPanel.id(), "blur", 0);
+      editor.setEditorMode(null);
+      return;
+    }
+    if (e.event_type === "dock_toggle_worktrees") {
+      // Host Alt+T on the dock — the dialog's OPEN_MODE chord has no
+      // equivalent in the dock (no editor mode), so the host routes it
+      // here. Share the same flip the click/Alt+T-in-dialog use.
+      if (dockMode) toggleShowWorktrees();
+      return;
+    }
+    if (e.event_type === "dock_toggle_trivial") {
+      if (dockMode) toggleHideTrivial();
+      return;
+    }
+    if (e.event_type === "dock_toggle_scope") {
+      if (dockMode) toggleScope();
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === "filter") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const value = payload.value;

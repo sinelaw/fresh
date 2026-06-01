@@ -2640,6 +2640,29 @@ impl Editor {
         Ok(())
     }
 
+    /// Fire a `widget_event` at the plugin owning the dock, keyed to the
+    /// `sessions` widget. Used for dock-only gestures (Enter-activate,
+    /// the Alt+T/Alt+I/Alt+P filter toggles) that the dialog handles via
+    /// an editor mode the dock can't use — see `dispatch_floating_widget_key`.
+    fn fire_dock_widget_event(&self, panel_id: u64, event_type: &str) {
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: "sessions".to_string(),
+                    event_type: event_type.to_string(),
+                    payload: serde_json::json!({}),
+                },
+            );
+        }
+    }
+
     /// Route a keystroke to the floating widget panel when one is
     /// mounted. Returns `true` if the key was consumed.
     ///
@@ -2696,19 +2719,57 @@ impl Editor {
                 .map(|k| k == "filter")
                 .unwrap_or(false);
             match code {
-                KeyCode::Enter | KeyCode::Esc => {
+                KeyCode::Esc => {
                     if on_filter {
                         // Return from the filter to the session list.
                         self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
                     } else {
-                        // Dive into / leave the dock — focus the editor;
-                        // the dock stays visible.
+                        // Leave the dock — focus the editor; dock stays visible.
                         self.blur_floating_panel(slot);
+                    }
+                    return true;
+                }
+                KeyCode::Enter => {
+                    if on_filter {
+                        // Return from the filter to the session list.
+                        self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
+                    } else {
+                        // Activate the highlighted row. The plugin attaches a
+                        // discovered (on-disk) worktree as a new session, or —
+                        // for a row already backed by a live window — blurs to
+                        // the editor (the dock stays visible). Handled
+                        // plugin-side so the discovered-vs-live decision lives
+                        // next to the dialog's identical `activate` logic, not
+                        // split across the host (was: always blur, which
+                        // silently dropped the on-disk attach in the dock).
+                        self.fire_dock_widget_event(panel_id, "dock_activate");
                     }
                     return true;
                 }
                 KeyCode::Char('/') if modifiers.is_empty() => {
                     self.set_panel_focus_and_notify(panel_id, "filter".to_string());
+                    return true;
+                }
+                KeyCode::Char('t' | 'T') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+T toggles "show all worktrees". In the dialog this is
+                    // an OPEN_MODE chord, but the dock has no editor mode (it
+                    // floats over the active buffer's mode), so route it as a
+                    // dock widget_event the plugin maps to the same toggle —
+                    // otherwise it falls through to the generic chord path and
+                    // merely blurs the dock.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_worktrees");
+                    return true;
+                }
+                KeyCode::Char('i' | 'I') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+I toggles "show empty/1-file sessions" — same dock
+                    // routing rationale as Alt+T above.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_trivial");
+                    return true;
+                }
+                KeyCode::Char('p' | 'P') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+P flips the project scope (current ↔ all) — same dock
+                    // routing rationale as Alt+T above.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_scope");
                     return true;
                 }
                 KeyCode::Char('n' | 'N') if modifiers.contains(KeyModifiers::ALT) => {

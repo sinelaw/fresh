@@ -507,6 +507,45 @@ fn picker_space_toggles_focused_checkbox_not_list() {
     );
 }
 
+/// Alt+T in the dock toggles "all worktrees" rather than blurring the
+/// dock. The Open dialog handles Alt+T via its OPEN_MODE chord, but the
+/// dock has no editor mode (it floats over the active buffer's mode), so
+/// before the fix the host treated Alt+T as an unhandled Ctrl/Alt chord
+/// and blurred the dock — the checkbox never flipped. The host now routes
+/// it as a `dock_toggle_worktrees` widget_event the plugin maps to the
+/// same toggle.
+#[test]
+fn dock_alt_t_toggles_worktrees_without_blurring() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The dock's worktree filter starts off.
+    h.wait_until(|h| h.screen_to_string().contains("[ ] all worktrees"))
+        .unwrap();
+
+    // Alt+T flips it on. Without the fix the chord blurs the dock and the
+    // checkbox stays unchecked, so this wait would time out.
+    h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[v] all worktrees"))
+        .unwrap();
+
+    // Alt+T again flips it back off (proves it stays wired, not one-shot).
+    h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[ ] all worktrees"))
+        .unwrap();
+
+    // And the dock kept keyboard focus throughout — it never blurred.
+    assert!(
+        h.editor().is_dock_focused(),
+        "Alt+T must leave the dock focused, not blur it.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
 #[test]
 fn settings_dialog_does_not_overlap_dock() {
     // Open the dock, then open the Settings modal via the command
