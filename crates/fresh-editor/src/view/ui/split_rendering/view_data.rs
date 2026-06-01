@@ -300,7 +300,15 @@ pub(super) fn build_view_data(
     // less the gutter) so long virtual-line text wraps consistently
     // instead of being truncated past the viewport edge.
     let virtual_line_wrap_width = if line_wrap_enabled {
-        Some(effective_width.saturating_sub(gutter_width).max(1))
+        let avail = effective_width.saturating_sub(gutter_width);
+        // Mirror the `available_width < 2` bail-out in
+        // `apply_wrapping_transform`: at degenerate widths (a tiny
+        // `wrap_column`, a narrow split pane, or an unusually wide gutter)
+        // source lines render unwrapped, so virtual/diff lines must too.
+        // Clamping up to `1` here instead would feed `wrap_str_to_width`
+        // a width of 1 and split every grapheme onto its own row — the
+        // single-letter wrapping of diff hunks reported in #2177.
+        (avail >= 2).then_some(avail)
     } else {
         None
     };
