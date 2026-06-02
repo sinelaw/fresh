@@ -589,12 +589,9 @@ impl Editor {
             persisted_env.as_ref(),
             &working_dir,
         );
-        let (active_window_id, active_window_root) = picked_active
+        let (active_window_id, _active_window_root) = picked_active
             .map(|w| (fresh_core::WindowId(w.id), w.root.clone()))
             .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
-
-        // Initialize LSP manager with active window's root.
-        let root_uri = types::file_path_to_lsp_uri(&active_window_root);
 
         t.phase("buffer_state");
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
@@ -615,36 +612,14 @@ impl Editor {
         let async_bridge = AsyncBridge::new();
         let event_broadcaster = crate::model::control_event::EventBroadcaster::default();
 
-        // Create the base window's per-window bridge up front so the
-        // LSP manager (configured below) can receive its responses
-        // through the window's channel rather than the editor-global
-        // one. The same `AsyncBridge` is moved into `base.bridge`
-        // when the base Window is constructed at the end of init.
-        let base_window_bridge = AsyncBridge::new();
-
         if tokio_runtime.is_none() {
             tracing::warn!("Failed to create Tokio runtime - async features disabled");
         }
 
-        // Create LSP manager with async support, scoped to the
-        // active window (matches `active_window_id` + the LSP
-        // root_uri above). LSP responses route through the active
-        // window's per-window bridge.
-        let mut lsp = LspManager::new(active_window_id, root_uri);
-
-        // Configure runtime and bridge if available — the LSP manager
-        // is wired to the base window's bridge, so its async responses
-        // land in `base.bridge` (not the editor-global `async_bridge`).
-        if let Some(ref runtime) = tokio_runtime {
-            lsp.set_runtime(runtime.handle().clone(), base_window_bridge.clone());
-        }
-
-        // Configure language servers (per-language + universal +
-        // Deno auto-detection). Shared with the per-window setup in
-        // `Editor::build_window_lsp` so the base window and any window
-        // the orchestrator spawns later get the *same* server set —
-        // see `configure_lsp_servers`.
-        Self::configure_lsp_servers(&mut lsp, &active_window_root, &config);
+        // The base window's LSP manager is built by `Window::new`
+        // (rooted at the window's root, wired to its own bridge), just
+        // like every other window — there is no special boot-time LSP
+        // construction here anymore. See `build_window_lsp`.
 
         t.phase("lsp_setup");
         // Initialize split manager with the initial buffer
@@ -1091,10 +1066,10 @@ impl Editor {
         // test_hidden_terminal_resyncs_pty_size_when_revealed).
         active_win.terminal_width = width;
         active_win.terminal_height = height;
-        // Hand the eagerly-spawned LSP manager + the initial split
-        // layout off to the active window — that's where they live
-        // now (Step 0b).
-        active_win.lsp = Some(lsp);
+        // Install the initial split layout. The LSP manager and per-
+        // window bridge were already built by `Window::new` (rooted at
+        // this window's root, wired together), so there's nothing to
+        // hand off here — every window owns its manager by construction.
         active_win.buffers = buffers;
         active_win
             .buffers
@@ -1102,12 +1077,6 @@ impl Editor {
         active_win.buffer_metadata = buffer_metadata;
         active_win.event_logs = event_logs;
         active_win.plugin_state = active_plugin_state;
-        // Replace the default bridge created by `Window::new` with
-        // the bridge we already configured the LSP manager against.
-        // Both halves now point at the same channel; LSP responses
-        // arriving on the manager's sender land in
-        // `active_win.bridge`'s receiver.
-        active_win.bridge = base_window_bridge;
         // Load prompt histories from disk for the active window.
         // Each window has its own prompt-history rings.
         for history_name in ["search", "replace", "goto_line"] {

@@ -4196,11 +4196,7 @@ impl Editor {
     fn handle_disable_lsp_for_language(&mut self, language: String) {
         tracing::info!("Disabling LSP for language: {}", language);
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.shutdown_server(&language);
             tracing::info!("Stopped LSP server for {}", language);
         }
@@ -4232,11 +4228,7 @@ impl Editor {
             .get(&self.active_buffer())
             .and_then(|meta| meta.file_path().cloned());
         let __active_id = self.active_window;
-        let success = if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        let success = if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
             self.active_window_mut().status_message = Some(msg);
             ok
@@ -4254,11 +4246,7 @@ impl Editor {
         match uri.parse::<lsp_types::Uri>() {
             Ok(parsed_uri) => {
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     let restarted = lsp.set_language_root_uri(&language, parsed_uri);
                     if restarted {
                         self.active_window_mut().status_message = Some(format!(

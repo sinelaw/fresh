@@ -86,11 +86,7 @@ impl Editor {
 
                     // Store capabilities on the specific server handle
                     let __active_id = self.active_window;
-                    if let Some(lsp) = self
-                        .windows
-                        .get_mut(&__active_id)
-                        .and_then(|w| w.lsp.as_mut())
-                    {
+                    if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                         lsp.set_server_capabilities(&language, &server_name, capabilities);
                     }
 

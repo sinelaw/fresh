@@ -1578,11 +1578,7 @@ impl Editor {
         let (success, message) = if let Some(name) = server_name {
             // Restart a specific server
             let __active_id = self.active_window;
-            if let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            {
+            if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                 lsp.manual_restart_server(language, name, file_path.as_deref())
             } else {
                 (false, t!("lsp.no_manager").to_string())
@@ -1590,11 +1586,7 @@ impl Editor {
         } else {
             // Restart all enabled servers for the language
             let __active_id = self.active_window;
-            if let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            {
+            if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                 lsp.manual_restart(language, file_path.as_deref())
             } else {
                 (false, t!("lsp.no_manager").to_string())

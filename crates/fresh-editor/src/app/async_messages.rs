@@ -845,9 +845,7 @@ impl Editor {
         let Some(__win) = self.windows.get_mut(&__active_id) else {
             return;
         };
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut __win.lsp;
 
         // LSP should already be running since we got a quiescent notification
         let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::InlayHints)
@@ -944,7 +942,7 @@ impl Editor {
         let changed = self
             .windows
             .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
+            .map(|w| &mut w.lsp)
             .is_some_and(|lsp| {
                 lsp.apply_dynamic_capabilities(&server_name, register, &registrations)
             });
@@ -978,9 +976,7 @@ impl Editor {
             return;
         };
         let diagnostic_result_ids = &__win.diagnostic_result_ids;
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut __win.lsp;
         let Some(sh) = lsp.handle_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
         else {
             return;
@@ -1179,11 +1175,7 @@ impl Editor {
 
                 let __active_id = self.active_window;
 
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     let message = lsp.handle_server_crash(&language, &server_name_ref);
                     self.active_window_mut().status_message = Some(message);
                 }
@@ -1680,11 +1672,7 @@ impl Editor {
     /// Process pending LSP server restarts (with exponential backoff)
     pub(super) fn process_pending_lsp_restarts(&mut self) {
         let __active_id = self.active_window;
-        let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        else {
+        let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) else {
             return;
         };
 
@@ -1740,7 +1728,8 @@ impl Editor {
                     let lang_id = state.language.clone();
                     let __active_id = self.active_window;
                     if let Some(__win) = self.windows.get_mut(&__active_id) {
-                        if let Some(lsp) = __win.lsp.as_mut() {
+                        {
+                            let lsp = &mut __win.lsp;
                             // Send didOpen to ALL handles for this language,
                             // not just the first. Each server needs its own
                             // didOpen notification.

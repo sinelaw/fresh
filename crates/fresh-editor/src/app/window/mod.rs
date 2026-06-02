@@ -102,7 +102,12 @@ pub struct Window {
     ///
     /// `None` means "this window has never spawned any LSP"; the
     /// next LSP feature trigger will lazily create one.
-    pub lsp: Option<LspManager>,
+    /// This window's language-server manager. Every window owns one,
+    /// built in [`Window::new`] rooted at the window's project root —
+    /// there is no "window without a manager" state (that was the
+    /// "No LSP manager available" bug). Servers are still spawned
+    /// lazily on demand; an idle window's manager holds only config.
+    pub lsp: LspManager,
 
     /// Utility-dock panel-id → buffer-id occupancy. Each window
     /// gets its own dock — when one window has the search panel
@@ -735,6 +740,79 @@ pub struct Window {
     pub process_groups: ProcessGroups,
 }
 
+/// Apply language-server configuration to a freshly-created
+/// [`LspManager`]: per-language configs, the universal (global)
+/// servers, and the Deno auto-detection override. Shared by every
+/// window's construction so the server set is identical regardless of
+/// how the window came to exist (boot, orchestrator new-session,
+/// disk-restored shell).
+pub(crate) fn configure_lsp_servers(
+    lsp: &mut LspManager,
+    root: &std::path::Path,
+    config: &crate::config::Config,
+) {
+    use crate::types::{LspServerConfig, ProcessLimits};
+
+    // Per-language servers from config.
+    for (language, lsp_configs) in &config.lsp {
+        lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
+    }
+
+    // Universal (global) servers — spawned once, shared across languages.
+    let universal_servers: Vec<LspServerConfig> = config
+        .universal_lsp
+        .values()
+        .flat_map(|lc| lc.as_slice().to_vec())
+        .filter(|c| c.enabled)
+        .collect();
+    lsp.set_universal_configs(universal_servers);
+
+    // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
+    // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
+    // against the window's own root so each session gets the detection for
+    // its actual project rather than the process cwd.
+    if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
+        tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
+        let deno_config = LspServerConfig {
+            command: "deno".to_string(),
+            args: vec!["lsp".to_string()],
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: Some(serde_json::json!({"enable": true})),
+            ..Default::default()
+        };
+        lsp.set_language_config("javascript".to_string(), deno_config.clone());
+        lsp.set_language_config("typescript".to_string(), deno_config);
+    }
+}
+
+/// Build the [`LspManager`] every window owns: rooted at the window's
+/// own `root`, wired to its own `bridge` (which
+/// `process_async_messages` drains every frame) and the shared tokio
+/// runtime, and configured with the full server set. Called from
+/// [`Window::new`] so the manager is present *by construction* — there
+/// is no window without one, and no "No LSP manager available" state to
+/// represent.
+pub(crate) fn build_window_lsp(
+    id: WindowId,
+    root: &std::path::Path,
+    resources: &crate::app::window_resources::WindowResources,
+    bridge: &crate::services::async_bridge::AsyncBridge,
+) -> LspManager {
+    let root_uri = crate::app::types::file_path_to_lsp_uri(root);
+    let mut lsp = LspManager::new(id, root_uri);
+
+    // No runtime means async features are disabled (matches the
+    // historical base-window path when the tokio runtime fails to build).
+    if let Some(runtime) = resources.tokio_runtime.as_ref() {
+        lsp.set_runtime(runtime.handle().clone(), bridge.clone());
+    }
+
+    configure_lsp_servers(&mut lsp, root, &resources.config);
+    lsp
+}
+
 impl Window {
     /// Apply LSP folding ranges to the named buffer's `folding_ranges`
     /// store. Pure window mutation — no editor-global state touched.
@@ -800,7 +878,8 @@ impl Window {
         let Some(language) = self.buffers.get(&buffer_id).map(|s| s.language.clone()) else {
             return;
         };
-        if let Some(lsp) = self.lsp.as_mut() {
+        {
+            let lsp = &mut self.lsp;
             if let Some(handle) = lsp.get_handle_mut(&language) {
                 if let Err(e) = handle.cancel_request(request_id) {
                     tracing::warn!("Failed to send LSP cancel request: {}", e);
@@ -935,7 +1014,8 @@ impl Window {
         else {
             return false;
         };
-        if let Some(lsp) = self.lsp.as_ref() {
+        {
+            let lsp = &self.lsp;
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.code_action_resolve {
                     return true;
@@ -955,7 +1035,8 @@ impl Window {
         else {
             return false;
         };
-        if let Some(lsp) = self.lsp.as_ref() {
+        {
+            let lsp = &self.lsp;
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.completion_resolve {
                     return true;
@@ -977,7 +1058,8 @@ impl Window {
         else {
             return false;
         };
-        if let Some(lsp) = self.lsp.as_ref() {
+        {
+            let lsp = &self.lsp;
             for sh in lsp.get_handles(&language) {
                 if sh.capabilities.rename {
                     return true;
@@ -1013,7 +1095,8 @@ impl Window {
 
         let request_id = self.alloc_lsp_request_id();
 
-        if let Some(lsp) = self.lsp.as_mut() {
+        {
+            let lsp = &mut self.lsp;
             if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Rename) {
                 if let Err(e) = sh.handle.prepare_rename(
                     request_id,
@@ -1040,7 +1123,8 @@ impl Window {
             return;
         };
         let request_id = self.alloc_lsp_request_id();
-        if let Some(lsp) = self.lsp.as_mut() {
+        {
+            let lsp = &mut self.lsp;
             for sh in lsp.get_handles_mut(&language) {
                 if sh.capabilities.completion_resolve {
                     if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
@@ -1525,6 +1609,12 @@ impl Window {
         // (broke auto-save / auto-recovery tests after these fields
         // moved off `Editor`).
         let now = resources.time_source.now();
+        // Build this window's bridge and LSP manager up front so the
+        // manager is wired to the window's own channel and present by
+        // construction (see `build_window_lsp`). `&root`/`&resources`
+        // are borrowed here, then moved into the struct below.
+        let bridge = crate::services::async_bridge::AsyncBridge::new();
+        let lsp = build_window_lsp(id, &root, &resources, &bridge);
         Self {
             id,
             label,
@@ -1532,7 +1622,7 @@ impl Window {
             file_explorer: None,
             file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
-            lsp: None,
+            lsp,
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
@@ -1544,7 +1634,7 @@ impl Window {
             status_message: None,
             plugin_status_message: None,
             prompt: None,
-            bridge: crate::services::async_bridge::AsyncBridge::new(),
+            bridge,
             next_lsp_request_id: 0,
             pending_completion_requests: std::collections::HashSet::new(),
             completion_items: None,
@@ -1985,10 +2075,7 @@ impl Window {
     /// List the languages with currently-running LSP server handles in
     /// this window. Wraps `LspManager::running_servers`.
     pub fn running_lsp_servers(&self) -> Vec<String> {
-        self.lsp
-            .as_ref()
-            .map(|lsp| lsp.running_servers())
-            .unwrap_or_default()
+        self.lsp.running_servers()
     }
 
     /// Number of in-flight completion requests for this window.
@@ -2006,24 +2093,17 @@ impl Window {
     /// `language` in this window.
     pub fn initialized_lsp_server_count(&self, language: &str) -> usize {
         self.lsp
-            .as_ref()
-            .map(|lsp| {
-                lsp.get_handles(language)
-                    .iter()
-                    .filter(|sh| sh.capabilities.initialized)
-                    .count()
-            })
-            .unwrap_or(0)
+            .get_handles(language)
+            .iter()
+            .filter(|sh| sh.capabilities.initialized)
+            .count()
     }
 
     /// Shutdown the LSP server for `language` in this window (marks it
     /// disabled until manual restart). Returns true if a server was
     /// shutdown, false if no server was running for that language.
     pub fn shutdown_lsp_server(&mut self, language: &str) -> bool {
-        self.lsp
-            .as_mut()
-            .map(|lsp| lsp.shutdown_server(language))
-            .unwrap_or(false)
+        self.lsp.shutdown_server(language)
     }
 
     /// Enable event-log streaming to `path` for every buffer's event
@@ -2077,8 +2157,7 @@ impl Window {
                     return true;
                 }
                 self.lsp
-                    .as_ref()
-                    .and_then(|lsp| lsp.server_scope(server_name))
+                    .server_scope(server_name)
                     .map(|scope| scope.accepts(language))
                     .unwrap_or(false)
             })
@@ -2375,9 +2454,7 @@ impl Window {
         let request_id = self.next_lsp_request_id;
         self.next_lsp_request_id += 1;
 
-        let Some(lsp) = self.lsp.as_mut() else {
-            return false;
-        };
+        let lsp = &mut self.lsp;
         let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
         else {
             return false;
@@ -2893,10 +2970,7 @@ impl Window {
         );
 
         use crate::services::lsp::manager::LspSpawnResult;
-        let Some(lsp) = self.lsp.as_mut() else {
-            tracing::debug!("send_lsp_changes_for_buffer: no LSP manager available");
-            return;
-        };
+        let lsp = &mut self.lsp;
 
         if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
             tracing::debug!(
@@ -2932,9 +3006,7 @@ impl Window {
                 }
             };
 
-            let Some(lsp) = self.lsp.as_mut() else {
-                return;
-            };
+            let lsp = &mut self.lsp;
             for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
@@ -2971,9 +3043,7 @@ impl Window {
             return;
         }
 
-        let Some(lsp) = self.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut self.lsp;
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
             if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), changes.clone()) {

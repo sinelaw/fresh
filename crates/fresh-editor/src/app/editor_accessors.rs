@@ -368,11 +368,7 @@ impl Editor {
     /// Configure LSP server for a specific language
     pub fn set_lsp_config(&mut self, language: String, config: Vec<LspServerConfig>) {
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.set_language_configs(language, config);
         }
     }
@@ -471,11 +467,7 @@ impl Editor {
         // translation rides along for the same reason — LSP URIs need
         // to be host↔container-translated under the new authority.
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
             lsp.set_path_translation(self.authority.path_translation.clone());
             lsp.set_workspace_trust(self.authority.workspace_trust.clone());
@@ -595,24 +587,14 @@ impl Editor {
         self.panel_ids_mut().insert(key, buffer_id);
     }
 
-    /// True iff the active session has an LSP manager attached.
-    /// Used by tests to assert that the active window's `lsp`
-    /// slot is populated. (Pre-0b this exercised the warm-swap
-    /// code; post-0b the LSP manager lives directly on `Window`,
-    /// so the assertion is just "this window's `lsp` is `Some`.")
+    /// True iff the active session has an LSP manager attached. Every
+    /// window now owns one by construction (`Window::new`), so this is
+    /// always true; the helper is retained as a regression guard so a
+    /// future change that reintroduces a manager-less window state is
+    /// caught by the orchestrator-window tests.
     #[doc(hidden)]
     pub fn has_lsp_for_test(&self) -> bool {
         self.lsp().is_some()
-    }
-
-    /// Inject an LspManager so tests can prove the swap routes
-    /// it through the session stash without depending on real
-    /// LSP server spawn.
-    #[doc(hidden)]
-    pub fn install_dummy_lsp_for_test(&mut self) {
-        let active = self.active_window;
-        self.active_window_mut().lsp =
-            Some(crate::services::lsp::manager::LspManager::new(active, None));
     }
 
     /// Most-recent `path_changed` event the editor received.
@@ -807,19 +789,20 @@ impl Editor {
         &mut self.active_window_mut().buffers
     }
 
-    /// Active window's LSP manager (`None` if no LSP has been spawned
-    /// for this window yet). Each window has its own LSP set rooted
-    /// at its project root.
+    /// Active window's LSP manager. Each window owns one rooted at its
+    /// project root (built in `Window::new`), so this is always
+    /// present; the `Option` is retained for call-site ergonomics and
+    /// because the active-window lookup is itself fallible in spirit.
     pub(crate) fn lsp(&self) -> Option<&crate::services::lsp::manager::LspManager> {
-        self.active_window().lsp.as_ref()
+        Some(&self.active_window().lsp)
     }
 
     /// Mutable handle to the active window's LSP manager. Same
     /// borrow caveat as `file_explorer_mut()`: at sites that also
     /// need to read other Editor fields, prefer direct
-    /// `self.windows.get_mut(&self.active_window).and_then(|w| w.lsp.as_mut())`.
+    /// `self.windows.get_mut(&self.active_window).map(|w| &mut w.lsp)`.
     pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
-        self.active_window_mut().lsp.as_mut()
+        Some(&mut self.active_window_mut().lsp)
     }
 
     /// Active window's split tree. Panics if the window has no
