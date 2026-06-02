@@ -639,41 +639,12 @@ impl Editor {
             lsp.set_runtime(runtime.handle().clone(), base_window_bridge.clone());
         }
 
-        // Configure LSP servers from config
-        for (language, lsp_configs) in &config.lsp {
-            lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
-        }
-
-        // Configure universal (global) LSP servers — spawned once, shared across languages
-        let universal_servers: Vec<LspServerConfig> = config
-            .universal_lsp
-            .values()
-            .flat_map(|lc| lc.as_slice().to_vec())
-            .filter(|c| c.enabled)
-            .collect();
-        lsp.set_universal_configs(universal_servers);
-
-        // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-        // workspace root, override JS/TS LSP to use `deno lsp` (#1191).
-        // Checked against `active_window_root` so persisted sessions get the
-        // detection their actual project — process cwd would be wrong for a
-        // restored session rooted elsewhere.
-        if active_window_root.join("deno.json").exists()
-            || active_window_root.join("deno.jsonc").exists()
-        {
-            tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
-            let deno_config = LspServerConfig {
-                command: "deno".to_string(),
-                args: vec!["lsp".to_string()],
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: Some(serde_json::json!({"enable": true})),
-                ..Default::default()
-            };
-            lsp.set_language_config("javascript".to_string(), deno_config.clone());
-            lsp.set_language_config("typescript".to_string(), deno_config);
-        }
+        // Configure language servers (per-language + universal +
+        // Deno auto-detection). Shared with the per-window setup in
+        // `Editor::build_window_lsp` so the base window and any window
+        // the orchestrator spawns later get the *same* server set —
+        // see `configure_lsp_servers`.
+        Self::configure_lsp_servers(&mut lsp, &active_window_root, &config);
 
         t.phase("lsp_setup");
         // Initialize split manager with the initial buffer

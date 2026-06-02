@@ -46,6 +46,105 @@ impl crate::app::Editor {
         }
     }
 
+    /// Apply language-server configuration to a freshly-created
+    /// [`LspManager`]: per-language configs, the universal (global)
+    /// servers, and the Deno auto-detection override. Factored out of
+    /// `editor_init::with_options` so the base window and every
+    /// orchestrator-spawned window share one source of truth — when
+    /// the boot path gains a server (or a detection rule) the dive
+    /// path gets it for free, and the two can't drift.
+    pub(crate) fn configure_lsp_servers(
+        lsp: &mut crate::services::lsp::manager::LspManager,
+        root: &std::path::Path,
+        config: &crate::config::Config,
+    ) {
+        use crate::types::{LspServerConfig, ProcessLimits};
+
+        // Per-language servers from config.
+        for (language, lsp_configs) in &config.lsp {
+            lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
+        }
+
+        // Universal (global) servers — spawned once, shared across languages.
+        let universal_servers: Vec<LspServerConfig> = config
+            .universal_lsp
+            .values()
+            .flat_map(|lc| lc.as_slice().to_vec())
+            .filter(|c| c.enabled)
+            .collect();
+        lsp.set_universal_configs(universal_servers);
+
+        // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
+        // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
+        // against the window's own root so each session gets the detection for
+        // its actual project rather than the process cwd.
+        if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
+            tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
+            let deno_config = LspServerConfig {
+                command: "deno".to_string(),
+                args: vec!["lsp".to_string()],
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: Some(serde_json::json!({"enable": true})),
+                ..Default::default()
+            };
+            lsp.set_language_config("javascript".to_string(), deno_config.clone());
+            lsp.set_language_config("typescript".to_string(), deno_config);
+        }
+    }
+
+    /// Build a fully-configured [`LspManager`] for a window rooted at
+    /// `root`, wired to `bridge` (that window's own per-window async
+    /// bridge, which `process_async_messages` drains every frame) and
+    /// the editor's shared tokio runtime. Mirrors the base-window
+    /// setup in `editor_init::with_options` so *every* window — not
+    /// just the boot window — can spawn language servers.
+    pub(crate) fn build_window_lsp(
+        &self,
+        window_id: WindowId,
+        root: &std::path::Path,
+        bridge: &crate::services::async_bridge::AsyncBridge,
+    ) -> crate::services::lsp::manager::LspManager {
+        let root_uri = crate::app::types::file_path_to_lsp_uri(root);
+        let mut lsp = crate::services::lsp::manager::LspManager::new(window_id, root_uri);
+
+        // Wire the manager to this window's bridge so its async
+        // responses land in `windows[window_id].bridge`. No runtime
+        // means async features are disabled (matches the base path).
+        if let Some(ref runtime) = self.tokio_runtime {
+            lsp.set_runtime(runtime.handle().clone(), bridge.clone());
+        }
+
+        Self::configure_lsp_servers(&mut lsp, root, &self.config);
+        lsp
+    }
+
+    /// Lazily attach an [`LspManager`] to window `id` if it doesn't
+    /// have one yet. The base window is born with a manager in
+    /// `editor_init`, but windows created or restored later
+    /// (`create_window_at`, `create_window_with_terminal`, the disk
+    /// shells materialized on dive) start with `lsp == None`. Without
+    /// this, opening a code buffer in an orchestrator window leaves
+    /// every LSP action reporting "No LSP manager available". Called
+    /// on the dive path (`set_active_window`) and when the
+    /// orchestrator spawns a window so the manager is present the
+    /// moment the window can show a buffer.
+    pub(crate) fn ensure_window_lsp(&mut self, id: WindowId) {
+        let Some(window) = self.windows.get(&id) else {
+            return;
+        };
+        if window.lsp.is_some() {
+            return;
+        }
+        let root = window.root.clone();
+        let bridge = window.bridge.clone();
+        let lsp = self.build_window_lsp(id, &root, &bridge);
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.lsp = Some(lsp);
+        }
+    }
+
     /// Allocate a session id, insert a new `Session`, fire
     /// `session_created`. Does not switch active.
     ///
@@ -227,6 +326,12 @@ impl crate::app::Editor {
             win.resize_visible_terminals();
         }
 
+        // This path writes `active_window` directly (bypassing
+        // `set_active_window`), so attach the window's LSP manager here
+        // too — otherwise a code buffer opened in this orchestrator
+        // session can't start a server ("No LSP manager available").
+        self.ensure_window_lsp(id);
+
         // Plugin lifecycle: fire `window_created` first, then
         // `active_window_changed`. Order mirrors the
         // `create_window_at` + `set_active_window` sequence the
@@ -326,6 +431,15 @@ impl crate::app::Editor {
         // derives from the active window's root, so moving the pointer
         // is all it takes (no separate working_dir to sync).
         self.active_window = id;
+
+        // Attach a language-server manager to the incoming window if it
+        // doesn't have one yet. Only the base window is born with an LSP
+        // manager (in `editor_init`); windows created or restored later
+        // start with `lsp == None`, so a dive into one would otherwise
+        // leave LSP dead ("No LSP manager available") until the process
+        // restarts. Lazy on dive keeps never-visited preview shells from
+        // paying for a manager they never use.
+        self.ensure_window_lsp(id);
 
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach

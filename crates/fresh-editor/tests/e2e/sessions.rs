@@ -368,35 +368,36 @@ fn dive_stashes_and_restores_file_mod_times() {
     );
 }
 
-/// `setActiveSession` warm-swaps the LSP manager. The outgoing
-/// session's running LSPs are stashed (still alive in memory)
-/// and the incoming session's stash — empty for a fresh session
-/// — becomes the active slot. Future LSP requests in the new
-/// session spawn fresh servers rooted at its path; future dive-
-/// back finds the stashed LSPs warm.
+/// Each session owns its LSP manager (post-0b: the manager lives
+/// directly on `Window`, no warm-swap stash). Diving into a freshly
+/// created session must give it its *own* manager rooted at its path —
+/// not leave the slot empty. The empty-slot behaviour this test used to
+/// assert was the "No LSP manager available" bug: nothing ever created
+/// the promised on-demand manager, so LSP was dead in every
+/// orchestrator window until restart. `Editor::ensure_window_lsp`
+/// attaches one lazily on the dive path.
 #[test]
-fn dive_stashes_and_restores_lsp_manager() {
+fn dive_gives_each_window_its_own_lsp_manager() {
     let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
 
     let alpha = harness
         .editor_mut()
         .create_window_at(PathBuf::from("/tmp/wt-alpha-lsp"), "alpha".into());
 
-    // Pretend the base session has LSPs running.
-    harness.editor_mut().install_dummy_lsp_for_test();
+    // The base session is born with a manager (built in editor_init).
     assert!(harness.editor().has_lsp_for_test());
 
     harness.editor_mut().set_active_window(alpha);
     assert!(
-        !harness.editor().has_lsp_for_test(),
-        "alpha has no stashed LSP; active slot must be empty so a \
-         fresh LspManager spawns rooted at alpha's path on demand"
+        harness.editor().has_lsp_for_test(),
+        "diving into alpha must attach its own LspManager rooted at \
+         alpha's path — an empty slot is the 'No LSP manager available' bug"
     );
 
     harness.editor_mut().set_active_window(WindowId(1));
     assert!(
         harness.editor().has_lsp_for_test(),
-        "diving back must restore the base's stashed LspManager"
+        "the base session keeps its own manager across dives"
     );
 }
 

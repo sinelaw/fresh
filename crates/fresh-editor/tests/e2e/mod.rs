@@ -132,6 +132,7 @@ pub mod multicursor;
 pub mod on_save_actions;
 pub mod open_folder;
 pub mod orchestrator_dock;
+pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
 #[cfg(feature = "plugins")]
 pub mod panel_mode_window_switch_leak;
