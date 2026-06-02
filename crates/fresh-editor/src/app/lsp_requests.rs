@@ -105,20 +105,66 @@ const GHOST_TEXT_ID: &str = "ghost-text";
 impl Editor {
     /// Clear any active ghost text (inline completion) from the buffer.
     pub(crate) fn clear_ghost_text(&mut self) {
-        let Some(buffer_id) = self.active_window_mut().ghost_text_buffer_id.take() else {
-            return;
+        let buffer_id = {
+            let window = self.active_window_mut();
+            window.ghost_text_completion = None;
+            window.ghost_text_buffer_id.take()
         };
 
-        let active_window = self.active_window;
-        if let Some(state) = self
-            .windows
-            .get_mut(&active_window)
-            .and_then(|window| window.buffers.get_mut(&buffer_id))
-        {
-            state
-                .virtual_texts
-                .remove_by_id(&mut state.marker_list, GHOST_TEXT_ID);
+        if let Some(buffer_id) = buffer_id {
+            let active_window = self.active_window;
+            if let Some(state) = self
+                .windows
+                .get_mut(&active_window)
+                .and_then(|window| window.buffers.get_mut(&buffer_id))
+            {
+                state
+                    .virtual_texts
+                    .remove_by_id(&mut state.marker_list, GHOST_TEXT_ID);
+            }
         }
+    }
+
+    /// Accept the active inline-completion ghost text, if it still matches
+    /// the active buffer and cursor.
+    pub(crate) fn accept_ghost_text(&mut self) -> bool {
+        let Some(completion) = self.active_window().ghost_text_completion.clone() else {
+            return false;
+        };
+
+        let buffer_id = self.active_buffer();
+        let cursor_count = self.active_cursors().count();
+        let cursor = self.active_cursors().primary();
+        if buffer_id != completion.buffer_id
+            || cursor_count != 1
+            || !cursor.collapsed()
+            || cursor.position != completion.cursor_position
+        {
+            self.clear_ghost_text();
+            return false;
+        }
+
+        let cursor_id = self.active_cursors().primary_id();
+        let event = Event::Insert {
+            position: completion.cursor_position,
+            text: completion.suffix,
+            cursor_id,
+        };
+
+        self.active_window_mut().cancel_pending_lsp_requests();
+        self.clear_ghost_text();
+        if self.active_state().popups.top().is_some_and(|popup| {
+            matches!(
+                popup.resolver,
+                crate::view::popup::PopupResolver::Completion
+            )
+        }) {
+            self.hide_popup();
+            self.active_window_mut().completion_items = None;
+        }
+        self.active_event_log_mut().append(event.clone());
+        self.apply_event_to_active_buffer(&event);
+        true
     }
 
     /// Request inline completion (ghost text) with an automatic trigger.
@@ -475,7 +521,7 @@ impl Editor {
             state.virtual_texts.add_with_id_and_padding(
                 &mut state.marker_list,
                 anchor_pos,
-                suffix,
+                suffix.clone(),
                 style,
                 position,
                 100,
@@ -483,6 +529,12 @@ impl Editor {
                 false,
             );
             self.active_window_mut().ghost_text_buffer_id = Some(buffer_id);
+            self.active_window_mut().ghost_text_completion =
+                Some(crate::app::window::InlineCompletionGhostText {
+                    buffer_id,
+                    cursor_position: cursor_pos,
+                    suffix,
+                });
         }
     }
 
@@ -1063,15 +1115,17 @@ impl Editor {
     /// Check if the inserted character should trigger completion
     /// and if so, request completion automatically (possibly after a delay).
     ///
-    /// Only triggers when `completion_popup_auto_show` is enabled. Then:
+    /// Triggers when either automatic popup completions or ghost text are
+    /// enabled. Then:
     /// 1. Trigger characters (like `.`, `::`, etc.): immediate if suggest_on_trigger_characters is enabled
     /// 2. Word characters: delayed by quick_suggestions_delay_ms if quick_suggestions is enabled
     ///
     /// This provides VS Code-like behavior where suggestions appear while typing,
     /// with debouncing to avoid spamming the LSP server.
     pub(crate) fn maybe_trigger_completion(&mut self, c: char) {
-        // Auto-show must be enabled for any automatic triggering
-        if !self.config.editor.completion_popup_auto_show {
+        let auto_show_popup = self.config.editor.completion_popup_auto_show;
+        let auto_show_ghost_text = self.config.editor.enable_ghost_text;
+        if !auto_show_popup && !auto_show_ghost_text {
             return;
         }
 
@@ -1099,9 +1153,13 @@ impl Editor {
             );
             // Cancel any pending scheduled trigger
             self.active_window_mut().scheduled_completion_trigger = None;
-            self.request_completion();
-            if let Err(err) = self.request_inline_completion_automatic() {
-                tracing::debug!("Failed to request inline completion: {err}");
+            if auto_show_popup {
+                self.request_completion();
+            }
+            if auto_show_ghost_text {
+                if let Err(err) = self.request_inline_completion_automatic() {
+                    tracing::debug!("Failed to request inline completion: {err}");
+                }
             }
             return;
         }
