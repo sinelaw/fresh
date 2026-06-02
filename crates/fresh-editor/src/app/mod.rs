@@ -1631,6 +1631,11 @@ mod tests {
     /// `dock_close_reflows_buffer_to_full_width` e2e test; this asserts the
     /// redraw *request* the e2e harness can't observe (it drives renders
     /// unconditionally, so it can't see a missing redraw).
+    ///
+    /// Gated on `plugins`: it drives the unmount through the plugin
+    /// command path (`handle_plugin_command`), which only exists when the
+    /// plugin runtime is compiled in.
+    #[cfg(feature = "plugins")]
     #[test]
     fn unmounting_left_dock_requests_full_redraw() {
         use fresh_core::api::PluginCommand;
@@ -1658,6 +1663,7 @@ mod tests {
     /// The dock-only gate: closing a *centered* modal overlays the
     /// full-width chrome without carving it, so it must NOT force a
     /// full-screen clear (that would only flicker).
+    #[cfg(feature = "plugins")]
     #[test]
     fn unmounting_centered_modal_does_not_request_full_redraw() {
         use fresh_core::api::PluginCommand;
