@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::cmp::{max, Ordering};
 use std::collections::HashMap;
 use std::mem;
@@ -290,19 +290,127 @@ impl IntervalTree {
     }
 
     /// Deletes a marker by its ID. Performance: O(log n)
+    ///
+    /// Locates the node via `marker_map` and removes it using parent pointers
+    /// rather than a `(start, id)` key search. Edits can transiently leave the
+    /// tree position-ordered but *not* `(start, id)`-ordered — e.g. a deletion
+    /// clamps two markers to the same position, and their ids contradict the
+    /// order they reached that position. A key-routed delete would then take a
+    /// wrong turn and silently fail to remove the node; identity-based removal
+    /// is immune to that.
     pub fn delete(&mut self, id: MarkerId) -> bool {
-        let (start, _) = match self.get_position(id) {
-            Some(pos) => pos,
+        let node_rc = match self.marker_map.get(&id) {
+            Some(n) => Rc::clone(n),
             None => return false,
         };
 
-        if !self.marker_map.contains_key(&id) {
-            return false;
+        // Flush pending lazy deltas from the root down to this node so the node
+        // (and every ancestor) holds its true interval with no pending ancestor
+        // delta, making structural surgery safe.
+        Self::push_to_node(&node_rc);
+
+        // Decide which physical node to splice out. With two children we swap
+        // this node's marker with its in-order successor (which has no left
+        // child) and remove the successor's node instead.
+        let two_children = {
+            let n = node_rc.borrow();
+            n.left.is_some() && n.right.is_some()
+        };
+
+        let remove_rc = if two_children {
+            let right = node_rc.borrow().right.as_ref().unwrap().clone();
+            let succ = Self::min_node(&right);
+            let succ_id = succ.borrow().marker.id;
+
+            mem::swap(
+                &mut node_rc.borrow_mut().marker,
+                &mut succ.borrow_mut().marker,
+            );
+            // `node_rc` now carries the successor's marker; redirect the map.
+            self.marker_map.insert(succ_id, Rc::clone(&node_rc));
+            succ
+        } else {
+            Rc::clone(&node_rc)
+        };
+
+        // `remove_rc` now has at most one child. Splice that child (if any) into
+        // remove_rc's slot under its parent.
+        let child = {
+            let mut rb = remove_rc.borrow_mut();
+            rb.left.take().or_else(|| rb.right.take())
+        };
+        let parent = remove_rc.borrow().parent.upgrade();
+        if let Some(ref ch) = child {
+            ch.borrow_mut().parent = remove_rc.borrow().parent.clone();
+        }
+        match parent {
+            None => self.root = child,
+            Some(ref p) => {
+                let is_left = p
+                    .borrow()
+                    .left
+                    .as_ref()
+                    .is_some_and(|l| Rc::ptr_eq(l, &remove_rc));
+                if is_left {
+                    p.borrow_mut().left = child;
+                } else {
+                    p.borrow_mut().right = child;
+                }
+            }
         }
 
-        self.root = Self::delete_recursive(self.root.take(), start, id, &mut self.marker_map);
+        self.marker_map.remove(&id);
 
-        self.marker_map.remove(&id).is_some()
+        // Rebalance from the splice point up to the root.
+        self.rebalance_upward(parent);
+        true
+    }
+
+    /// Pushes pending lazy deltas from the root down to (and including)
+    /// `node_rc`, so the node holds its true interval and all ancestors on the
+    /// path have a zero `lazy_delta`.
+    fn push_to_node(node_rc: &Rc<RefCell<Node>>) {
+        let mut path: Vec<Rc<RefCell<Node>>> = Vec::new();
+        let mut cur = Some(Rc::clone(node_rc));
+        while let Some(c) = cur {
+            let parent = c.borrow().parent.upgrade();
+            path.push(c);
+            cur = parent;
+        }
+        for n in path.into_iter().rev() {
+            Node::push_delta(&n);
+        }
+    }
+
+    /// Walks from `start` up to the root, refreshing stats and AVL-balancing
+    /// each node, fixing the parent links and `self.root` as subtrees rotate.
+    fn rebalance_upward(&mut self, start: NodePtr) {
+        let mut cur = start;
+        while let Some(n) = cur {
+            let parent = n.borrow().parent.upgrade();
+            Node::update_stats(&n);
+            let new_sub = Self::balance(Rc::clone(&n));
+            match &parent {
+                None => {
+                    if let Some(ref ns) = new_sub {
+                        ns.borrow_mut().parent = Weak::new();
+                    }
+                    self.root = new_sub;
+                }
+                Some(p) => {
+                    let is_left = p.borrow().left.as_ref().is_some_and(|l| Rc::ptr_eq(l, &n));
+                    if let Some(ref ns) = new_sub {
+                        ns.borrow_mut().parent = Rc::downgrade(p);
+                    }
+                    if is_left {
+                        p.borrow_mut().left = new_sub;
+                    } else {
+                        p.borrow_mut().right = new_sub;
+                    }
+                }
+            }
+            cur = parent;
+        }
     }
 
     /// Move a marker to a new position, preserving its ID and type.
@@ -329,7 +437,88 @@ impl IntervalTree {
     /// Adjusts all markers for a text edit (insertion or deletion).
     /// Performance: O(log n) due to lazy delta propagation.
     pub fn adjust_for_edit(&mut self, pos: u64, delta: i64) {
+        // Special case: an insertion landing exactly on a position shared by a
+        // left-gravity marker (which stays put) and a right-gravity marker
+        // (which moves forward). The two markers' relative order is *reversed*
+        // by the edit, but this tree is a positional BST keyed on `(start, id)`
+        // and ordered when each marker was inserted — it cannot represent that
+        // reversal in place. Leaving it would corrupt the BST invariant and
+        // make later start-keyed traversals (adjust/delete/query) misroute,
+        // silently dropping edits to the displaced markers.
+        //
+        // To keep the invariant intact: pull the left-gravity "stayers" out of
+        // the tree first (while ordering is still valid so delete can find
+        // them), shift everything else, then re-insert the stayers at their
+        // correct post-edit interval so the BST is rebuilt in proper order.
+        // Only needed when a co-located right-gravity marker actually moves;
+        // otherwise the in-place adjust already keeps stayers correctly placed.
+        if delta > 0 {
+            // Collect every marker whose start is exactly `pos` by descending
+            // the BST on `start` alone (no reliance on the `max_end`
+            // augmentation, which can be transiently stale under lazy-delta
+            // propagation). The tree is position-ordered here, so this is a
+            // reliable O(log n + k) lookup.
+            let mut at_pos: Vec<(MarkerId, u64, bool, MarkerType)> = Vec::new();
+            Self::collect_starts_at(&self.root, 0, pos, &mut at_pos);
+
+            let has_mover = at_pos.iter().any(|(_, _, rg, _)| *rg);
+            let stayers: Vec<(MarkerId, u64, bool, MarkerType)> =
+                at_pos.into_iter().filter(|(_, _, rg, _)| !*rg).collect();
+
+            if has_mover && !stayers.is_empty() {
+                for (id, _, _, _) in &stayers {
+                    self.delete(*id);
+                }
+                Self::adjust_recursive(&mut self.root, pos, delta);
+                for (id, end, _rg, mtype) in stayers {
+                    // Left-gravity: the start stays at `pos`; the end shifts only
+                    // if it is strictly after `pos`, mirroring the gravity logic
+                    // in adjust_recursive.
+                    let new_end = if end > pos {
+                        (end as i64 + delta) as u64
+                    } else {
+                        end
+                    };
+                    self.insert_with_id(id, pos, new_end, mtype, false);
+                }
+                return;
+            }
+        }
+
         Self::adjust_recursive(&mut self.root, pos, delta);
+    }
+
+    /// Collects `(id, true_end, right_gravity, marker_type)` for every marker
+    /// whose true start equals `pos`. Read-only descent that accumulates lazy
+    /// deltas manually and routes purely on `start`; relies only on the BST's
+    /// position ordering, not on `max_end`.
+    fn collect_starts_at(
+        node: &NodePtr,
+        acc_delta: i64,
+        pos: u64,
+        out: &mut Vec<(MarkerId, u64, bool, MarkerType)>,
+    ) {
+        let Some(n) = node else { return };
+        let nb = n.borrow();
+        let d = acc_delta + nb.lazy_delta;
+        let start = (nb.marker.interval.start as i64 + d) as u64;
+        match pos.cmp(&start) {
+            Ordering::Less => Self::collect_starts_at(&nb.left, d, pos, out),
+            Ordering::Greater => Self::collect_starts_at(&nb.right, d, pos, out),
+            Ordering::Equal => {
+                let end = (nb.marker.interval.end as i64 + d) as u64;
+                out.push((
+                    nb.marker.id,
+                    end,
+                    nb.marker.right_gravity,
+                    nb.marker.marker_type.clone(),
+                ));
+                // Equal-start markers can sit in either subtree (BST tie-break
+                // by id), so search both.
+                Self::collect_starts_at(&nb.left, d, pos, out);
+                Self::collect_starts_at(&nb.right, d, pos, out);
+            }
+        }
     }
 
     /// Finds all markers that overlap a given query range.
@@ -408,106 +597,6 @@ impl IntervalTree {
         drop(root_mut);
         Node::update_stats(&root);
         Self::balance(root)
-    }
-
-    /// Recursive helper for delete
-    fn delete_recursive(
-        root: NodePtr,
-        start: u64,
-        id: MarkerId,
-        marker_map: &mut HashMap<MarkerId, Rc<RefCell<Node>>>,
-    ) -> NodePtr {
-        // Remove unnecessary 'mut'
-        let root = root?;
-
-        Node::push_delta(&root);
-
-        let mut root_mut = root.borrow_mut();
-        let (root_start, root_id) = (root_mut.marker.interval.start, root_mut.marker.id);
-
-        match start.cmp(&root_start) {
-            Ordering::Less => {
-                root_mut.left = Self::delete_recursive(root_mut.left.take(), start, id, marker_map);
-            }
-            Ordering::Greater => {
-                root_mut.right =
-                    Self::delete_recursive(root_mut.right.take(), start, id, marker_map);
-            }
-            Ordering::Equal => match id.cmp(&root_id) {
-                Ordering::Less => {
-                    root_mut.left =
-                        Self::delete_recursive(root_mut.left.take(), start, id, marker_map);
-                }
-                Ordering::Greater => {
-                    root_mut.right =
-                        Self::delete_recursive(root_mut.right.take(), start, id, marker_map);
-                }
-                Ordering::Equal => {
-                    return Self::perform_node_deletion(root_mut, Rc::clone(&root), marker_map);
-                }
-            },
-        }
-
-        drop(root_mut);
-        Node::update_stats(&root);
-        Self::balance(root)
-    }
-
-    /// Handles the actual structural changes for deletion.
-    fn perform_node_deletion(
-        mut node: RefMut<Node>,
-        node_rc: Rc<RefCell<Node>>,
-        marker_map: &mut HashMap<MarkerId, Rc<RefCell<Node>>>,
-    ) -> NodePtr {
-        if node.left.is_none() {
-            let right = node.right.take();
-            if let Some(ref r) = right {
-                r.borrow_mut().parent = node.parent.clone();
-            }
-            right
-        } else if node.right.is_none() {
-            let left = node.left.take();
-            if let Some(ref l) = left {
-                l.borrow_mut().parent = node.parent.clone();
-            }
-            left
-        } else {
-            let successor_rc = Self::min_node(node.right.as_ref().unwrap());
-
-            let (_successor_start, successor_id) = {
-                let s = successor_rc.borrow();
-                (s.marker.interval.start, s.marker.id)
-            };
-
-            // Capture the original node's marker identity BEFORE we swap
-            // it away. After the swap `successor_rc` carries this
-            // marker, and that's what delete_recursive must now search
-            // for in the right subtree to remove it.
-            let (orig_start, orig_id) = (node.marker.interval.start, node.marker.id);
-
-            mem::swap(&mut node.marker, &mut successor_rc.borrow_mut().marker);
-
-            // `node_rc` now carries the successor's marker, so external
-            // references (marker_map) to `successor_id` must point here
-            // instead of at the old successor node (which is about to
-            // be removed). Without this update, `get_position(successor_id)`
-            // would keep resolving via the orphaned successor node and
-            // return stale data — the root cause of end-of-line inlay
-            // hints flipping to the start of their line after a nearby
-            // delete, because the orphan misses all subsequent
-            // adjust_for_edit calls.
-            marker_map.insert(successor_id, Rc::clone(&node_rc));
-
-            // Remove the old successor node. After the swap it holds
-            // the original marker (orig_start, orig_id), so search by
-            // THAT key — not by (successor_start, successor_id) which
-            // no longer corresponds to any node in the subtree.
-            node.right = Self::delete_recursive(node.right.take(), orig_start, orig_id, marker_map);
-
-            drop(node);
-            Node::update_stats(&node_rc);
-            Self::balance(node_rc)
-        }
     }
 
     /// Finds the minimum node in a subtree (for deletion)
@@ -709,6 +798,29 @@ impl IntervalTree {
 }
 
 #[cfg(test)]
+impl IntervalTree {
+    fn debug_dump(&self) -> Vec<(MarkerId, u64, u64, bool)> {
+        let mut out = Vec::new();
+        Self::debug_collect(&self.root, 0, &mut out);
+        out
+    }
+    fn debug_collect(node: &NodePtr, ad: i64, out: &mut Vec<(MarkerId, u64, u64, bool)>) {
+        if let Some(n) = node {
+            let nb = n.borrow();
+            let d = ad + nb.lazy_delta;
+            Self::debug_collect(&nb.left, d, out);
+            out.push((
+                nb.marker.id,
+                (nb.marker.interval.start as i64 + d) as u64,
+                (nb.marker.interval.end as i64 + d) as u64,
+                nb.marker.right_gravity,
+            ));
+            Self::debug_collect(&nb.right, d, out);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -807,6 +919,85 @@ mod tests {
         assert_eq!(get_pos(&tree, m1_end), (2, 2), "first match must not grow");
         assert_eq!(get_pos(&tree, m2_start), (5, 5), "second match shifts");
         assert_eq!(get_pos(&tree, m2_end), (7, 7));
+    }
+
+    #[test]
+    fn test_gravity_reversal_preserves_bst_for_later_edits() {
+        // Regression for prop_shadow_model_matches_tree: a left-gravity marker
+        // and a right-gravity marker created in id-order at distinct positions
+        // can later collide on the same position. An insertion there makes the
+        // right-gravity marker hop *past* the left-gravity one, reversing their
+        // relative order. The positional BST must be rebuilt so that a
+        // *subsequent* edit still routes to the displaced marker — the original
+        // bug left the tree corrupt and silently dropped the later deletion.
+        let mut tree = IntervalTree::new();
+
+        // Created in this id order while positions are distinct.
+        let right = tree.insert(10, 10); // right-gravity, lower id
+        let left = tree.insert_left_gravity(11, 11); // left-gravity, higher id
+
+        // Make them collide at position 10: pull `left` back by deleting the
+        // single byte between them.
+        tree.adjust_for_edit(10, -1);
+        assert_eq!(get_pos(&tree, right), (10, 10));
+        assert_eq!(get_pos(&tree, left), (10, 10));
+
+        // Insert at 10. `right` (right-gravity) hops to 15; `left` stays at 10.
+        // Their order is now reversed relative to the (start, id) BST key.
+        tree.adjust_for_edit(10, 5);
+        assert_eq!(get_pos(&tree, left), (10, 10), "left-gravity marker stays");
+        assert_eq!(
+            get_pos(&tree, right),
+            (15, 15),
+            "right-gravity marker moves"
+        );
+
+        // The real test: a later edit between the two positions must still
+        // reach `right`. Before the fix this deletion never visited `right`'s
+        // node because the BST was corrupt, leaving it stuck at 15.
+        tree.adjust_for_edit(12, -1);
+        assert_eq!(
+            get_pos(&tree, right),
+            (14, 14),
+            "later deletion must still route to the displaced marker"
+        );
+        assert_eq!(get_pos(&tree, left), (10, 10));
+    }
+
+    #[test]
+    fn test_gravity_reversal_after_clamp_with_unordered_ids() {
+        // Production markers get ids in *creation* order, not position order, so
+        // a higher-id marker can sit at a lower position. A deletion can then
+        // clamp two markers to the same point, and a following insertion there
+        // (left-gravity stayer + right-gravity mover) must still be handled
+        // without losing or duplicating a marker.
+        let mut tree = IntervalTree::new();
+        let a = tree.insert(100, 100); // id 0, right-gravity, higher position
+        let b = tree.insert_left_gravity(50, 50); // id 1, left-gravity, lower position
+
+        // Clamp both to position 50.
+        tree.adjust_for_edit(50, -60);
+        assert_eq!(get_pos(&tree, a), (50, 50));
+        assert_eq!(get_pos(&tree, b), (50, 50));
+
+        // Insert at 50: `a` (right-gravity) moves to 55, `b` (left-gravity) stays.
+        tree.adjust_for_edit(50, 5);
+        assert_eq!(get_pos(&tree, b), (50, 50), "left-gravity stayer");
+        assert_eq!(get_pos(&tree, a), (55, 55), "right-gravity mover");
+
+        // Both markers must still be present and a later edit must route to both.
+        tree.adjust_for_edit(52, -1);
+        assert_eq!(get_pos(&tree, a), (54, 54));
+        assert_eq!(get_pos(&tree, b), (50, 50));
+
+        // The tree must hold exactly two physical nodes — no orphan/duplicate
+        // left behind by a misrouted internal delete.
+        assert_eq!(
+            tree.debug_dump().len(),
+            2,
+            "tree leaked a duplicate node: {:?}",
+            tree.debug_dump()
+        );
     }
 
     #[test]
@@ -1095,5 +1286,136 @@ mod tests {
             (24, 24),
             "Marker at 40 should shift to 24"
         );
+    }
+
+    // Property tests exercising the tree directly with creation-order ids
+    // (decoupled from position), mixed gravity, clamping deletes, and explicit
+    // marker deletes — the combination that exposed the BST-ordering and
+    // delete-routing bugs.
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        enum Op {
+            Insert { pos: u64, len: u64 },
+            Delete { pos: u64, len: u64 },
+            CreateMarker { pos: u64, right_gravity: bool },
+            DeleteMarker { idx: usize },
+        }
+
+        fn arb_op(max: u64) -> impl Strategy<Value = Op> {
+            prop_oneof![
+                (0..=max, 1..=50u64).prop_map(|(pos, len)| Op::Insert { pos, len }),
+                (0..=max, 1..=30u64).prop_map(|(pos, len)| Op::Delete { pos, len }),
+                (0..=max, any::<bool>())
+                    .prop_map(|(pos, right_gravity)| Op::CreateMarker { pos, right_gravity }),
+                (0..200usize).prop_map(|idx| Op::DeleteMarker { idx }),
+            ]
+        }
+
+        proptest! {
+            /// The tree's reported positions must always match a naive shadow
+            /// model that slides/clamps point markers independently, regardless
+            /// of marker creation order, gravity, clamping, or interleaved
+            /// marker deletions.
+            #[test]
+            fn prop_tree_matches_shadow_with_unordered_ids(
+                init in prop::collection::vec((0..1000u64, any::<bool>()), 0..15),
+                ops in prop::collection::vec(arb_op(1000), 1..40),
+            ) {
+                let mut tree = IntervalTree::new();
+                // shadow: (id, Option<pos>, right_gravity)
+                let mut shadow: Vec<(MarkerId, Option<u64>, bool)> = Vec::new();
+
+                for (pos, rg) in init {
+                    let id = if rg {
+                        tree.insert(pos, pos)
+                    } else {
+                        tree.insert_left_gravity(pos, pos)
+                    };
+                    shadow.push((id, Some(pos), rg));
+                }
+
+                for op in ops {
+                    match op {
+                        Op::Insert { pos, len } => {
+                            tree.adjust_for_edit(pos, len as i64);
+                            for (_id, p, rg) in shadow.iter_mut() {
+                                if let Some(cur) = p {
+                                    let shifts = if *rg { *cur >= pos } else { *cur > pos };
+                                    if shifts {
+                                        *cur += len;
+                                    }
+                                }
+                            }
+                        }
+                        Op::Delete { pos, len } => {
+                            tree.adjust_for_edit(pos, -(len as i64));
+                            for (_id, p, _rg) in shadow.iter_mut() {
+                                if let Some(cur) = p {
+                                    if *cur >= pos + len {
+                                        *cur -= len;
+                                    } else if *cur > pos {
+                                        *cur = pos;
+                                    }
+                                }
+                            }
+                        }
+                        Op::CreateMarker { pos, right_gravity } => {
+                            let id = if right_gravity {
+                                tree.insert(pos, pos)
+                            } else {
+                                tree.insert_left_gravity(pos, pos)
+                            };
+                            shadow.push((id, Some(pos), right_gravity));
+                        }
+                        Op::DeleteMarker { idx } => {
+                            if !shadow.is_empty() {
+                                let i = idx % shadow.len();
+                                if let (id, Some(_), _) = shadow[i] {
+                                    tree.delete(id);
+                                    shadow[i].1 = None;
+                                }
+                            }
+                        }
+                    }
+
+                    // Every live marker must match its shadow position.
+                    for (id, p, _rg) in &shadow {
+                        if let Some(expected) = p {
+                            let actual = tree.get_position(*id).map(|x| x.0);
+                            prop_assert_eq!(
+                                actual,
+                                Some(*expected),
+                                "marker {} expected at {} but tree says {:?}",
+                                id,
+                                expected,
+                                actual
+                            );
+                        }
+                    }
+
+                    // The tree must remain position-ordered (in-order
+                    // non-decreasing) and free of leaked/duplicate nodes.
+                    let dump = tree.debug_dump();
+                    for w in dump.windows(2) {
+                        prop_assert!(
+                            w[0].1 <= w[1].1,
+                            "BST position order violated: id {}@{} before id {}@{}",
+                            w[0].0, w[0].1, w[1].0, w[1].1
+                        );
+                    }
+                    let live = shadow.iter().filter(|(_, p, _)| p.is_some()).count();
+                    prop_assert_eq!(
+                        dump.len(),
+                        live,
+                        "tree node count {} != live marker count {}",
+                        dump.len(),
+                        live
+                    );
+                }
+            }
+        }
     }
 }
