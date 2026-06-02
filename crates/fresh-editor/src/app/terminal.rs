@@ -513,6 +513,49 @@ impl Window {
         format!("{} (n)", desired)
     }
 
+    /// Update terminal buffers' tab titles from the title the running
+    /// program set via OSC escape codes (OSC 0/1/2). Intended to run once
+    /// per frame. When a terminal hasn't set a title (or only ever set an
+    /// empty one), its buffer keeps whatever name it already had — the
+    /// default `*Terminal N*` or a plugin-provided title.
+    ///
+    /// Titles are sanitized (control characters stripped, length capped)
+    /// the same way as the host window title. OSC titles are applied
+    /// verbatim without the `name (k)` disambiguation used for plugin
+    /// titles: programs rewrite these frequently (e.g. to show the cwd or
+    /// the running command) and re-disambiguating on every change would
+    /// make the suffix flicker.
+    pub fn sync_terminal_titles(&mut self) {
+        // Snapshot (buffer, title) pairs first so the mutable
+        // `buffer_metadata` borrow below doesn't overlap the immutable
+        // `terminal_manager` / `terminal_buffers` borrows. Each terminal
+        // state lock is taken and released within the closure.
+        let updates: Vec<(BufferId, String)> = self
+            .terminal_buffers
+            .iter()
+            .filter_map(|(buffer_id, terminal_id)| {
+                let handle = self.terminal_manager.get(*terminal_id)?;
+                let title = handle.state.lock().ok()?.title().to_string();
+                if title.is_empty() {
+                    return None;
+                }
+                let sanitized = crate::services::terminal_title::sanitize_title(&title);
+                if sanitized.is_empty() {
+                    return None;
+                }
+                Some((*buffer_id, sanitized))
+            })
+            .collect();
+
+        for (buffer_id, title) in updates {
+            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                if meta.display_name != title {
+                    meta.display_name = title;
+                }
+            }
+        }
+    }
+
     /// Open a new terminal in this window: spawn the PTY, create
     /// the buffer, attach to the active split, switch this window's
     /// active buffer to it, enable terminal mode, and resize the PTY

@@ -48,24 +48,50 @@ const SCROLLBACK_LINES: usize = 200_000;
 struct PtyWriteListener {
     /// Queue of data to write back to the PTY
     write_queue: Arc<Mutex<Vec<String>>>,
+    /// Latest title requested by the program via OSC 0/1/2 (or a reset
+    /// via the OSC reset sequence). `Some` means a change is pending;
+    /// the inner string is the new title (empty string for a reset).
+    /// `process_output` drains this after parsing to update the
+    /// terminal's stored title.
+    pending_title: Arc<Mutex<Option<String>>>,
 }
 
 impl PtyWriteListener {
     fn new() -> Self {
         Self {
             write_queue: Arc::new(Mutex::new(Vec::new())),
+            pending_title: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl EventListener for PtyWriteListener {
     fn send_event(&self, event: Event) {
-        if let Event::PtyWrite(text) = event {
-            if let Ok(mut queue) = self.write_queue.lock() {
-                queue.push(text);
+        match event {
+            Event::PtyWrite(text) => {
+                if let Ok(mut queue) = self.write_queue.lock() {
+                    queue.push(text);
+                }
             }
+            // OSC 0 (icon + window title), OSC 1 (icon title), and OSC 2
+            // (window title) all surface as `Title`. Record the latest;
+            // `process_output` propagates it to `terminal_title` so the
+            // buffer's tab auto-adjusts to whatever the running program set.
+            Event::Title(title) => {
+                if let Ok(mut pending) = self.pending_title.lock() {
+                    *pending = Some(title);
+                }
+            }
+            // Title reset (OSC with empty payload) — clear back to the
+            // buffer's default name by recording an empty title.
+            Event::ResetTitle => {
+                if let Ok(mut pending) = self.pending_title.lock() {
+                    *pending = Some(String::new());
+                }
+            }
+            // Other events (ClipboardStore, etc.) are ignored for now.
+            _ => {}
         }
-        // Other events (Title, ClipboardStore, etc.) are ignored for now
     }
 }
 
@@ -88,6 +114,9 @@ pub struct TerminalState {
     backing_file_history_end: u64,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
+    /// Pending title set by the program via OSC 0/1/2 (shared with the
+    /// event listener). Drained in `process_output` into `terminal_title`.
+    pending_title: Arc<Mutex<Option<String>>>,
 }
 
 impl TerminalState {
@@ -100,6 +129,7 @@ impl TerminalState {
         };
         let listener = PtyWriteListener::new();
         let pty_write_queue = listener.write_queue.clone();
+        let pending_title = listener.pending_title.clone();
         let term = Term::new(config, &size, listener);
 
         Self {
@@ -112,6 +142,7 @@ impl TerminalState {
             synced_history_lines: 0,
             backing_file_history_end: 0,
             pty_write_queue,
+            pending_title,
         }
     }
 
@@ -130,6 +161,14 @@ impl TerminalState {
     /// Process output from the PTY
     pub fn process_output(&mut self, data: &[u8]) {
         self.parser.advance(&mut self.term, data);
+        // The parser may have emitted OSC title events (0/1/2) into the
+        // listener's pending slot during `advance`. Apply the latest so
+        // the stored title reflects what the program requested.
+        if let Ok(mut pending) = self.pending_title.lock() {
+            if let Some(title) = pending.take() {
+                self.terminal_title = title;
+            }
+        }
         self.dirty = true;
     }
 
@@ -1019,5 +1058,38 @@ mod tests {
         let response = &responses[0];
         // Should report position as row 5, col 10
         assert_eq!(response, "\x1b[5;10R", "Response should be \\x1b[5;10R");
+    }
+
+    /// OSC 2 ("set window title") drives the stored terminal title so the
+    /// buffer's tab can auto-adjust to whatever the program requested.
+    #[test]
+    fn test_osc_set_window_title() {
+        let mut state = TerminalState::new(80, 24);
+        assert_eq!(state.title(), "");
+        // ESC ] 2 ; <title> BEL
+        state.process_output(b"\x1b]2;my-shell: ~/project\x07");
+        assert_eq!(state.title(), "my-shell: ~/project");
+    }
+
+    /// OSC 0 sets both the icon name and the window title; we treat it the
+    /// same as OSC 2 for the buffer title.
+    #[test]
+    fn test_osc_set_icon_and_window_title() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]0;vim README.md\x07");
+        assert_eq!(state.title(), "vim README.md");
+    }
+
+    /// A later OSC title overrides an earlier one, and the title can arrive
+    /// in the same chunk as other output.
+    #[test]
+    fn test_osc_title_updates_and_mixes_with_output() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]2;first\x07hello");
+        assert_eq!(state.title(), "first");
+        state.process_output(b"world\x1b]2;second\x07");
+        assert_eq!(state.title(), "second");
+        // The printable bytes still landed on the grid.
+        assert!(state.content_string().contains("helloworld"));
     }
 }

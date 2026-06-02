@@ -80,6 +80,13 @@ impl Editor {
             }
         }
 
+        // Refresh terminal tab titles from any OSC 0/1/2 title the running
+        // programs set since the last frame. Done for every window so
+        // background tabs stay current, not just the active one.
+        for window in self.windows.values_mut() {
+            window.sync_terminal_titles();
+        }
+
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
         // chrome lays itself out, so the menu bar, splits, and status
