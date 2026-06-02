@@ -201,6 +201,20 @@ pub struct ScrollRegion {
     pub scroll: usize,
 }
 
+/// Output of a single [`render_collected`] call (or one of the
+/// standalone arm helpers). Replaces the six-element tuple that was
+/// the previous return type, giving call sites named fields instead
+/// of positional slots.
+#[derive(Default)]
+struct CollectedOutput {
+    entries: Vec<TextPropertyEntry>,
+    hits: Vec<HitArea>,
+    focus_cursor: Option<FocusCursor>,
+    embeds: Vec<EmbedRect>,
+    overlays: Vec<OverlayRow>,
+    scroll_regions: Vec<ScrollRegion>,
+}
+
 /// Render a spec to a [`RenderOutput`].
 ///
 /// `prev` is the previous render's instance state (or empty on
@@ -254,18 +268,17 @@ fn render_spec_inner(
     };
 
     let mut next_state = HashMap::new();
-    let (entries, hits, focus_cursor, embeds, overlays, scroll_regions) =
-        render_collected(spec, prev, &mut next_state, &focus_key, panel_width);
+    let collected = render_collected(spec, prev, &mut next_state, &focus_key, panel_width);
     RenderOutput {
-        entries,
-        hits,
+        entries: collected.entries,
+        hits: collected.hits,
         instance_states: next_state,
         focus_key,
         tabbable,
-        focus_cursor,
-        embeds,
-        overlays,
-        scroll_regions,
+        focus_cursor: collected.focus_cursor,
+        embeds: collected.embeds,
+        overlays: collected.overlays,
+        scroll_regions: collected.scroll_regions,
     }
 }
 
@@ -425,14 +438,7 @@ fn render_collected(
     next_state: &mut HashMap<String, WidgetInstanceState>,
     focus_key: &str,
     panel_width: u32,
-) -> (
-    Vec<TextPropertyEntry>,
-    Vec<HitArea>,
-    Option<FocusCursor>,
-    Vec<EmbedRect>,
-    Vec<OverlayRow>,
-    Vec<ScrollRegion>,
-) {
+) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
     let mut hits: Vec<HitArea> = Vec::new();
     // At most one TextInput is focused per panel, so the cursor
@@ -507,25 +513,19 @@ fn render_collected(
                     continue;
                 }
                 let child_panel_width = per_child_width[idx];
-                let (
-                    child_entries,
-                    child_hits,
-                    child_focus,
-                    child_embeds,
-                    child_overlays,
-                    child_scroll,
-                ) = render_collected(child, prev, next_state, focus_key, child_panel_width);
+                let child_out =
+                    render_collected(child, prev, next_state, focus_key, child_panel_width);
                 // Rows can host overlays in principle (e.g. a
                 // tooltip on a button); forward them up without
                 // a row-offset adjustment — Row pieces all sit
                 // on the same buffer-row as the merged row.
-                overlays.extend(child_overlays);
-                if child_entries.is_empty() {
-                    debug_assert!(child_hits.is_empty(), "empty children produce no hits");
+                overlays.extend(child_out.overlays);
+                if child_out.entries.is_empty() {
+                    debug_assert!(child_out.hits.is_empty(), "empty children produce no hits");
                     continue;
                 }
-                if child_entries.len() == 1 {
-                    let mut entry = child_entries.into_iter().next().unwrap();
+                if child_out.entries.len() == 1 {
+                    let mut entry = child_out.entries.into_iter().next().unwrap();
                     // Inline children can't carry their own newlines
                     // — that would split the merged Row across
                     // buffer lines. The Row's final merged entry
@@ -533,19 +533,19 @@ fn render_collected(
                     strip_trailing_newline(&mut entry);
                     row_pieces.push(RowPiece::Inline {
                         entry,
-                        hits: child_hits,
-                        focus_cursor: child_focus,
-                        embeds: child_embeds,
-                        scroll_regions: child_scroll,
+                        hits: child_out.hits,
+                        focus_cursor: child_out.focus_cursor,
+                        embeds: child_out.embeds,
+                        scroll_regions: child_out.scroll_regions,
                     });
                 } else {
                     row_pieces.push(RowPiece::Block {
                         column_width: child_panel_width,
-                        entries: child_entries,
-                        hits: child_hits,
-                        focus_cursor: child_focus,
-                        embeds: child_embeds,
-                        scroll_regions: child_scroll,
+                        entries: child_out.entries,
+                        hits: child_out.hits,
+                        focus_cursor: child_out.focus_cursor,
+                        embeds: child_out.embeds,
+                        scroll_regions: child_out.scroll_regions,
                     });
                 }
             }
@@ -691,14 +691,7 @@ fn render_collected(
                 // afterwards without pushing the rest of the
                 // col downward.
                 let is_overlay = matches!(child, WidgetSpec::Overlay { .. });
-                let (
-                    child_entries,
-                    child_hits,
-                    child_focus,
-                    child_embeds,
-                    child_overlays,
-                    child_scroll,
-                ) = render_collected(child, prev, next_state, focus_key, panel_width);
+                let child_out = render_collected(child, prev, next_state, focus_key, panel_width);
                 let row_offset = entries.len() as u32;
                 if is_overlay {
                     // Promote the overlay child's regular
@@ -707,13 +700,13 @@ fn render_collected(
                     // for those entries are shifted to the same
                     // anchor row so click-to-pick targets the
                     // painted row.
-                    for (i, e) in child_entries.into_iter().enumerate() {
+                    for (i, e) in child_out.entries.into_iter().enumerate() {
                         overlays.push(OverlayRow {
                             buffer_row: row_offset + i as u32,
                             entry: e,
                         });
                     }
-                    for mut h in child_hits {
+                    for mut h in child_out.hits {
                         h.buffer_row += row_offset;
                         hits.push(h);
                     }
@@ -721,49 +714,49 @@ fn render_collected(
                     // legal) anchors at the same row; without
                     // this shift Up/Down + cursor placement
                     // would land on the col's "natural" row.
-                    if let Some(mut fc) = child_focus {
+                    if let Some(mut fc) = child_out.focus_cursor {
                         fc.buffer_row += row_offset;
                         focus_cursor = Some(fc);
                     }
                     // Forward nested overlays without further
                     // adjustment (already anchored).
-                    overlays.extend(child_overlays);
+                    overlays.extend(child_out.overlays);
                     // Embeds inside an overlay don't make sense
                     // today (a window-embed below a popup would
                     // be confusing) — propagate at the same
                     // anchor row so behaviour is well-defined
                     // if someone tries it.
-                    for mut emb in child_embeds {
+                    for mut emb in child_out.embeds {
                         emb.buffer_row += row_offset;
                         embeds.push(emb);
                     }
-                    for mut sr in child_scroll {
+                    for mut sr in child_out.scroll_regions {
                         sr.buffer_row += row_offset;
                         scroll_regions.push(sr);
                     }
                     continue;
                 }
-                for mut h in child_hits {
+                for mut h in child_out.hits {
                     h.buffer_row += row_offset;
                     hits.push(h);
                 }
-                if let Some(mut fc) = child_focus {
+                if let Some(mut fc) = child_out.focus_cursor {
                     fc.buffer_row += row_offset;
                     focus_cursor = Some(fc);
                 }
-                for mut emb in child_embeds {
+                for mut emb in child_out.embeds {
                     emb.buffer_row += row_offset;
                     embeds.push(emb);
                 }
-                for mut sr in child_scroll {
+                for mut sr in child_out.scroll_regions {
                     sr.buffer_row += row_offset;
                     scroll_regions.push(sr);
                 }
-                overlays.extend(child_overlays.into_iter().map(|mut o| {
+                overlays.extend(child_out.overlays.into_iter().map(|mut o| {
                     o.buffer_row += row_offset;
                     o
                 }));
-                entries.extend(child_entries);
+                entries.extend(child_out.entries);
             }
         }
         WidgetSpec::HintBar {
@@ -872,152 +865,19 @@ fn render_collected(
             focusable: _,
             key: list_key,
         } => {
-            // Look up host-owned scroll + selected index from prev
-            // state (becomes authoritative after first render).
-            // Spec's `selected_index` is initial-only on first
-            // mount; subsequent updates read instance state.
-            let total = items.len() as u32;
-            let visible = (*visible_rows).max(1);
-            let (prev_scroll, prev_sel) = list_key
-                .as_deref()
-                .and_then(|k| prev.get(k))
-                .and_then(|s| match s {
-                    WidgetInstanceState::List {
-                        scroll_offset,
-                        selected_index,
-                    } => Some((*scroll_offset, *selected_index)),
-                    _ => None,
-                })
-                .unwrap_or((0, *selected_index));
-            // Clamp the previous selection to the current dataset
-            // size — items may have shrunk between renders (e.g.
-            // search results changed). Out-of-range selections
-            // collapse to the last item, or -1 if the list is
-            // now empty.
-            let effective_sel = if prev_sel < 0 || total == 0 {
-                -1
-            } else if (prev_sel as u32) >= total {
-                (total - 1) as i32
-            } else {
-                prev_sel
-            };
-
-            // Compute scroll: auto-clamp to keep selection in view
-            // and never extend past the dataset end.
-            let mut scroll = prev_scroll;
-            if effective_sel >= 0 {
-                let sel = effective_sel as u32;
-                if sel < scroll {
-                    scroll = sel;
-                }
-                if sel >= scroll + visible {
-                    scroll = sel + 1 - visible;
-                }
-            }
-            let max_scroll = total.saturating_sub(visible);
-            if scroll > max_scroll {
-                scroll = max_scroll;
-            }
-            // Persist scroll + selection for the next render.
-            // Lists without a `key` lose state across updates.
-            if let Some(k) = list_key.as_deref() {
-                next_state.insert(
-                    k.to_string(),
-                    WidgetInstanceState::List {
-                        scroll_offset: scroll,
-                        selected_index: effective_sel,
-                    },
-                );
-            }
-
-            // Render the visible window, emitting one entry + one
-            // hit area per visible item. Selected row gets the
-            // popup_selection_bg + extend_to_line_end style. Hit-area
-            // payload uses the *absolute* item index so the plugin
-            // never needs to translate window-relative coordinates.
-            //
-            // After the real items we pad with blank entries up to
-            // `visible` rows so the List occupies the full height
-            // its `visible_rows` advertises (Bug 1). Without this
-            // padding, a list with 3 items inside a `visible_rows=20`
-            // labeledSection closes its bottom border 17 rows above
-            // where the sibling preview pane closes — the
-            // wireframed dialog shape called for matched heights.
-            let start = scroll as usize;
-            let end = ((scroll + visible) as usize).min(items.len());
-            for (offset, item) in items[start..end].iter().enumerate() {
-                let i = start + offset;
-                let mut entry = item.clone();
-                entry.normalize_widths();
-                let is_selected = i as i32 == effective_sel;
-                if is_selected {
-                    let mut style = entry.style.unwrap_or_default();
-                    style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
-                    style.extend_to_line_end = true;
-                    entry.style = Some(style);
-                }
-                let byte_end = entry.text.len();
-                ensure_trailing_newline(&mut entry);
-                entries.push(entry);
-                let item_key = item_keys.get(i).cloned().unwrap_or_default();
-                let hit_row = (entries.len() - 1) as u32;
-                hits.push(HitArea {
-                    widget_key: item_key.clone(),
-                    widget_kind: "list",
-                    buffer_row: hit_row,
-                    byte_start: 0,
-                    byte_end,
-                    payload: json!({
-                        "index": i as i64,
-                        "key": item_key,
-                        // The List's own spec key, so a click handler can
-                        // update the host-owned selection instance state
-                        // (keyed by this) — the item key in `key` is not
-                        // enough to find the widget. Null for keyless lists.
-                        "list_key": list_key.as_deref(),
-                    }),
-                    event_type: "select",
-                });
-            }
-            // Pad to `visible` rows with blank entries. Hit areas
-            // intentionally not emitted for the padding — those rows
-            // aren't clickable items.
-            let rendered_items = (end - start) as u32;
-            for _ in rendered_items..visible {
-                let mut padding = TextPropertyEntry {
-                    text: String::new(),
-                    properties: Default::default(),
-                    style: None,
-                    inline_overlays: Vec::new(),
-                    segments: Vec::new(),
-                    pad_to_chars: None,
-                    truncate_to_chars: None,
-                };
-                ensure_trailing_newline(&mut padding);
-                entries.push(padding);
-            }
-
-            // Surface a scroll region for the host to paint a draggable
-            // scrollbar when the list overflows its visible height. The
-            // region is panel-relative-from-this-render: buffer_row 0 is
-            // the first list row, col 0 the list's left edge; the
-            // compositor (Row/Col/Section) offsets both as it places the
-            // list. The scrollbar lives in the rightmost column
-            // (`col_in_row + width_cols - 1`).
-            if total > visible {
-                if let Some(k) = list_key.as_deref() {
-                    scroll_regions.push(ScrollRegion {
-                        list_key: k.to_string(),
-                        buffer_row: 0,
-                        col_in_row: 0,
-                        width_cols: panel_width,
-                        height_rows: visible,
-                        total: total as usize,
-                        visible: visible as usize,
-                        scroll: scroll as usize,
-                    });
-                }
-            }
+            let list_out = render_widget_list(
+                items,
+                item_keys,
+                *selected_index,
+                *visible_rows,
+                list_key.as_deref(),
+                prev,
+                next_state,
+                panel_width,
+            );
+            entries.extend(list_out.entries);
+            hits.extend(list_out.hits);
+            scroll_regions.extend(list_out.scroll_regions);
         }
         WidgetSpec::Tree {
             nodes,
@@ -1028,222 +888,19 @@ fn render_collected(
             checkable,
             key: tree_key,
         } => {
-            // Look up host-owned instance state (scroll, selection,
-            // expanded set). Spec values are initial-only.
-            let prev_state = tree_key
-                .as_deref()
-                .filter(|k| !k.is_empty())
-                .and_then(|k| prev.get(k));
-            let (prev_scroll, prev_sel, prev_expanded) = match prev_state {
-                Some(WidgetInstanceState::Tree {
-                    scroll_offset,
-                    selected_index,
-                    expanded_keys,
-                }) => (*scroll_offset, *selected_index, expanded_keys.clone()),
-                _ => {
-                    // First render: seed expanded_keys from spec.
-                    let seeded: HashSet<String> = expanded_keys.iter().cloned().collect();
-                    (0, *selected_index, seeded)
-                }
-            };
-
-            // Compute the visible (un-collapsed) flat slice of the
-            // full `nodes` list. A node at depth d is visible iff
-            // every ancestor (the most recent earlier node at depth
-            // d-1, that node's most recent earlier at d-2, etc.) is
-            // expanded. Walk linearly tracking ancestor expansion at
-            // each depth — set ancestor[d] = is_expanded(node) when
-            // we visit a node at depth d, and consider a node
-            // visible iff ancestor[0..node.depth] are all true.
-            //
-            // O(N * max_depth) — fine; trees in this editor are
-            // shallow (filesystem trees, search-results trees).
-            let mut ancestor_open: Vec<bool> = Vec::new();
-            let mut visible_indices: Vec<usize> = Vec::with_capacity(nodes.len());
-            for (i, node) in nodes.iter().enumerate() {
-                let depth = node.depth as usize;
-                // Truncate the ancestor stack to this node's depth.
-                ancestor_open.truncate(depth);
-                let visible = ancestor_open.iter().all(|open| *open);
-                if visible {
-                    visible_indices.push(i);
-                }
-                // Push this node's own openness onto the stack so
-                // descendants see it. The node is "open" iff it has
-                // children AND its key is in expanded_keys; leaves
-                // act like open nodes (their nonexistent descendants
-                // can't be hidden anyway).
-                let key = item_keys.get(i).cloned().unwrap_or_default();
-                let is_open = if node.has_children {
-                    !key.is_empty() && prev_expanded.contains(&key)
-                } else {
-                    true
-                };
-                ancestor_open.push(is_open);
-            }
-
-            // Clamp the previous selection to a visible index. The
-            // selected_index in the spec/instance state references
-            // the *absolute* `nodes` index; if that node is now
-            // hidden (parent collapsed), find the closest visible
-            // node at-or-before it. If no visible nodes, -1.
-            let total_visible = visible_indices.len() as u32;
-            let visible = (*visible_rows).max(1);
-            let clamp_to_visible = |abs: i32| -> i32 {
-                if abs < 0 || nodes.is_empty() {
-                    return -1;
-                }
-                let abs = abs.min((nodes.len() as i32) - 1) as usize;
-                if let Ok(_pos) = visible_indices.binary_search(&abs) {
-                    return abs as i32;
-                }
-                // Not visible — fall back to the nearest earlier
-                // visible node, else the first visible node, else -1.
-                let earlier = visible_indices.iter().rev().find(|&&v| v <= abs);
-                if let Some(&v) = earlier {
-                    return v as i32;
-                }
-                visible_indices.first().map(|&v| v as i32).unwrap_or(-1)
-            };
-            let effective_sel_abs = clamp_to_visible(prev_sel);
-            // Find the position of the selected absolute index in
-            // visible_indices — that's its "visible-window position"
-            // used for scroll math.
-            let sel_visible_pos: i32 = if effective_sel_abs < 0 {
-                -1
-            } else {
-                visible_indices
-                    .iter()
-                    .position(|&v| v == effective_sel_abs as usize)
-                    .map(|p| p as i32)
-                    .unwrap_or(-1)
-            };
-
-            // Compute scroll: same auto-clamp logic as List, but
-            // operating on the visible-windowed indices.
-            let mut scroll = prev_scroll;
-            if sel_visible_pos >= 0 {
-                let sel = sel_visible_pos as u32;
-                if sel < scroll {
-                    scroll = sel;
-                }
-                if sel >= scroll + visible {
-                    scroll = sel + 1 - visible;
-                }
-            }
-            let max_scroll = total_visible.saturating_sub(visible);
-            if scroll > max_scroll {
-                scroll = max_scroll;
-            }
-
-            // Persist instance state.
-            if let Some(k) = tree_key.as_deref().filter(|k| !k.is_empty()) {
-                next_state.insert(
-                    k.to_string(),
-                    WidgetInstanceState::Tree {
-                        scroll_offset: scroll,
-                        selected_index: effective_sel_abs,
-                        expanded_keys: prev_expanded.clone(),
-                    },
-                );
-            }
-
-            // Render the visible window.
-            let start = scroll as usize;
-            let end = ((scroll + visible) as usize).min(visible_indices.len());
-            for &abs_idx in &visible_indices[start..end] {
-                // Apply pad/truncate hints and convert any char-unit
-                // overlays to byte offsets *before* the disclosure
-                // prefix is prepended; render_tree_row then byte-shifts
-                // the (now byte-unit) overlays uniformly.
-                let mut node = nodes[abs_idx].clone();
-                node.text.normalize_widths();
-                let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
-                let is_expanded =
-                    node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
-                let rendered = render_tree_row(&node, is_expanded, *checkable);
-                let mut entry = rendered.entry;
-                let is_selected = abs_idx as i32 == effective_sel_abs;
-                if is_selected {
-                    let mut style = entry.style.unwrap_or_default();
-                    style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
-                    style.extend_to_line_end = true;
-                    entry.style = Some(style);
-                }
-                let row_byte_end = entry.text.len();
-                ensure_trailing_newline(&mut entry);
-                entries.push(entry);
-                let hit_row = (entries.len() - 1) as u32;
-                // Disclosure hit (only when has_children) — fires
-                // `expand`. The host toggles instance-state
-                // `expanded_keys` and re-renders before firing the
-                // event; the plugin only listens if it cares about
-                // expansion changes.
-                // Tree hits use the *tree's* spec key for
-                // `widget_key` (so click-to-focus works the same
-                // as Toggle/Button — the tree is tabbable). The
-                // per-row key travels in the payload.
-                let tree_spec_key = tree_key.clone().unwrap_or_default();
-                if let Some(disc_range) = rendered.disclosure_range {
-                    hits.push(HitArea {
-                        widget_key: tree_spec_key.clone(),
-                        widget_kind: "tree",
-                        buffer_row: hit_row,
-                        byte_start: disc_range.0,
-                        byte_end: disc_range.1,
-                        payload: json!({
-                            "index": abs_idx as i64,
-                            "key": item_key.clone(),
-                            "expanded": !is_expanded,
-                        }),
-                        event_type: "expand",
-                    });
-                }
-                // Checkbox hit (when the parent Tree is checkable
-                // *and* this node has Some(_) checked) — fires
-                // `toggle` with the *new* checked value. The host
-                // does not mutate the spec; the plugin owns the
-                // truth and pushes the new state back via
-                // `WidgetMutation::SetCheckedKeys`.
-                if let Some(cb_range) = rendered.checkbox_range {
-                    let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
-                    hits.push(HitArea {
-                        widget_key: tree_spec_key.clone(),
-                        widget_kind: "tree",
-                        buffer_row: hit_row,
-                        byte_start: cb_range.0,
-                        byte_end: cb_range.1,
-                        payload: json!({
-                            "index": abs_idx as i64,
-                            "key": item_key.clone(),
-                            "checked": new_checked,
-                        }),
-                        event_type: "toggle",
-                    });
-                }
-                // Row body hit — fires `select`. Spans whatever's
-                // left of the row text after the disclosure +
-                // checkbox prefix.
-                let body_start = match (rendered.checkbox_range, rendered.disclosure_range) {
-                    (Some((_, end)), _) => end + 1, // +1 for the trailing space after [v]
-                    (None, Some((_, end))) => end,
-                    (None, None) => 0,
-                };
-                if body_start < row_byte_end {
-                    hits.push(HitArea {
-                        widget_key: tree_spec_key,
-                        widget_kind: "tree",
-                        buffer_row: hit_row,
-                        byte_start: body_start,
-                        byte_end: row_byte_end,
-                        payload: json!({
-                            "index": abs_idx as i64,
-                            "key": item_key,
-                        }),
-                        event_type: "select",
-                    });
-                }
-            }
+            let tree_out = render_widget_tree(
+                nodes,
+                item_keys,
+                *selected_index,
+                *visible_rows,
+                expanded_keys,
+                *checkable,
+                tree_key.as_deref(),
+                prev,
+                next_state,
+            );
+            entries.extend(tree_out.entries);
+            hits.extend(tree_out.hits);
         }
         WidgetSpec::Text {
             value,
@@ -1255,301 +912,36 @@ fn render_collected(
             field_width,
             max_visible_chars,
             full_width,
-            completions,
+            completions: _,
             completions_visible_rows,
             key,
         } => {
-            let _ = completions; // pulled from instance state below
-                                 // Default popup height: 5 visible rows. Plugins
-                                 // override per-widget by setting
-                                 // `completions_visible_rows`; 0 falls back to the
-                                 // default so the orchestrator's existing `text({...})`
-                                 // calls Just Work without opting in.
-            let effective_visible_rows = if *completions_visible_rows == 0 {
-                5u32
-            } else {
-                *completions_visible_rows
-            };
-
-            let is_focused = match key.as_deref() {
-                Some(k) if !k.is_empty() => k == focus_key,
-                _ => *focused,
-            };
-            // Host-owned value/cursor (+ scroll, multi-line only):
-            // read instance state if it exists; else seed from spec
-            // on first render. See WidgetInstanceState::Text doc.
-            //
-            // `rows == 0` shouldn't happen because of serde's
-            // default = 1, but if it slips through (raw struct
-            // construction in tests, etc.) treat it as single-line.
-            let multiline_spec = *rows > 1;
-            let mut effective_editor: crate::primitives::text_edit::TextEdit;
-            let prev_scroll: u32;
-            // Completions + selected index ride along on the
-            // Text widget's instance state — neither comes from
-            // the spec (plugins push via `SetCompletions`), so we
-            // carry them across renders verbatim and clamp the
-            // index to the current list size below.
-            let mut prev_completions: Vec<fresh_core::api::CompletionItem> = Vec::new();
-            let mut prev_completion_idx: usize = 0;
-            let mut prev_completion_scroll: u32 = 0;
-            match key
-                .as_deref()
-                .filter(|k| !k.is_empty())
-                .and_then(|k| prev.get(k))
-            {
-                Some(WidgetInstanceState::Text {
-                    editor,
-                    scroll,
-                    completions,
-                    completion_selected_index,
-                    completion_scroll_offset,
-                }) => {
-                    effective_editor = editor.clone();
-                    prev_scroll = *scroll;
-                    prev_completions = completions.clone();
-                    prev_completion_idx = *completion_selected_index;
-                    prev_completion_scroll = *completion_scroll_offset;
-                }
-                _ => {
-                    effective_editor = if multiline_spec {
-                        crate::primitives::text_edit::TextEdit::with_text(value)
-                    } else {
-                        crate::primitives::text_edit::TextEdit::single_line_with_text(value)
-                    };
-                    let seed = if *cursor_byte < 0 {
-                        value.len()
-                    } else {
-                        (*cursor_byte as usize).min(value.len())
-                    };
-                    effective_editor.set_cursor_from_flat(seed);
-                    prev_scroll = 0;
-                }
-            }
-            // Clamp once per render so a list that shrank
-            // host-side (or arrived empty) doesn't keep a stale
-            // out-of-bounds index alive.
-            if !prev_completions.is_empty() {
-                prev_completion_idx = prev_completion_idx.min(prev_completions.len() - 1);
-            } else {
-                prev_completion_idx = 0;
-            }
-            let effective_value = effective_editor.value();
-            let effective_cursor_byte = effective_editor.flat_cursor_byte() as i32;
-            let effective_cursor = if is_focused {
-                effective_cursor_byte
-            } else {
-                -1
-            };
-            let multiline = multiline_spec;
-            // When `full_width` is requested, override the
-            // plugin-supplied `field_width` with the slice of
-            // `panel_width` remaining after the label prefix,
-            // the two surrounding `[` / `]` brackets, and one
-            // trailing column reserved for the cursor-park space
-            // `render_text_input` appends when focused. Reserving
-            // unconditionally costs an unfocused field one
-            // trailing space but keeps the rendered width stable
-            // across the focus transition — without it the field
-            // would overflow the parent on focus. For multi-line
-            // we don't need the focus reservation but keep the
-            // same calculation for symmetry; `render_text_area`
-            // already fills the panel width by default.
-            let effective_field_width = if *full_width && !multiline {
-                let label_overhead = if label.is_empty() {
-                    0u32
-                } else {
-                    label.chars().count() as u32 + 1
-                };
-                panel_width
-                    .saturating_sub(label_overhead)
-                    .saturating_sub(3)
-                    .max(1)
-            } else {
-                *field_width
-            };
-            // Selection overlay is only meaningful for the focused
-            // widget — passing `None` otherwise keeps the no-selection
-            // rendering paths unchanged.
-            let selection_for_render = if is_focused {
-                effective_editor.selection_flat_range()
-            } else {
-                None
-            };
-            let new_scroll;
-            if multiline {
-                let rendered = render_text_area(
-                    &effective_value,
-                    effective_cursor,
-                    selection_for_render,
-                    is_focused,
-                    label,
-                    placeholder.as_deref(),
-                    *rows,
-                    effective_field_width,
-                    prev_scroll,
-                    panel_width,
-                );
-                new_scroll = rendered.scroll_row;
-                if let (Some(buffer_row), Some(byte_in_row)) =
-                    (rendered.cursor_buffer_row, rendered.cursor_byte_in_row)
-                {
-                    focus_cursor = Some(FocusCursor {
-                        buffer_row,
-                        byte_in_row: byte_in_row as u32,
-                    });
-                }
-                for mut e in rendered.entries {
-                    ensure_trailing_newline(&mut e);
-                    entries.push(e);
-                }
-            } else {
-                let rendered = render_text_input(
-                    &effective_value,
-                    effective_cursor,
-                    selection_for_render,
-                    is_focused,
-                    label,
-                    placeholder.as_deref(),
-                    *max_visible_chars,
-                    effective_field_width,
-                    *full_width,
-                );
-                new_scroll = 0;
-                if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
-                    focus_cursor = Some(FocusCursor {
-                        buffer_row: 0,
-                        byte_in_row: byte_in_row as u32,
-                    });
-                }
-                let mut entry = rendered.entry;
-                ensure_trailing_newline(&mut entry);
-                entries.push(entry);
-            }
-            // Persist instance state for next render. `editor`
-            // already carries the canonical cursor (row/col +
-            // selection); `scroll` carries the renderer's
-            // auto-clamped first-visible-row for multi-line, or `0`
-            // for single-line.
-            //
-            // Emit the completion popup as *overlay rows* rather
-            // than regular entries so it floats — the rest of the
-            // form below the input keeps its layout position and
-            // the popup paints on top. The overlay anchors are
-            // chosen so the dim separator lands on top of the
-            // wrapping `LabeledSection`'s bottom border (visually
-            // replacing it), and the side borders + bottom
-            // border that follow paint over whatever sits below
-            // the section. See `render_completion_*` helpers for
-            // the chrome detail.
-            if !prev_completions.is_empty() {
-                // `panel_width` here is the inner-area width the
-                // wrapping `LabeledSection` handed us (it has
-                // already subtracted its own 4 columns of chrome
-                // — `│ ` on the left + ` │` on the right). The
-                // overlay rows need to paint into the full panel
-                // width (including those `│ ... │` columns), so
-                // we widen by 4 here so the side borders the
-                // popup paints line up with the section's.
-                let popup_inner = panel_width as usize;
-                let popup_total = popup_inner.saturating_add(4); // re-add section chrome
-                let total = prev_completions.len() as u32;
-                let visible = effective_visible_rows.max(1).min(total);
-                // Forward-only auto-scroll: when the selection
-                // walks past the bottom of the visible window
-                // (Down past the last visible row), pull the
-                // scroll forward to keep selection in view. We
-                // deliberately do NOT pull the scroll *back* if
-                // the selection is above the window — the
-                // mouse-wheel scroll handler explicitly diverges
-                // scroll from selection (the user is scrolling
-                // the view, not the selection), and a back-pull
-                // here would undo the wheel's scroll on the very
-                // next render. The keyboard Up handler updates
-                // scroll itself when needed, so it doesn't rely
-                // on a back-pull from the renderer either.
-                let sel = prev_completion_idx as u32;
-                let mut scroll = prev_completion_scroll;
-                if sel >= scroll + visible {
-                    scroll = sel + 1 - visible;
-                }
-                let max_scroll = total.saturating_sub(visible);
-                if scroll > max_scroll {
-                    scroll = max_scroll;
-                }
-                prev_completion_scroll = scroll;
-
-                // Overlay anchors:
-                //   anchor 0 = the text widget's own row (input)
-                //   anchor 1 = labeledSection's bottom border row
-                //              (the dim separator paints here,
-                //              replacing the section's `╰─...─╯`
-                //              visually)
-                //   anchor 2..N+1 = item rows
-                //   anchor N+2 = popup's own bottom border
-                //              `╰─...─╯` (a `LabeledSection`
-                //              passes child overlays through
-                //              unchanged, see widgets/render.rs
-                //              `LabeledSection` branch).
-                let mut anchor: u32 = 1;
-                overlays.push(OverlayRow {
-                    buffer_row: anchor,
-                    entry: render_completion_dim_separator_overlay(popup_total),
-                });
-                anchor += 1;
-                let needs_scrollbar = total > visible;
-                let end = (scroll + visible).min(total) as usize;
-                for (visible_row, i) in (scroll as usize..end).enumerate() {
-                    let item = &prev_completions[i];
-                    let thumb = if needs_scrollbar {
-                        completion_scrollbar_glyph(visible_row as u32, visible, scroll, total)
-                    } else {
-                        None
-                    };
-                    overlays.push(OverlayRow {
-                        buffer_row: anchor,
-                        entry: render_completion_item_overlay(
-                            &item.value,
-                            item.kind.as_deref(),
-                            i == prev_completion_idx,
-                            popup_total,
-                            thumb,
-                        ),
-                    });
-                    anchor += 1;
-                }
-                overlays.push(OverlayRow {
-                    buffer_row: anchor,
-                    entry: render_completion_bottom_border(popup_total),
-                });
-            } else {
-                prev_completion_scroll = 0;
-            }
-            if let Some(k) = key.as_deref().filter(|k| !k.is_empty()) {
-                next_state.insert(
-                    k.to_string(),
-                    WidgetInstanceState::Text {
-                        editor: effective_editor.clone(),
-                        scroll: new_scroll,
-                        completions: prev_completions,
-                        completion_selected_index: prev_completion_idx,
-                        completion_scroll_offset: prev_completion_scroll,
-                    },
-                );
-            }
+            let text_out = render_widget_text(
+                value,
+                *cursor_byte,
+                *focused,
+                label,
+                placeholder.as_deref(),
+                *rows,
+                *field_width,
+                *max_visible_chars,
+                *full_width,
+                *completions_visible_rows,
+                key.as_deref(),
+                prev,
+                next_state,
+                focus_key,
+                panel_width,
+            );
+            entries.extend(text_out.entries);
+            focus_cursor = text_out.focus_cursor;
+            overlays.extend(text_out.overlays);
         }
         WidgetSpec::LabeledSection { label, child, .. } => {
             // Inner area: 1 column of border + 1 column of
             // padding on each side ⇒ 4 columns of chrome.
             let inner_width = panel_width.saturating_sub(4).max(1);
-            let (
-                child_entries,
-                child_hits,
-                child_focus,
-                child_embeds,
-                child_overlays,
-                child_scroll,
-            ) = render_collected(child, prev, next_state, focus_key, inner_width);
+            let child_out = render_collected(child, prev, next_state, focus_key, inner_width);
             // Shift child overlays by 1 to account for the top
             // border row this section emits — the child authored
             // its anchors relative to its own row 0 (e.g. anchor 1
@@ -1559,7 +951,7 @@ fn render_collected(
             // this: anchor 1 lands on the section's bottom
             // border row (replacing it visually with the dim
             // separator), anchor 2+ lands below the section.
-            overlays.extend(child_overlays.into_iter().map(|mut o| {
+            overlays.extend(child_out.overlays.into_iter().map(|mut o| {
                 o.buffer_row += 1;
                 o
             }));
@@ -1574,7 +966,7 @@ fn render_collected(
             // and one column of padding. Pad/truncate the child
             // text to exactly `inner_width` so the right border
             // lines up regardless of the child's natural width.
-            for mut child_entry in child_entries {
+            for mut child_entry in child_out.entries {
                 strip_trailing_newline(&mut child_entry);
                 let wrapped = wrap_in_side_border(child_entry, inner_width as usize);
                 let row_offset = entries.len() as u32;
@@ -1590,13 +982,13 @@ fn render_collected(
             // the *first child line*; shift them by 1 (top
             // border) and by the left-border byte prefix.
             let prefix_bytes = LEFT_BORDER_PREFIX.len();
-            for mut h in child_hits {
+            for mut h in child_out.hits {
                 h.buffer_row += 1;
                 h.byte_start += prefix_bytes;
                 h.byte_end += prefix_bytes;
                 hits.push(h);
             }
-            if let Some(mut fc) = child_focus {
+            if let Some(mut fc) = child_out.focus_cursor {
                 fc.buffer_row += 1;
                 fc.byte_in_row += prefix_bytes as u32;
                 focus_cursor = Some(fc);
@@ -1604,12 +996,12 @@ fn render_collected(
             // Embeds are column-addressed; the `│ ` prefix is
             // 4 UTF-8 bytes but only 2 display columns wide.
             let prefix_cols = LEFT_BORDER_PREFIX.chars().count() as u32;
-            for mut emb in child_embeds {
+            for mut emb in child_out.embeds {
                 emb.buffer_row += 1;
                 emb.col_in_row += prefix_cols;
                 embeds.push(emb);
             }
-            for mut sr in child_scroll {
+            for mut sr in child_out.scroll_regions {
                 sr.buffer_row += 1;
                 sr.col_in_row += prefix_cols;
                 // The section padded the child to `inner_width`, so the
@@ -1683,32 +1075,711 @@ fn render_collected(
             // flow through unchanged. This keeps the
             // Overlay-as-root case (no enclosing Col) sane:
             // it just renders inline.
-            let (
-                child_entries,
-                child_hits,
-                child_focus,
-                child_embeds,
-                child_overlays,
-                child_scroll,
-            ) = render_collected(child, prev, next_state, focus_key, panel_width);
-            entries.extend(child_entries);
-            hits.extend(child_hits);
+            let child_out = render_collected(child, prev, next_state, focus_key, panel_width);
+            entries.extend(child_out.entries);
+            hits.extend(child_out.hits);
             if focus_cursor.is_none() {
-                focus_cursor = child_focus;
+                focus_cursor = child_out.focus_cursor;
             }
-            embeds.extend(child_embeds);
-            overlays.extend(child_overlays);
-            scroll_regions.extend(child_scroll);
+            embeds.extend(child_out.embeds);
+            overlays.extend(child_out.overlays);
+            scroll_regions.extend(child_out.scroll_regions);
         }
     }
-    (
+    CollectedOutput {
         entries,
         hits,
         focus_cursor,
         embeds,
         overlays,
         scroll_regions,
-    )
+    }
+}
+
+// =========================================================================
+// Standalone arm helpers — extracted from the render_collected match to keep
+// that function navigable. Each returns a CollectedOutput the caller folds
+// back into its local accumulators.
+// =========================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_widget_list(
+    items: &[TextPropertyEntry],
+    item_keys: &[String],
+    selected_index: i32,
+    visible_rows: u32,
+    list_key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    panel_width: u32,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    // Look up host-owned scroll + selected index from prev
+    // state (becomes authoritative after first render).
+    // Spec's `selected_index` is initial-only on first
+    // mount; subsequent updates read instance state.
+    let total = items.len() as u32;
+    let visible = visible_rows.max(1);
+    let (prev_scroll, prev_sel) = list_key
+        .and_then(|k| prev.get(k))
+        .and_then(|s| match s {
+            WidgetInstanceState::List {
+                scroll_offset,
+                selected_index,
+            } => Some((*scroll_offset, *selected_index)),
+            _ => None,
+        })
+        .unwrap_or((0, selected_index));
+    // Clamp the previous selection to the current dataset
+    // size — items may have shrunk between renders (e.g.
+    // search results changed). Out-of-range selections
+    // collapse to the last item, or -1 if the list is
+    // now empty.
+    let effective_sel = if prev_sel < 0 || total == 0 {
+        -1
+    } else if (prev_sel as u32) >= total {
+        (total - 1) as i32
+    } else {
+        prev_sel
+    };
+
+    // Compute scroll: auto-clamp to keep selection in view
+    // and never extend past the dataset end.
+    let mut scroll = prev_scroll;
+    if effective_sel >= 0 {
+        let sel = effective_sel as u32;
+        if sel < scroll {
+            scroll = sel;
+        }
+        if sel >= scroll + visible {
+            scroll = sel + 1 - visible;
+        }
+    }
+    let max_scroll = total.saturating_sub(visible);
+    if scroll > max_scroll {
+        scroll = max_scroll;
+    }
+    // Persist scroll + selection for the next render.
+    // Lists without a `key` lose state across updates.
+    if let Some(k) = list_key {
+        next_state.insert(
+            k.to_string(),
+            WidgetInstanceState::List {
+                scroll_offset: scroll,
+                selected_index: effective_sel,
+            },
+        );
+    }
+
+    // Render the visible window, emitting one entry + one
+    // hit area per visible item. Selected row gets the
+    // popup_selection_bg + extend_to_line_end style. Hit-area
+    // payload uses the *absolute* item index so the plugin
+    // never needs to translate window-relative coordinates.
+    //
+    // After the real items we pad with blank entries up to
+    // `visible` rows so the List occupies the full height
+    // its `visible_rows` advertises. Without this padding, a
+    // list with 3 items inside a `visible_rows=20`
+    // labeledSection closes its bottom border 17 rows above
+    // where the sibling preview pane closes.
+    let start = scroll as usize;
+    let end = ((scroll + visible) as usize).min(items.len());
+    for (offset, item) in items[start..end].iter().enumerate() {
+        let i = start + offset;
+        let mut entry = item.clone();
+        entry.normalize_widths();
+        let is_selected = i as i32 == effective_sel;
+        if is_selected {
+            let mut style = entry.style.unwrap_or_default();
+            style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
+            style.extend_to_line_end = true;
+            entry.style = Some(style);
+        }
+        let byte_end = entry.text.len();
+        ensure_trailing_newline(&mut entry);
+        out.entries.push(entry);
+        let item_key = item_keys.get(i).cloned().unwrap_or_default();
+        let hit_row = (out.entries.len() - 1) as u32;
+        out.hits.push(HitArea {
+            widget_key: item_key.clone(),
+            widget_kind: "list",
+            buffer_row: hit_row,
+            byte_start: 0,
+            byte_end,
+            payload: json!({
+                "index": i as i64,
+                "key": item_key,
+                // The List's own spec key, so a click handler can
+                // update the host-owned selection instance state
+                // (keyed by this) — the item key in `key` is not
+                // enough to find the widget. Null for keyless lists.
+                "list_key": list_key,
+            }),
+            event_type: "select",
+        });
+    }
+    // Pad to `visible` rows with blank entries. Hit areas
+    // intentionally not emitted for the padding — those rows
+    // aren't clickable items.
+    let rendered_items = (end - start) as u32;
+    for _ in rendered_items..visible {
+        let mut padding = TextPropertyEntry {
+            text: String::new(),
+            properties: Default::default(),
+            style: None,
+            inline_overlays: Vec::new(),
+            segments: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
+        };
+        ensure_trailing_newline(&mut padding);
+        out.entries.push(padding);
+    }
+
+    // Surface a scroll region for the host to paint a draggable
+    // scrollbar when the list overflows its visible height. The
+    // region is panel-relative-from-this-render: buffer_row 0 is
+    // the first list row, col 0 the list's left edge; the
+    // compositor (Row/Col/Section) offsets both as it places the
+    // list. The scrollbar lives in the rightmost column
+    // (`col_in_row + width_cols - 1`).
+    if total > visible {
+        if let Some(k) = list_key {
+            out.scroll_regions.push(ScrollRegion {
+                list_key: k.to_string(),
+                buffer_row: 0,
+                col_in_row: 0,
+                width_cols: panel_width,
+                height_rows: visible,
+                total: total as usize,
+                visible: visible as usize,
+                scroll: scroll as usize,
+            });
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_widget_text(
+    value: &str,
+    cursor_byte: i32,
+    focused: bool,
+    label: &str,
+    placeholder: Option<&str>,
+    rows: u32,
+    field_width: u32,
+    max_visible_chars: u32,
+    full_width: bool,
+    completions_visible_rows: u32,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+    panel_width: u32,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    // Default popup height: 5 visible rows. Plugins override per-widget
+    // by setting `completions_visible_rows`; 0 falls back to the default
+    // so the orchestrator's existing `text({...})` calls Just Work.
+    let effective_visible_rows = if completions_visible_rows == 0 {
+        5u32
+    } else {
+        completions_visible_rows
+    };
+
+    let is_focused = match key.filter(|k| !k.is_empty()) {
+        Some(k) => k == focus_key,
+        None => focused,
+    };
+    // Host-owned value/cursor (+ scroll, multi-line only):
+    // read instance state if it exists; else seed from spec
+    // on first render. See WidgetInstanceState::Text doc.
+    //
+    // `rows == 0` shouldn't happen because of serde's
+    // default = 1, but if it slips through (raw struct
+    // construction in tests, etc.) treat it as single-line.
+    let multiline = rows > 1;
+    let mut effective_editor: crate::primitives::text_edit::TextEdit;
+    let prev_scroll: u32;
+    // Completions + selected index ride along on the
+    // Text widget's instance state — neither comes from
+    // the spec (plugins push via `SetCompletions`), so we
+    // carry them across renders verbatim and clamp the
+    // index to the current list size below.
+    let mut prev_completions: Vec<fresh_core::api::CompletionItem> = Vec::new();
+    let mut prev_completion_idx: usize = 0;
+    let mut prev_completion_scroll: u32 = 0;
+    match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
+        Some(WidgetInstanceState::Text {
+            editor,
+            scroll,
+            completions,
+            completion_selected_index,
+            completion_scroll_offset,
+        }) => {
+            effective_editor = editor.clone();
+            prev_scroll = *scroll;
+            prev_completions = completions.clone();
+            prev_completion_idx = *completion_selected_index;
+            prev_completion_scroll = *completion_scroll_offset;
+        }
+        _ => {
+            effective_editor = if multiline {
+                crate::primitives::text_edit::TextEdit::with_text(value)
+            } else {
+                crate::primitives::text_edit::TextEdit::single_line_with_text(value)
+            };
+            let seed = if cursor_byte < 0 {
+                value.len()
+            } else {
+                (cursor_byte as usize).min(value.len())
+            };
+            effective_editor.set_cursor_from_flat(seed);
+            prev_scroll = 0;
+        }
+    }
+    // Clamp once per render so a list that shrank
+    // host-side (or arrived empty) doesn't keep a stale
+    // out-of-bounds index alive.
+    if !prev_completions.is_empty() {
+        prev_completion_idx = prev_completion_idx.min(prev_completions.len() - 1);
+    } else {
+        prev_completion_idx = 0;
+    }
+    let effective_value = effective_editor.value();
+    let effective_cursor_byte = effective_editor.flat_cursor_byte() as i32;
+    let effective_cursor = if is_focused {
+        effective_cursor_byte
+    } else {
+        -1
+    };
+    // When `full_width` is requested, override the
+    // plugin-supplied `field_width` with the slice of
+    // `panel_width` remaining after the label prefix,
+    // the two surrounding `[` / `]` brackets, and one
+    // trailing column reserved for the cursor-park space
+    // `render_text_input` appends when focused. Reserving
+    // unconditionally costs an unfocused field one
+    // trailing space but keeps the rendered width stable
+    // across the focus transition — without it the field
+    // would overflow the parent on focus. For multi-line
+    // we don't need the focus reservation but keep the
+    // same calculation for symmetry; `render_text_area`
+    // already fills the panel width by default.
+    let effective_field_width = if full_width && !multiline {
+        let label_overhead = if label.is_empty() {
+            0u32
+        } else {
+            label.chars().count() as u32 + 1
+        };
+        panel_width
+            .saturating_sub(label_overhead)
+            .saturating_sub(3)
+            .max(1)
+    } else {
+        field_width
+    };
+    // Selection overlay is only meaningful for the focused
+    // widget — passing `None` otherwise keeps the no-selection
+    // rendering paths unchanged.
+    let selection_for_render = if is_focused {
+        effective_editor.selection_flat_range()
+    } else {
+        None
+    };
+    let new_scroll;
+    if multiline {
+        let rendered = render_text_area(
+            &effective_value,
+            effective_cursor,
+            selection_for_render,
+            is_focused,
+            label,
+            placeholder,
+            rows,
+            effective_field_width,
+            prev_scroll,
+            panel_width,
+        );
+        new_scroll = rendered.scroll_row;
+        if let (Some(buffer_row), Some(byte_in_row)) =
+            (rendered.cursor_buffer_row, rendered.cursor_byte_in_row)
+        {
+            out.focus_cursor = Some(FocusCursor {
+                buffer_row,
+                byte_in_row: byte_in_row as u32,
+            });
+        }
+        for mut e in rendered.entries {
+            ensure_trailing_newline(&mut e);
+            out.entries.push(e);
+        }
+    } else {
+        let rendered = render_text_input(
+            &effective_value,
+            effective_cursor,
+            selection_for_render,
+            is_focused,
+            label,
+            placeholder,
+            max_visible_chars,
+            effective_field_width,
+            full_width,
+        );
+        new_scroll = 0;
+        if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
+            out.focus_cursor = Some(FocusCursor {
+                buffer_row: 0,
+                byte_in_row: byte_in_row as u32,
+            });
+        }
+        let mut entry = rendered.entry;
+        ensure_trailing_newline(&mut entry);
+        out.entries.push(entry);
+    }
+    // Persist instance state for next render. `editor`
+    // already carries the canonical cursor (row/col +
+    // selection); `scroll` carries the renderer's
+    // auto-clamped first-visible-row for multi-line, or `0`
+    // for single-line.
+    //
+    // Emit the completion popup as *overlay rows* rather
+    // than regular entries so it floats — the rest of the
+    // form below the input keeps its layout position and
+    // the popup paints on top. The overlay anchors are
+    // chosen so the dim separator lands on top of the
+    // wrapping `LabeledSection`'s bottom border (visually
+    // replacing it), and the side borders + bottom
+    // border that follow paint over whatever sits below
+    // the section. See `render_completion_*` helpers for
+    // the chrome detail.
+    if !prev_completions.is_empty() {
+        // `panel_width` here is the inner-area width the
+        // wrapping `LabeledSection` handed us (it has
+        // already subtracted its own 4 columns of chrome
+        // — `│ ` on the left + ` │` on the right). The
+        // overlay rows need to paint into the full panel
+        // width (including those `│ ... │` columns), so
+        // we widen by 4 here so the side borders the
+        // popup paints line up with the section's.
+        let popup_inner = panel_width as usize;
+        let popup_total = popup_inner.saturating_add(4); // re-add section chrome
+        let total = prev_completions.len() as u32;
+        let visible = effective_visible_rows.max(1).min(total);
+        // Forward-only auto-scroll: when the selection
+        // walks past the bottom of the visible window
+        // (Down past the last visible row), pull the
+        // scroll forward to keep selection in view. We
+        // deliberately do NOT pull the scroll *back* if
+        // the selection is above the window — the
+        // mouse-wheel scroll handler explicitly diverges
+        // scroll from selection (the user is scrolling
+        // the view, not the selection), and a back-pull
+        // here would undo the wheel's scroll on the very
+        // next render. The keyboard Up handler updates
+        // scroll itself when needed, so it doesn't rely
+        // on a back-pull from the renderer either.
+        let sel = prev_completion_idx as u32;
+        let mut scroll = prev_completion_scroll;
+        if sel >= scroll + visible {
+            scroll = sel + 1 - visible;
+        }
+        let max_scroll = total.saturating_sub(visible);
+        if scroll > max_scroll {
+            scroll = max_scroll;
+        }
+        prev_completion_scroll = scroll;
+
+        // Overlay anchors:
+        //   anchor 0 = the text widget's own row (input)
+        //   anchor 1 = labeledSection's bottom border row
+        //              (the dim separator paints here,
+        //              replacing the section's `╰─...─╯`
+        //              visually)
+        //   anchor 2..N+1 = item rows
+        //   anchor N+2 = popup's own bottom border
+        //              `╰─...─╯` (a `LabeledSection`
+        //              passes child overlays through
+        //              unchanged, see widgets/render.rs
+        //              `LabeledSection` branch).
+        let mut anchor: u32 = 1;
+        out.overlays.push(OverlayRow {
+            buffer_row: anchor,
+            entry: render_completion_dim_separator_overlay(popup_total),
+        });
+        anchor += 1;
+        let needs_scrollbar = total > visible;
+        let end = (scroll + visible).min(total) as usize;
+        for (visible_row, i) in (scroll as usize..end).enumerate() {
+            let item = &prev_completions[i];
+            let thumb = if needs_scrollbar {
+                completion_scrollbar_glyph(visible_row as u32, visible, scroll, total)
+            } else {
+                None
+            };
+            out.overlays.push(OverlayRow {
+                buffer_row: anchor,
+                entry: render_completion_item_overlay(
+                    &item.value,
+                    item.kind.as_deref(),
+                    i == prev_completion_idx,
+                    popup_total,
+                    thumb,
+                ),
+            });
+            anchor += 1;
+        }
+        out.overlays.push(OverlayRow {
+            buffer_row: anchor,
+            entry: render_completion_bottom_border(popup_total),
+        });
+    } else {
+        prev_completion_scroll = 0;
+    }
+    if let Some(k) = key.filter(|k| !k.is_empty()) {
+        next_state.insert(
+            k.to_string(),
+            WidgetInstanceState::Text {
+                editor: effective_editor.clone(),
+                scroll: new_scroll,
+                completions: prev_completions,
+                completion_selected_index: prev_completion_idx,
+                completion_scroll_offset: prev_completion_scroll,
+            },
+        );
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_widget_tree(
+    nodes: &[TreeNode],
+    item_keys: &[String],
+    selected_index: i32,
+    visible_rows: u32,
+    expanded_keys: &[String],
+    checkable: bool,
+    tree_key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    // Look up host-owned instance state (scroll, selection,
+    // expanded set). Spec values are initial-only.
+    let prev_state = tree_key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k));
+    let (prev_scroll, prev_sel, prev_expanded) = match prev_state {
+        Some(WidgetInstanceState::Tree {
+            scroll_offset,
+            selected_index,
+            expanded_keys,
+        }) => (*scroll_offset, *selected_index, expanded_keys.clone()),
+        _ => {
+            // First render: seed expanded_keys from spec.
+            let seeded: HashSet<String> = expanded_keys.iter().cloned().collect();
+            (0, selected_index, seeded)
+        }
+    };
+
+    // Compute the visible (un-collapsed) flat slice of the
+    // full `nodes` list. A node at depth d is visible iff
+    // every ancestor (the most recent earlier node at depth
+    // d-1, that node's most recent earlier at d-2, etc.) is
+    // expanded. Walk linearly tracking ancestor expansion at
+    // each depth — set ancestor[d] = is_expanded(node) when
+    // we visit a node at depth d, and consider a node
+    // visible iff ancestor[0..node.depth] are all true.
+    //
+    // O(N * max_depth) — fine; trees in this editor are
+    // shallow (filesystem trees, search-results trees).
+    let mut ancestor_open: Vec<bool> = Vec::new();
+    let mut visible_indices: Vec<usize> = Vec::with_capacity(nodes.len());
+    for (i, node) in nodes.iter().enumerate() {
+        let depth = node.depth as usize;
+        // Truncate the ancestor stack to this node's depth.
+        ancestor_open.truncate(depth);
+        let visible = ancestor_open.iter().all(|open| *open);
+        if visible {
+            visible_indices.push(i);
+        }
+        // Push this node's own openness onto the stack so
+        // descendants see it. The node is "open" iff it has
+        // children AND its key is in expanded_keys; leaves
+        // act like open nodes (their nonexistent descendants
+        // can't be hidden anyway).
+        let key = item_keys.get(i).cloned().unwrap_or_default();
+        let is_open = if node.has_children {
+            !key.is_empty() && prev_expanded.contains(&key)
+        } else {
+            true
+        };
+        ancestor_open.push(is_open);
+    }
+
+    // Clamp the previous selection to a visible index. The
+    // selected_index in the spec/instance state references
+    // the *absolute* `nodes` index; if that node is now
+    // hidden (parent collapsed), find the closest visible
+    // node at-or-before it. If no visible nodes, -1.
+    let total_visible = visible_indices.len() as u32;
+    let visible = visible_rows.max(1);
+    let clamp_to_visible = |abs: i32| -> i32 {
+        if abs < 0 || nodes.is_empty() {
+            return -1;
+        }
+        let abs = abs.min((nodes.len() as i32) - 1) as usize;
+        if let Ok(_pos) = visible_indices.binary_search(&abs) {
+            return abs as i32;
+        }
+        // Not visible — fall back to the nearest earlier
+        // visible node, else the first visible node, else -1.
+        let earlier = visible_indices.iter().rev().find(|&&v| v <= abs);
+        if let Some(&v) = earlier {
+            return v as i32;
+        }
+        visible_indices.first().map(|&v| v as i32).unwrap_or(-1)
+    };
+    let effective_sel_abs = clamp_to_visible(prev_sel);
+    // Find the position of the selected absolute index in
+    // visible_indices — that's its "visible-window position"
+    // used for scroll math.
+    let sel_visible_pos: i32 = if effective_sel_abs < 0 {
+        -1
+    } else {
+        visible_indices
+            .iter()
+            .position(|&v| v == effective_sel_abs as usize)
+            .map(|p| p as i32)
+            .unwrap_or(-1)
+    };
+
+    // Compute scroll: same auto-clamp logic as List, but
+    // operating on the visible-windowed indices.
+    let mut scroll = prev_scroll;
+    if sel_visible_pos >= 0 {
+        let sel = sel_visible_pos as u32;
+        if sel < scroll {
+            scroll = sel;
+        }
+        if sel >= scroll + visible {
+            scroll = sel + 1 - visible;
+        }
+    }
+    let max_scroll = total_visible.saturating_sub(visible);
+    if scroll > max_scroll {
+        scroll = max_scroll;
+    }
+
+    // Persist instance state.
+    if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
+        next_state.insert(
+            k.to_string(),
+            WidgetInstanceState::Tree {
+                scroll_offset: scroll,
+                selected_index: effective_sel_abs,
+                expanded_keys: prev_expanded.clone(),
+            },
+        );
+    }
+
+    // Render the visible window.
+    let start = scroll as usize;
+    let end = ((scroll + visible) as usize).min(visible_indices.len());
+    for &abs_idx in &visible_indices[start..end] {
+        // Apply pad/truncate hints and convert any char-unit
+        // overlays to byte offsets *before* the disclosure
+        // prefix is prepended; render_tree_row then byte-shifts
+        // the (now byte-unit) overlays uniformly.
+        let mut node = nodes[abs_idx].clone();
+        node.text.normalize_widths();
+        let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
+        let is_expanded =
+            node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
+        let rendered = render_tree_row(&node, is_expanded, checkable);
+        let mut entry = rendered.entry;
+        let is_selected = abs_idx as i32 == effective_sel_abs;
+        if is_selected {
+            let mut style = entry.style.unwrap_or_default();
+            style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
+            style.extend_to_line_end = true;
+            entry.style = Some(style);
+        }
+        let row_byte_end = entry.text.len();
+        ensure_trailing_newline(&mut entry);
+        out.entries.push(entry);
+        let hit_row = (out.entries.len() - 1) as u32;
+        // Disclosure hit (only when has_children) — fires
+        // `expand`. The host toggles instance-state
+        // `expanded_keys` and re-renders before firing the
+        // event; the plugin only listens if it cares about
+        // expansion changes.
+        // Tree hits use the *tree's* spec key for
+        // `widget_key` (so click-to-focus works the same
+        // as Toggle/Button — the tree is tabbable). The
+        // per-row key travels in the payload.
+        let tree_spec_key = tree_key.unwrap_or("").to_string();
+        if let Some(disc_range) = rendered.disclosure_range {
+            out.hits.push(HitArea {
+                widget_key: tree_spec_key.clone(),
+                widget_kind: "tree",
+                buffer_row: hit_row,
+                byte_start: disc_range.0,
+                byte_end: disc_range.1,
+                payload: json!({
+                    "index": abs_idx as i64,
+                    "key": item_key.clone(),
+                    "expanded": !is_expanded,
+                }),
+                event_type: "expand",
+            });
+        }
+        // Checkbox hit (when the parent Tree is checkable
+        // *and* this node has Some(_) checked) — fires
+        // `toggle` with the *new* checked value. The host
+        // does not mutate the spec; the plugin owns the
+        // truth and pushes the new state back via
+        // `WidgetMutation::SetCheckedKeys`.
+        if let Some(cb_range) = rendered.checkbox_range {
+            let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
+            out.hits.push(HitArea {
+                widget_key: tree_spec_key.clone(),
+                widget_kind: "tree",
+                buffer_row: hit_row,
+                byte_start: cb_range.0,
+                byte_end: cb_range.1,
+                payload: json!({
+                    "index": abs_idx as i64,
+                    "key": item_key.clone(),
+                    "checked": new_checked,
+                }),
+                event_type: "toggle",
+            });
+        }
+        // Row body hit — fires `select`. Spans whatever's
+        // left of the row text after the disclosure +
+        // checkbox prefix.
+        let body_start = match (rendered.checkbox_range, rendered.disclosure_range) {
+            (Some((_, end)), _) => end + 1, // +1 for the trailing space after [v]
+            (None, Some((_, end))) => end,
+            (None, None) => 0,
+        };
+        if body_start < row_byte_end {
+            out.hits.push(HitArea {
+                widget_key: tree_spec_key,
+                widget_kind: "tree",
+                buffer_row: hit_row,
+                byte_start: body_start,
+                byte_end: row_byte_end,
+                payload: json!({
+                    "index": abs_idx as i64,
+                    "key": item_key,
+                }),
+                event_type: "select",
+            });
+        }
+    }
+    out
 }
 
 // =========================================================================
