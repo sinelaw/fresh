@@ -269,43 +269,58 @@ fn test_terminal_content_rendering() {
     assert!(!content[0].is_empty());
 }
 
-/// A program running in the terminal can rename its own tab by emitting an
-/// OSC 2 ("set window title") escape sequence, just like in a standalone
-/// terminal emulator. The default `*Terminal 0*` tab label is replaced by
-/// the requested title on the next render, asserted purely on screen output.
+/// A terminal tab auto-names from its foreground process, tmux-style: the
+/// command running in the pty (here the shell itself, right after open)
+/// replaces the default `*Terminal 0*` label. Asserted on the rendered tab
+/// bar row, so it observes real output rather than inspecting model state.
+///
+/// Linux-only: the foreground process group is read via `tcgetpgrp` +
+/// `/proc`, which other platforms don't implement (they fall back to the
+/// OSC title / default).
+#[cfg(target_os = "linux")]
 #[test]
-fn test_terminal_tab_title_follows_osc_sequence() {
+fn test_terminal_tab_title_follows_foreground_process() {
     let mut harness = harness_or_return!(80, 24);
 
-    // Open a terminal — the tab starts with the default label.
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
-    harness.assert_screen_contains("*Terminal 0*");
 
-    // Emulate the program emitting OSC 2 by feeding the bytes into the
-    // live terminal's emulator state (the same path PTY output takes).
     let buffer_id = harness.editor().active_buffer_id();
     let terminal_id = harness
         .editor()
         .active_window()
         .get_terminal_id(buffer_id)
         .expect("active buffer should be a terminal");
-    {
-        let handle = harness
+
+    // Semantic wait: the shell becomes the pty's foreground process group
+    // shortly after spawn. Drive renders until auto-naming resolves; the
+    // bound only guards against a hang (cargo nextest times out externally).
+    let mut expected = None;
+    for _ in 0..2000 {
+        if let Some(name) = harness
             .editor()
             .terminal_manager()
             .get(terminal_id)
-            .expect("terminal handle should exist");
-        let mut state = handle.state.lock().expect("terminal state lock");
-        // ESC ] 2 ; <title> BEL
-        state.process_output(b"\x1b]2;my-shell: ~/project\x07");
+            .and_then(|h| h.foreground_process_name())
+        {
+            expected = Some(name);
+            harness.render().unwrap();
+            break;
+        }
+        harness.render().unwrap();
     }
+    let expected = expected.expect("foreground process name should resolve on Linux");
 
-    // After the next render the tab reflects the OSC title and the default
-    // label is gone.
-    harness.render().unwrap();
-    harness.assert_screen_contains("my-shell: ~/project");
-    harness.assert_screen_not_contains("*Terminal 0*");
+    // The tab bar (row 1) now shows the foreground command, not the default.
+    let tab_bar = harness.get_tab_bar();
+    assert!(
+        tab_bar.contains(&expected),
+        "tab bar {tab_bar:?} should contain foreground command {expected:?}"
+    );
+    assert!(
+        !tab_bar.contains("*Terminal 0*"),
+        "tab bar {tab_bar:?} should no longer show the default label"
+    );
 }
 
 /// Test terminal handles ANSI escape sequences for cursor positioning

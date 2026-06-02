@@ -323,10 +323,49 @@ impl Editor {
         // exactly when the timeout needs to fire, so a hung clipboard
         // owner can't block the UI past `PASTE_ASYNC_DEADLINE`.
         let paste_deadline = self.next_paste_deadline();
+        // Note: the terminal-title poll deadline is intentionally NOT folded
+        // in here. This deadline path caps the loop's wait to one frame
+        // (~16ms) for smooth animation, which would turn the ~1s title poll
+        // into a 60Hz busy loop. The loop's existing 50ms idle poll is fine
+        // granularity to notice `terminal_titles_need_poll` going true.
         [lsp_progress_deadline, anim_deadline, paste_deadline]
             .into_iter()
             .flatten()
             .min()
+    }
+
+    /// Earliest time a terminal tab needs its foreground-process title
+    /// re-polled, across all windows. `None` when no window has an
+    /// auto-named (non-explicit) terminal. Drives the event loop's periodic
+    /// wakeups so a tab reflects a command that starts or exits while the
+    /// UI is otherwise idle (the render that follows runs
+    /// `Window::sync_terminal_titles`).
+    pub fn terminal_title_poll_deadline(&self) -> Option<std::time::Instant> {
+        let mut earliest: Option<std::time::Instant> = None;
+        for window in self.windows.values() {
+            let has_auto = window
+                .terminal_buffers
+                .keys()
+                .any(|b| !window.terminal_explicit_titles.contains(b));
+            if !has_auto {
+                continue;
+            }
+            let deadline = match window.terminal_fg_poll_at {
+                Some(last) => last + crate::app::terminal::FG_POLL_INTERVAL,
+                None => std::time::Instant::now(),
+            };
+            earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
+        }
+        earliest
+    }
+
+    /// Whether a terminal tab is due for a foreground-process title poll
+    /// (its deadline has passed). The event loop ORs this into its
+    /// `needs_render` decision so the periodic wakeup actually paints a
+    /// frame, matching how animations and the LSP spinner are handled.
+    pub fn terminal_titles_need_poll(&self) -> bool {
+        self.terminal_title_poll_deadline()
+            .is_some_and(|d| d <= std::time::Instant::now())
     }
 
     /// Get stored LSP diagnostics (for testing and external access)

@@ -286,6 +286,24 @@ pub struct Window {
     /// from the PTY, used for replay / save-history).
     pub terminal_log_files: HashMap<crate::services::terminal::TerminalId, std::path::PathBuf>,
 
+    /// Terminal buffers whose tab title was set explicitly (plugin- or
+    /// command-derived). These are excluded from foreground-process
+    /// auto-naming so a program running inside doesn't clobber the chosen
+    /// title; an OSC title emitted by the program still takes precedence.
+    pub terminal_explicit_titles: std::collections::HashSet<BufferId>,
+
+    /// Last time foreground-process names were polled for terminal tab
+    /// auto-naming. Throttles the `tcgetpgrp` + `/proc` reads to roughly
+    /// once a second rather than every frame. `None` until the first poll.
+    pub(crate) terminal_fg_poll_at: Option<std::time::Instant>,
+
+    /// Cached foreground-process name per terminal buffer, refreshed on the
+    /// [`FG_POLL_INTERVAL`] poll. Present means a name was read; absent
+    /// means none was available (so callers fall back to the OSC title or
+    /// default). Applied to the tab every frame so the title stays put
+    /// between polls without re-running the syscall.
+    pub(crate) terminal_fg_cache: HashMap<BufferId, String>,
+
     /// Plugin-managed per-window state. Outer key is plugin name,
     /// inner is the plugin-defined key. Read via
     /// `editor.getWindowState(key)` and written via
@@ -1639,6 +1657,9 @@ impl Window {
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),
+            terminal_explicit_titles: std::collections::HashSet::new(),
+            terminal_fg_poll_at: None,
+            terminal_fg_cache: HashMap::new(),
             event_logs: HashMap::new(),
             status_message: None,
             plugin_status_message: None,

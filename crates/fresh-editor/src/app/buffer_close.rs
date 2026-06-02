@@ -74,6 +74,13 @@ impl Editor {
         if let Some(terminal_id) = self.active_window_mut().terminal_buffers.remove(&id) {
             // Close the terminal process
             self.active_window_mut().terminal_manager.close(terminal_id);
+            // Drop any explicit-title marker / cached foreground name so the
+            // id can't carry stale auto-naming state if a future buffer
+            // reuses it.
+            self.active_window_mut()
+                .terminal_explicit_titles
+                .remove(&id);
+            self.active_window_mut().terminal_fg_cache.remove(&id);
 
             // Retain the rendered backing file so its scrollback stays
             // searchable after close (Universal Search "Terminals" scope).

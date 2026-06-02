@@ -33,6 +33,13 @@ use crate::view::split::SplitViewState;
 use rust_i18n::t;
 use std::path::PathBuf;
 
+/// How often [`Window::sync_terminal_titles`] polls each terminal's
+/// foreground process group for tmux-style tab auto-naming. Frequent enough
+/// to feel responsive when a command starts/exits, infrequent enough that
+/// the per-terminal `tcgetpgrp` + `/proc` read is negligible. Also drives
+/// the editor's periodic-redraw deadline so the tab refreshes while idle.
+pub(crate) const FG_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config
@@ -452,6 +459,9 @@ impl Window {
             if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
                 meta.display_name = final_name;
             }
+            // Mark this tab as explicitly titled so foreground-process
+            // auto-naming leaves it alone (an OSC title still overrides).
+            self.terminal_explicit_titles.insert(buffer_id);
         }
 
         // When the new terminal ended up as this window's active
@@ -513,39 +523,91 @@ impl Window {
         format!("{} (n)", desired)
     }
 
-    /// Update terminal buffers' tab titles from the title the running
-    /// program set via OSC escape codes (OSC 0/1/2). Intended to run once
-    /// per frame. When a terminal hasn't set a title (or only ever set an
-    /// empty one), its buffer keeps whatever name it already had — the
-    /// default `*Terminal N*` or a plugin-provided title.
+    /// Refresh terminal buffers' tab titles, tmux-style. Runs every frame,
+    /// but the expensive part — reading each terminal's foreground process
+    /// group (`tcgetpgrp` + `/proc`) — is throttled to [`FG_POLL_INTERVAL`]
+    /// and cached; the cached name is re-applied to the tab on every frame
+    /// so the title is responsive to renders without re-running the syscall.
+    /// Precedence per terminal:
     ///
-    /// Titles are sanitized (control characters stripped, length capped)
-    /// the same way as the host window title. OSC titles are applied
-    /// verbatim without the `name (k)` disambiguation used for plugin
-    /// titles: programs rewrite these frequently (e.g. to show the cwd or
-    /// the running command) and re-disambiguating on every change would
-    /// make the suffix flicker.
+    /// 1. **Foreground process name** — the command currently in the
+    ///    terminal's foreground process group (e.g. `python3` while a REPL
+    ///    runs, `bash` at the prompt). Mirrors tmux's
+    ///    `#{pane_current_command}` and is the primary source so a tab
+    ///    reflects what's actually running, even for programs (top,
+    ///    python3) that never emit a title.
+    /// 2. **OSC title** — what a program set via OSC 0/1/2. Used only as a
+    ///    fallback where the foreground process can't be read (currently
+    ///    every non-Linux platform).
+    /// 3. **Default** — `*Terminal N*` when nothing else is available.
+    ///
+    /// Terminals with an explicit (plugin-/command-derived) title are left
+    /// untouched — like a tmux manual rename, an intentional name opts out
+    /// of auto-naming.
+    ///
+    /// Names are sanitized (control characters stripped, length capped) the
+    /// same way as the host window title, and applied without the
+    /// `name (k)` disambiguation used for plugin titles.
     pub fn sync_terminal_titles(&mut self) {
-        // Snapshot (buffer, title) pairs first so the mutable
-        // `buffer_metadata` borrow below doesn't overlap the immutable
-        // `terminal_manager` / `terminal_buffers` borrows. Each terminal
-        // state lock is taken and released within the closure.
-        let updates: Vec<(BufferId, String)> = self
-            .terminal_buffers
-            .iter()
-            .filter_map(|(buffer_id, terminal_id)| {
-                let handle = self.terminal_manager.get(*terminal_id)?;
-                let title = handle.state.lock().ok()?.title().to_string();
-                if title.is_empty() {
-                    return None;
+        // Refresh the foreground-name cache. A terminal is re-read when the
+        // poll interval has elapsed, or eagerly while it has no cached name
+        // yet (its first prompt may not have a foreground pgid the instant
+        // it spawns, and renders are event-driven — so keep trying until it
+        // resolves rather than waiting a full interval).
+        let now = std::time::Instant::now();
+        let interval_due = self
+            .terminal_fg_poll_at
+            .is_none_or(|last| now.duration_since(last) >= FG_POLL_INTERVAL);
+        if interval_due {
+            self.terminal_fg_poll_at = Some(now);
+        }
+        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+            if self.terminal_explicit_titles.contains(buffer_id) {
+                continue;
+            }
+            if !interval_due && self.terminal_fg_cache.contains_key(buffer_id) {
+                continue;
+            }
+            let name = self
+                .terminal_manager
+                .get(*terminal_id)
+                .and_then(|h| h.foreground_process_name())
+                .map(|n| crate::services::terminal_title::sanitize_title(&n))
+                .filter(|n| !n.is_empty());
+            match name {
+                Some(n) => {
+                    self.terminal_fg_cache.insert(*buffer_id, n);
                 }
-                let sanitized = crate::services::terminal_title::sanitize_title(&title);
-                if sanitized.is_empty() {
-                    return None;
+                None => {
+                    self.terminal_fg_cache.remove(buffer_id);
                 }
-                Some((*buffer_id, sanitized))
-            })
-            .collect();
+            }
+        }
+
+        // Apply a title to every (non-explicit) terminal tab every frame,
+        // from the cached foreground name or the OSC fallback. Snapshot
+        // first so the mutable `buffer_metadata` borrow doesn't overlap the
+        // immutable reads above.
+        let mut updates: Vec<(BufferId, String)> = Vec::new();
+        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+            if self.terminal_explicit_titles.contains(buffer_id) {
+                continue;
+            }
+            let name = self
+                .terminal_fg_cache
+                .get(buffer_id)
+                .cloned()
+                .or_else(|| {
+                    // Fallback: the OSC title, where the foreground process
+                    // isn't available (non-Linux).
+                    let handle = self.terminal_manager.get(*terminal_id)?;
+                    let osc = handle.state.lock().ok()?.title().to_string();
+                    let sanitized = crate::services::terminal_title::sanitize_title(&osc);
+                    (!sanitized.is_empty()).then_some(sanitized)
+                })
+                .unwrap_or_else(|| format!("*Terminal {}*", terminal_id.0));
+            updates.push((*buffer_id, name));
+        }
 
         for (buffer_id, title) in updates {
             if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {

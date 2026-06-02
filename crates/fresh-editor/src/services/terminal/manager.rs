@@ -63,6 +63,12 @@ pub struct TerminalHandle {
     /// shell or agent forked. `None` on Windows or when
     /// portable_pty couldn't report the pid.
     pid: Option<u32>,
+    /// PTY master file descriptor, captured at spawn. Used to read the
+    /// terminal's foreground process group via `tcgetpgrp` for tmux-style
+    /// tab auto-naming. `None` on Windows or when the platform doesn't
+    /// expose it. Only read on Linux (the only `/proc`-backed target).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    master_fd: Option<i32>,
 }
 
 impl TerminalHandle {
@@ -105,6 +111,44 @@ impl TerminalHandle {
     /// platforms / configurations that don't expose a pid.
     pub fn pid(&self) -> Option<u32> {
         self.pid
+    }
+
+    /// Name of the command currently in the foreground of this terminal,
+    /// e.g. `"bash"` at the prompt or `"python3"` while a REPL runs.
+    ///
+    /// Derived from the PTY's foreground process *group* (`tcgetpgrp` on
+    /// the master fd) rather than the shell pid, so it tracks whatever the
+    /// user is actually interacting with — the same signal tmux uses for
+    /// `#{pane_current_command}`. This is how a tab can read `python3`
+    /// even though `python3` never emits an OSC title sequence.
+    ///
+    /// Only implemented on Linux (via `/proc/<pgid>/comm`); returns `None`
+    /// elsewhere so callers fall back to the OSC title or default name.
+    pub fn foreground_process_name(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            let fd = self.master_fd?;
+            // SAFETY: `fd` is the PTY master, kept open by the writer
+            // thread for the terminal's lifetime. `tcgetpgrp` only reads.
+            let pgid = unsafe { libc::tcgetpgrp(fd) };
+            if pgid <= 0 {
+                return None;
+            }
+            // Local OS introspection of a local fd. The `FileSystem` trait
+            // abstracts the *editing* filesystem (possibly remote); it does
+            // not apply to reading this host's `/proc`.
+            let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;
+            let name = comm.trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
     }
 
     /// Send `signal` to the terminal's process group. Returns
@@ -578,6 +622,21 @@ impl TerminalManager {
                 }
             });
 
+            // Capture the PTY master fd before the master moves into the
+            // writer thread below. Used later by `foreground_process_name`
+            // (tmux-style tab auto-naming). The fd stays valid for the
+            // terminal's lifetime because the writer thread owns the master.
+            let master_fd: Option<i32> = {
+                #[cfg(unix)]
+                {
+                    pty_pair.master.as_raw_fd()
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            };
+
             // Spawn writer thread
             let pty_size_ref = pty_pair.master;
             thread::spawn(move || {
@@ -626,6 +685,7 @@ impl TerminalManager {
                 cwd: cwd.clone(),
                 shell,
                 pid: child_pid,
+                master_fd,
             })
         })();
 

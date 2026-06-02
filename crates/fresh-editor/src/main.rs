@@ -4253,6 +4253,13 @@ where
             needs_render = true;
         }
 
+        // Terminal tabs auto-name from the foreground process (tmux-style);
+        // poll on an interval so a command that starts/exits while the UI is
+        // idle is reflected without waiting for an unrelated event.
+        if editor.terminal_titles_need_poll() {
+            needs_render = true;
+        }
+
         if needs_render
             && last_render.elapsed() >= FRAME_DURATION
             && !editor.should_suppress_render()
