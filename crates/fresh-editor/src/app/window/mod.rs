@@ -1821,11 +1821,16 @@ impl Window {
     /// visible the tabs row only spans the editor area; otherwise it spans
     /// the full terminal width.
     pub fn effective_tabs_width(&self) -> u16 {
+        // Start from the chrome left after the editor-global dock, then
+        // subtract the file explorer — same carve-out order as the
+        // renderer and `editor_content_area`, so tab-scroll math matches
+        // the width the tabs actually paint into when the dock is shown.
+        let chrome = self.terminal_width.saturating_sub(self.dock_cols);
         if self.file_explorer_visible && self.file_explorer.is_some() {
-            let explorer = self.file_explorer_width.to_cols(self.terminal_width);
-            self.terminal_width.saturating_sub(explorer)
+            let explorer = self.file_explorer_width.to_cols(chrome);
+            chrome.saturating_sub(explorer)
         } else {
-            self.terminal_width
+            chrome
         }
     }
 

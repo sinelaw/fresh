@@ -109,11 +109,26 @@ impl Editor {
 
         // Check if we should forward mouse events to the terminal
         // Forward if: in terminal mode, mouse is over terminal buffer, and terminal is in alternate screen mode
-        if let Some(result) =
-            self.active_window_mut()
-                .try_forward_mouse_to_terminal(col, row, mouse_event)
-        {
-            return result;
+        //
+        // ...unless a chrome drag is in progress (dock-border resize, split
+        // separator, or file-explorer width). That drag owns the mouse until
+        // release, so don't let an alternate-screen terminal swallow the
+        // motion once the pointer crosses over it — *growing* the dock drags
+        // the cursor rightward across a full-screen `btop`, and forwarding
+        // there both stalls the resize and eats the mouse-up that ends it,
+        // leaving the drag stuck. Shrinking happened to work only because the
+        // pointer stays left of the terminal the whole time.
+        let chrome_drag_active = self.dock_resizing || {
+            let ms = &self.active_window().mouse_state;
+            ms.dragging_separator.is_some() || ms.drag_start_explorer_width.is_some()
+        };
+        if !chrome_drag_active {
+            if let Some(result) =
+                self.active_window_mut()
+                    .try_forward_mouse_to_terminal(col, row, mouse_event)
+            {
+                return result;
+            }
         }
 
         // Dismiss theme info popup on any left-click; check if click is on the button first

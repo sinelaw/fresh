@@ -966,18 +966,15 @@ impl Window {
         }
     }
 
-    /// Resize all this window's visible terminal PTYs to match their
-    /// current split dimensions. Reads the window's cached
-    /// `terminal_width` / `terminal_height` for the screen size.
-    pub fn resize_visible_terminals(&mut self) {
-        // Mirror the render layout (`render.rs::compute_dock_split` +
-        // the file-explorer split): the editor-global dock claims the
-        // leftmost `dock_cols`, then the file explorer claims a slice of
-        // the remaining chrome, and the splits (terminals included) get
-        // what's left. `dock_cols` is pushed down by `Editor::relayout`.
-        // Computing the file-explorer width against the post-dock chrome
-        // width (not the full screen) matches the renderer exactly, so
-        // the PTY size lines up with the cells it actually draws into.
+    /// The rect the editor splits lay out into, mirroring the renderer
+    /// (`render.rs::compute_dock_split` + the file-explorer split): the
+    /// editor-global dock claims the leftmost `dock_cols`, then the file
+    /// explorer claims a slice of the remaining chrome, and the splits get
+    /// what's left. `dock_cols` is pushed down by `Editor::relayout`.
+    /// Computing the file-explorer width against the post-dock chrome
+    /// width (not the full screen) matches the renderer exactly, so split
+    /// geometry derived from this lines up with the cells actually drawn.
+    pub(crate) fn editor_content_area(&self) -> ratatui::layout::Rect {
         let chrome_width = self.terminal_width.saturating_sub(self.dock_cols);
         let file_explorer_width = if self.file_explorer_visible {
             self.file_explorer_width.to_cols(chrome_width)
@@ -991,12 +988,19 @@ impl Window {
             crate::config::FileExplorerSide::Right => self.dock_cols,
         };
         let editor_width = chrome_width.saturating_sub(file_explorer_width);
-        let editor_area = ratatui::layout::Rect::new(
+        ratatui::layout::Rect::new(
             editor_x,
             1, // menu bar
             editor_width,
             self.terminal_height.saturating_sub(2), // menu bar + status bar
-        );
+        )
+    }
+
+    /// Resize all this window's visible terminal PTYs to match their
+    /// current split dimensions. Reads the window's cached
+    /// `terminal_width` / `terminal_height` for the screen size.
+    pub fn resize_visible_terminals(&mut self) {
+        let editor_area = self.editor_content_area();
 
         let Some((mgr, _)) = self.buffers.splits() else {
             return;

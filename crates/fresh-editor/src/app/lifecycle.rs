@@ -412,5 +412,28 @@ impl crate::app::window::Window {
         }
 
         self.resize_visible_terminals();
+
+        // The editor narrowed/widened (dock toggle or drag, file explorer,
+        // window resize, split change). Re-pin each visible split's active
+        // tab into view at its NEW width — otherwise a tab that was flush
+        // against the right edge scrolls off when the pane shrinks and the
+        // tab-scroll offset is never revisited. Use each split's real area
+        // width (dock/explorer/split-aware), not the whole-window width, so
+        // a half-width vertical split scrolls correctly too.
+        let visible: Vec<(
+            crate::model::event::LeafId,
+            crate::model::event::BufferId,
+            u16,
+        )> = match self.buffers.splits() {
+            Some((mgr, _)) => mgr
+                .get_visible_buffers(self.editor_content_area())
+                .into_iter()
+                .map(|(split_id, buffer_id, area)| (split_id, buffer_id, area.width))
+                .collect(),
+            None => Vec::new(),
+        };
+        for (split_id, buffer_id, tab_width) in visible {
+            self.ensure_active_tab_visible(split_id, buffer_id, tab_width);
+        }
     }
 }
