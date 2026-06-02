@@ -2140,7 +2140,11 @@ impl LspState {
     ) -> Result<(), String> {
         use lsp_types::DocumentDiagnosticParams;
 
-        // Check if server supports pull diagnostics (diagnosticProvider capability)
+        // Check if server supports pull diagnostics (diagnosticProvider capability).
+        // This raw `ServerCapabilities` snapshot is kept in sync with dynamic
+        // `client/registerCapability` updates (sinelaw/fresh#2195) by the stdout
+        // reader, so a server like pyright that registers `diagnosticProvider`
+        // dynamically rather than statically is honored here too.
         let supports_pull = self
             .capabilities
             .lock()
@@ -2808,6 +2812,7 @@ impl LspTask {
         shutting_down: Arc<AtomicBool>,
         document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
         config_options: Arc<std::sync::Mutex<Option<Value>>>,
+        capabilities: Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
     ) {
         tokio::spawn(async move {
             tracing::info!("LSP stdout reader task started for {}", language);
@@ -2825,6 +2830,7 @@ impl LspTask {
                             &stdin_writer,
                             &document_versions,
                             &config_options,
+                            &capabilities,
                         )
                         .await
                         {
@@ -2936,6 +2942,7 @@ impl LspTask {
             shutting_down.clone(),
             self.document_versions.clone(),
             config_options.clone(),
+            state.capabilities.clone(),
         );
 
         // Sequential command dispatch loop.
@@ -3631,6 +3638,46 @@ fn unregistrations_from_params(params: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Reflect dynamic capability (un)registrations into the raw `ServerCapabilities`
+/// snapshot held by the LSP task.
+///
+/// The main-loop `ServerCapabilitySummary` is the primary gate for whether a
+/// request is sent, and it is updated from the same registrations. But a few
+/// task-side send checks read this raw snapshot instead — currently only
+/// `handle_document_diagnostic` (pull diagnostics) — so the diagnostic provider
+/// must be mirrored here or those requests are silently skipped for servers
+/// (e.g. pyright) that register `diagnosticProvider` dynamically rather than
+/// statically. Other features gate solely on the summary; extend this if a new
+/// task-side gate is added (sinelaw/fresh#2195).
+fn sync_raw_capabilities(
+    capabilities: &Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
+    registrations: &[(String, Option<Value>)],
+    register: bool,
+) {
+    use lsp_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+
+    if !registrations
+        .iter()
+        .any(|(method, _)| method == "textDocument/diagnostic")
+    {
+        return;
+    }
+
+    let mut guard = capabilities.lock().unwrap();
+    let caps = guard.get_or_insert_with(ServerCapabilities::default);
+    for (method, options) in registrations {
+        if method == "textDocument/diagnostic" {
+            caps.diagnostic_provider = register.then(|| {
+                let opts = options
+                    .as_ref()
+                    .and_then(|o| serde_json::from_value::<DiagnosticOptions>(o.clone()).ok())
+                    .unwrap_or_default();
+                DiagnosticServerCapabilities::Options(opts)
+            });
+        }
+    }
+}
+
 /// Build the response to a `workspace/configuration` request.
 ///
 /// LSP servers pull their settings by asking the client for named
@@ -3737,6 +3784,7 @@ async fn handle_message_dispatch(
     stdin_writer: &Arc<tokio::sync::Mutex<ChildStdin>>,
     document_versions: &Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
     config_options: &Arc<std::sync::Mutex<Option<Value>>>,
+    capabilities: &Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
 ) -> Result<(), String> {
     match message {
         JsonRpcMessage::Response(response) => {
@@ -3839,6 +3887,9 @@ async fn handle_message_dispatch(
                         registrations.iter().map(|(m, _)| m).collect::<Vec<_>>()
                     );
                     if !registrations.is_empty() {
+                        // Keep the task-side raw capability snapshot in sync for
+                        // the few send gates that read it (pull diagnostics).
+                        sync_raw_capabilities(capabilities, &registrations, true);
                         let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
                             language: language.to_string(),
                             server_name: server_name.to_string(),
@@ -3865,11 +3916,14 @@ async fn handle_message_dispatch(
                         methods
                     );
                     if !methods.is_empty() {
+                        let registrations: Vec<(String, Option<Value>)> =
+                            methods.into_iter().map(|m| (m, None)).collect();
+                        sync_raw_capabilities(capabilities, &registrations, false);
                         let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
                             language: language.to_string(),
                             server_name: server_name.to_string(),
                             register: false,
-                            registrations: methods.into_iter().map(|m| (m, None)).collect(),
+                            registrations,
                         });
                     }
                     JsonRpcResponse {
@@ -5237,6 +5291,66 @@ mod tests {
                 .and_then(|c| c.refresh_support),
             Some(true),
             "workspace.semanticTokens.refreshSupport must be advertised"
+        );
+    }
+
+    #[test]
+    fn sync_raw_capabilities_mirrors_dynamic_diagnostic_provider() {
+        // The task-side raw `ServerCapabilities` snapshot gates pull diagnostics
+        // (`handle_document_diagnostic`). A server like pyright registers
+        // `diagnosticProvider` dynamically, not statically, so without mirroring
+        // it here the pull is silently skipped (sinelaw/fresh#2195).
+        let caps: Arc<std::sync::Mutex<Option<ServerCapabilities>>> =
+            Arc::new(std::sync::Mutex::new(Some(ServerCapabilities::default())));
+        assert!(caps
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .diagnostic_provider
+            .is_none());
+
+        sync_raw_capabilities(
+            &caps,
+            &[("textDocument/diagnostic".to_string(), None)],
+            true,
+        );
+        assert!(
+            caps.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .diagnostic_provider
+                .is_some(),
+            "dynamic diagnostic registration must set diagnostic_provider so pulls aren't skipped"
+        );
+
+        sync_raw_capabilities(
+            &caps,
+            &[("textDocument/diagnostic".to_string(), None)],
+            false,
+        );
+        assert!(
+            caps.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .diagnostic_provider
+                .is_none(),
+            "unregister must clear diagnostic_provider"
+        );
+    }
+
+    #[test]
+    fn sync_raw_capabilities_ignores_non_diagnostic_methods() {
+        // Only the diagnostic provider is gated task-side; other methods must
+        // not disturb the raw snapshot (they gate on the main-loop summary).
+        let caps: Arc<std::sync::Mutex<Option<ServerCapabilities>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        sync_raw_capabilities(&caps, &[("textDocument/hover".to_string(), None)], true);
+        assert!(
+            caps.lock().unwrap().is_none(),
+            "a non-diagnostic registration must not materialize the raw snapshot"
         );
     }
 
