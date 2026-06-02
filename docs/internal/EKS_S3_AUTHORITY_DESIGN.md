@@ -150,9 +150,11 @@ So EKS attach reuses the SSH *connect* machinery, not the docker
 
   SSH startup and EKS attach both call this; only the transport differs.
 - The resulting `RemoteKeepalive` (runtime + child + reconnect task)
-  rides in the existing `session_keepalive` slot so the daemon path
-  keeps the channel alive across the rebuild — the same slot SSH already
-  uses for `SshConnection`.
+  rides in the `session_keepalive` slot so the daemon path keeps the
+  channel alive across the rebuild — the same slot SSH already uses for
+  `SshConnection`. (Under per-session authority — `AUTHORITY_DESIGN.md`
+  §"Evolution" — this slot becomes per-session, so each warm Cloud
+  Workspace owns its own keepalive rather than the process owning one.)
 
 `setAuthority` (docker, local) and `attachRemoteAgent` (ssh-style remote
 over a transport) are the two attach families. Keeping them separate is

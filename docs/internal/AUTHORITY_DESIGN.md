@@ -39,6 +39,15 @@ disconnect) stays the source of truth for user\@host labels.
    invents is an authority. Local's terminal wrapper is
    `detect_shell()` with no args and `manages_cwd: false`.
 
+   > **Evolution (Orchestrator / Cloud Workspaces).** As editor state
+   > moves onto `Window`/`Session` (see `orchestrator-sessions-design.md`)
+   > and a single process holds many sessions — some attached to live
+   > cloud backends that stay warm in the background — this becomes
+   > **one authority per `Session`, exactly one *active*.** The "sole
+   > router" and "opaque to core" principles are unchanged; only
+   > "per-process, one alive" gives way. See
+   > §"Evolution: per-session authority".
+
 2. **Authority is the sole router for "where".** Every primitive routes
    through `editor.authority()`. Nothing reads a backend-specific
    field. Nothing branches on "is this SSH / a container".
@@ -219,6 +228,79 @@ different "what changes" semantics (working directory vs. the
 `current_authority` slot). Keeping them separate entry points means
 callers don't have to care about each other; each can evolve
 independently.
+
+## Evolution: per-session authority
+
+> Status within this doc: **design direction**, not yet shipped. The
+> sections above describe the per-`Editor`, one-alive model as it ships
+> today. This section describes where the Orchestrator session model and
+> Cloud Workspaces (`EKS_WORKSPACE_UX_DESIGN.md`) take it. It is recorded
+> here so the foundational principles above are read with the evolution
+> in view.
+
+### What forces the change
+
+Cloud Workspaces make a workspace a [`Session`](orchestrator-sessions-design.md)
+whose authority is a remote (EKS/`kubectl exec`) backend, and the UX
+decision **D4 — background cloud sessions stay warm** requires several
+sessions to hold **live backends concurrently** (each its own
+`kubectl exec` channel, agent, reconnect task, keepalive). A single
+`Authority` per process can keep exactly one backend alive, so that
+model cannot express warm background sessions. The authority must be
+**owned per `Session`/`Window`**.
+
+This is not a reversal — it is the next step of the migration that
+already moved buffers, splits, file explorer, LSP, and terminals from
+`Editor` onto `Window`. Authority is the remaining per-project field.
+
+### The restated invariant
+
+- **One authority per `Session`, exactly one *active*.** The active
+  session's authority is still the *sole router* for every primitive
+  (principle 2 intact); background sessions hold **dormant** authorities
+  — live connection, routing nothing. "Modal per window" (principle 5)
+  becomes literally true now that one process holds many windows.
+- **Opaque to core (principle 3) is unchanged.** The Orchestrator renders
+  a session's optional "remote facet" (state/cost/verbs) generically and
+  never names a backend.
+
+### Transitions become per-session, not per-process
+
+The conservative "drop and rebuild the whole `Editor`" choice existed
+because enumerating every cache holding an `Arc<dyn FileSystem>` at swap
+time was error-prone. The session migration **already bundled that
+state per session** — so the unit of teardown shrinks from "the process"
+to "a session":
+
+- **Connect / switch** is no longer a process restart. Switching to a
+  warm session *activates* its existing authority (instant); switching to
+  a cold/stopped one resumes/rebuilds **that session only**, leaving
+  other sessions and their connections untouched.
+- **`install_authority` / `clear_authority`** retarget the *active
+  session's* authority slot and rebuild that session, not the `Editor`.
+  The old whole-`Editor` restart remains the mechanism for a genuine
+  process-level change (e.g. config reload), not for an authority swap.
+
+### Follow-ons to work through
+
+Three things currently shared process-wide are passed into every
+authority constructor as one `Arc` the server owns. Per-session,
+divergent backends likely make some of them per-session — to be designed
+deliberately, not assumed:
+
+- **`WorkspaceTrust`** — trusting a cluster/host is a per-workspace
+  decision; trust probably becomes per-session (with a shared registry
+  for "remember this cluster").
+- **`EnvProvider`** — venv/direnv/mise activation is per-project; almost
+  certainly per-session.
+- **`session_keepalive` / `startup_authority` (daemon).** The
+  `EditorServer` single-slot model (one keepalive, one startup authority)
+  becomes a per-session collection: each warm session owns its keepalive
+  bundle; the daemon holds them for the lifetime of their session, not
+  the process.
+- **Resource ceiling.** Warm sessions accumulate host-side processes
+  (one `kubectl`/`ssh` child + agent + tokio task each). The warm-set cap
+  (UX D4) suspends the least-recently-active beyond a configurable max.
 
 ## Plugin API
 

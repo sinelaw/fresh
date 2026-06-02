@@ -300,6 +300,23 @@ ephemeral becomes a per-workspace policy flag (row 11): persistent =
 stop/resume; ephemeral = destroy-on-disconnect. Build the suspend/resume
 machinery in v1.
 
+### D5 — Authority becomes per-session (not per-process)
+
+A direct consequence of D4. Warm background sessions each hold a live
+backend, so the `Authority` (its filesystem, spawners, keepalive) must be
+**owned per `Session`/`Window`, with exactly one *active*** — not one per
+process as today. The active session's authority is still the sole
+router; background ones are dormant-but-connected. Switching sessions
+*activates* an authority instead of restarting the process, and
+`install_authority` retargets the active session, not the whole `Editor`.
+
+This continues the Orchestrator migration (which already moved buffers,
+LSP, terminals, explorer onto `Window`); authority is the remaining
+per-project field. It also pulls `WorkspaceTrust`, `EnvProvider`, and the
+daemon's single `session_keepalive`/`startup_authority` slots toward
+per-session ownership. Full write-up: `AUTHORITY_DESIGN.md`
+§"Evolution: per-session authority".
+
 ### D4 — Background cloud sessions stay warm
 
 When a cloud session is not the active one in the Orchestrator, its
