@@ -269,6 +269,45 @@ fn test_terminal_content_rendering() {
     assert!(!content[0].is_empty());
 }
 
+/// A program running in the terminal can rename its own tab by emitting an
+/// OSC 2 ("set window title") escape sequence, just like in a standalone
+/// terminal emulator. The default `*Terminal 0*` tab label is replaced by
+/// the requested title on the next render, asserted purely on screen output.
+#[test]
+fn test_terminal_tab_title_follows_osc_sequence() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Open a terminal — the tab starts with the default label.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Emulate the program emitting OSC 2 by feeding the bytes into the
+    // live terminal's emulator state (the same path PTY output takes).
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("active buffer should be a terminal");
+    {
+        let handle = harness
+            .editor()
+            .terminal_manager()
+            .get(terminal_id)
+            .expect("terminal handle should exist");
+        let mut state = handle.state.lock().expect("terminal state lock");
+        // ESC ] 2 ; <title> BEL
+        state.process_output(b"\x1b]2;my-shell: ~/project\x07");
+    }
+
+    // After the next render the tab reflects the OSC title and the default
+    // label is gone.
+    harness.render().unwrap();
+    harness.assert_screen_contains("my-shell: ~/project");
+    harness.assert_screen_not_contains("*Terminal 0*");
+}
+
 /// Test terminal handles ANSI escape sequences for cursor positioning
 /// Uses direct terminal state processing (synchronous) instead of PTY
 #[test]
