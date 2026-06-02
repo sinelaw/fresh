@@ -262,15 +262,15 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities,
-        DiagnosticWorkspaceClientCapabilities, DiagnosticTag,
-        DynamicRegistrationClientCapabilities, FoldingRangeCapability,
-        FoldingRangeClientCapabilities, FoldingRangeKind, FoldingRangeKindCapability,
-        GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
-        InlayHintClientCapabilities, MarkupKind, PublishDiagnosticsClientCapabilities,
-        RenameClientCapabilities, SignatureHelpClientCapabilities, TagSupport,
-        TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
-        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        DiagnosticWorkspaceClientCapabilities, DynamicRegistrationClientCapabilities,
+        FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
+        FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
+        HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
+        PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
+        SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
+        TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
+        WorkspaceEditClientCapabilities,
     };
 
     ClientCapabilities {
