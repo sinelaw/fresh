@@ -262,7 +262,8 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        CompletionClientCapabilities, DiagnosticClientCapabilities,
+        DiagnosticWorkspaceClientCapabilities, DiagnosticTag,
         DynamicRegistrationClientCapabilities, FoldingRangeCapability,
         FoldingRangeClientCapabilities, FoldingRangeKind, FoldingRangeKindCapability,
         GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
@@ -292,6 +293,14 @@ fn create_client_capabilities() -> ClientCapabilities {
             // pulls in `resolve_workspace_configuration`, sourcing the
             // requested section from each server's `initialization_options`.
             configuration: Some(true),
+            // Accept server-driven diagnostic refreshes. We handle
+            // `workspace/diagnostic/refresh` (re-pulling diagnostics for all
+            // open docs), but servers only send it when the client advertises
+            // refresh support — e.g. rust-analyzer fires it once indexing
+            // finishes, which is when the first real diagnostics exist.
+            diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {
