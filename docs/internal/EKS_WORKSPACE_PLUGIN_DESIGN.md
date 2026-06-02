@@ -38,6 +38,21 @@ in the sandboxed TS runtime and only ever does host-side work through
   kubeconfig/AWS chain already does (SSO, IRSA, `aws eks get-token`).
 - Not multi-pod-per-window (the authority is modal — one pod).
 
+## Default posture: full-manage, with an escape hatch
+
+Per [`EKS_WORKSPACE_UX_DESIGN.md`](EKS_WORKSPACE_UX_DESIGN.md) D1, the
+default is **full-manage**: Fresh ships an opinionated, zero-config
+provisioning engine so a developer with only an AWS account + a cluster
+gets a working workspace with no setup. The built-in providers below are
+therefore *real Fresh-owned defaults* (default EBS-live/S3-sync pod spec,
+Karpenter/Spot-friendly, Pod-Identity-scoped) that also drive the full
+`stop / resume / rebuild / resize / destroy / idle-stop` lifecycle — not
+mere "apply the user's YAML" shims.
+
+The `command` provider remains the **deliberate escape hatch** for teams
+who own their provisioning (Terraform/Helm/CDK). It is the override, not
+the thing every user must configure. Default path: Fresh just does it.
+
 ## The core abstraction: a `Provider`
 
 Everything customizable is funneled through one small contract. A
