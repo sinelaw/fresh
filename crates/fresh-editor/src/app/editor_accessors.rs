@@ -495,6 +495,64 @@ impl Editor {
         }
     }
 
+    /// The active window's id. The active session under the (in-progress)
+    /// per-session model; today pinned to the single window.
+    pub fn active_window_id(&self) -> fresh_core::WindowId {
+        self.active_window
+    }
+
+    /// Swap a *single* session's (window's) authority without a restart —
+    /// the per-session counterpart to [`Self::set_boot_authority`], which
+    /// fans one authority across every window at boot.
+    ///
+    /// Updates that window's `resources.authority` and re-points its LSP
+    /// backend (long-running spawner, path translation, trust); when the
+    /// window is the active one, mirrors into the editor-wide `authority`
+    /// cache the rest of the editor reads and fires the `authority_changed`
+    /// hook. This is the activation primitive a per-session attach (the
+    /// planned `attachRemoteAgent` op, and the Orchestrator session-swap)
+    /// builds on, and the seam that lets distinct windows hold distinct
+    /// authorities concurrently (`AUTHORITY_DESIGN.md` §"Evolution:
+    /// per-session authority").
+    ///
+    /// Caveat — why production attach still goes through the destructive
+    /// `install_authority` restart: like `set_boot_authority`, this does
+    /// not invalidate per-buffer captured filesystem handles or terminals
+    /// opened under the previous authority. Hot-swapping those safely is
+    /// the remaining per-window cache-invalidation work gated on the live
+    /// multi-session migration; until it lands, this method is the
+    /// infrastructure seam, exercised by tests and the activation path,
+    /// not yet the user-facing attach.
+    pub fn set_session_authority(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        authority: crate::services::authority::Authority,
+    ) {
+        let is_active = self.active_window == window_id;
+        if let Some(w) = self.windows.get_mut(&window_id) {
+            w.resources.authority = authority.clone();
+            // Each window owns its `LspManager` by construction (no longer an
+            // `Option`); re-point its backend handles, matching the active-
+            // window re-pointing `set_boot_authority` does for every window.
+            let lsp = &mut w.lsp;
+            lsp.set_long_running_spawner(authority.long_running_spawner.clone());
+            lsp.set_path_translation(authority.path_translation.clone());
+            lsp.set_workspace_trust(authority.workspace_trust.clone());
+        }
+        if is_active {
+            self.authority = authority;
+            #[cfg(feature = "plugins")]
+            {
+                self.update_plugin_state_snapshot();
+                let label = self.authority.display_label.clone();
+                self.plugin_manager.read().unwrap().run_hook(
+                    "authority_changed",
+                    crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
+                );
+            }
+        }
+    }
+
     /// Read-only access to the active authority.
     pub fn authority(&self) -> &crate::services::authority::Authority {
         &self.authority

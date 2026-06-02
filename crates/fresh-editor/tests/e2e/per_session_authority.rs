@@ -1,0 +1,104 @@
+//! Per-session authority infrastructure (`Editor::set_session_authority`).
+//!
+//! The activation primitive the per-session authority model is built on
+//! (see `docs/internal/AUTHORITY_DESIGN.md` §"Evolution: per-session
+//! authority"). Unlike `set_boot_authority`, which fans one authority
+//! across every window at boot, `set_session_authority` swaps a *single*
+//! window's authority and only mirrors into the editor-wide cache when
+//! that window is the active one.
+//!
+//! These tests lock in:
+//!   1. swapping the active window's authority updates both the window's
+//!      own `authority()` and the editor-wide `authority()` the rest of
+//!      the editor reads;
+//!   2. targeting a non-active / unknown window does not disturb the
+//!      active authority — the guard that keeps distinct sessions from
+//!      stomping each other once multi-session is live.
+
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
+use fresh::services::authority::{
+    Authority, AuthorityPayload, FilesystemSpec, SpawnerSpec, TerminalWrapperSpec,
+};
+
+fn container_authority(label: &str) -> Authority {
+    Authority::from_plugin_payload(
+        AuthorityPayload {
+            filesystem: FilesystemSpec::Local,
+            spawner: SpawnerSpec::Local,
+            terminal_wrapper: TerminalWrapperSpec::HostShell,
+            display_label: label.to_string(),
+            path_translation: None,
+        },
+        std::sync::Arc::new(fresh::services::workspace_trust::WorkspaceTrust::permissive()),
+        std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
+    )
+    .expect("local-backed payload is valid")
+}
+
+#[test]
+fn set_session_authority_on_active_window_updates_window_and_editor() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // Boots local — empty display label.
+    assert_eq!(harness.editor_mut().authority().display_label, "");
+
+    let active = harness.editor_mut().active_window_id();
+    harness
+        .editor_mut()
+        .set_session_authority(active, container_authority("Container:abc"));
+
+    // The editor-wide cache (read by the 100+ `self.authority` call sites)
+    // reflects the swap…
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "Container:abc"
+    );
+    // …and so does the window's own per-session handle.
+    assert_eq!(
+        harness.editor_mut().active_window().authority().display_label,
+        "Container:abc"
+    );
+    Ok(())
+}
+
+#[test]
+fn set_session_authority_on_other_window_leaves_active_untouched() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // Establish a known active authority first.
+    let active = harness.editor_mut().active_window_id();
+    harness
+        .editor_mut()
+        .set_session_authority(active, container_authority("Container:active"));
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "Container:active"
+    );
+
+    // Target a window that isn't active (and, here, doesn't exist): the
+    // editor-wide active authority must be left alone. This is the guard
+    // that lets a background session's authority be swapped without
+    // disturbing the foreground one once multi-session is live.
+    let bogus = fresh_core::WindowId(9999);
+    assert_ne!(bogus, active);
+    harness
+        .editor_mut()
+        .set_session_authority(bogus, container_authority("Container:background"));
+
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "Container:active",
+        "swapping a non-active window must not change the active authority"
+    );
+    Ok(())
+}

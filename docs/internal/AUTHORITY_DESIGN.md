@@ -272,6 +272,18 @@ so several windows coexist, (b) give each window its **own keepalive** so
 a background window keeps its live backend, and (c) replace the
 destructive-restart transition with **per-window activation**.
 
+> **Implementation status.** The per-window activation primitive has
+> landed: `Editor::set_session_authority(window_id, authority)`
+> (`app/editor_accessors.rs`) swaps a *single* window's authority and
+> re-points that window's LSP, mirroring into the editor-wide cache only
+> when it's the active window — the per-session counterpart to the
+> all-windows boot fan-out. Tested (`tests/e2e/per_session_authority.rs`:
+> active-window swap propagates; non-active swap leaves the foreground
+> untouched). Still gated: live multi-session, the per-window keepalive,
+> and cache-invalidation of buffers/terminals opened under the old
+> authority (so production attach still uses the destructive
+> `install_authority` restart).
+
 ### The restated invariant
 
 - **One authority per `Session`, exactly one *active*.** The active
