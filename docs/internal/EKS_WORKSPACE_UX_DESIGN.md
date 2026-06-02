@@ -300,6 +300,32 @@ ephemeral becomes a per-workspace policy flag (row 11): persistent =
 stop/resume; ephemeral = destroy-on-disconnect. Build the suspend/resume
 machinery in v1.
 
+### D4 — Background cloud sessions stay warm
+
+When a cloud session is not the active one in the Orchestrator, its
+`kubectl exec` channel **stays connected** (the `RemoteKeepalive` bundle
+— agent, reconnect task, runtime — is held per session). Switching back
+is instant; no reconnect, no resume.
+
+Consequences:
+- **The agent heartbeat runs for *every* warm session, not just the
+  active one** — otherwise a backgrounded session's idle `exec` stream
+  gets dropped by ELB/NAT timeouts and "instant switch-back" becomes
+  "switch back, then wait for a reconnect." The heartbeat is what makes
+  warm actually warm.
+- **Warm ≠ exempt from idle auto-stop.** "Stays warm" governs the
+  *connection* while the workspace is `running`; the workspace-lifecycle
+  idle timer (D2) still measures per-session inactivity and can `stop`
+  the pod (closing its channel). A backgrounded session that goes idle
+  long enough suspends; switching back to it then resumes. Warm keeps
+  switching snappy; idle-stop keeps the bill honest. They don't fight —
+  warm is about the live connection, idle-stop is about the pod.
+- **Resource ceiling.** Each warm session holds a host-side `kubectl`
+  subprocess + an in-pod agent + a tokio task. Fine for a handful; with
+  many sessions it accumulates. Keep all warm by default (the decision),
+  but cap the warm set at a configurable max (suspend the
+  least-recently-active beyond it) as a safety valve.
+
 ### D3 — Management lives *in the Orchestrator*, not a separate panel (v1)
 
 The original D3 ("ship a Workspaces panel") is **superseded**: a cloud
@@ -321,10 +347,6 @@ facet**, not by building new chrome.
 - **Cluster-creation boundary (F1).** Confirmed out of scope to *create*
   clusters — but how guided is the "you have AWS, no cluster" dead-end?
   Reference Terraform + docs link, or something warmer?
-- **Background-session connection liveness (Orchestrator).** When a cloud
-  session is *not* the active one, does its `kubectl exec` channel stay
-  connected (cheap to hold, instant switch-back, but holds host
-  resources + keepalive) or suspend (frees resources, slower switch-back,
-  must reconnect)? Likely: keep the channel warm briefly, then suspend on
-  a timer — but it needs a deliberate policy, since the Orchestrator can
-  hold many sessions.
+- **Warm-set cap default (D4 detail).** "Stay warm" is decided; the only
+  remaining knob is the max number of simultaneously warm sessions before
+  the least-recently-active suspend. Pick a sane default (e.g. 5-8).
