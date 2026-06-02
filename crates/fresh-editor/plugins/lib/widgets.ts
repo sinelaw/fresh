@@ -225,6 +225,14 @@ export function divider(
  * re-renders. Lists without a key reset to scroll=0 each render. */
 export function list(options: {
   items: TextPropertyEntry[];
+  /** Optional per-item widget specs. When provided (non-empty) they
+   * override `items`: each renders as a multi-row "card" (e.g. a
+   * `labeledSection` for a rounded pill) and the list selects,
+   * scrolls, and routes clicks in item units — one card per item.
+   * Pass `items: []` alongside. All cards share a uniform height; a
+   * click anywhere on a card fires the same `select` event a classic
+   * row would. Interactive widgets nested in a card aren't routed. */
+  itemSpecs?: WidgetSpec[];
   itemKeys?: string[];
   selectedIndex?: number;
   visibleRows: number;
@@ -240,6 +248,7 @@ export function list(options: {
   return {
     kind: "list",
     items: options.items,
+    itemSpecs: options.itemSpecs ?? [],
     itemKeys: options.itemKeys ?? [],
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,

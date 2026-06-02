@@ -3768,17 +3768,34 @@ impl Editor {
             WidgetMutation::SetSelectedIndex { widget_key, index } => {
                 // List selected_index lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-                    let prev_scroll = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::List {
-                            scroll_offset, ..
-                        }) => *scroll_offset,
-                        _ => 0,
-                    };
+                    let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::List {
+                                scroll_offset,
+                                selected_index,
+                                item_height,
+                                user_scrolled,
+                            }) => (
+                                *scroll_offset,
+                                *selected_index,
+                                *item_height,
+                                *user_scrolled,
+                            ),
+                            _ => (0, -1, 1, false),
+                        };
+                    // Re-pinning the *same* index (which `refreshOpenDialog`
+                    // does on every repaint) must preserve a user scroll —
+                    // otherwise a probe-poll refresh would snap the view back
+                    // to the selection a beat after a mouse scroll. Only an
+                    // actual selection change re-arms scroll-follows-selection.
+                    let user_scrolled = prev_user_scrolled && index == prev_index;
                     panel.instance_states.insert(
                         widget_key,
                         crate::widgets::WidgetInstanceState::List {
                             scroll_offset: prev_scroll,
                             selected_index: index,
+                            item_height: prev_item_height,
+                            user_scrolled,
                         },
                     );
                 }

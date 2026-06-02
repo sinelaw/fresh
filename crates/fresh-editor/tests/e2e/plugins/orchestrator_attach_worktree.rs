@@ -603,9 +603,11 @@ fn visible_feats(screen: &str) -> std::collections::BTreeSet<String> {
 #[test]
 fn scrollbar_click_scrolls_the_session_list() {
     let (_temp, repo) = set_up_repo_with_many_worktrees(15);
-    // 24 rows ⇒ list visible height well under the 16 rows, so it
-    // overflows and a scrollbar is drawn.
-    let mut harness = EditorTestHarness::with_working_dir(160, 24, repo.clone()).unwrap();
+    // 16 sessions rendered as multi-row cards far exceed the visible
+    // height, so the list overflows and a scrollbar is drawn. The
+    // terminal is tall enough that a few whole cards (each carrying a
+    // `· on-disk` line) are visible to confirm discovery landed.
+    let mut harness = EditorTestHarness::with_working_dir(160, 40, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
     wait_for_command(&mut harness, "Orchestrator: Open");
 
@@ -615,7 +617,7 @@ fn scrollbar_click_scrolls_the_session_list() {
     // and for the screen to settle, so the full set is present before
     // we snapshot.
     harness
-        .wait_until_stable(|h| h.screen_to_string().matches("· on-disk").count() >= 5)
+        .wait_until_stable(|h| h.screen_to_string().matches("· on-disk").count() >= 3)
         .unwrap();
 
     let before = visible_feats(&harness.screen_to_string());

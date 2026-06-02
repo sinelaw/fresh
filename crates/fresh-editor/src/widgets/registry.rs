@@ -70,6 +70,22 @@ pub enum WidgetInstanceState {
     List {
         scroll_offset: u32,
         selected_index: i32,
+        /// Rows each item occupies in the last render: 1 for a classic
+        /// one-row-per-item list, or the uniform card height for an
+        /// `item_specs` (card) list. The renderer writes it; mouse
+        /// handlers read it to convert the row-denominated `visible_rows`
+        /// into a per-item scroll window (so wheel/scrollbar bounds are
+        /// right for card lists, and an un-scrollable list still lets the
+        /// wheel bubble to an enclosing scrollable pane).
+        item_height: u32,
+        /// True once the user has scrolled the list by mouse (wheel or
+        /// scrollbar) without moving the selection. While set, the
+        /// renderer respects `scroll_offset` as-is instead of snapping
+        /// it back to keep `selected_index` in view — so a mouse scroll
+        /// can push the selected card off-screen. Cleared whenever the
+        /// selection itself moves (keyboard nav, click, or a plugin
+        /// `SetSelectedIndex`), which re-arms scroll-follows-selection.
+        user_scrolled: bool,
     },
     /// `Text` instance state: host-owned `TextEdit` (value + cursor
     /// row/col + selection anchor + multiline flag), plus a viewport
@@ -272,31 +288,23 @@ impl WidgetRegistry {
         scroll_offset: u32,
         visible: u32,
     ) -> Option<i32> {
+        let _ = visible;
         let state = self.panels.get_mut(&panel_id)?;
         let WidgetInstanceState::List {
             scroll_offset: so,
-            selected_index,
+            user_scrolled,
+            ..
         } = state.instance_states.get_mut(list_key)?
         else {
             return None;
         };
+        // Mouse scroll moves the *view* only — the selection stays put
+        // (and may scroll out of view). `user_scrolled` tells the
+        // renderer not to snap the offset back to the selection. Never
+        // returns a moved selection, so no `select`/live-switch fires.
         *so = scroll_offset;
-        if *selected_index < 0 || visible == 0 {
-            return None;
-        }
-        let prev = *selected_index;
-        let lo = scroll_offset as i32;
-        let hi = (scroll_offset + visible).saturating_sub(1) as i32;
-        if *selected_index < lo {
-            *selected_index = lo;
-        } else if *selected_index > hi {
-            *selected_index = hi;
-        }
-        if *selected_index != prev {
-            Some(*selected_index)
-        } else {
-            None
-        }
+        *user_scrolled = true;
+        None
     }
 
     /// Update side-effects (hits, instance_states, focus_key, tabbable)
@@ -478,6 +486,8 @@ mod tests {
             WidgetInstanceState::List {
                 scroll_offset: scroll,
                 selected_index: sel,
+                item_height: 1,
+                user_scrolled: false,
             },
         );
         reg.mount(
@@ -496,27 +506,29 @@ mod tests {
             WidgetInstanceState::List {
                 scroll_offset,
                 selected_index,
+                ..
             } => (*scroll_offset, *selected_index),
             _ => panic!("not a list"),
         }
     }
 
     #[test]
-    fn set_list_scroll_sets_offset_and_clamps_selection_into_view() {
-        // Selection (row 2) is above the dragged-to window [10, 18);
-        // it should clamp up to the new top (10) and report the move.
+    fn set_list_scroll_moves_view_only_not_selection() {
+        // Mouse scroll moves the *view* and never the selection — even
+        // when the selection (row 2) ends up above the dragged-to window
+        // [10, 18). No move is reported, so no `select`/live-switch
+        // fires; the selection is allowed to leave the visible range.
         let mut reg = WidgetRegistry::new();
         mount_with_list(&mut reg, 0, 2);
         let moved = reg.set_list_scroll(7, "lst", 10, 8);
-        assert_eq!(moved, Some(10));
-        assert_eq!(list_state(&reg), (10, 10));
+        assert_eq!(moved, None);
+        assert_eq!(list_state(&reg), (10, 2));
     }
 
     #[test]
     fn set_list_scroll_leaves_in_view_selection_untouched() {
         // Selection already inside the new window — offset updates,
-        // selection stays, and no move is reported (no plugin sync
-        // needed).
+        // selection stays, and no move is reported.
         let mut reg = WidgetRegistry::new();
         mount_with_list(&mut reg, 0, 12);
         let moved = reg.set_list_scroll(7, "lst", 10, 8); // window [10,18)

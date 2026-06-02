@@ -26,6 +26,7 @@ import {
   key as widgetKey,
   labeledSection,
   list,
+  raw,
   row,
   overlay,
   spacer,
@@ -106,6 +107,71 @@ interface AgentSession {
   // display). Set for discovered rows; left undefined for live
   // sessions where the tab/label already carries the identity.
   branch?: string;
+  // Opportunistically-gathered GitHub PR summary for this session's
+  // branch (via `gh`), shown on the pill's third line. `undefined`
+  // until first probed; see `PrProbe` for the lifecycle.
+  pr?: PrProbe;
+  // Opportunistically-gathered local git summary (ahead/behind +
+  // working-tree diffstat) for the pill's second line — useful even
+  // before there's a PR. Same lifecycle as `pr`.
+  git?: GitProbe;
+  // Wall-clock ms when this session last became the active window. Used
+  // to suppress the terminal's activation redraw from registering as
+  // agent activity (so selecting a session doesn't flash it `working`).
+  activatedAt?: number;
+}
+
+// Local git summary + freshness bookkeeping (mirrors `PrProbe`).
+interface GitProbe {
+  status: "loading" | "ok";
+  fetchedAt: number;
+  info?: GitStat;
+}
+
+// Compact working-tree + branch-position summary, from
+// `git status --porcelain=v2 --branch` and `git diff --shortstat HEAD`.
+interface GitStat {
+  branch?: string;
+  // Commits ahead / behind the upstream (or base), when an upstream
+  // is configured.
+  ahead?: number;
+  behind?: number;
+  // Count of dirty paths (staged + unstaged + untracked).
+  dirty?: number;
+  // Uncommitted line churn vs HEAD.
+  added?: number;
+  deleted?: number;
+}
+
+// PR info gathered for a session, plus the freshness bookkeeping that
+// keeps the probe opportunistic (never blocks a render, refreshes on a
+// slow cadence). `status` distinguishes "haven't looked", "looking",
+// "looked, no PR / gh unavailable", and "have a PR".
+interface PrProbe {
+  status: "loading" | "none" | "ok";
+  // Wall-clock ms of the last completed probe (success or "none"),
+  // used to throttle re-probes.
+  fetchedAt: number;
+  info?: PrInfo;
+}
+
+// The subset of `gh pr view --json …` we surface. All optional so a
+// partial/older `gh` still renders what it can.
+interface PrInfo {
+  number: number;
+  // "OPEN" | "MERGED" | "CLOSED".
+  state?: string;
+  isDraft?: boolean;
+  // "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "".
+  reviewDecision?: string;
+  // gh's MERGEABLE / CONFLICTING / UNKNOWN.
+  mergeable?: string;
+  // Rolled-up CI: counts derived from statusCheckRollup.
+  checksPass?: number;
+  checksFail?: number;
+  checksPending?: number;
+  // Count of (review) comments.
+  comments?: number;
 }
 
 // =============================================================================
@@ -703,8 +769,10 @@ interface StatusSymbol {
 const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
   // In progress — amber/warning, an asterisk reads as "busy/spinner".
   working: { glyph: "*", fg: "diagnostic.warning_fg" },
-  // Done/quiet — green check, the universal "complete" mark.
-  idle: { glyph: "✓", fg: "file_status_added_fg" },
+  // Quiet / waiting — a small dim dot. Deliberately understated: idle is
+  // the resting state, so it shouldn't draw the eye the way a green
+  // check (which reads as "done/success") did.
+  idle: { glyph: "·", fg: "ui.menu_disabled_fg" },
 };
 
 // Width of the left status margin: glyph + trailing space.
@@ -871,95 +939,200 @@ function sessionsColumnHeader(): WidgetSpec {
   };
 }
 
-// Build one rendered list-item row for `id`:
-//   `<sym> [ ] <name>  <project basename>`
-// A leading status symbol (working `*` / idle `✓`, blank for on-disk rows)
-// sits in the left margin so every name lines up regardless of state. Then
-// the multi-select checkbox, the name (active bold, discovered dim), and an
-// optional cross-project basename tag. `contentWidth` is the list column's
-// inner width in cells — the dock passes ~30, the modal passes its wider
-// session-column width.
-function renderListItem(
+// =============================================================================
+// Pill (card) rendering — the richer multi-line list item
+//
+// Each session renders as a rounded `labeledSection` card with two
+// content lines:
+//
+//   ╭────────────────────────────────────╮
+//   │ * agent-auth              demo-proj │   line 1: status · name · project
+//   │ #1287 ✓7/8 ●2 approved · merge ok   │   line 2: PR badge (or branch)
+//   ╰────────────────────────────────────╯
+//
+// The host `list` widget lays these out one card per item (selection,
+// scroll, and clicks all in item units) via the `itemSpecs` channel.
+// =============================================================================
+
+type Entry = { text: string; style?: Record<string, unknown> };
+
+// Field icons (Alt-5 style) — a small glyph labels each field so its
+// slot is unambiguous. `BRANCH_ICON` falls back gracefully: it's only
+// decorative, and the branch name follows it.
+const PROJECT_ICON = "▣";
+// `▸` (not the git-fork `⎇`, which is absent from many monospace fonts
+// and renders as tofu) — matches the branch marker the dock detail line
+// already uses.
+const BRANCH_ICON = "▸";
+
+// Card line 2: branch (with icon, left) + a compact git summary
+// (right-aligned) that's useful even before any PR exists —
+// ahead/behind the upstream and the uncommitted diffstat
+// (`+added −deleted`), or `clean`.
+function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
+  const dim = "ui.menu_disabled_fg";
+  let branch = s.branch || (s.discovered ? "(worktree)" : "(detached)");
+  // Cap the branch so it doesn't push the right-aligned git summary off
+  // the tail (the host truncates the row's *end*, which is the summary)
+  // on a normal-width card. Very narrow docks may still clip it.
+  const BRANCH_CAP = 28;
+  if (branch.length > BRANCH_CAP) branch = branch.slice(0, BRANCH_CAP - 1) + "…";
+  const left: Entry[] = [
+    { text: BRANCH_ICON + " ", style: { fg: dim } },
+    { text: branch, style: { fg: dim } },
+  ];
+  // The git summary is right-aligned on the line (see `renderPillSpec`),
+  // so it's returned separately from the branch.
+  const right: Entry[] = [];
+  const sep = (): string => (right.length ? " " : "");
+  const probe = s.git;
+  // Keep the last good summary on screen while a re-poll is in flight
+  // (only the very first probe, with no prior info, shows the spinner).
+  const g = probe?.info;
+  if (!g) {
+    if (probe?.status === "loading") {
+      right.push({ text: "…", style: { fg: dim, italic: true } });
+    }
+    return { left, right };
+  }
+  if (g.ahead && g.ahead > 0) {
+    right.push({ text: `${sep()}↑${g.ahead}`, style: { fg: "file_status_added_fg" } });
+  }
+  if (g.behind && g.behind > 0) {
+    right.push({ text: `${sep()}↓${g.behind}`, style: { fg: "diagnostic.warning_fg" } });
+  }
+  if (g.added) {
+    right.push({ text: `${sep()}+${g.added}`, style: { fg: "file_status_added_fg" } });
+  }
+  if (g.deleted) {
+    right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "file_status_deleted_fg" } });
+  }
+  if (right.length === 0) {
+    right.push({ text: "clean", style: { fg: dim, italic: true } });
+  }
+  return { left, right };
+}
+
+// Card line 3: the GitHub PR badge (number, checks, comments, review,
+// conflicts). Degrades to a dim placeholder when there's no PR yet,
+// the probe is still running, or `gh` is unavailable.
+function prLineEntries(s: AgentSession): Entry[] {
+  const dim = "ui.menu_disabled_fg";
+  const probe = s.pr;
+  // Keep the last good badge on screen while a re-poll is in flight —
+  // don't flash a placeholder over real data (only the very first probe,
+  // with no prior info, shows the spinner).
+  if (probe?.info && (probe.status === "ok" || probe.status === "loading")) {
+    const p = probe.info;
+    const out: Entry[] = [
+      { text: "PR ", style: { fg: dim } },
+      { text: `#${p.number}`, style: { fg: "ui.help_key_fg", bold: true } },
+    ];
+    if (p.isDraft) out.push({ text: " draft", style: { fg: dim } });
+    if (p.checksFail && p.checksFail > 0) {
+      out.push({ text: ` ✗${p.checksFail}`, style: { fg: "diagnostic.error_fg" } });
+    } else if (p.checksPending && p.checksPending > 0) {
+      out.push({ text: ` •${p.checksPending}`, style: { fg: "diagnostic.warning_fg" } });
+    } else if (p.checksPass && p.checksPass > 0) {
+      out.push({ text: ` ✓${p.checksPass}`, style: { fg: "file_status_added_fg" } });
+    }
+    if (p.comments && p.comments > 0) {
+      out.push({ text: ` ●${p.comments}`, style: { fg: dim } });
+    }
+    if (p.reviewDecision === "APPROVED") {
+      out.push({ text: " approved", style: { fg: "file_status_added_fg" } });
+    } else if (p.reviewDecision === "CHANGES_REQUESTED") {
+      out.push({ text: " chg-req", style: { fg: "diagnostic.warning_fg" } });
+    }
+    if (p.mergeable === "CONFLICTING") {
+      out.push({ text: " · ✗ conflicts", style: { fg: "diagnostic.error_fg" } });
+    }
+    return out;
+  }
+  // No info yet (loading-without-prior, or "none"): show the resting
+  // placeholder. We deliberately DON'T flash a transient "PR …" — a
+  // bare "PR" with no number reads as a half-loaded badge; better to
+  // hold "· no PR yet" until there's a real number to show.
+  return [{
+    text: s.discovered ? "· on-disk worktree" : "· no PR yet",
+    style: { fg: dim, italic: true },
+  }];
+}
+
+// On-disk (discovered, unopened) worktrees get a dim hollow ring in the
+// status column — distinct from the live `*` working / `✓` idle glyphs.
+const ON_DISK_GLYPH = "○";
+
+// Build one session as a rounded three-line pill (`labeledSection`
+// card), Alt-5 layout — each field carries a small icon so its slot is
+// unambiguous:
+//
+//   line 1: <state> [ ] NAME (bold)            ▣ project
+//   line 2: ▸ branch        <git: ↑ahead ↓behind +add −del / clean>
+//   line 3: PR #1287 ✓7/8 ●2 approved   (or "· no PR yet")
+//
+// The right-hand groups on lines 1–2 are right-aligned by the host (a
+// flex spacer), so they adapt to the card's real width — including a
+// user-dragged dock — with no plugin-side width estimate.
+function renderPillSpec(
   id: number,
   activeId: number,
-  contentWidth: number,
-): TextPropertyEntry {
+): WidgetSpec {
   const s = orchestratorSessions.get(id);
-  if (!s) {
-    return styledRow([{ text: "(unknown)" }]);
-  }
+  if (!s) return labeledSection({ label: "", child: styledRow([{ text: "(unknown)" }]) });
   const isActive = id === activeId;
   const isDiscovered = !!s.discovered;
   const isChecked = openDialog?.selectedIds.has(id) ?? false;
-
-  // Left status margin: live sessions get a coloured working/idle symbol
-  // (recomputed from the output timestamp at render time — the stored
-  // `state` can be stale since nothing fires when a session goes quiet).
-  // On-disk rows have no agent, so they get a blank margin of the same
-  // width to keep names aligned.
-  const marginEntry = isDiscovered
-    ? { text: " ".repeat(STATUS_MARGIN_W) }
+  // Line 1, left: state glyph · checkbox · NAME (always bold). The name
+  // is uncapped — on a narrow card the host truncates the row's *tail*
+  // (the project tag), so the glyph + checkbox + name always survive.
+  const left: Entry[] = isDiscovered
+    ? [{ text: ON_DISK_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } }]
     : (() => {
         const sym = STATE_SYMBOL[sessionState(s)];
-        return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
+        return [{ text: sym.glyph + " ", style: { fg: sym.fg, bold: true } }];
       })();
-
-  // Multi-select checkbox. `[x]` when this row is in the bulk selection,
-  // `[ ]` otherwise — toggled with Space (the rebindable
-  // `orchestrator_toggle_select`) or a click. Kept contiguous with the
-  // name (`[ ] <name>`) — other code and tests key off that.
-  const checkbox = {
+  // Multi-select checkbox — same `[x]`/`[ ]` as the classic row so
+  // Space-to-select and the bulk-action handlers keep working.
+  left.push({
     text: isChecked ? "[x] " : "[ ] ",
     style: isChecked
       ? { fg: "ui.help_key_fg", bold: true }
       : { fg: "ui.menu_disabled_fg" },
-  };
-
-  const entries: { text: string; style?: Record<string, unknown> }[] = [
-    marginEntry,
-    checkbox,
-    {
-      text: s.label,
-      style: isActive
-        ? { fg: "ui.help_key_fg", bold: true }
-        : isDiscovered
-        ? { fg: "ui.menu_disabled_fg" }
-        : undefined,
-    },
+  });
+  left.push({
+    text: s.label,
+    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
+  });
+  // Line 1, right: the project, icon-tagged so it never reads as a
+  // status word. (Lifecycle now lives only in the state glyph + line 3.)
+  const proj = editor.pathBasename(projectKeyOf(s));
+  const right: Entry[] = [
+    { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
+    { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
-  // Running tally of the row width so far (margin + checkbox + name).
-  let leftWidth = STATUS_MARGIN_W + 4 + s.label.length;
+  const git = gitLineParts(s);
 
-  // On-disk tag for discovered worktrees — they have no live state, so
-  // this is how the row advertises it's an unopened on-disk worktree.
-  if (isDiscovered) {
-    const tag = " · on-disk";
-    if (leftWidth + tag.length <= contentWidth) {
-      entries.push({
-        text: tag,
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      });
-      leftWidth += tag.length;
-    }
-  }
+  // Right-alignment is the host's job: a flex spacer between the left and
+  // right groups fills the row at the card's *actual* width, so the tags
+  // stay flush-right and re-flow when the dock is resized — no
+  // plugin-side width estimate (which couldn't see a user-dragged dock
+  // width) and nothing to host-truncate mid-tag at the expected width.
+  const flexLine = (l: Entry[], r: Entry[]): WidgetSpec =>
+    row(
+      raw([styledRow(l as Parameters<typeof styledRow>[0])]),
+      flexSpacer(),
+      raw([styledRow(r as Parameters<typeof styledRow>[0])]),
+    );
 
-  // PROJECT tag: basename for cross-project rows only; current-project
-  // rows leave it blank. Its presence/absence is the switch signal other
-  // code waits on, so keep it unless it genuinely doesn't fit.
-  const proj = projectKeyOf(s);
-  if (proj !== currentProjectKey()) {
-    const tag = editor.pathBasename(proj);
-    const tagText = "  " + tag;
-    if (leftWidth + tagText.length <= contentWidth) {
-      entries.push({
-        text: tagText,
-        style: { fg: "ui.menu_disabled_fg", italic: true },
-      });
-      leftWidth += tagText.length;
-    }
-  }
-
-  return styledRow(entries as Parameters<typeof styledRow>[0]);
+  // Line 3 (PR badge) is left-aligned, so no flex spacer.
+  const prRow = raw([
+    styledRow(prLineEntries(s) as Parameters<typeof styledRow>[0]),
+  ]);
+  return labeledSection({
+    label: "",
+    child: col(flexLine(left, right), flexLine(git.left, git.right), prRow),
+  });
 }
 
 // Preview-pane content for the currently selected session.
@@ -1552,9 +1725,10 @@ function buildOpenSpec(): WidgetSpec {
   // rows when there are few sessions) so the dialog stays
   // vertically full rather than collapsing to a short floating box.
   openDialog.listVisibleRows = maxListRowsForScreen();
-  const colWidth = modalSessionColWidth();
   const activeId = editor.activeWindow();
-  const items = filtered.map((id) => renderListItem(id, activeId, colWidth));
+  // Cards size themselves to the host-laid-out width (flex right-align),
+  // so no per-column width estimate is needed here.
+  const itemSpecs = filtered.map((id) => renderPillSpec(id, activeId));
   const itemKeys = filtered.map(String);
   const selIdx = filtered.length === 0
     ? -1
@@ -1742,7 +1916,8 @@ function buildOpenSpec(): WidgetSpec {
           sessionsSeparator(),
           sessionsColumnHeader(),
           list({
-            items,
+            items: [],
+            itemSpecs,
             itemKeys,
             selectedIndex: selIdx,
             // `listVisibleRows` is the fitted list height; the 5 rows
@@ -1844,6 +2019,10 @@ function refreshOpenDialog(): void {
   if (!openPanel || !openDialog) return;
   pruneSelection();
   openDialog.filteredIds = filterSessions(openDialog.filter.value);
+  // Ensure the background probe poll is running (idempotent; it stops
+  // itself when the panel closes). PR/git info is gathered on that
+  // loop's own cadence, never synchronously from this refresh.
+  startProbePolling();
   // Clamp the selection into range so a fresh filter or a
   // session vanishing under us doesn't leave us pointing past
   // the end of the list.
@@ -1860,6 +2039,236 @@ function refreshOpenDialog(): void {
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
+}
+
+// =============================================================================
+// PR probe — opportunistic `gh` integration for the pill's second line
+//
+// Best-effort and non-blocking: each visible session's branch is looked
+// up against `gh pr view`; results are cached on the session with a TTL
+// so holding ↑/↓ doesn't fan out a probe per row, and any failure (`gh`
+// missing, not a GitHub remote, unauthenticated, or no PR for the
+// branch) degrades silently to the "no PR" / branch fallback.
+// =============================================================================
+
+const PR_PROBE_TTL_MS = 90_000;
+const prProbesInFlight = new Set<number>();
+// Git is local + cheap, so refresh it more often than the PR (network) probe.
+const GIT_PROBE_TTL_MS = 15_000;
+const gitProbesInFlight = new Set<number>();
+
+// Resolve (and cache) a session's branch. Live sessions don't carry
+// `branch` up front, so ask git in the worktree once.
+async function sessionBranch(s: AgentSession): Promise<string> {
+  if (s.branch) return s.branch;
+  try {
+    const r = await spawnCollect(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      s.root,
+    );
+    if (r.exit_code === 0) {
+      const b = (r.stdout || "").trim();
+      if (b && b !== "HEAD") {
+        s.branch = b;
+        return b;
+      }
+    }
+  } catch (_e) {
+    // ignore — branch stays unknown, probe will report "none"
+  }
+  return s.branch || "";
+}
+
+// Tally a gh `statusCheckRollup` array into pass / fail / pending.
+// Handles both CheckRun (status/conclusion) and StatusContext (state).
+function rollupCounts(
+  rollup: unknown,
+): { pass: number; fail: number; pending: number } {
+  let pass = 0;
+  let fail = 0;
+  let pending = 0;
+  if (Array.isArray(rollup)) {
+    for (const c of rollup as Record<string, unknown>[]) {
+      const status = String(c.status ?? "").toUpperCase();
+      if (status && status !== "COMPLETED") {
+        pending++;
+        continue;
+      }
+      const concl = String(c.conclusion ?? c.state ?? "").toUpperCase();
+      if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(concl)) pass++;
+      else if (
+        ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]
+          .includes(concl)
+      ) fail++;
+      else pending++;
+    }
+  }
+  return { pass, fail, pending };
+}
+
+async function probePr(s: AgentSession): Promise<void> {
+  if (prProbesInFlight.has(s.id)) return;
+  const now = Date.now();
+  if (s.pr && s.pr.status !== "loading" && now - s.pr.fetchedAt < PR_PROBE_TTL_MS) {
+    return;
+  }
+  prProbesInFlight.add(s.id);
+  // Keep any prior info visible while re-checking (avoids a flicker
+  // back to the branch fallback on refresh).
+  s.pr = { status: "loading", fetchedAt: s.pr?.fetchedAt ?? 0, info: s.pr?.info };
+  try {
+    const branch = await sessionBranch(s);
+    if (!branch) {
+      s.pr = { status: "none", fetchedAt: Date.now() };
+      return;
+    }
+    const fields =
+      "number,state,isDraft,reviewDecision,mergeable,statusCheckRollup,comments";
+    const r = await spawnCollect(
+      "gh",
+      ["pr", "view", branch, "--json", fields],
+      s.root,
+    );
+    if (r.exit_code !== 0) {
+      // No PR for this branch, or `gh` unavailable / not a GH remote.
+      s.pr = { status: "none", fetchedAt: Date.now() };
+      return;
+    }
+    const j = JSON.parse(r.stdout || "{}") as Record<string, unknown>;
+    const counts = rollupCounts(j.statusCheckRollup);
+    const comments = Array.isArray(j.comments)
+      ? j.comments.length
+      : typeof j.comments === "number"
+      ? j.comments
+      : 0;
+    s.pr = {
+      status: "ok",
+      fetchedAt: Date.now(),
+      info: {
+        number: Number(j.number),
+        state: j.state ? String(j.state) : undefined,
+        isDraft: Boolean(j.isDraft),
+        reviewDecision: j.reviewDecision ? String(j.reviewDecision) : "",
+        mergeable: j.mergeable ? String(j.mergeable) : undefined,
+        checksPass: counts.pass,
+        checksFail: counts.fail,
+        checksPending: counts.pending,
+        comments,
+      },
+    };
+  } catch (_e) {
+    s.pr = { status: "none", fetchedAt: Date.now() };
+  } finally {
+    prProbesInFlight.delete(s.id);
+    // Surface the freshly-gathered badge (debounced so a batch of
+    // probes finishing together collapses into one render).
+    scheduleProbeRefresh();
+  }
+}
+
+// Parse `git status --porcelain=v2 --branch` into a GitStat. Counts any
+// non-`#` line as a dirty path (changed/staged/unmerged/untracked).
+function parsePorcelainV2(stdout: string): GitStat {
+  const g: GitStat = {};
+  let dirty = 0;
+  for (const line of (stdout || "").split(/\r?\n/)) {
+    if (line.startsWith("# branch.head ")) {
+      const b = line.slice("# branch.head ".length).trim();
+      if (b && b !== "(detached)") g.branch = b;
+    } else if (line.startsWith("# branch.ab ")) {
+      const m = line.match(/\+(\d+)\s+-(\d+)/);
+      if (m) {
+        g.ahead = Number(m[1]);
+        g.behind = Number(m[2]);
+      }
+    } else if (line && !line.startsWith("#")) {
+      dirty++;
+    }
+  }
+  g.dirty = dirty;
+  return g;
+}
+
+// Opportunistic local-git summary for the pill's second line. Two cheap
+// git calls (status + diffstat), throttled like the PR probe.
+async function probeGit(s: AgentSession): Promise<void> {
+  if (gitProbesInFlight.has(s.id)) return;
+  const now = Date.now();
+  if (s.git && s.git.status === "ok" && now - s.git.fetchedAt < GIT_PROBE_TTL_MS) {
+    return;
+  }
+  gitProbesInFlight.add(s.id);
+  s.git = { status: "loading", fetchedAt: s.git?.fetchedAt ?? 0, info: s.git?.info };
+  try {
+    const st = await spawnCollect(
+      "git",
+      ["status", "--porcelain=v2", "--branch"],
+      s.root,
+    );
+    if (st.exit_code !== 0) {
+      s.git = { status: "ok", fetchedAt: Date.now() }; // not a git dir → empty summary
+      return;
+    }
+    const info = parsePorcelainV2(st.stdout || "");
+    if (info.branch && !s.branch) s.branch = info.branch;
+    // Uncommitted line churn vs HEAD (staged + unstaged).
+    const diff = await spawnCollect("git", ["diff", "--shortstat", "HEAD"], s.root);
+    if (diff.exit_code === 0) {
+      const ins = (diff.stdout || "").match(/(\d+) insertion/);
+      const del = (diff.stdout || "").match(/(\d+) deletion/);
+      if (ins) info.added = Number(ins[1]);
+      if (del) info.deleted = Number(del[1]);
+    }
+    s.git = { status: "ok", fetchedAt: Date.now(), info };
+  } catch (_e) {
+    s.git = { status: "ok", fetchedAt: Date.now() };
+  } finally {
+    gitProbesInFlight.delete(s.id);
+    scheduleProbeRefresh();
+  }
+}
+
+// Probe lifecycle: a single low-frequency poll loop, NOT action-driven.
+// It ticks every PROBE_POLL_INTERVAL_MS while a panel is open and kicks
+// the per-session probes, which each self-throttle to their TTL (git
+// 15s, pr 90s) — so a session is hit at most once per TTL regardless of
+// how often the panel re-renders (e.g. a busy agent spamming
+// terminal_output no longer fans out probes). The loop stops itself when
+// the panel closes.
+const PROBE_POLL_INTERVAL_MS = 5_000;
+let probePollActive = false;
+
+function startProbePolling(): void {
+  if (probePollActive) return;
+  probePollActive = true;
+  const tick = (): void => {
+    if (!openPanel || !openDialog) {
+      probePollActive = false;
+      return;
+    }
+    for (const id of openDialog.filteredIds) {
+      const s = orchestratorSessions.get(id);
+      if (!s) continue;
+      void probePr(s);
+      void probeGit(s);
+    }
+    void editor.delay(PROBE_POLL_INTERVAL_MS).then(tick);
+  };
+  tick();
+}
+
+// Coalesce the re-renders triggered by probe completions: a batch of
+// probes finishing together collapses into one refresh rather than one
+// per probe (the open-time storm that made the panel feel unresponsive).
+let probeRefreshPending = false;
+function scheduleProbeRefresh(): void {
+  if (probeRefreshPending) return;
+  probeRefreshPending = true;
+  void editor.delay(150).then(() => {
+    probeRefreshPending = false;
+    if (openPanel) refreshOpenDialog();
+  });
 }
 
 function openControlRoom(opts: { dock?: boolean } = {}): void {
@@ -2075,20 +2484,10 @@ function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  // Content width tracks the responsive dock width we request from the
-  // host (`dockDefaultWidth`, re-issued on resize), bounded by what the
-  // host can actually grant: it keeps EDITOR_MIN (~20) cols for the
-  // buffer, so on a narrow terminal the real dock is `screenW - 20` and
-  // below that it's hidden. Taking the min keeps name/tag truncation
-  // roughly in step with the visible width. (The header divider is
-  // host-rendered at the true width via `divider()`, so it doesn't rely
-  // on this estimate.)
-  const EDITOR_MIN_COLS = 20;
-  const screenW = editor.getScreenSize().width;
-  const grantable = screenW > 0 ? screenW - EDITOR_MIN_COLS : DOCK_WIDTH_COLS;
-  const dockW = Math.min(dockDefaultWidth(), grantable);
-  const contentW = dockContentCols(dockW);
-  const items = filtered.map((id) => renderListItem(id, activeId, contentW));
+  // Cards size themselves to the host-laid-out dock width (flex
+  // right-align), so no plugin-side width estimate is needed — this is
+  // what lets the tags re-flow to a user-dragged dock width.
+  const itemSpecs = filtered.map((id) => renderPillSpec(id, activeId));
   const itemKeys = filtered.map(String);
   const selIdx = filtered.length === 0
     ? -1
@@ -2202,7 +2601,8 @@ function buildDockSpec(): WidgetSpec {
     // chrome the way a plugin-computed `"─".repeat(width)` did.
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
     list({
-      items,
+      items: [],
+      itemSpecs,
       itemKeys,
       selectedIndex: selIdx,
       visibleRows: listRows,
@@ -5216,7 +5616,15 @@ editor.on("window_closed", () => {
   refreshOpenDialog();
 });
 
+// Grace window after a session becomes active during which terminal
+// output is attributed to the activation redraw (or an attach's shell
+// startup), not the agent — so selecting a session doesn't flash it
+// `working`.
+const ACTIVATION_GRACE_MS = 1500;
+
 editor.on("active_window_changed", () => {
+  const s = orchestratorSessions.get(editor.activeWindow());
+  if (s) s.activatedAt = Date.now();
   refreshOpenDialog();
 });
 
@@ -5283,6 +5691,12 @@ function scheduleIdleSweep(): void {
 editor.on("terminal_output", (payload) => {
   const s = orchestratorSessions.get(payload.window_id);
   if (s) {
+    // Ignore the redraw burst a terminal emits right after its window
+    // becomes active — that's not the agent working, and counting it
+    // would flash the card to `working` on every selection.
+    if (s.activatedAt !== undefined && Date.now() - s.activatedAt < ACTIVATION_GRACE_MS) {
+      return;
+    }
     // Stamp the moment of output. `sessionState` turns this into
     // working/idle; the cached `state` is updated so persistence and
     // any non-render reader see a fresh value too.

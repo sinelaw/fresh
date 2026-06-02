@@ -889,17 +889,22 @@ impl Editor {
         index: i32,
     ) {
         if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-            let prev_scroll = match panel.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
-                    *scroll_offset
-                }
-                _ => 0,
+            let (prev_scroll, prev_item_height) = match panel.instance_states.get(widget_key) {
+                Some(crate::widgets::WidgetInstanceState::List {
+                    scroll_offset,
+                    item_height,
+                    ..
+                }) => (*scroll_offset, *item_height),
+                _ => (0, 1),
             };
             panel.instance_states.insert(
                 widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::List {
                     scroll_offset: prev_scroll,
                     selected_index: index,
+                    item_height: prev_item_height,
+                    // A deliberate selection re-arms scroll-follows-selection.
+                    user_scrolled: false,
                 },
             );
         }
@@ -921,9 +926,19 @@ impl Editor {
             Some(fresh_core::api::WidgetSpec::List {
                 selected_index,
                 items,
+                item_specs,
                 item_keys,
                 ..
-            }) => (*selected_index, items.len() as i32, item_keys.clone()),
+            }) => {
+                // Item count is in *items* (cards override the plain
+                // `items` rows; see `WidgetSpec::List::item_specs`).
+                let total = if item_specs.is_empty() {
+                    items.len()
+                } else {
+                    item_specs.len()
+                };
+                (*selected_index, total as i32, item_keys.clone())
+            }
             _ => return,
         };
         if total == 0 {
@@ -939,17 +954,23 @@ impl Editor {
         let new_sel = raw.clamp(0, total - 1);
         let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            let cur_scroll = match panel_mut.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
-                    *scroll_offset
-                }
-                _ => 0,
+            let (cur_scroll, cur_item_height) = match panel_mut.instance_states.get(widget_key) {
+                Some(crate::widgets::WidgetInstanceState::List {
+                    scroll_offset,
+                    item_height,
+                    ..
+                }) => (*scroll_offset, *item_height),
+                _ => (0, 1),
             };
             panel_mut.instance_states.insert(
                 widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::List {
                     scroll_offset: cur_scroll,
                     selected_index: new_sel,
+                    item_height: cur_item_height,
+                    // Keyboard nav re-arms scroll-follows-selection so the
+                    // renderer brings the new selection back into view.
+                    user_scrolled: false,
                 },
             );
         }
@@ -1262,41 +1283,53 @@ impl Editor {
             Some(fresh_core::api::WidgetSpec::List {
                 visible_rows,
                 items,
+                item_specs,
                 ..
-            }) => (*visible_rows, items.len() as u32),
+            }) => {
+                let total = if item_specs.is_empty() {
+                    items.len()
+                } else {
+                    item_specs.len()
+                };
+                (*visible_rows, total as u32)
+            }
             _ => return false,
         };
         if total == 0 {
             return false;
         }
-        let (cur_sel, cur_scroll) = match panel.instance_states.get(widget_key) {
+        let (cur_sel, cur_scroll, item_height) = match panel.instance_states.get(widget_key) {
             Some(crate::widgets::WidgetInstanceState::List {
                 selected_index,
                 scroll_offset,
-            }) => (*selected_index, *scroll_offset),
-            _ => (-1, 0),
+                item_height,
+                ..
+            }) => (*selected_index, *scroll_offset, (*item_height).max(1)),
+            _ => (-1, 0, 1),
         };
-        let visible = visible_rows.max(1);
-        let max_scroll = total.saturating_sub(visible);
-        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
+        // Convert the row-denominated viewport into a per-item window so
+        // the bound is right for card lists (item_height > 1), and so a
+        // list that already shows everything (max_scroll == 0, e.g. the
+        // Git Log which sets visible_rows == commit count and scrolls via
+        // its enclosing pane) reports "can't scroll" and lets the wheel
+        // bubble to that pane rather than swallowing it.
+        let visible_items = (visible_rows.max(1) / item_height).max(1);
+        let max_scroll = total.saturating_sub(visible_items);
+        let new_scroll = (cur_scroll as i64 + delta as i64).clamp(0, max_scroll as i64) as u32;
         if new_scroll == cur_scroll {
             return false;
         }
-        let new_sel = if cur_sel < 0 {
-            cur_sel
-        } else if (cur_sel as u32) < new_scroll {
-            new_scroll as i32
-        } else if (cur_sel as u32) >= new_scroll + visible {
-            (new_scroll + visible - 1) as i32
-        } else {
-            cur_sel
-        };
+        // Wheel scrolls the *view* only — the selection stays put (and
+        // may leave the visible window); `user_scrolled` tells the
+        // renderer not to snap the offset back to it.
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
             panel_mut.instance_states.insert(
                 widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::List {
                     scroll_offset: new_scroll,
-                    selected_index: new_sel,
+                    selected_index: cur_sel,
+                    item_height,
+                    user_scrolled: true,
                 },
             );
         }

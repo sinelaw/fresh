@@ -883,25 +883,286 @@ fn render_collected(
         }
         WidgetSpec::List {
             items,
+            item_specs,
             item_keys,
             selected_index,
             visible_rows,
             focusable: _,
             key: list_key,
         } => {
-            let list_out = render_widget_list(
-                items,
-                item_keys,
-                *selected_index,
-                *visible_rows,
-                list_key.as_deref(),
-                prev,
-                next_state,
-                panel_width,
-            );
-            entries.extend(list_out.entries);
-            hits.extend(list_out.hits);
-            scroll_regions.extend(list_out.scroll_regions);
+            // Two layouts share one selection/scroll model:
+            //   * classic — one `items` `TextPropertyEntry` per row;
+            //   * cards    — one `item_specs` `WidgetSpec` per item,
+            //                each rendered into a multi-row block (a
+            //                rounded `LabeledSection` "pill", say).
+            // Selection, scroll, `visible_rows`, and clicks are always
+            // in *item* units; the card path just maps an item to a
+            // fixed band of `item_height` rows instead of one row.
+            let use_specs = !item_specs.is_empty();
+            let total = if use_specs {
+                item_specs.len() as u32
+            } else {
+                items.len() as u32
+            };
+            // Available height, in terminal rows.
+            let avail_rows = (*visible_rows).max(1);
+
+            // Look up host-owned scroll + selected index from prev
+            // state (becomes authoritative after first render).
+            // Spec's `selected_index` is initial-only on first mount.
+            let (prev_scroll, prev_sel, prev_user_scrolled) = list_key
+                .as_deref()
+                .and_then(|k| prev.get(k))
+                .and_then(|s| match s {
+                    WidgetInstanceState::List {
+                        scroll_offset,
+                        selected_index,
+                        user_scrolled,
+                        ..
+                    } => Some((*scroll_offset, *selected_index, *user_scrolled)),
+                    _ => None,
+                })
+                .unwrap_or((0, *selected_index, false));
+            // Clamp the previous selection to the current dataset
+            // size — items may have shrunk between renders. Out-of-
+            // range selections collapse to the last item, or -1 if
+            // the list is now empty.
+            let effective_sel = if prev_sel < 0 || total == 0 {
+                -1
+            } else if (prev_sel as u32) >= total {
+                (total - 1) as i32
+            } else {
+                prev_sel
+            };
+
+            // Pre-render the card blocks (if any) so we know the
+            // uniform card height; the visible-item count and all the
+            // scroll math derive from it. Nested hits/embeds/overlays/
+            // scroll are dropped: a card is a single `select` target
+            // (interactive widgets nested in a card aren't routed yet).
+            let mut rendered_cards: Vec<Vec<TextPropertyEntry>> = Vec::new();
+            let mut item_height: u32 = 1;
+            if use_specs {
+                rendered_cards.reserve(item_specs.len());
+                for item_spec in item_specs.iter() {
+                    let mut scratch = HashMap::new();
+                    let card_entries =
+                        render_collected(item_spec, prev, &mut scratch, focus_key, panel_width)
+                            .entries;
+                    item_height = item_height.max((card_entries.len() as u32).max(1));
+                    rendered_cards.push(card_entries);
+                }
+            }
+            // How many items fit, and the per-item scroll window.
+            let visible_items = if use_specs {
+                (avail_rows / item_height).max(1)
+            } else {
+                avail_rows
+            };
+
+            // When the card list overflows, the host paints a scrollbar
+            // in the rightmost column — which would sit on top of each
+            // card's right border. Re-render the cards one column
+            // narrower so they leave that column free. (Row count is
+            // width-independent, so `item_height` stays valid.)
+            if use_specs && total > visible_items && panel_width > 1 {
+                let card_width = panel_width - 1;
+                rendered_cards.clear();
+                for item_spec in item_specs.iter() {
+                    let mut scratch = HashMap::new();
+                    let card_entries =
+                        render_collected(item_spec, prev, &mut scratch, focus_key, card_width)
+                            .entries;
+                    rendered_cards.push(card_entries);
+                }
+            }
+
+            // Compute scroll. Normally we auto-clamp to keep the
+            // selection in view, but once the user has scrolled by mouse
+            // (`user_scrolled`) we respect their offset as-is so the
+            // selected card can sit off-screen — only the range clamp
+            // below still applies. Selection moves (keyboard/click/plugin)
+            // clear `user_scrolled`, re-arming this follow behaviour.
+            let mut scroll = prev_scroll;
+            if effective_sel >= 0 && !prev_user_scrolled {
+                let sel = effective_sel as u32;
+                if sel < scroll {
+                    scroll = sel;
+                }
+                if sel >= scroll + visible_items {
+                    scroll = sel + 1 - visible_items;
+                }
+            }
+            let max_scroll = total.saturating_sub(visible_items);
+            if scroll > max_scroll {
+                scroll = max_scroll;
+            }
+            // Persist scroll + selection for the next render.
+            // Lists without a `key` lose state across updates.
+            if let Some(k) = list_key.as_deref() {
+                next_state.insert(
+                    k.to_string(),
+                    WidgetInstanceState::List {
+                        scroll_offset: scroll,
+                        selected_index: effective_sel,
+                        item_height,
+                        user_scrolled: prev_user_scrolled,
+                    },
+                );
+            }
+
+            let start = scroll as usize;
+            let end = ((scroll + visible_items) as usize).min(total as usize);
+            // Blank full-height-padding row factory.
+            let blank_row = || {
+                let mut padding = TextPropertyEntry {
+                    text: String::new(),
+                    properties: Default::default(),
+                    style: None,
+                    inline_overlays: Vec::new(),
+                    segments: Vec::new(),
+                    pad_to_chars: None,
+                    truncate_to_chars: None,
+                };
+                ensure_trailing_newline(&mut padding);
+                padding
+            };
+            // Style a row as the selected item (highlight band that
+            // runs to line end behind a card's borders / text).
+            let mark_selected = |entry: &mut TextPropertyEntry| {
+                let mut style = entry.style.clone().unwrap_or_default();
+                style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
+                style.extend_to_line_end = true;
+                entry.style = Some(style);
+            };
+            // Cards indicate selection three ways so it reads in any
+            // theme — even if colours are too subtle: a *heavy* box
+            // border (colour-independent marker), bold, and an accent fg
+            // on the pure-border rows. No background band — it reads
+            // garish over a multi-row card and fights theme colours.
+            // Every box glyph is 3 bytes in both light and heavy forms,
+            // so swapping them preserves inline-overlay byte offsets.
+            let mark_selected_card = |entry: &mut TextPropertyEntry| {
+                entry.text = entry
+                    .text
+                    .replace('╭', "┏")
+                    .replace('╮', "┓")
+                    .replace('╰', "┗")
+                    .replace('╯', "┛")
+                    .replace('─', "━")
+                    .replace('│', "┃");
+                let mut style = entry.style.clone().unwrap_or_default();
+                style.bold = true;
+                if entry.text.starts_with('┏') || entry.text.starts_with('┗') {
+                    style.fg = Some(OverlayColorSpec::theme_key("ui.popup_border_fg"));
+                }
+                entry.style = Some(style);
+            };
+
+            let rows_emitted: u32 = if use_specs {
+                // Each item occupies a band of `item_height` rows; shorter
+                // cards pad within their band so every card lines up. A
+                // `select` hit covers every row, so a click anywhere on
+                // the card selects it. When the list height isn't a whole
+                // multiple of the card height, the next item below the
+                // fold is rendered *partially* into the leftover rows
+                // (rather than a blank gap) so it's clear there's more to
+                // scroll.
+                let mut emitted = 0u32;
+                let last = if end < total as usize { end + 1 } else { end };
+                'cards: for i in start..last {
+                    let is_selected = i as i32 == effective_sel;
+                    let item_key = item_keys.get(i).cloned().unwrap_or_default();
+                    let card = &rendered_cards[i];
+                    for r in 0..item_height as usize {
+                        if emitted >= avail_rows {
+                            break 'cards;
+                        }
+                        let mut entry = card.get(r).cloned().unwrap_or_else(blank_row);
+                        entry.normalize_widths();
+                        if is_selected {
+                            mark_selected_card(&mut entry);
+                        }
+                        let byte_end = entry.text.len();
+                        ensure_trailing_newline(&mut entry);
+                        let hit_row = entries.len() as u32;
+                        entries.push(entry);
+                        hits.push(HitArea {
+                            widget_key: item_key.clone(),
+                            widget_kind: "list",
+                            buffer_row: hit_row,
+                            byte_start: 0,
+                            byte_end,
+                            payload: json!({
+                                "index": i as i64,
+                                "key": item_key,
+                                "list_key": list_key.as_deref(),
+                            }),
+                            event_type: "select",
+                        });
+                        emitted += 1;
+                    }
+                }
+                emitted
+            } else {
+                // Classic one-row-per-item path.
+                for (offset, item) in items[start..end.min(items.len())].iter().enumerate() {
+                    let i = start + offset;
+                    let mut entry = item.clone();
+                    entry.normalize_widths();
+                    if i as i32 == effective_sel {
+                        mark_selected(&mut entry);
+                    }
+                    let byte_end = entry.text.len();
+                    ensure_trailing_newline(&mut entry);
+                    entries.push(entry);
+                    let item_key = item_keys.get(i).cloned().unwrap_or_default();
+                    let hit_row = (entries.len() - 1) as u32;
+                    hits.push(HitArea {
+                        widget_key: item_key.clone(),
+                        widget_kind: "list",
+                        buffer_row: hit_row,
+                        byte_start: 0,
+                        byte_end,
+                        payload: json!({
+                            "index": i as i64,
+                            "key": item_key,
+                            // The List's own spec key, so a click handler can
+                            // update the host-owned selection instance state
+                            // (keyed by this) — the item key in `key` is not
+                            // enough to find the widget. Null for keyless lists.
+                            "list_key": list_key.as_deref(),
+                        }),
+                        event_type: "select",
+                    });
+                }
+                (end - start) as u32
+            };
+
+            // Pad to the advertised height with blank rows so the List
+            // occupies its full `visible_rows` (keeps a sibling pane's
+            // bottom border aligned). Padding rows aren't clickable.
+            for _ in rows_emitted..avail_rows {
+                entries.push(blank_row());
+            }
+
+            // Surface a scroll region for the host to paint a draggable
+            // scrollbar when the list overflows. Totals are in items;
+            // height_rows is the painted band so the thumb spans it.
+            if total > visible_items {
+                if let Some(k) = list_key.as_deref() {
+                    scroll_regions.push(ScrollRegion {
+                        list_key: k.to_string(),
+                        buffer_row: 0,
+                        col_in_row: 0,
+                        width_cols: panel_width,
+                        height_rows: avail_rows,
+                        total: total as usize,
+                        visible: visible_items as usize,
+                        scroll: scroll as usize,
+                    });
+                }
+            }
         }
         WidgetSpec::Tree {
             nodes,
@@ -1125,165 +1386,6 @@ fn render_collected(
 // that function navigable. Each returns a CollectedOutput the caller folds
 // back into its local accumulators.
 // =========================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_widget_list(
-    items: &[TextPropertyEntry],
-    item_keys: &[String],
-    selected_index: i32,
-    visible_rows: u32,
-    list_key: Option<&str>,
-    prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    panel_width: u32,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    // Look up host-owned scroll + selected index from prev
-    // state (becomes authoritative after first render).
-    // Spec's `selected_index` is initial-only on first
-    // mount; subsequent updates read instance state.
-    let total = items.len() as u32;
-    let visible = visible_rows.max(1);
-    let (prev_scroll, prev_sel) = list_key
-        .and_then(|k| prev.get(k))
-        .and_then(|s| match s {
-            WidgetInstanceState::List {
-                scroll_offset,
-                selected_index,
-            } => Some((*scroll_offset, *selected_index)),
-            _ => None,
-        })
-        .unwrap_or((0, selected_index));
-    // Clamp the previous selection to the current dataset
-    // size — items may have shrunk between renders (e.g.
-    // search results changed). Out-of-range selections
-    // collapse to the last item, or -1 if the list is
-    // now empty.
-    let effective_sel = if prev_sel < 0 || total == 0 {
-        -1
-    } else if (prev_sel as u32) >= total {
-        (total - 1) as i32
-    } else {
-        prev_sel
-    };
-
-    // Compute scroll: auto-clamp to keep selection in view
-    // and never extend past the dataset end.
-    let mut scroll = prev_scroll;
-    if effective_sel >= 0 {
-        let sel = effective_sel as u32;
-        if sel < scroll {
-            scroll = sel;
-        }
-        if sel >= scroll + visible {
-            scroll = sel + 1 - visible;
-        }
-    }
-    let max_scroll = total.saturating_sub(visible);
-    if scroll > max_scroll {
-        scroll = max_scroll;
-    }
-    // Persist scroll + selection for the next render.
-    // Lists without a `key` lose state across updates.
-    if let Some(k) = list_key {
-        next_state.insert(
-            k.to_string(),
-            WidgetInstanceState::List {
-                scroll_offset: scroll,
-                selected_index: effective_sel,
-            },
-        );
-    }
-
-    // Render the visible window, emitting one entry + one
-    // hit area per visible item. Selected row gets the
-    // popup_selection_bg + extend_to_line_end style. Hit-area
-    // payload uses the *absolute* item index so the plugin
-    // never needs to translate window-relative coordinates.
-    //
-    // After the real items we pad with blank entries up to
-    // `visible` rows so the List occupies the full height
-    // its `visible_rows` advertises. Without this padding, a
-    // list with 3 items inside a `visible_rows=20`
-    // labeledSection closes its bottom border 17 rows above
-    // where the sibling preview pane closes.
-    let start = scroll as usize;
-    let end = ((scroll + visible) as usize).min(items.len());
-    for (offset, item) in items[start..end].iter().enumerate() {
-        let i = start + offset;
-        let mut entry = item.clone();
-        entry.normalize_widths();
-        let is_selected = i as i32 == effective_sel;
-        if is_selected {
-            let mut style = entry.style.unwrap_or_default();
-            style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
-            style.extend_to_line_end = true;
-            entry.style = Some(style);
-        }
-        let byte_end = entry.text.len();
-        ensure_trailing_newline(&mut entry);
-        out.entries.push(entry);
-        let item_key = item_keys.get(i).cloned().unwrap_or_default();
-        let hit_row = (out.entries.len() - 1) as u32;
-        out.hits.push(HitArea {
-            widget_key: item_key.clone(),
-            widget_kind: "list",
-            buffer_row: hit_row,
-            byte_start: 0,
-            byte_end,
-            payload: json!({
-                "index": i as i64,
-                "key": item_key,
-                // The List's own spec key, so a click handler can
-                // update the host-owned selection instance state
-                // (keyed by this) — the item key in `key` is not
-                // enough to find the widget. Null for keyless lists.
-                "list_key": list_key,
-            }),
-            event_type: "select",
-        });
-    }
-    // Pad to `visible` rows with blank entries. Hit areas
-    // intentionally not emitted for the padding — those rows
-    // aren't clickable items.
-    let rendered_items = (end - start) as u32;
-    for _ in rendered_items..visible {
-        let mut padding = TextPropertyEntry {
-            text: String::new(),
-            properties: Default::default(),
-            style: None,
-            inline_overlays: Vec::new(),
-            segments: Vec::new(),
-            pad_to_chars: None,
-            truncate_to_chars: None,
-        };
-        ensure_trailing_newline(&mut padding);
-        out.entries.push(padding);
-    }
-
-    // Surface a scroll region for the host to paint a draggable
-    // scrollbar when the list overflows its visible height. The
-    // region is panel-relative-from-this-render: buffer_row 0 is
-    // the first list row, col 0 the list's left edge; the
-    // compositor (Row/Col/Section) offsets both as it places the
-    // list. The scrollbar lives in the rightmost column
-    // (`col_in_row + width_cols - 1`).
-    if total > visible {
-        if let Some(k) = list_key {
-            out.scroll_regions.push(ScrollRegion {
-                list_key: k.to_string(),
-                buffer_row: 0,
-                col_in_row: 0,
-                width_cols: panel_width,
-                height_rows: visible,
-                total: total as usize,
-                visible: visible as usize,
-                scroll: scroll as usize,
-            });
-        }
-    }
-    out
-}
 
 #[allow(clippy::too_many_arguments)]
 fn render_widget_text(
@@ -4334,6 +4436,7 @@ mod tests {
                 TextPropertyEntry::text("beta"),
                 TextPropertyEntry::text("gamma"),
             ],
+            item_specs: vec![],
             item_keys: vec!["a".into(), "b".into(), "c".into()],
             selected_index: -1,
             visible_rows: 10,
@@ -4361,12 +4464,86 @@ mod tests {
     }
 
     #[test]
+    fn list_item_specs_render_multirow_cards_in_item_units() {
+        // Two cards, each a LabeledSection (rounded box) wrapping one
+        // body row ⇒ 3 rows tall (top border, body, bottom border).
+        let card = |body: &str| WidgetSpec::LabeledSection {
+            label: String::new(),
+            child: Box::new(WidgetSpec::Raw {
+                entries: vec![TextPropertyEntry::text(body)],
+                key: None,
+            }),
+            width_pct: None,
+            key: None,
+        };
+        let spec = WidgetSpec::List {
+            items: vec![],
+            item_specs: vec![card("aaa"), card("bbb")],
+            item_keys: vec!["a".into(), "b".into()],
+            selected_index: 1,
+            // 12 rows available: 2 cards * 3 rows = 6, padded to 12.
+            visible_rows: 12,
+            focusable: true,
+            key: Some("cards".into()),
+        };
+        // Finite panel width (cards draw borders sized to it; the
+        // u32::MAX `render_no_focus` uses would loop drawing `─`).
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let (entries, hits) = (out.entries, out.hits);
+        // Fills the advertised height.
+        assert_eq!(entries.len(), 12);
+        // Card height is 3 rows; both cards render → 6 hit rows, all
+        // mapping back to their item index (whole card is clickable).
+        assert_eq!(hits.len(), 6, "3 rows per card * 2 cards");
+        assert!(hits[0..3]
+            .iter()
+            .all(|h| h.payload["index"] == 0 && h.widget_key == "a"));
+        assert!(hits[3..6]
+            .iter()
+            .all(|h| h.payload["index"] == 1 && h.widget_key == "b"));
+        // The selected card (index 1, rows 3..6) is marked by a heavy
+        // box border + bold — NOT a background band (which read garish
+        // over a multi-row card). The unselected card (rows 0..3) keeps
+        // the light rounded border and no bold.
+        for r in 0..3 {
+            assert!(
+                !entries[r].text.contains('┓') && !entries[r].text.contains('┃'),
+                "unselected card row {r} should keep the light border"
+            );
+            assert!(entries[r].style.as_ref().map_or(true, |s| s.bg.is_none()));
+        }
+        // Heavy border glyphs appear somewhere in the selected card, and
+        // its rows are bold, with no background band.
+        let heavy = (3..6).any(|r| {
+            entries[r].text.contains('┏')
+                || entries[r].text.contains('┗')
+                || entries[r].text.contains('┃')
+        });
+        assert!(heavy, "selected card should use a heavy box border");
+        for r in 3..6 {
+            let style = entries[r].style.as_ref();
+            assert!(
+                style.map(|s| s.bold).unwrap_or(false),
+                "row {r} of the selected card should be bold"
+            );
+            assert!(
+                style.and_then(|s| s.bg.as_ref()).is_none(),
+                "row {r} of the selected card should NOT use a background band"
+            );
+        }
+        // Rounded corners survived the per-item render.
+        assert!(entries[0].text.starts_with('╭'));
+        assert!(entries[2].text.starts_with('╰'));
+    }
+
+    #[test]
     fn list_applies_selection_bg_to_selected_row() {
         let spec = WidgetSpec::List {
             items: vec![
                 TextPropertyEntry::text("first"),
                 TextPropertyEntry::text("second"),
             ],
+            item_specs: vec![],
             item_keys: vec!["x".into(), "y".into()],
             selected_index: 1,
             visible_rows: 10,
@@ -4399,6 +4576,7 @@ mod tests {
                         TextPropertyEntry::text("row0"),
                         TextPropertyEntry::text("row1"),
                     ],
+                    item_specs: vec![],
                     item_keys: vec!["a".into(), "b".into()],
                     selected_index: -1,
                     visible_rows: 10,
@@ -4424,6 +4602,7 @@ mod tests {
     fn list_payload_includes_absolute_index_and_key() {
         let spec = WidgetSpec::List {
             items: vec![TextPropertyEntry::text("only")],
+            item_specs: vec![],
             item_keys: vec!["match:42".into()],
             selected_index: 0,
             visible_rows: 10,
@@ -4463,6 +4642,7 @@ mod tests {
         let spec = WidgetSpec::List {
             items: vec![TextPropertyEntry::text("a"), TextPropertyEntry::text("b")],
             // Only one key for two items — second hit gets an empty key.
+            item_specs: vec![],
             item_keys: vec!["only".into()],
             selected_index: -1,
             visible_rows: 10,
@@ -4481,6 +4661,7 @@ mod tests {
         let item_keys = (0..total).map(|i| format!("k{}", i)).collect();
         WidgetSpec::List {
             items,
+            item_specs: vec![],
             item_keys,
             selected_index: selected,
             visible_rows: visible,
@@ -4532,6 +4713,8 @@ mod tests {
             WidgetInstanceState::List {
                 scroll_offset: 5,
                 selected_index: 1,
+                item_height: 1,
+                user_scrolled: false,
             },
         );
         // Spec's selected_index doesn't matter (instance state wins).
@@ -4555,6 +4738,8 @@ mod tests {
             WidgetInstanceState::List {
                 scroll_offset: 4,
                 selected_index: 5,
+                item_height: 1,
+                user_scrolled: false,
             },
         );
         let spec = make_list(99, 3, 10, Some("L"));
@@ -4577,6 +4762,8 @@ mod tests {
             WidgetInstanceState::List {
                 scroll_offset: 8,
                 selected_index: -1,
+                item_height: 1,
+                user_scrolled: false,
             },
         );
         let spec = make_list(-1, 3, 5, Some("L"));

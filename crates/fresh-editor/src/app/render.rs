@@ -4233,13 +4233,28 @@ fn paint_text_property_entry(
     // resulting span carries one consistent style. The overlays are
     // produced in declaration order by the widget renderer; later
     // overlays override earlier ones for any cells they cover.
+    // Snap every boundary to a grapheme-cluster boundary. Overlay
+    // offsets can land mid-codepoint after a row is truncated with a
+    // multi-byte `…` (the overlay end isn't re-clamped to the new
+    // text), and slicing `text[a..b]` on such an index panics. Valid
+    // boundaries are kept as-is; an interior one floors to the previous
+    // grapheme boundary (worst case a span edge shifts by one cluster,
+    // invisible in practice).
+    let snap = |i: usize| {
+        let i = i.min(text.len());
+        if text.is_char_boundary(i) {
+            i
+        } else {
+            crate::primitives::grapheme::prev_grapheme_boundary(&text, i)
+        }
+    };
     let boundaries: std::collections::BTreeSet<usize> = std::iter::once(0)
         .chain(std::iter::once(text.len()))
         .chain(
             normalized
                 .inline_overlays
                 .iter()
-                .flat_map(|o| [o.start.min(text.len()), o.end.min(text.len())]),
+                .flat_map(|o| [snap(o.start), snap(o.end)]),
         )
         .collect();
     let bounds: Vec<usize> = boundaries.into_iter().collect();

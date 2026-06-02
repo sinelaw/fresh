@@ -1550,6 +1550,20 @@ pub enum WidgetSpec {
     /// where `index` is the absolute (not visible-window) index.
     List {
         items: Vec<crate::text_property::TextPropertyEntry>,
+        /// Optional parallel array of per-item widget specs. When
+        /// non-empty it **overrides** `items`: each entry is rendered
+        /// via the normal widget renderer into a multi-row block
+        /// (e.g. a `LabeledSection` for a rounded "card"/"pill"), and
+        /// the list lays items out, selects, scrolls, and routes
+        /// clicks in *item* units — one card per logical item,
+        /// regardless of how many terminal rows it occupies. All
+        /// cards share a uniform height (the tallest item's row count;
+        /// shorter items pad). `item_keys` / `selected_index` are
+        /// still indexed per item. Interactive widgets nested inside a
+        /// card aren't routed yet — the whole card is one `select`
+        /// hit. Leave empty for the classic one-row-per-`items` list.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        item_specs: Vec<WidgetSpec>,
         #[serde(default)]
         item_keys: Vec<String>,
         #[serde(default = "default_list_selected")]
