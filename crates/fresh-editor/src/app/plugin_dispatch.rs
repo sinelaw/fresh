@@ -5887,6 +5887,19 @@ impl Editor {
         };
         *self.panel_opt_mut(slot) = None;
         let _ = self.widget_registry.unmount(panel_id);
+        // Hiding the left dock frees its full-height column. The next
+        // frame's `compute_dock_split` already lays the chrome back out
+        // full-width (and the early command drain in `render` makes that
+        // happen in the *same* frame as the unmount), so the layout is
+        // correct — but the freed strip can still show stale glyphs from
+        // the old dock until something repaints those cells. Force a full
+        // clear+redraw so the reclaim is unconditional on every terminal,
+        // mirroring how a resize relayout clears. Gated to the dock slot:
+        // a centered modal overlays the full-width chrome without carving
+        // it, so clearing on its close would only cause a visible flicker.
+        if slot == super::PanelSlot::Dock {
+            self.request_full_redraw();
+        }
         // Restore the active window's visible terminal PTYs to their
         // dive-view split rects. The orchestrator picker's preview
         // pane shrinks PTYs to the embed size on every frame while

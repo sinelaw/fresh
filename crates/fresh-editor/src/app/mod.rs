@@ -1624,6 +1624,62 @@ mod tests {
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
     }
 
+    /// F3: hiding the left dock (Toggle Dock → unmount) must request a
+    /// full clear+redraw so the freed column is repainted unconditionally,
+    /// rather than risking stale glyphs lingering as a left "gutter" until
+    /// an unrelated event. The on-screen reflow is covered by the
+    /// `dock_close_reflows_buffer_to_full_width` e2e test; this asserts the
+    /// redraw *request* the e2e harness can't observe (it drives renders
+    /// unconditionally, so it can't see a missing redraw).
+    #[test]
+    fn unmounting_left_dock_requests_full_redraw() {
+        use fresh_core::api::PluginCommand;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        // Drop any redraw request left over from construction.
+        let _ = editor.take_full_redraw_request();
+
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget { panel_id: 1 })
+            .unwrap();
+
+        assert!(editor.dock.is_none(), "dock should be unmounted");
+        assert!(
+            editor.take_full_redraw_request(),
+            "hiding the dock must request a full redraw so the freed \
+             column is repainted immediately"
+        );
+    }
+
+    /// The dock-only gate: closing a *centered* modal overlays the
+    /// full-width chrome without carving it, so it must NOT force a
+    /// full-screen clear (that would only flicker).
+    #[test]
+    fn unmounting_centered_modal_does_not_request_full_redraw() {
+        use fresh_core::api::PluginCommand;
+
+        let mut editor = default_test_editor();
+        editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
+        let _ = editor.take_full_redraw_request();
+
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget { panel_id: 1 })
+            .unwrap();
+
+        assert!(
+            editor.floating_widget_panel.is_none(),
+            "centered modal should be unmounted"
+        );
+        assert!(
+            !editor.take_full_redraw_request(),
+            "closing a centered modal must not force a full-screen clear"
+        );
+    }
+
     #[test]
     fn test_new_buffer() {
         let config = Config::default();
