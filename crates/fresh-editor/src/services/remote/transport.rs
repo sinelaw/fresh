@@ -20,7 +20,7 @@
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use crate::services::process_hidden::HideWindow;
@@ -293,6 +293,42 @@ impl EksConnection {
     }
 }
 
+/// Reconnect task for an EKS agent channel: when the channel drops, it
+/// re-bootstraps the agent by re-running `kubectl exec` against the pod and
+/// hot-swaps the transport via `replace_transport`. The EKS analogue of
+/// [`spawn_reconnect_task`](super::spawn_reconnect_task), reusing the generic
+/// [`spawn_reconnect_task_with`](super::spawn_reconnect_task_with).
+///
+/// Reconnects to the *same* `target`. A pod reschedule / eviction changes the
+/// pod name, which this does not yet re-resolve — the plugin "resolve current
+/// pod" callback (`AUTHORITY_DESIGN.md` open question 3) layers on later. A
+/// same-name reconnect still covers transient stream drops (the common idle /
+/// network-blip case).
+pub fn spawn_eks_reconnect_task(
+    channel: &Arc<AgentChannel>,
+    target: EksTarget,
+) -> tokio::task::JoinHandle<()> {
+    let connect_fn = move || {
+        let target = target.clone();
+        async move {
+            let transport = KubectlExecTransport::new(target);
+            // Non-interactive on reconnect (no terminal to prompt on).
+            let (reader, writer, _child) = bootstrap_agent(&transport, StderrMode::Null)
+                .await
+                .map_err(|e| crate::services::remote::SshError::AgentStartFailed(e.to_string()))?;
+            let reader: Box<dyn AsyncBufRead + Unpin + Send> = Box::new(reader);
+            let writer: Box<dyn AsyncWrite + Unpin + Send> = Box::new(writer);
+            Ok::<_, crate::services::remote::SshError>((reader, writer))
+        }
+    };
+    crate::services::remote::spawn_reconnect_task_with(
+        Arc::clone(channel),
+        connect_fn,
+        crate::services::remote::ReconnectConfig::default(),
+        "EKS remote",
+    )
+}
+
 impl Drop for EksConnection {
     fn drop(&mut self) {
         // Stop pinging a carrier we're about to kill.
@@ -370,6 +406,25 @@ mod tests {
         );
         // No shell metacharacters that would need quoting under `kubectl --`.
         assert!(!code.contains('\''));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn eks_reconnect_task_spawns_and_aborts_cleanly() {
+        // We can't run a real `kubectl exec` here, but we can verify the
+        // task's lifecycle over a live (local-agent) channel: while the
+        // channel is connected the task idles (it only acts on disconnect),
+        // and aborting it terminates promptly without panicking. The actual
+        // reconnect path is exercised by the generic `spawn_reconnect_task_with`
+        // tests; this guards the EKS wiring on top of it.
+        let channel = crate::services::remote::spawn_local_agent()
+            .await
+            .expect("spawn local agent");
+        let handle = spawn_eks_reconnect_task(&channel, target());
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(channel.is_connected(), "channel healthy; reconnect idles");
+        handle.abort();
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        assert!(joined.is_ok(), "aborted reconnect task joins promptly");
     }
 
     #[test]

@@ -40,8 +40,8 @@ pub use spawner::{
     SpawnResult, StdioChild,
 };
 pub use transport::{
-    bootstrap_agent, EksConnection, EksTarget, KubectlExecTransport, RemoteTransport, StderrMode,
-    TransportError,
+    bootstrap_agent, spawn_eks_reconnect_task, EksConnection, EksTarget, KubectlExecTransport,
+    RemoteTransport, StderrMode, TransportError,
 };
 /// Shared `kubectl exec` argv builder, used by the agent transport, the
 /// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
