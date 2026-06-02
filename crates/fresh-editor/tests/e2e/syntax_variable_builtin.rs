@@ -1,5 +1,4 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
-use ratatui::style::Color;
 
 #[test]
 fn test_js_variable_builtin_highlight() {
@@ -22,7 +21,7 @@ fn test_js_variable_builtin_highlight() {
     harness.open_file(&js_file).unwrap();
     harness.render().unwrap();
 
-    let expected_color = Color::Rgb(86, 156, 214);
+    let expected_color = harness.editor().theme().syntax_variable_builtin;
     let mut found = false;
     for y in 0..10 {
         for x in 0..120 {

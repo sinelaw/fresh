@@ -1021,6 +1021,8 @@
     "field.type_desc": "Type names",
     "field.variable": "Variable",
     "field.variable_desc": "Variable names",
+    "field.variable_builtin": "Built-in Variable",
+    "field.variable_builtin_desc": "Built-in variable names (like this, self, etc.)",
     "field.constant": "Constant",
     "field.constant_desc": "Constants and literals",
     "field.operator": "Operator",
