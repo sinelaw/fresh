@@ -1065,22 +1065,28 @@ fn dock_new_session_name_is_rooted_in_the_project() {
 /// accepted directory's children) buried the worktree / Session Name
 /// fields and trapped a Tab-to-advance user in a loop of re-accepting.
 ///
-/// We assert on the *completion dropdown* — the actual subject of F8 —
-/// rather than on the worktree checkbox: the checkbox's presence is
-/// decided by an async `git` subprocess probe, and asserting on it made
-/// an earlier version of this test hang under CI load when that probe
-/// was slow/contended. Path completion, by contrast, is a synchronous
-/// `readDir` call, so this assertion is deterministic and git-free.
+/// We observe the dropdown's open/closed state through the **"Session
+/// Name" label**, which the popup paints over while it is up. We do NOT
+/// assert on the candidate text: completion rows render the *full
+/// absolute path* and the host tail-truncates them (render.rs
+/// `render_completion_item`), so on a deep CI temp directory the
+/// directory basename is cut off the end and never appears on screen —
+/// that environment-dependent truncation made earlier versions of this
+/// test hang to the external timeout. The label is fixed-width, git
+/// independent, and always legible, so this is deterministic regardless
+/// of how long the host's temp path is.
 #[test]
 fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     let (_tmp, root) = setup_project("alphaproj");
-    // A directory child that sorts first, so the path-completion's top
-    // (highlighted) candidate is a directory (rendered with a trailing
-    // "/"). Give it its own child `inner` so that, *without* the fix,
-    // accepting `aaa_dir/` re-pops the dropdown listing `inner` — the
-    // observable signature of the bug.
-    fs::create_dir(root.join("aaa_dir")).unwrap();
-    fs::create_dir(root.join("aaa_dir").join("inner")).unwrap();
+    // A directory that sorts first, so the path-completion's top
+    // (highlighted) candidate is a directory. Give it several children so
+    // that, *without* the fix, accepting `aaa_dir/` re-pops a dropdown
+    // tall enough to keep the form fields buried (the bug's signature).
+    let aaa = root.join("aaa_dir");
+    fs::create_dir(&aaa).unwrap();
+    for child in ["inner_a", "inner_b", "inner_c"] {
+        fs::create_dir(aaa.join(child)).unwrap();
+    }
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
             .unwrap();
@@ -1090,45 +1096,28 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
+    // The form opens with every field visible, "Session Name" among them.
+    assert!(
+        h.screen_to_string().contains("Session Name"),
+        "form should open with its fields visible:\n{}",
+        h.screen_to_string()
+    );
 
     // The Project Path field is empty on open (it only *shows* the
     // detected root as a placeholder). Type the project root + "/" so the
     // dropdown lists the directory's children; the top one is `aaa_dir/`.
+    // Path completion is synchronous, so the popup is up once typing
+    // finishes — and it paints over the fields below Project Path, hiding
+    // the "Session Name" label.
     h.type_text(&format!("{}/", root.display())).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("aaa_dir"))
+    h.wait_until(|h| !h.screen_to_string().contains("Session Name"))
         .unwrap();
-    // We haven't descended into aaa_dir yet, so its child must not show.
-    assert!(
-        !h.screen_to_string().contains("inner"),
-        "aaa_dir's child leaked into the dropdown before accepting:\n{}",
-        h.screen_to_string()
-    );
 
-    // Tab accepts the highlighted `aaa_dir/`. Path completion is
-    // synchronous (the old re-pop runs `computePathCompletions` inline),
-    // so the accepted path — and, without the fix, the re-popped dropdown
-    // listing `inner` — is present on the very next render.
-    //
-    // We wait for the accepted path (`aaa_dir/`) to land in the field —
-    // a specific, semantic state change — rather than for the screen to
-    // *stop changing*. An earlier version used `wait_until_stable`, which
-    // blocks until two consecutive renders are byte-identical; but this
-    // form fires asynchronous `git`-subprocess probes (and sits over the
-    // live dock), so the screen does not reliably quiesce under CI load
-    // and the wait hung to the 180s external timeout. "Wait for no
-    // change" is exactly the non-semantic wait CONTRIBUTING §3 warns
-    // against; waiting for a named state is deterministic.
+    // Tab accepts the highlighted `aaa_dir/`. With the fix the dropdown
+    // CLOSES, so the form fields — including "Session Name" — reappear.
+    // Without the fix it re-pops `aaa_dir`'s children, keeping the fields
+    // buried, and this wait times out: the observable bug.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("aaa_dir/"))
+    h.wait_until(|h| h.screen_to_string().contains("Session Name"))
         .unwrap();
-
-    // With the fix the dropdown is closed, so `aaa_dir`'s child never
-    // appears. Without the fix the dropdown re-popped listing `inner`,
-    // burying the fields and trapping the Tab-to-advance user.
-    assert!(
-        !h.screen_to_string().contains("inner"),
-        "accepting the directory re-popped the completion dropdown \
-         (listing aaa_dir/inner) instead of closing it:\n{}",
-        h.screen_to_string()
-    );
 }
