@@ -929,9 +929,20 @@ fn test_switch_project_double_click_parent_navigates_up() {
 
     // Create a parent/child structure. Start the editor inside the child so the
     // ".." entry is meaningful, and place a unique marker in the parent.
-    let child = root.join("child");
+    //
+    // The parent gets a deliberately long name so the current path
+    // overflows the folder browser's title bar, forcing it to render a
+    // "[...]" truncation marker. That marker contains dots, so a naive
+    // search for the ".." row matches the *title* instead of the entry.
+    // This is exactly what happens on Windows (its temp paths are long
+    // enough to truncate) — the test timed out there while passing on
+    // Linux, whose short /tmp paths never truncated. Forcing the long
+    // path here exercises the truncation on every platform.
+    let parent = root.join("p".repeat(120));
+    fs::create_dir(&parent).unwrap();
+    let child = parent.join("child");
     fs::create_dir(&child).unwrap();
-    fs::write(root.join("parent_marker.txt"), "marker").unwrap();
+    fs::write(parent.join("parent_marker.txt"), "marker").unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), child.clone())
@@ -965,8 +976,18 @@ fn test_switch_project_double_click_parent_navigates_up() {
         .enumerate()
         .find(|(_, l)| {
             // Filter to lines that look like file-list rows (contain "..")
-            // and are not the path/status lines.
-            l.contains("..") && !l.contains("Navigation:") && !l.contains("Path:")
+            // and are not the path/status lines. Crucially exclude the
+            // title line: when the current path is too long for the
+            // border it renders a "[...]" truncation marker (three dots),
+            // which `contains("..")` matches. On Windows the temp path is
+            // long enough to trigger this, so without the exclusion the
+            // search hit the title and the click missed the real entry —
+            // the test then timed out (it passed on Linux only because the
+            // short /tmp path never truncated).
+            l.contains("..")
+                && !l.contains("[...]")
+                && !l.contains("Navigation:")
+                && !l.contains("Path:")
         })
         .expect("Should find row containing '..' entry");
     let col = line.find("..").expect("'..' must be on its row") as u16 + 1;
