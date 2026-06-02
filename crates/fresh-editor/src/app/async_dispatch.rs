@@ -304,6 +304,12 @@ impl Editor {
                 AsyncMessage::LspDiagnosticRefresh { language } => {
                     self.handle_lsp_diagnostic_refresh(language);
                 }
+                AsyncMessage::LspInlayHintRefresh { language } => {
+                    self.handle_lsp_inlay_hint_refresh(language);
+                }
+                AsyncMessage::LspSemanticTokensRefresh { language } => {
+                    self.handle_lsp_semantic_tokens_refresh(language);
+                }
                 AsyncMessage::LspDynamicCapabilities {
                     language,
                     server_name,

@@ -268,11 +268,12 @@ fn create_client_capabilities() -> ClientCapabilities {
         DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
         FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
         FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
-        HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
-        PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
-        SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
-        TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
-        WorkspaceEditClientCapabilities, WorkspaceSymbolClientCapabilities,
+        HoverClientCapabilities, InlayHintClientCapabilities, InlayHintWorkspaceClientCapabilities,
+        MarkupKind, PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
+        SemanticTokensWorkspaceClientCapabilities, SignatureHelpClientCapabilities, TagSupport,
+        TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
+        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+        WorkspaceSymbolClientCapabilities,
     };
 
     ClientCapabilities {
@@ -308,6 +309,18 @@ fn create_client_capabilities() -> ClientCapabilities {
             // refresh support — e.g. rust-analyzer fires it once indexing
             // finishes, which is when the first real diagnostics exist.
             diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
+            // Accept server-driven inlay-hint and semantic-token refreshes.
+            // These fire when the server learns something later that changes a
+            // file the user never edited (e.g. cross-file type inference), so
+            // it isn't otherwise re-pulled. We handle them by re-pulling for
+            // all open docs of the language; servers only send them because we
+            // advertise refresh support here (sinelaw/fresh#2195 §2).
+            inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
+            semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
             ..Default::default()
@@ -3883,6 +3896,41 @@ async fn handle_message_dispatch(
                         error: None,
                     }
                 }
+                "workspace/inlayHint/refresh" => {
+                    // Server learned more (e.g. a cross-file type change) and
+                    // wants cached inlay hints re-pulled for all open documents.
+                    // Servers only send this because we advertise
+                    // `workspace.inlayHint.refreshSupport` (sinelaw/fresh#2195 §2).
+                    tracing::info!(
+                        "LSP ({}) requested inlay-hint refresh (workspace/inlayHint/refresh)",
+                        language
+                    );
+                    let _ = async_tx.send(AsyncMessage::LspInlayHintRefresh {
+                        language: language.to_string(),
+                    });
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+                "workspace/semanticTokens/refresh" => {
+                    // Same idea as inlayHint/refresh, for semantic highlighting.
+                    tracing::info!(
+                        "LSP ({}) requested semantic-tokens refresh (workspace/semanticTokens/refresh)",
+                        language
+                    );
+                    let _ = async_tx.send(AsyncMessage::LspSemanticTokensRefresh {
+                        language: language.to_string(),
+                    });
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
                 "workspace/applyEdit" => {
                     // Server asks client to apply a workspace edit (e.g. during executeCommand)
                     tracing::info!("LSP ({}) received workspace/applyEdit request", language);
@@ -5163,6 +5211,32 @@ mod tests {
                 .and_then(|s| s.dynamic_registration),
             Some(true),
             "workspace.symbol must advertise dynamicRegistration"
+        );
+    }
+
+    #[test]
+    fn advertises_inlay_hint_and_semantic_tokens_refresh_support() {
+        // A server only sends `workspace/inlayHint/refresh` (and the semantic
+        // tokens equivalent) when the client advertised refresh support; we now
+        // handle both, so both must be advertised (sinelaw/fresh#2195 §2).
+        let caps = create_client_capabilities();
+        let workspace = caps.workspace.as_ref().expect("workspace caps must be set");
+
+        assert_eq!(
+            workspace
+                .inlay_hint
+                .as_ref()
+                .and_then(|c| c.refresh_support),
+            Some(true),
+            "workspace.inlayHint.refreshSupport must be advertised"
+        );
+        assert_eq!(
+            workspace
+                .semantic_tokens
+                .as_ref()
+                .and_then(|c| c.refresh_support),
+            Some(true),
+            "workspace.semanticTokens.refreshSupport must be advertised"
         );
     }
 

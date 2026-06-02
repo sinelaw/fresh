@@ -164,6 +164,17 @@ pub enum AsyncMessage {
     /// Client should re-pull diagnostics for all open documents
     LspDiagnosticRefresh { language: String },
 
+    /// LSP server requests an inlay-hint refresh (workspace/inlayHint/refresh).
+    /// Client should re-pull inlay hints for all open documents — used when the
+    /// server learns more later (e.g. a change in file A alters inferred types
+    /// in file B, which the user never edited so was never otherwise re-pulled).
+    LspInlayHintRefresh { language: String },
+
+    /// LSP server requests a semantic-tokens refresh
+    /// (workspace/semanticTokens/refresh). Client should re-pull semantic
+    /// tokens for all open documents.
+    LspSemanticTokensRefresh { language: String },
+
     /// LSP server registered (`client/registerCapability`) or unregistered
     /// (`client/unregisterCapability`) one or more capabilities dynamically.
     /// Many servers advertise little or nothing statically in their

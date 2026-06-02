@@ -901,6 +901,22 @@ impl Editor {
         self.pull_diagnostics_for_language(&language);
     }
 
+    pub(super) fn handle_lsp_inlay_hint_refresh(&mut self, language: String) {
+        tracing::info!(
+            "LSP ({}) inlay-hint refresh requested, re-pulling inlay hints",
+            language
+        );
+        self.request_inlay_hints_for_language(&language);
+    }
+
+    pub(super) fn handle_lsp_semantic_tokens_refresh(&mut self, language: String) {
+        tracing::info!(
+            "LSP ({}) semantic-tokens refresh requested, re-pulling semantic tokens",
+            language
+        );
+        self.request_semantic_tokens_for_language(&language);
+    }
+
     /// Apply a dynamic capability (un)registration from the server, then — when
     /// a capability newly turned on — kick off the corresponding requests for
     /// buffers that were already open before the registration arrived (they
