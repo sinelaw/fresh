@@ -99,6 +99,48 @@ So the blast radius on the non-cloud experience is: one optional,
 empty-by-default field on a session row. That is the whole answer to
 "without hurting people who don't use pods."
 
+### Grounding: the current dock already does most of this
+
+Reassessed against the live Orchestrator dock / Open-modal
+(`orchestrator-pr-pill-wireframes.md`, `ORCHESTRATOR_DOCK_NNG_*`), the
+"remote facet" is not speculative — it slots into patterns that already
+ship:
+
+- **Session rows already carry per-session state + a suffix.** Each row
+  is `<sym> [ ] <name> <· project / · on-disk>`, where `<sym>` is `*`
+  (working) / `✓` (idle) / blank (on-disk), rendered by
+  `renderListItem()` in `orchestrator.ts`. The cloud state
+  (`starting/running/stopped/error`) is **another glyph in the same
+  symbol slot**, not new chrome.
+- **"on-disk" is the precedent for "stopped".** The dock already
+  distinguishes a discovered-but-not-live worktree (`· on-disk`) from a
+  live session (`✓`/`*`). A `stopped` cloud workspace (exists, not
+  connected) is the same idea — provisioned identity, no live backend —
+  and reuses that visual language.
+- **Per-session action buttons already exist:** `[ Visit ] [ Details ]
+  [ Stop ] [ Archive ] [ Delete ]`. Cloud verbs layer here:
+  `Resume`/`Rebuild`/`Resize` join the row, and **`Stop` is reconciled**
+  — for a cloud session it means *suspend the pod* (D2/D4), a superset of
+  today's "stop session activity." Name the overlap deliberately so it
+  isn't two different "Stop"s.
+- **The PR-pill work is the rendering + data precedent for the facet.**
+  The in-flight multi-line "pill" (line 1 name+project, line 2 an
+  opportunistically-gathered GitHub PR badge) is *exactly* the shape the
+  remote facet needs: an optional second line carrying best-effort,
+  async-gathered status. Cloud state + rough `$/hr` + idle timer reuse
+  the **same pill mechanism and the same opportunistic-gather plumbing**
+  — not a parallel renderer.
+- **Respect the one-row-per-item constraint.** The host `list` widget
+  renders exactly one terminal row per item; the PR-pill design already
+  had to navigate this. The remote facet must ride whatever multi-line
+  pill mechanism that work establishes rather than fighting the renderer.
+
+Upshot of the reassessment: the dock is converging on rich, multi-line,
+opportunistically-populated session pills *anyway* (for PR/CI status).
+The cloud remote facet is one more opportunistic data source feeding the
+same pill — which makes "management lives in the Orchestrator" (D3) cheaper
+and more natural than when it was first written.
+
 ### Bonus: it composes with the Orchestrator's original purpose
 
 The Orchestrator exists to run **parallel AI agents, each in its own
@@ -310,9 +352,13 @@ router; background ones are dormant-but-connected. Switching sessions
 *activates* an authority instead of restarting the process, and
 `install_authority` retargets the active session, not the whole `Editor`.
 
-This continues the Orchestrator migration (which already moved buffers,
-LSP, terminals, explorer onto `Window`); authority is the remaining
-per-project field. It also pulls `WorkspaceTrust`, `EnvProvider`, and the
+Reassessed against the current tree: the per-window authority **field
+already exists** (`WindowResources.authority` / `Window::authority()`),
+so this isn't a from-scratch move. What's actually missing is (a) live
+multi-session (the active session is still pinned to `WindowId(1)`), (b) a
+per-window keepalive so a background window keeps its live backend, and
+(c) replacing the destructive `install_authority` restart with per-window
+activation. It also pulls `WorkspaceTrust`, `EnvProvider`, and the
 daemon's single `session_keepalive`/`startup_authority` slots toward
 per-session ownership. Full write-up: `AUTHORITY_DESIGN.md`
 §"Evolution: per-session authority".

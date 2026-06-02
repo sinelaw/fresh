@@ -249,9 +249,28 @@ sessions to hold **live backends concurrently** (each its own
 model cannot express warm background sessions. The authority must be
 **owned per `Session`/`Window`**.
 
-This is not a reversal — it is the next step of the migration that
-already moved buffers, splits, file explorer, LSP, and terminals from
-`Editor` onto `Window`. Authority is the remaining per-project field.
+This is not a reversal — it continues the migration that moved buffers,
+splits, file explorer, LSP, and terminals from `Editor` onto `Window`.
+
+**Where the code actually is today (reassessed against the current
+tree):** the per-window authority *field already exists* —
+`WindowResources` holds an `authority`, exposed as `Window::authority()`
+(`app/window/mod.rs`). What is *not* yet true:
+
+- The `Editor` still holds a top-level `self.authority` that
+  `Editor::authority()` returns directly, and the **active session is
+  pinned to `WindowId(1)`** ("until the multi-session migration step
+  lands" — `editor_accessors.rs`). So multiple sessions don't yet run
+  concurrently.
+- Transitions are still the **destructive `Editor`-level restart**:
+  `install_authority` queues `pending_authority` and calls
+  `request_restart`; `main.rs` drops and rebuilds the whole editor.
+
+So the remaining work for warm Cloud Workspaces is *not* "move authority
+onto `Window`" (the field is there) — it is (a) land live multi-session
+so several windows coexist, (b) give each window its **own keepalive** so
+a background window keeps its live backend, and (c) replace the
+destructive-restart transition with **per-window activation**.
 
 ### The restated invariant
 
@@ -259,20 +278,22 @@ already moved buffers, splits, file explorer, LSP, and terminals from
   session's authority is still the *sole router* for every primitive
   (principle 2 intact); background sessions hold **dormant** authorities
   — live connection, routing nothing. "Modal per window" (principle 5)
-  becomes literally true now that one process holds many windows.
+  becomes literally true once one process runs many windows (today it's
+  pinned to one).
 - **Opaque to core (principle 3) is unchanged.** The Orchestrator renders
   a session's optional "remote facet" (state/cost/verbs) generically and
   never names a backend.
 
 ### Transitions become per-session, not per-process
 
-The conservative "drop and rebuild the whole `Editor`" choice existed
+Today's conservative "drop and rebuild the whole `Editor`"
+(`install_authority` → `pending_authority` → `request_restart`) exists
 because enumerating every cache holding an `Arc<dyn FileSystem>` at swap
-time was error-prone. The session migration **already bundled that
-state per session** — so the unit of teardown shrinks from "the process"
-to "a session":
+time was error-prone. The session migration **bundles that state per
+window** — so the unit of teardown can shrink from "the process" to "a
+session":
 
-- **Connect / switch** is no longer a process restart. Switching to a
+- **Connect / switch** stops being a process restart. Switching to a
   warm session *activates* its existing authority (instant); switching to
   a cold/stopped one resumes/rebuilds **that session only**, leaving
   other sessions and their connections untouched.
@@ -280,6 +301,13 @@ to "a session":
   session's* authority slot and rebuild that session, not the `Editor`.
   The old whole-`Editor` restart remains the mechanism for a genuine
   process-level change (e.g. config reload), not for an authority swap.
+- **A no-restart swap mechanism already exists but is boot-only.**
+  `set_boot_authority` replaces the authority without a restart, then
+  fans it out to *every* window's `resources.authority` — i.e. it sets
+  one global authority across all windows at construction time, and is
+  explicitly "not from the event loop." The per-window-activation path
+  generalizes from this (swap one window's authority, re-point its LSP /
+  path-translation), rather than reusing it as-is.
 
 ### Follow-ons to work through
 
