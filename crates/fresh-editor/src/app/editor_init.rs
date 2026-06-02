@@ -248,6 +248,7 @@ impl Editor {
             last_window_title: None,
             mode_registry: ModeRegistry::new(),
             pending_authority: None,
+            pending_keepalive: None,
             remote_indicator_override: None,
             menus: crate::config::MenuConfig::translated(),
             background_process_handles: HashMap::new(),

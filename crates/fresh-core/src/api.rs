@@ -3655,6 +3655,23 @@ pub enum PluginCommand {
     /// restart.
     ClearAuthority,
 
+    /// Attach to a remote agent over a transport that requires a live
+    /// connection (today: `kubectl exec` into an EKS pod). Unlike
+    /// `SetAuthority` — which builds a synchronously-constructible
+    /// backend and restarts immediately — this kicks off an *async*
+    /// connect (spawn the carrier, bootstrap the agent, await `ready`);
+    /// only on success does the editor install the resulting authority
+    /// and restart. On failure the editor surfaces the error and stays
+    /// put.
+    ///
+    /// `payload` is opaque at the fresh-core boundary; the concrete
+    /// schema (`RemoteAgentSpec`) lives in `fresh-editor` so core stays
+    /// ignorant of backend kinds, exactly like `SetAuthority`.
+    AttachRemoteAgent {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+    },
+
     /// Activate an environment: set the live env provider's recipe (an
     /// activation shell `snippet` run in `dir`). Re-evaluated on demand on the
     /// active backend and applied to every spawn — no authority rebuild. Only

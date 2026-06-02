@@ -533,6 +533,61 @@ impl Authority {
     }
 }
 
+/// Plugin payload for `editor.attachRemoteAgent(...)`. Names a transport
+/// that needs a live connection plus the captured in-pod env probe.
+/// Opaque JSON at the fresh-core boundary; parsed here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteAgentSpec {
+    pub transport: RemoteTransportSpec,
+    /// Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+    /// `command_exists`. Empty when no probe ran.
+    #[serde(default)]
+    pub base_env: Vec<(String, String)>,
+}
+
+/// Transport kind for [`RemoteAgentSpec`]. Tagged + additive so new
+/// carriers slot in without breaking the plugin contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum RemoteTransportSpec {
+    /// Exec into a pod on an EKS (or any kube) cluster.
+    KubectlExec {
+        #[serde(default)]
+        context: Option<String>,
+        namespace: String,
+        pod: String,
+        #[serde(default)]
+        container: Option<String>,
+        #[serde(default)]
+        workspace: Option<String>,
+    },
+}
+
+impl RemoteAgentSpec {
+    /// Resolve into the connect parameters: the pod target and the
+    /// captured env to apply to LSP spawns.
+    pub fn into_eks_target(self) -> (EksTarget, Vec<(String, String)>) {
+        match self.transport {
+            RemoteTransportSpec::KubectlExec {
+                context,
+                namespace,
+                pod,
+                container,
+                workspace,
+            } => (
+                EksTarget {
+                    context,
+                    namespace,
+                    pod,
+                    container,
+                    workspace,
+                },
+                self.base_env,
+            ),
+        }
+    }
+}
+
 /// Resources that must outlive an EKS [`Authority`]: the carrier
 /// connection (its `kubectl exec` child + heartbeat task) and the
 /// reconnect task. The editor parks this in its session-keepalive slot —

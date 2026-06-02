@@ -162,6 +162,13 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // sync with `crates/fresh-editor/src/services/authority/mod.rs`.
         "AuthorityPayload" => Some(AUTHORITY_PAYLOAD_DECL.to_string()),
 
+        // Remote-agent attach spec for `editor.attachRemoteAgent(...)`.
+        // Hand-written for the same reason as `AuthorityPayload`: the
+        // authoritative `RemoteAgentSpec` struct lives in `fresh-editor`.
+        // Keep in sync with
+        // `crates/fresh-editor/src/services/authority/mod.rs`.
+        "RemoteAgentSpec" => Some(REMOTE_AGENT_SPEC_DECL.to_string()),
+
         // Remote Indicator override — payload for
         // `editor.setRemoteIndicatorState(...)`. Same hand-written
         // rationale: the authoritative enum lives in
@@ -216,6 +223,30 @@ type AuthorityPayload = {
 type PathTranslationSpec = {
   host_root: string;
   remote_root: string;
+};"#;
+
+/// Hand-written declaration for `RemoteAgentSpec` (the
+/// `editor.attachRemoteAgent(...)` payload). Keep in sync with
+/// `crates/fresh-editor/src/services/authority/mod.rs::RemoteAgentSpec`.
+const REMOTE_AGENT_SPEC_DECL: &str = r#"type RemoteAgentTransport = {
+  kind: "kubectl-exec";
+  /** kubeconfig context to select (`--context`); omit for the current one. */
+  context?: string | null;
+  namespace: string;
+  pod: string;
+  /** Target container in a multi-container pod (`-c`). */
+  container?: string | null;
+  /** Pod-side workspace root the terminal opens in. */
+  workspace?: string | null;
+};
+
+type RemoteAgentSpec = {
+  transport: RemoteAgentTransport;
+  /**
+  * Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+  * binary-presence probes. Omit when no probe was run.
+  */
+  base_env?: [string, string][];
 };"#;
 
 /// Hand-written declaration for `RemoteIndicatorStatePayload`. Keep in

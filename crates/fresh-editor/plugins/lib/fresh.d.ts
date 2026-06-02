@@ -1539,6 +1539,25 @@ type LspServerPackConfig = {
 	*/
 	processLimits: ProcessLimitsPackConfig | null;
 };
+type RemoteAgentTransport = {
+	kind: "kubectl-exec";
+	/** kubeconfig context to select (`--context`); omit for the current one. */
+	context?: string | null;
+	namespace: string;
+	pod: string;
+	/** Target container in a multi-container pod (`-c`). */
+	container?: string | null;
+	/** Pod-side workspace root the terminal opens in. */
+	workspace?: string | null;
+};
+type RemoteAgentSpec = {
+	transport: RemoteAgentTransport;
+	/**
+	* Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+	* binary-presence probes. Omit when no probe was run.
+	*/
+	base_env?: [string, string][];
+};
 type RemoteIndicatorStatePayload = {
 	kind: "local";
 } | {
@@ -2969,6 +2988,19 @@ interface EditorAPI {
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
+	/**
+	* Attach to a remote agent that needs a live connection (today a
+	* `kubectl exec` agent in an EKS pod). The connect is asynchronous:
+	* this returns immediately, the editor connects in the background,
+	* and only on success installs the authority and restarts (on
+	* failure it surfaces the error and stays put). Fire-and-forget,
+	* like `setAuthority` — any post-attach work belongs in the
+	* plugin's post-restart init.
+	* 
+	* The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
+	* plugins hand-build an object matching it.
+	*/
+	attachRemoteAgent(payload: RemoteAgentSpec): boolean;
 	/**
 	* Activate an environment: set the live env recipe (`snippet` run in
 	* `dir`). Applied to every spawn, re-evaluated on demand — no restart.

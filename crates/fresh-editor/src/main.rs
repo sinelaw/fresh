@@ -3730,7 +3730,7 @@ fn real_main() -> AnyhowResult<()> {
         gpm_client,
         mut terminal_modes,
         authority: startup_authority,
-        _remote_session,
+        _remote_session: remote_session,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
@@ -3748,6 +3748,15 @@ fn real_main() -> AnyhowResult<()> {
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
     let mut current_authority = startup_authority;
+
+    // Process-lifetime keepalive for a connection-backed authority.
+    // Seeded from the SSH startup session (if any); replaced when a
+    // plugin attaches a remote agent (EKS) mid-session via
+    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
+    // tears the previous connection down. Boxed opaquely so this loop
+    // never names a backend.
+    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
+        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -3922,6 +3931,20 @@ fn real_main() -> AnyhowResult<()> {
         if let Some(new_authority) = editor.take_pending_authority() {
             tracing::info!("Authority transition queued; restarting editor");
             current_authority = new_authority;
+            // A connection-backed authority (remote agent / EKS) queues
+            // its keepalive alongside the authority. Adopt it here so the
+            // live carrier + reconnect/heartbeat tasks survive into the
+            // next iteration; the previous keepalive drops (tearing down
+            // the old connection). A plain local/docker transition
+            // carries no keepalive, leaving the slot — and any current
+            // remote session — untouched.
+            if let Some(new_keepalive) = editor.take_pending_keepalive() {
+                // Swap in the new session and drop the previous one,
+                // explicitly tearing the old connection down before the
+                // next iteration builds against the new backend.
+                let previous = std::mem::replace(&mut current_keepalive, Some(new_keepalive));
+                drop(previous);
+            }
         }
 
         // Pluck the warning-log channel back out of the soon-to-be-

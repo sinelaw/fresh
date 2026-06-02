@@ -427,6 +427,26 @@ impl Editor {
         self.request_restart(self.working_dir().to_path_buf());
     }
 
+    /// Install a new authority that owns a live connection, parking its
+    /// keepalive bundle so the connection survives the restart.
+    ///
+    /// Remote-agent backends (SSH-style, EKS) hold carrier processes,
+    /// reconnect/heartbeat tasks, and a Tokio handle that must outlive
+    /// the `Editor` rebuild — exactly the role of the daemon's
+    /// `session_keepalive` slot. The restart loop pairs
+    /// `take_pending_authority` with `take_pending_keepalive` and moves
+    /// the bundle into the process-/server-level keepalive, dropping the
+    /// previous one (tearing down the prior connection). Opaque
+    /// `Box<dyn Any + Send>` so core/main need not name the backend.
+    pub fn install_authority_with_keepalive(
+        &mut self,
+        authority: crate::services::authority::Authority,
+        keepalive: Box<dyn std::any::Any + Send>,
+    ) {
+        self.pending_keepalive = Some(keepalive);
+        self.install_authority(authority);
+    }
+
     /// Restore the default local authority. Same destructive-restart
     /// semantics as `install_authority` — the caller never observes a
     /// half-transitioned editor.
@@ -442,6 +462,14 @@ impl Editor {
     /// restart to move the queued authority into the fresh editor.
     pub fn take_pending_authority(&mut self) -> Option<crate::services::authority::Authority> {
         self.pending_authority.take()
+    }
+
+    /// Take the keepalive bundle queued alongside a pending authority by
+    /// [`Self::install_authority_with_keepalive`]. Called by the restart
+    /// loop right beside `take_pending_authority` so the new connection's
+    /// carrier/tasks are parked before the old `Editor` is dropped.
+    pub fn take_pending_keepalive(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.pending_keepalive.take()
     }
 
     /// Directly replace the active authority without triggering a

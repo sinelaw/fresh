@@ -996,6 +996,10 @@ impl Editor {
                 self.handle_set_authority(payload);
             }
 
+            PluginCommand::AttachRemoteAgent { payload } => {
+                self.handle_attach_remote_agent(payload);
+            }
+
             PluginCommand::ClearAuthority => {
                 tracing::info!("Plugin cleared authority; restoring local");
                 self.clear_authority();
@@ -3448,6 +3452,62 @@ impl Editor {
                 self.set_status_message(format!("setAuthority rejected: {}", e));
             }
         }
+    }
+
+    fn handle_attach_remote_agent(&mut self, payload: serde_json::Value) {
+        // Opaque at the fresh-core boundary; the concrete schema lives in
+        // services::authority so core stays backend-agnostic.
+        let spec = match serde_json::from_value::<
+            crate::services::authority::RemoteAgentSpec,
+        >(payload)
+        {
+            Ok(spec) => spec,
+            Err(e) => {
+                tracing::warn!("attachRemoteAgent: invalid payload: {}", e);
+                self.set_status_message(format!("attachRemoteAgent rejected: {e}"));
+                return;
+            }
+        };
+
+        // Take owned handles up front so the immutable borrows of `self`
+        // end before the mutable `set_status_message` / spawn below.
+        let runtime = self.tokio_runtime.clone();
+        let sender = self.async_bridge.as_ref().map(|b| b.sender());
+        let (Some(runtime), Some(sender)) = (runtime, sender) else {
+            self.set_status_message("attachRemoteAgent: async runtime not available".to_string());
+            return;
+        };
+
+        // The connect (spawn the carrier, bootstrap the agent, await
+        // `ready`) is async and can take seconds, so run it on the
+        // runtime and report back via the bridge instead of blocking the
+        // event loop. On success the main loop installs the authority +
+        // keepalive and restarts; on failure it surfaces the error.
+        let (target, base_env) = spec.into_eks_target();
+        let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
+        let env = std::sync::Arc::clone(&self.authority.env_provider);
+        let label = target.display();
+        self.set_status_message(format!("Connecting to {label}…"));
+
+        runtime.spawn(async move {
+            let outcome =
+                crate::services::authority::connect_eks_authority(target, base_env, trust, env)
+                    .await;
+            let msg = match outcome {
+                Ok((authority, keepalive)) => {
+                    AsyncMessage::RemoteAttachReady(crate::services::async_bridge::RemoteAttachReady {
+                        authority,
+                        keepalive: Box::new(keepalive),
+                    })
+                }
+                Err(e) => AsyncMessage::RemoteAttachFailed {
+                    error: e.to_string(),
+                },
+            };
+            // Best-effort: if the editor is gone the send fails harmlessly.
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = sender.send(msg);
+        });
     }
 
     fn handle_set_remote_indicator_state(&mut self, state: serde_json::Value) {

@@ -649,6 +649,21 @@ impl Editor {
                 } => {
                     self.handle_plugin_lsp_response(request_id, result);
                 }
+                AsyncMessage::RemoteAttachReady(ready) => {
+                    // The background connect succeeded; install the new
+                    // authority + its keepalive and restart so the whole
+                    // editor rebuilds around the remote backend (same
+                    // destructive-transition contract as setAuthority).
+                    tracing::info!(
+                        "Remote attach connected ({}); installing authority",
+                        ready.authority.display_label
+                    );
+                    self.install_authority_with_keepalive(ready.authority, ready.keepalive);
+                }
+                AsyncMessage::RemoteAttachFailed { error } => {
+                    tracing::warn!("Remote attach failed: {}", error);
+                    self.set_status_message(format!("Attach failed: {error}"));
+                }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
                     stdout,

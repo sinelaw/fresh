@@ -26,9 +26,34 @@ pub enum LspSemanticTokensResponse {
     Range(Result<Option<SemanticTokensRangeResult>, String>),
 }
 
+/// A completed remote-agent attach: the assembled authority plus the
+/// keepalive that must outlive it. Carried back from the async connect
+/// task to the main loop, which installs it and restarts. Manual `Debug`
+/// because neither field is `Debug`.
+pub struct RemoteAttachReady {
+    pub authority: crate::services::authority::Authority,
+    pub keepalive: Box<dyn std::any::Any + Send>,
+}
+
+impl std::fmt::Debug for RemoteAttachReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteAttachReady")
+            .field("label", &self.authority.display_label)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Messages sent from async tasks to the synchronous main loop
 #[derive(Debug)]
 pub enum AsyncMessage {
+    /// An async `attachRemoteAgent` connect succeeded — install the
+    /// authority + keepalive and restart.
+    RemoteAttachReady(RemoteAttachReady),
+
+    /// An async `attachRemoteAgent` connect failed — surface the error;
+    /// the editor stays on its current authority.
+    RemoteAttachFailed { error: String },
+
     /// LSP diagnostics received for a file
     LspDiagnostics {
         uri: String,

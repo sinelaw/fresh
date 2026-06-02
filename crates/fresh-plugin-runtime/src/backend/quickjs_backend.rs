@@ -5768,6 +5768,29 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::ClearAuthority);
     }
 
+    /// Attach to a remote agent that needs a live connection (today a
+    /// `kubectl exec` agent in an EKS pod). The connect is asynchronous:
+    /// this returns immediately, the editor connects in the background,
+    /// and only on success installs the authority and restarts (on
+    /// failure it surfaces the error and stays put). Fire-and-forget,
+    /// like `setAuthority` — any post-attach work belongs in the
+    /// plugin's post-restart init.
+    ///
+    /// The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
+    /// plugins hand-build an object matching it.
+    #[plugin_api(js_name = "attachRemoteAgent")]
+    pub fn attach_remote_agent(
+        &self,
+        ctx: rquickjs::Ctx<'_>,
+        #[plugin_api(ts_type = "RemoteAgentSpec")] payload: rquickjs::Value<'_>,
+    ) -> bool {
+        let json = js_to_json(&ctx, payload);
+        let _ = self
+            .command_sender
+            .send(PluginCommand::AttachRemoteAgent { payload: json });
+        true
+    }
+
     /// Activate an environment: set the live env recipe (`snippet` run in
     /// `dir`). Applied to every spawn, re-evaluated on demand — no restart.
     /// Honored only when the workspace is Trusted.

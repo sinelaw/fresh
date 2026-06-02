@@ -350,6 +350,7 @@ impl EditorServer {
             if let Some(ref mut editor) = self.editor {
                 if editor.should_quit() {
                     let pending_authority = editor.take_pending_authority();
+                    let pending_keepalive = editor.take_pending_keepalive();
                     let restart_dir = editor.take_restart_dir();
                     if pending_authority.is_some() || restart_dir.is_some() {
                         tracing::info!(
@@ -357,7 +358,9 @@ impl EditorServer {
                             pending_authority.is_some(),
                             restart_dir.is_some()
                         );
-                        if let Err(e) = self.rebuild_editor(restart_dir, pending_authority) {
+                        if let Err(e) =
+                            self.rebuild_editor(restart_dir, pending_authority, pending_keepalive)
+                        {
                             tracing::error!("Session rebuild failed, shutting down: {}", e);
                             self.shutdown.store(true, Ordering::SeqCst);
                             continue;
@@ -686,6 +689,7 @@ impl EditorServer {
         &mut self,
         new_working_dir: Option<PathBuf>,
         new_authority: Option<crate::services::authority::Authority>,
+        new_keepalive: Option<Box<dyn std::any::Any + Send>>,
     ) -> io::Result<()> {
         // Flush buffer saves + workspace before dropping the old editor,
         // mirroring the standalone exit path.  On failure we log and
@@ -736,6 +740,14 @@ impl EditorServer {
                 auth.display_label
             );
             self.current_authority = auth;
+        }
+        // Adopt the keepalive that rode with a connection-backed authority
+        // (remote agent / EKS) so its carrier + reconnect/heartbeat tasks
+        // survive the rebuild; the previous keepalive drops, tearing down
+        // any prior remote session. A local/docker transition carries
+        // none, leaving the current session untouched.
+        if let Some(keepalive) = new_keepalive {
+            self.session_keepalive = Some(keepalive);
         }
 
         let (mut editor, terminal) = self.build_editor_instance()?;

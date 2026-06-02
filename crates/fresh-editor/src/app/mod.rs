@@ -601,6 +601,14 @@ pub struct Editor {
     /// the authority over through its own channel.
     pending_authority: Option<crate::services::authority::Authority>,
 
+    /// Keepalive bundle queued alongside `pending_authority` for a
+    /// connection-backed authority (remote agent / EKS), parked by the
+    /// restart loop so the live carrier + reconnect/heartbeat tasks
+    /// survive the rebuild. `None` for synchronously-constructible
+    /// authorities (local, docker). See
+    /// [`Editor::install_authority_with_keepalive`].
+    pending_keepalive: Option<Box<dyn std::any::Any + Send>>,
+
     /// Plugin-supplied override for the Remote Indicator. Takes
     /// precedence over the authority-derived state at render time.
     /// Cleared on editor restart (plugins must reassert the state

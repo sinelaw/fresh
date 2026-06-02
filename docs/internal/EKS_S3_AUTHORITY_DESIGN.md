@@ -19,9 +19,20 @@
 > (`spawn_heartbeat_task` — a periodic `info` ping, no agent.py change /
 > no protocol bump) ships and is wired into `EksConnection` so idle
 > `kubectl exec` streams survive LB/NAT idle timeouts; it self-terminates
-> via a `Weak` ref. Unit-tested throughout (incl. a real-agent heartbeat
-> test). **Not yet wired:** the async `attachRemoteAgent` op +
-> reconnect-respawn, live multi-session, and the `eks-workspace` plugin.
+> via a `Weak` ref. The async **`attachRemoteAgent` plugin op** is wired
+> end to end: JS `editor.attachRemoteAgent(spec)` → `PluginCommand::
+> AttachRemoteAgent` → a runtime task runs `connect_eks_authority` →
+> `AsyncMessage::RemoteAttachReady` → `install_authority_with_keepalive`
+> → the restart loop (standalone `main.rs` and daemon `EditorServer`)
+> adopts the authority **and its keepalive** (the same slot SSH uses), so
+> the live carrier + reconnect/heartbeat survive the rebuild. The
+> **`eks-workspace.ts`** plugin ships the Provider model (`attach-existing`
+> / `manifest` / `run` / `command`-Terraform escape hatch) with env-probe,
+> RBAC-exec preflight, and connect/disconnect commands. The EKS reconnect
+> task re-runs `kubectl exec` on stream drop. Unit + e2e tested; plugin
+> type-checks. **Remaining (core-team-gated):** live multi-session so
+> background cloud sessions stay *warm* (D4) — until then attach uses the
+> destructive restart, which is correct, just not warm.
 
 Status: design. Nothing else here ships yet. Supersedes the earlier
 "EKS + S3 full cloud authority" draft, which proposed a bespoke
