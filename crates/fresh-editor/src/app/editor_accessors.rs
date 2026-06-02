@@ -1551,12 +1551,16 @@ impl Editor {
             return false;
         }
 
-        // Trigger the completion request
-        self.request_completion();
-        if let Err(err) = self.request_inline_completion_automatic() {
-            tracing::debug!("Failed to request inline completion: {err}");
+        // Trigger the completion request(s)
+        if self.config.editor.completion_popup_auto_show {
+            self.request_completion();
+        }
+        if self.config.editor.enable_ghost_text {
+            if let Err(err) = self.request_inline_completion_automatic() {
+                tracing::debug!("Failed to request inline completion: {err}");
+            }
         }
 
-        true
+        self.config.editor.completion_popup_auto_show || self.config.editor.enable_ghost_text
     }
 }

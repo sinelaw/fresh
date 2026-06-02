@@ -58,6 +58,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[derive(Clone, Debug)]
+pub(crate) struct InlineCompletionGhostText {
+    pub buffer_id: BufferId,
+    pub cursor_position: usize,
+    pub suffix: String,
+}
+
 /// A project-rooted unit of editor state.
 ///
 /// After Step 0b every per-subsystem field listed below is owned
@@ -446,6 +453,9 @@ pub struct Window {
 
     /// Buffer currently showing inline ghost text for completion.
     pub ghost_text_buffer_id: Option<BufferId>,
+
+    /// Active inline completion text that can be accepted into the buffer.
+    pub(crate) ghost_text_completion: Option<InlineCompletionGhostText>,
 
     /// Scheduled completion-trigger time (debounced quick-suggestions).
     pub scheduled_completion_trigger: Option<std::time::Instant>,
@@ -2343,6 +2353,7 @@ impl Window {
             completion_popup_lsp_items: Vec::new(),
             pending_completion_resolve_request: None,
             ghost_text_buffer_id: None,
+            ghost_text_completion: None,
             scheduled_completion_trigger: None,
             dabbrev_state: None,
             pending_goto_definition_request: None,

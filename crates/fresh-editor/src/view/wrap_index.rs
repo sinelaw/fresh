@@ -1615,6 +1615,7 @@ mod tests {
             position: VirtualTextPosition::BeforeChar,
             style: None,
             gravity,
+            pad_with_space: true,
         };
 
         let mut decorations = IndexDecorations {

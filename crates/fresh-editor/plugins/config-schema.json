@@ -783,7 +783,7 @@
           "x-section": "Completion"
         },
         "quick_suggestions": {
-          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions appear automatically while typing,\nnot just on trigger characters (like `.` or `::`).\nOnly takes effect when completion_popup_auto_show is true.\nDefault: true",
+          "description": "Enable quick suggestions (VS Code-like behavior).\nWhen enabled, completion suggestions or inline ghost text are requested\nautomatically while typing, not just on trigger characters (like `.` or `::`).\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Completion"
@@ -797,10 +797,10 @@
           "x-section": "Completion"
         },
         "enable_ghost_text": {
-          "description": "Show inline ghost text for the currently selected completion item.\nThis renders a dimmed suggestion directly in the buffer while the\ncompletion popup is open.\nDefault: true",
+          "description": "Show LSP inline completion ghost text from textDocument/inlineCompletion.\nThis renders a dimmed Copilot-style suggestion directly in the buffer,\nindependently of the completion popup.\nDefault: true",
           "type": "boolean",
-          "x-section": "Completion",
-          "default": true
+          "default": true,
+          "x-section": "Completion"
         },
         "suggest_on_trigger_characters": {
           "description": "Whether trigger characters (like `.`, `::`, `->`) immediately show completions.\nWhen true, typing a trigger character bypasses quick_suggestions_delay_ms.\nDefault: true",
