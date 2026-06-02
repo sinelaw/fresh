@@ -341,6 +341,9 @@ impl Editor {
     /// UI is otherwise idle (the render that follows runs
     /// `Window::sync_terminal_titles`).
     pub fn terminal_title_poll_deadline(&self) -> Option<std::time::Instant> {
+        if !self.config.editor.terminal_auto_title {
+            return None;
+        }
         let mut earliest: Option<std::time::Instant> = None;
         for window in self.windows.values() {
             let has_auto = window

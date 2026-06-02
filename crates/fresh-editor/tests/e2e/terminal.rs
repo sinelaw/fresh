@@ -282,6 +282,12 @@ fn test_terminal_content_rendering() {
 fn test_terminal_tab_title_follows_foreground_process() {
     let mut harness = harness_or_return!(80, 24);
 
+    // Opt into tmux-style auto-naming (the harness disables it by default for
+    // deterministic `*Terminal N*` tabs elsewhere).
+    let mut cfg = harness.editor().config().clone();
+    cfg.editor.terminal_auto_title = true;
+    harness.editor_mut().set_config(cfg);
+
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
 

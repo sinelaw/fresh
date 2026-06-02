@@ -906,6 +906,16 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub set_window_title: bool,
 
+    /// Auto-name terminal tabs after the running program (tmux-style). When
+    /// enabled, an integrated terminal's tab reflects its foreground process
+    /// (e.g. `python3`, `vim`) combined with any title the program set via
+    /// an OSC escape sequence, instead of the static `*Terminal N*` label.
+    /// Disable to keep the fixed `*Terminal N*` names.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub terminal_auto_title: bool,
+
     /// Cursor style for the terminal cursor.
     /// Options: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline
     /// Default: blinking_block
@@ -1475,6 +1485,7 @@ impl Default for EditorConfig {
             show_tilde: true,
             use_terminal_bg: false,
             set_window_title: true,
+            terminal_auto_title: true,
             rulers: Vec::new(),
             whitespace_show: true,
             whitespace_spaces_leading: false,

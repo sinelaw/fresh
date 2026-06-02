@@ -571,6 +571,14 @@ impl Window {
     /// the same way as the host window title, and applied without the
     /// `name (k)` disambiguation used for plugin titles.
     pub fn sync_terminal_titles(&mut self) {
+        // Gated by config: when off, tabs keep their static `*Terminal N*`
+        // (or plugin) names. Clearing the cache lets a later enable start
+        // fresh.
+        if !self.config().editor.terminal_auto_title {
+            self.terminal_fg_cache.clear();
+            return;
+        }
+
         // Refresh the foreground-name cache. A terminal is re-read when the
         // poll interval has elapsed, or eagerly while it has no cached name
         // yet (its first prompt may not have a foreground pgid the instant

@@ -204,6 +204,7 @@ pub struct PartialEditorConfig {
     pub show_tilde: Option<bool>,
     pub use_terminal_bg: Option<bool>,
     pub set_window_title: Option<bool>,
+    pub terminal_auto_title: Option<bool>,
     pub rulers: Option<Vec<usize>>,
     pub whitespace_show: Option<bool>,
     pub whitespace_spaces_leading: Option<bool>,
@@ -315,6 +316,8 @@ impl Merge for PartialEditorConfig {
         self.show_tilde.merge_from(&other.show_tilde);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
         self.set_window_title.merge_from(&other.set_window_title);
+        self.terminal_auto_title
+            .merge_from(&other.terminal_auto_title);
         self.rulers.merge_from(&other.rulers);
         self.whitespace_show.merge_from(&other.whitespace_show);
         self.whitespace_spaces_leading
@@ -619,6 +622,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_tilde: Some(cfg.show_tilde),
             use_terminal_bg: Some(cfg.use_terminal_bg),
             set_window_title: Some(cfg.set_window_title),
+            terminal_auto_title: Some(cfg.terminal_auto_title),
             rulers: Some(cfg.rulers.clone()),
             whitespace_show: Some(cfg.whitespace_show),
             whitespace_spaces_leading: Some(cfg.whitespace_spaces_leading),
@@ -774,6 +778,9 @@ impl PartialEditorConfig {
             show_tilde: self.show_tilde.unwrap_or(defaults.show_tilde),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
             set_window_title: self.set_window_title.unwrap_or(defaults.set_window_title),
+            terminal_auto_title: self
+                .terminal_auto_title
+                .unwrap_or(defaults.terminal_auto_title),
             rulers: self.rulers.unwrap_or_else(|| defaults.rulers.clone()),
             whitespace_show: self.whitespace_show.unwrap_or(defaults.whitespace_show),
             whitespace_spaces_leading: self

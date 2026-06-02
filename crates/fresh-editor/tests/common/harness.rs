@@ -645,6 +645,11 @@ impl EditorTestHarness {
         // by passing a config, so the override here never gets in their
         // way.
         config.editor.show_prompt_line = true;
+        // Keep terminal tabs on their static `*Terminal N*` names in tests so
+        // assertions don't depend on the host's shell / foreground process.
+        // The tmux-style auto-naming (default on for users) is exercised by
+        // tests that opt back in via `set_config` after construction.
+        config.editor.terminal_auto_title = false;
         // Force "default" keybinding map for consistent test behavior across platforms
         // (Config::default() uses platform-specific keymaps which breaks test assumptions)
         // Skip this if the test explicitly wants to preserve its keymap (e.g., testing emacs bindings)

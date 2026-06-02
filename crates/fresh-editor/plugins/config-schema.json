@@ -70,6 +70,7 @@
         "show_tilde": true,
         "use_terminal_bg": false,
         "set_window_title": true,
+        "terminal_auto_title": true,
         "cursor_style": "default",
         "rulers": [],
         "whitespace_show": true,
@@ -438,6 +439,12 @@
         },
         "set_window_title": {
           "description": "Update the terminal window title (via OSC 2) to reflect the active buffer.\nWhen enabled, Fresh sets the terminal/tab title to \"<file> — Fresh\" as\nyou switch buffers. Harmless on terminals that don't understand the\nescape sequence — they silently ignore it.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "terminal_auto_title": {
+          "description": "Auto-name terminal tabs after the running program (tmux-style). When\nenabled, an integrated terminal's tab reflects its foreground process\n(e.g. `python3`, `vim`) combined with any title the program set via\nan OSC escape sequence, instead of the static `*Terminal N*` label.\nDisable to keep the fixed `*Terminal N*` names.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
