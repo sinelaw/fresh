@@ -12,14 +12,12 @@
 //! resolve without any chroot.
 
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use fresh::model::filesystem::FileSystem;
-use fresh::services::authority::connect_eks_authority;
+use fresh::services::authority::{connect_eks_authority, RemoteAgentSpec};
 use fresh::services::env_provider::EnvProvider;
-use fresh::services::remote::{
-    EksConnection, EksTarget, LongRunningSpawner, ProcessSpawner, RemoteFileSystem,
-};
+use fresh::services::remote::{EksConnection, EksTarget, RemoteFileSystem};
 use fresh::services::workspace_trust::WorkspaceTrust;
 
 static PATH_INIT: Once = Once::new();
@@ -101,6 +99,53 @@ fn eks_connection_round_trips_a_file_through_fake_kubectl() {
     assert!(fs.exists(&file));
 
     drop(connection);
+}
+
+#[test]
+fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
+    ensure_fake_kubectl_on_path();
+    if !python3_available() {
+        eprintln!("skipping: python3 not found on PATH");
+        return;
+    }
+
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path().to_path_buf();
+
+    // The exact JSON the eks-workspace plugin emits and the
+    // `attachRemoteAgent` op parses — driven through the real
+    // parse → connect path `handle_attach_remote_agent` runs (minus the
+    // editor's runtime/bridge hop, which is trivial plumbing).
+    let json = serde_json::json!({
+        "transport": {
+            "kind": "kubectl-exec",
+            "context": "fake-ctx",
+            "namespace": "test",
+            "pod": "fake-pod",
+            "workspace": ws.to_string_lossy(),
+        },
+        "base_env": [["E2E_BASE", "base"]],
+    });
+    let spec: RemoteAgentSpec = serde_json::from_value(json).expect("attach spec parses");
+    let (target, base_env) = spec.into_eks_target();
+
+    let rt = multi_thread_rt();
+    let (authority, _keepalive) = rt
+        .block_on(connect_eks_authority(
+            target,
+            base_env,
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(EnvProvider::inactive()),
+        ))
+        .expect("connect from parsed attach spec");
+
+    assert!(authority.display_label.starts_with("eks:"));
+    assert_eq!(authority.terminal_wrapper.command, "kubectl");
+
+    // The connected authority's filesystem works end to end.
+    let f = ws.join("spec.txt");
+    authority.filesystem.write_file(&f, b"via-spec").unwrap();
+    assert_eq!(authority.filesystem.read_file(&f).unwrap(), b"via-spec");
 }
 
 #[test]

@@ -67,6 +67,45 @@ fn set_session_authority_on_active_window_updates_window_and_editor() -> anyhow:
 }
 
 #[test]
+fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow::Result<()> {
+    // The path the `attachRemoteAgent` op lands on once its async connect
+    // succeeds: a connection-backed authority is queued *alongside* its
+    // keepalive, and a restart is requested so both restart loops adopt them
+    // before the old editor is dropped.
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // A real attach would pass an `EksKeepalive`; the slot is opaque
+    // `Box<dyn Any + Send>`, so any owned value exercises the wiring.
+    let keepalive: Box<dyn std::any::Any + Send> = Box::new(());
+    harness
+        .editor_mut()
+        .install_authority_with_keepalive(container_authority("Container:ka"), keepalive);
+
+    // The authority is queued…
+    let pending = harness.editor_mut().take_pending_authority();
+    assert_eq!(
+        pending.expect("authority queued").display_label,
+        "Container:ka"
+    );
+    // …so is the keepalive…
+    assert!(
+        harness.editor_mut().take_pending_keepalive().is_some(),
+        "keepalive queued alongside the authority"
+    );
+    // …and a restart was requested (the destructive-transition contract).
+    assert!(
+        harness.editor_mut().take_restart_dir().is_some(),
+        "restart requested"
+    );
+    Ok(())
+}
+
+#[test]
 fn set_session_authority_on_other_window_leaves_active_untouched() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let mut harness = EditorTestHarness::create(

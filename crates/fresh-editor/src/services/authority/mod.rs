@@ -694,6 +694,49 @@ mod tests {
     }
 
     #[test]
+    fn remote_agent_spec_parses_plugin_payload() {
+        // The exact JSON shape `editor.attachRemoteAgent(...)` carries and
+        // `handle_attach_remote_agent` parses (opaque at the fresh-core
+        // boundary). Pins the plugin↔core wire contract.
+        let json = serde_json::json!({
+            "transport": {
+                "kind": "kubectl-exec",
+                "context": "arn:aws:eks:prod",
+                "namespace": "dev",
+                "pod": "fresh-7c9f",
+                "container": "app",
+                "workspace": "/workspace"
+            },
+            "base_env": [
+                ["PATH", "/home/dev/.local/bin:/usr/bin"],
+                ["LANG", "C.UTF-8"]
+            ]
+        });
+        let spec: RemoteAgentSpec = serde_json::from_value(json).expect("spec parses");
+        let (target, base_env) = spec.into_eks_target();
+        assert_eq!(target.context.as_deref(), Some("arn:aws:eks:prod"));
+        assert_eq!(target.namespace, "dev");
+        assert_eq!(target.pod, "fresh-7c9f");
+        assert_eq!(target.container.as_deref(), Some("app"));
+        assert_eq!(target.workspace.as_deref(), Some("/workspace"));
+        assert_eq!(base_env.len(), 2);
+        assert_eq!(
+            base_env[0],
+            ("PATH".to_string(), "/home/dev/.local/bin:/usr/bin".to_string())
+        );
+
+        // Minimal payload (only namespace + pod) parses too: context,
+        // container, workspace, and base_env are all optional.
+        let minimal = serde_json::json!({
+            "transport": { "kind": "kubectl-exec", "namespace": "dev", "pod": "p" }
+        });
+        let spec2: RemoteAgentSpec = serde_json::from_value(minimal).expect("minimal parses");
+        let (t2, env2) = spec2.into_eks_target();
+        assert!(t2.context.is_none() && t2.container.is_none() && t2.workspace.is_none());
+        assert!(env2.is_empty());
+    }
+
+    #[test]
     fn from_plugin_payload_local_yields_host_shell() {
         let payload = AuthorityPayload {
             filesystem: FilesystemSpec::Local,
