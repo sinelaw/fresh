@@ -130,10 +130,66 @@ config edit, not a code change.
 }
 ```
 
-The template mounts the S3-backed volume (Mountpoint-for-S3 CSI) at
-`workspace` — that line is the user's, per the authority doc's "S3 is the
-pod's problem." The plugin renders `${var}` / `${user}` / `${workspace}`
-and applies it.
+The template provisions an **EBS GP3 volume** at `workspace` and a sync
+sidecar to S3 (see §"Storage" for why — *not* an S3 live mount). Those
+lines are the user's; the plugin just renders `${var}` / `${user}` /
+`${workspace}` and applies the manifest.
+
+## Storage — what the pod's volume should be (research-driven)
+
+This is where the deep-research review changed the recommendation. The
+durability requirement ("bytes in S3 when the pod is down") does **not**
+mean "mount S3 as the live workspace." A code editor needs POSIX
+fidelity (atomic `rename` on save) and small-file speed; S3 mounts and
+EFS both fail that hard. The recommended shape:
+
+> **Live tier = Amazon EBS GP3** (dynamic PV via the EBS CSI driver).
+> **Durable tier = S3**, reached by *syncing* the EBS workspace to a
+> bucket on `preStop` + periodically (+ optionally debounced on save),
+> and restoring it via an initContainer on a fresh pod.
+
+This keeps Fresh's normal atomic-save path working unchanged (no
+`direct_write` hack) and still puts the bytes in S3 when the pod is gone.
+EBS is single-AZ, so the manifest must pin the pod to the volume's AZ
+(topology-aware scheduling); Karpenter then provisions the node in that
+AZ.
+
+### Alternatives & trade-offs
+
+| Volume strategy | Atomic save (`rename`) | Small-file speed | Durable when pod down | Cost | Verdict |
+|---|---|---|---|---|---|
+| **EBS GP3 + S3 sync** (recommended) | ✅ full POSIX | ✅ sub-ms, ~3000 IOPS | ✅ via sync (loss window = last sync) | EBS while running + S3 storage | **Default.** Fast, atomic, durable; cost is a sync component + AZ pinning. |
+| Mountpoint for S3 (standard) — *live mount* | ❌ rename fails (I/O error) | ❌ per-op REST latency | ✅ always (it *is* S3) | cheapest | **Reject for source.** Saves fail; no dir-rename/random-write/symlink. OK for read-only artifact fetch. |
+| Mountpoint for S3 Express One Zone `--allow-overwrite` | ⚠️ file rename only | ⚠️ better, still object latency | ✅ | higher (Express) | Marginal; still no dir-rename/random-write, no Local Zones. |
+| Amazon EFS | ✅ POSIX | ❌ ~100× slower file-create; Maven build 16 min vs 1:45 on EBS | ✅ multi-AZ | medium-high | **Reject for source.** RWX/multi-AZ is wasted on a single-editor workspace and the latency cripples `npm i`/`git clone`. |
+| `s3fs` / `goofys` live mount | ⚠️ emulated, fragile | ❌ slow, cache quirks | ✅ | cheap | Weak; only if S3-as-source is a hard mandate. |
+| Local NVMe instance store + S3 sync | ✅ | ✅ fastest | ⚠️ only what was synced (lost on stop) | included w/ instance | Fastest, but sync is *critical-path* and instance-type-bound. |
+
+The plugin doesn't enforce a choice — storage is the manifest/provider's
+business — but ships the EBS+sync manifest as the `manifest`-provider
+default and documents this table so users don't reach for the S3 mount
+and hit failing saves.
+
+## Compute & identity defaults (research-driven)
+
+These belong in the user's manifest/Terraform, but the plugin's
+defaults, docs, and preflight should steer toward them:
+
+- **Karpenter + EC2 Spot for workspace pods**, with On-Demand fallback;
+  cluster add-ons on a static managed node group. Enforce a NodePool
+  instance-type allow-list so a workspace can't request a $30/hr box.
+  Scale-to-zero off-hours via CronJob keeps idle cost near zero.
+- **Avoid AWS Fargate for workspaces.** Fargate forbids DaemonSets, so
+  the **EKS Pod Identity Agent can't run** — the pod loses secure AWS
+  access (e.g. the S3 sync's credentials) — and there's no eBPF for
+  sandboxing. The plugin's preflight should warn if the target pod is
+  scheduled on Fargate.
+- **Identity: EKS Pod Identity (not IRSA) + Session Policies; EKS Access
+  Entries (not `aws-auth`).** A single broad "developer workspace" role,
+  scoped down at provisioning time by an inline session policy to *this*
+  developer's bucket prefix — least privilege without exhausting the
+  5,000-IAM-role account quota. All of this is the user's IaC; the
+  plugin only needs the resulting kubeconfig + the pod's own creds.
 
 ## Configuration model
 
@@ -228,8 +284,19 @@ The whole point is "easy to adapt." The seams:
   universal adapter; covers Terraform, Helm, Pulumi, CDK, internal CLIs.
 - **Template vars** — `${user}`, `${workspace}`, `${cwd}`, plus any
   `vars` from config, substituted into manifests and command args.
-- **`preflight` commands** — per-target gates (image has `python3`?
-  quota available? VPN up?), with the failing command's stderr surfaced.
+- **`preflight` commands** — per-target gates with the failing command's
+  stderr surfaced. The research makes three checks worth shipping as
+  built-in defaults (over and above user-supplied ones):
+  - **`python3` present** in the pod (agent prerequisite) —
+    `kubectl exec … -- sh -lc 'command -v python3'`.
+  - **`create` on `pods/exec`** for the developer identity —
+    `kubectl auth can-i create pods/exec -n <ns>`. K8s ≥1.30 runs `exec`
+    over WebSockets and ≥1.35 demands the `create` verb; a read-only
+    `get` grant that "worked before" silently breaks attach after a
+    cluster upgrade. Catch it here with a clear message.
+  - **not on Fargate** — warn if the target pod's node is Fargate, since
+    the EKS Pod Identity Agent (a DaemonSet) can't run there and the
+    pod's S3-sync credentials will fail.
 - **Teardown policy** — `down()` can stop, destroy, or no-op; teams that
   keep warm per-developer pods set "leave running" + `attach-existing`.
 - **No lock-in on bring-up** — Fresh's built-ins (`manifest`/`run`) are
@@ -240,16 +307,22 @@ The whole point is "easy to adapt." The seams:
 
 - **Credentials never touch Fresh.** Everything shells out to the user's
   `kubectl`/`aws`, which resolve auth the way they already do (SSO,
-  IRSA, `aws eks get-token`, EKS access entries). No payload carries a
-  secret (authority doc, principle: payloads name resources, not
-  secrets).
+  `aws eks get-token`, **EKS Access Entries**). In-pod AWS access (the
+  S3 sync) uses **EKS Pod Identity + a scoped session policy**, not
+  baked-in keys. No payload carries a secret (authority doc principle:
+  payloads name resources, not secrets).
 - **WorkspaceTrust unchanged.** Attaching to a cluster doesn't bypass
   command gating; the remote authority gates spawns like any other.
 - **Confirm before create** (`confirmCreate`, default on) — making a pod
   costs money; the user okays it the first time per workspace.
 - **Idle auto-stop** (`idleStopMinutes`) — the plugin tracks editor
   activity and runs `provider.down()` after idle, so a forgotten pod
-  doesn't bill overnight. Scale-to-zero friendly.
+  doesn't bill overnight. Pairs with cluster-side scale-to-zero CronJobs
+  (off-hours) and Karpenter draining empty nodes.
+- **Session TTL** — independent of idle, cap a session's lifetime
+  (e.g. 12 h) and force teardown, so a compromised kubeconfig token
+  can't be leveraged indefinitely even while keep-alives hold the stream
+  open. A security control, not just a cost one.
 - **Clear teardown** — Disconnect always offers to stop/destroy; the
   panel shows what's still running and roughly what it's costing if the
   provider reports it.
@@ -265,6 +338,9 @@ The whole point is "easy to adapt." The seams:
   surface "workspace pod ended" with a one-click Rebuild.
 - **`python3` missing in image** → caught by preflight with an
   actionable message, before the confusing agent-handshake failure.
+- **Idle freeze** → the agent heartbeat (authority doc) keeps the
+  `exec` stream past ELB/NAT idle timeouts; if the channel drops anyway,
+  reconnect re-resolves the pod rather than presenting a frozen UI.
 
 ## Relationship to core (what the plugin needs from Fresh)
 

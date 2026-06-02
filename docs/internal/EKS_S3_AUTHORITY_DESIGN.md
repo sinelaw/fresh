@@ -159,66 +159,105 @@ over a transport) are the two attach families. Keeping them separate is
 honest: one swaps synchronously-constructible backends, the other
 establishes a live connection core must own.
 
-## S3 is the pod's problem
+## S3 is the pod's problem — but *not* as the live mount
 
-Fresh never sees S3. The durability guarantee comes entirely from how
-the pod's workspace volume is provisioned — owned by the plugin /
-cluster manifest, not core. Practically that means a **Mountpoint for
-Amazon S3 CSI** volume (or `s3fs`, or an S3-synced PVC) mounted at the
-workspace path. When the pod terminates, the objects persist in S3; a
-new pod mounting the same bucket sees them immediately.
+Fresh never sees S3. How the pod's workspace volume is provisioned is
+owned entirely by the plugin / cluster manifest, not core. The earlier
+draft of this doc proposed mounting the bucket *live* (Mountpoint for S3
+CSI) and giving the agent an in-place `direct_write` save path. **The
+deep-research review (`eks-workspace-research-prompt.md` findings)
+killed that recommendation, and it's worth being explicit about why.**
 
-This pushes object-store semantics out of Fresh, but it does **not**
-make them vanish — they reappear as one constraint on the *agent's*
-behaviour:
+### Decision 1 (load-bearing, REVISED): EBS GP3 as the live tier; S3 as the durable tier
 
-### Decision 1 (load-bearing): mount semantics vs. the agent's save path
+A code editor lives or dies on POSIX fidelity and small-file latency,
+and the benchmarks are damning for an S3 live mount:
 
-Fresh's save path writes a temp file and atomically `rename`s it into
-place (see `model/buffer/save.rs`, and `RemoteFileSystem::write_patched`
-/ `temp_path_for`). **Mountpoint for S3 does not support `rename` or
-random/in-place writes** — it only does sequential writes to new
-objects. So a temp-then-rename save *against a Mountpoint mount will
-fail*. The choices:
+- **Mountpoint for S3 forbids non-replacing `rename`** on standard
+  buckets — it fails early with an I/O error rather than emulate
+  copy+delete. Fresh's save is temp-write-then-`rename` (`save.rs`,
+  `temp_path_for`), so **every save would fail**. It also blocks
+  directory renames, random mid-file writes, `chmod`/`chown`, and
+  sym/hard links. S3 Express One Zone + `--allow-overwrite` restores
+  *file* rename only, at higher cost and with no Local Zones — still no
+  dir-rename or random writes. A non-starter for a live workspace.
+- **EFS is ~100× slower on small files** — file-create latency of
+  ~22 ms vs. ~0.2 ms on EBS; a Maven build measured at **16 min on EFS
+  vs. 1:45 on EBS**. `git clone` / `npm install` / venvs generate
+  exactly the synchronous small-file metadata storm EFS is worst at.
 
-- **(a) Pick a mount that supports rename** — `s3fs` (more POSIX, slower,
-  caches locally) or a block PVC (EBS/EFS) that is *separately* synced
-  to S3. Costs latency or adds a sync component.
-- **(b) Give the EKS authority an in-place save path** — write directly
-  to the destination object, skipping temp+rename, accepting a non-
-  atomic save (a crash mid-write can truncate the file). This is a
-  per-authority save-strategy flag the agent honours.
+So the live working volume is **Amazon EBS GP3** (dynamic PV via the EBS
+CSI driver): full POSIX, sub-ms metadata, ~3000 IOPS baseline. The
+durable, cheap S3 tier is reached by **syncing** the EBS workspace to a
+bucket — on graceful teardown (a `preStop` hook), periodically, and/or
+debounced on save — and restoring it on a fresh pod's startup
+(initContainer). This *still satisfies the stated invariant* ("the data
+is in S3 when the pod is down") while keeping editing fast and saves
+atomic.
 
-Recommendation: **(b)** for v1 (a config flag, `direct_write`, on the
-remote authority), with **(a)** via `s3fs` documented for users who need
-atomic saves. This keeps the cheap, native-object property the user
-asked for and confines the cost to "saves are non-atomic on this
-backend," which is acceptable for a single-editor workspace.
+**The win for Fresh: zero core change.** Against an EBS-backed POSIX
+filesystem, the existing remote save path (temp + atomic `rename`) just
+works — the `direct_write` flag the prior draft proposed is **deleted**
+from this design. Storage policy lives entirely in the pod manifest /
+plugin; Fresh is oblivious, exactly as intended.
+
+See [`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md)
+§"Storage" for the full alternatives table and the recommended
+EBS-live + S3-sync manifest pattern.
 
 ### Decision 2: durability granularity / loss window
 
-A completed save → agent writes the object → the mount flushes to S3 on
-close. So **a saved-and-closed file is durable.** The loss window is
-anything written-but-not-flushed at the instant the pod dies, plus pod
-scratch (build outputs, caches) that was never meant to be durable. The
-contract to document: *"durable on save"*, not *"durable on keystroke."*
-Good enough for the stated requirement; flagged so it's not a surprise.
+With the sync model, durability is **"durable as of the last sync,"** not
+"durable on keystroke." Tighten the window by syncing on save (debounced)
+and on `preStop`, accepting more S3 PUT churn; or accept a coarser
+periodic sync. Either way it is a *pod-side sync policy*, not a Fresh
+concern. Pod scratch (build outputs, caches) is intentionally excluded
+from the durable set and lost on pod death — that's the point.
 
 ### Decision 3: agent prerequisites in the pod image
 
 The remote agent is Python over stdin. The workspace image must ship
-`python3` (same constraint SSH already imposes on the remote host), or
-we ship a static agent binary and `kubectl cp` it in before exec. v1:
-require `python3`; document it; the plugin's preflight checks for it and
-gives a clear error.
+`python3` (same constraint SSH already imposes), or we `kubectl cp` a
+static agent binary in before exec. v1: require `python3`, checked by the
+plugin's preflight with a clear error.
+
+## Connection liveness — what the research forces on the transport
+
+The research surfaced three exec-layer realities the kubectl-exec
+transport must handle. None require an `S3FileSystem`-style rethink, but
+they shape the transport and reconnect logic:
+
+- **Idle timeouts silently freeze sessions.** ELB/NAT idle timers
+  (5-15 min) drop a long-lived `exec` stream that sees no traffic, with
+  no TCP FIN — the UI just freezes. The agent channel already has
+  reconnect (`replace_transport`), but it needs an **application-level
+  heartbeat**: a periodic no-op ping RPC (well under the timeout) to keep
+  the stream warm, plus prompt detection of a dropped channel to trigger
+  reconnect. This is a small addition to the agent protocol, shared by
+  SSH and EKS.
+- **Pod reschedule changes the pod name.** A Spot interruption / eviction
+  reschedules onto a new node with a new pod name and IP; volatile state
+  is gone, only the volume survives. So the transport's respawn closure
+  **cannot re-run a cached `kubectl exec <oldpod>`** — it must call back
+  to the plugin to *re-resolve the current pod* before reconnecting
+  (open question 3, now load-bearing). On `gone`, surface "workspace pod
+  ended → Rebuild," never a frozen screen.
+- **TTY resize and SPDY→WebSocket: we get these free.** Because the
+  integrated terminal shells out to the real `kubectl exec -it` binary,
+  `kubectl` implements the `TerminalSizeQueue` (SIGWINCH) protocol and
+  the K8s ≥1.30 WebSocket negotiation for us — we don't hand-roll a
+  streaming API client. One inherited gotcha: K8s ≥1.30 routes `exec`
+  over WebSockets, and ≥1.35 requires the **`create` verb on
+  `pods/exec`**; the plugin's preflight must check the developer identity
+  holds it, or attach fails confusingly after a cluster upgrade.
 
 ## What this is
 
 - The SSH remote authority with a `kubectl exec` transport. New code is
   one transport impl, one constructor, one terminal wrapper, one attach
   op. Filesystem, spawners, agent, reconnect: reused verbatim.
-- Durable-on-S3-when-the-pod-is-down, via an S3-backed pod mount that
-  Fresh knows nothing about.
+- Durable-on-S3-when-the-pod-is-down, via an **EBS live volume synced to
+  S3** (not an S3 live mount) that Fresh knows nothing about.
 
 ## What this is not
 
@@ -226,19 +265,28 @@ gives a clear error.
 - **Not pod-independent access.** Pod down ⇒ no editing (by design — the
   user accepted this). The bytes are safe in S3; they're just not
   reachable through Fresh until a pod returns.
-- **Not a pod provisioner.** Bringing pods up/down, the S3-backed PVC,
-  autoscaling, cost controls — all the plugin's job (next doc).
+- **Not an S3 live mount.** Per the research, the live workspace is EBS;
+  S3 is a sync target. Saves stay atomic and fast; no `direct_write`.
+- **Not a pod provisioner.** Bringing pods up/down, the EBS volume, the
+  S3 sync, autoscaling, cost controls — all the plugin's job (next doc).
 - **Not multi-pod / multi-root.** One authority, one pod (principle 5).
-- **Not atomic-save guaranteed.** Depends on the mount; see Decision 1.
 
 ## Open questions
 
 1. The `RemoteTransport` refactor touches `connection.rs`, which SSH
    depends on — must land behind tests proving SSH is byte-for-byte
    unchanged before EKS rides on it.
-2. `kubectl` as a host dependency for v1 (vs. `kube-rs` SPDY exec
+2. `kubectl` as a host dependency for v1 (vs. `kube-rs` WebSocket exec
    later). Acceptable to start; `RemoteTransport` makes the swap local.
-3. Reconnect after pod *eviction/reschedule*: the pod name changes, so
-   the respawn closure must re-resolve the target (ask the plugin for
-   the current pod), not just re-run the old `kubectl exec`. Needs a
-   "resolve current pod" callback in the transport.
+   Note: using the `kubectl` binary is also how we inherit TTY-resize
+   and the SPDY→WebSocket transition for free.
+3. **Reconnect after pod eviction/reschedule (now load-bearing).** Spot
+   interruptions make this the common case, not an edge. The pod name
+   changes, so the respawn closure must re-resolve the target via a
+   "resolve current pod" callback into the plugin, then reconnect —
+   recovering workspace state from the synced EBS volume. Needs design
+   alongside the plugin's provider `status()`/`up()`.
+4. **Agent heartbeat.** Add a periodic no-op ping RPC to the agent
+   protocol so idle `exec` streams survive ELB/NAT idle timeouts
+   (5-15 min) instead of silently freezing. Shared by SSH and EKS;
+   pick an interval well under the smallest common timeout (~60 s).
