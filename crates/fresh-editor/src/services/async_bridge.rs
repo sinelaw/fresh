@@ -164,6 +164,20 @@ pub enum AsyncMessage {
     /// Client should re-pull diagnostics for all open documents
     LspDiagnosticRefresh { language: String },
 
+    /// LSP server registered (`client/registerCapability`) or unregistered
+    /// (`client/unregisterCapability`) one or more capabilities dynamically.
+    /// Many servers advertise little or nothing statically in their
+    /// `initialize` result and instead register providers afterwards, so these
+    /// must update the stored `ServerCapabilities` or the features stay gated
+    /// off for the whole session. `register == false` means unregister.
+    /// Each entry is `(method, register_options)`.
+    LspDynamicCapabilities {
+        language: String,
+        server_name: String,
+        register: bool,
+        registrations: Vec<(String, Option<Value>)>,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 

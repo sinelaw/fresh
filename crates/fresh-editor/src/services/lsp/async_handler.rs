@@ -263,14 +263,16 @@ fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
         CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
-        DiagnosticWorkspaceClientCapabilities, DynamicRegistrationClientCapabilities,
+        DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
+        DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
+        DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
         FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
         FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
         HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
         PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
         SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
         TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
-        WorkspaceEditClientCapabilities,
+        WorkspaceEditClientCapabilities, WorkspaceSymbolClientCapabilities,
     };
 
     ClientCapabilities {
@@ -293,6 +295,13 @@ fn create_client_capabilities() -> ClientCapabilities {
             // pulls in `resolve_workspace_configuration`, sourcing the
             // requested section from each server's `initialization_options`.
             configuration: Some(true),
+            // Accept dynamically-registered workspace-symbol providers. We
+            // apply `client/registerCapability` (see handler), so servers that
+            // register `workspace/symbol` after `initialize` get the feature.
+            symbol: Some(WorkspaceSymbolClientCapabilities {
+                dynamic_registration: Some(true),
+                ..Default::default()
+            }),
             // Accept server-driven diagnostic refreshes. We handle
             // `workspace/diagnostic/refresh` (re-pulling diagnostics for all
             // open docs), but servers only send it when the client advertises
@@ -308,22 +317,45 @@ fn create_client_capabilities() -> ClientCapabilities {
                 did_save: Some(true),
                 ..Default::default()
             }),
+            // `dynamicRegistration: true` on every capability we actually
+            // honor: many servers advertise little statically in `initialize`
+            // and register providers afterwards via `client/registerCapability`
+            // (which we now apply). Without the flag a spec-compliant server is
+            // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
+                dynamic_registration: Some(true),
                 content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
-                ..Default::default()
             }),
             signature_help: Some(SignatureHelpClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             definition: Some(GotoCapability {
+                dynamic_registration: Some(true),
                 link_support: Some(true),
+            }),
+            references: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            document_highlight: Some(DocumentHighlightClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
-            references: Some(DynamicRegistrationClientCapabilities::default()),
+            formatting: Some(DocumentFormattingClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            range_formatting: Some(DocumentRangeFormattingClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
             code_action: Some(CodeActionClientCapabilities {
+                dynamic_registration: Some(true),
                 // Without `codeActionLiteralSupport`, rust-analyzer (and
                 // servers that follow the same spec branch) returns `null`
                 // for `textDocument/codeAction` whenever the action would be
@@ -362,9 +394,11 @@ fn create_client_capabilities() -> ClientCapabilities {
                 data_support: Some(true),
             }),
             inlay_hint: Some(InlayHintClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             diagnostic: Some(DiagnosticClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             folding_range: Some(FoldingRangeClientCapabilities {
@@ -3560,6 +3594,30 @@ async fn read_message_from_stdout(
     serde_json::from_str(&json).map_err(|e| format!("Failed to deserialize message: {}", e))
 }
 
+/// Parse the `registrations` out of a `client/registerCapability` request's
+/// params into `(method, register_options)` pairs. Malformed params yield an
+/// empty list (we still ack the request).
+fn registrations_from_params(params: Option<&Value>) -> Vec<(String, Option<Value>)> {
+    params
+        .and_then(|p| serde_json::from_value::<lsp_types::RegistrationParams>(p.clone()).ok())
+        .map(|rp| {
+            rp.registrations
+                .into_iter()
+                .map(|r| (r.method, r.register_options))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse the unregistered method names out of a `client/unregisterCapability`
+/// request's params. Malformed params yield an empty list.
+fn unregistrations_from_params(params: Option<&Value>) -> Vec<String> {
+    params
+        .and_then(|p| serde_json::from_value::<lsp_types::UnregistrationParams>(p.clone()).ok())
+        .map(|up| up.unregisterations.into_iter().map(|u| u.method).collect())
+        .unwrap_or_default()
+}
+
 /// Build the response to a `workspace/configuration` request.
 ///
 /// LSP servers pull their settings by asking the client for named
@@ -3754,11 +3812,53 @@ async fn handle_message_dispatch(
                     }
                 }
                 "client/registerCapability" => {
-                    // Server wants to register a capability dynamically - acknowledge
-                    tracing::trace!(
-                        "Acknowledging client/registerCapability (id={})",
-                        request.id
+                    // Many servers advertise little or nothing statically in
+                    // their `initialize` result and register providers
+                    // dynamically here instead. Parse the registrations and
+                    // forward them so the stored `ServerCapabilities` is updated
+                    // — otherwise the feature stays gated off for the whole
+                    // session (sinelaw/fresh#2195). Still ack with `null`.
+                    let registrations = registrations_from_params(request.params.as_ref());
+                    tracing::debug!(
+                        "client/registerCapability (id={}) registering {} method(s): {:?}",
+                        request.id,
+                        registrations.len(),
+                        registrations.iter().map(|(m, _)| m).collect::<Vec<_>>()
                     );
+                    if !registrations.is_empty() {
+                        let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
+                            language: language.to_string(),
+                            server_name: server_name.to_string(),
+                            register: true,
+                            registrations,
+                        });
+                    }
+                    JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: request.id,
+                        result: Some(Value::Null),
+                        error: None,
+                    }
+                }
+                "client/unregisterCapability" => {
+                    // Mirror of registerCapability: the server is withdrawing a
+                    // dynamically-registered provider, so clear the matching
+                    // capability flag.
+                    let methods = unregistrations_from_params(request.params.as_ref());
+                    tracing::debug!(
+                        "client/unregisterCapability (id={}) unregistering {} method(s): {:?}",
+                        request.id,
+                        methods.len(),
+                        methods
+                    );
+                    if !methods.is_empty() {
+                        let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
+                            language: language.to_string(),
+                            server_name: server_name.to_string(),
+                            register: false,
+                            registrations: methods.into_iter().map(|m| (m, None)).collect(),
+                        });
+                    }
                     JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
                         id: request.id,
@@ -5020,6 +5120,82 @@ mod tests {
                 "expected codeActionKind value_set to include {required:?}, got {kinds:?}",
             );
         }
+    }
+
+    #[test]
+    fn advertises_dynamic_registration_on_honored_capabilities() {
+        // Servers that register providers dynamically only do so when the
+        // client advertised `dynamicRegistration` for that capability
+        // (sinelaw/fresh#2195 §1). Spot-check the ones most commonly registered
+        // dynamically.
+        let caps = create_client_capabilities();
+        let td = caps
+            .text_document
+            .as_ref()
+            .expect("text_document capabilities must be set");
+
+        assert_eq!(
+            td.inlay_hint.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "inlay_hint must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.completion.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "completion must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.formatting.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "formatting must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.document_symbol
+                .as_ref()
+                .and_then(|c| c.dynamic_registration),
+            Some(true),
+            "document_symbol must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            caps.workspace
+                .as_ref()
+                .and_then(|w| w.symbol.as_ref())
+                .and_then(|s| s.dynamic_registration),
+            Some(true),
+            "workspace.symbol must advertise dynamicRegistration"
+        );
+    }
+
+    #[test]
+    fn parses_register_and_unregister_capability_params() {
+        let register = serde_json::json!({
+            "registrations": [
+                { "id": "1", "method": "textDocument/inlayHint" },
+                {
+                    "id": "2",
+                    "method": "textDocument/completion",
+                    "registerOptions": { "triggerCharacters": ["."] }
+                }
+            ]
+        });
+        let parsed = registrations_from_params(Some(&register));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, "textDocument/inlayHint");
+        assert!(parsed[0].1.is_none());
+        assert_eq!(parsed[1].0, "textDocument/completion");
+        assert!(parsed[1].1.is_some());
+
+        let unregister = serde_json::json!({
+            "unregisterations": [
+                { "id": "1", "method": "textDocument/inlayHint" }
+            ]
+        });
+        let methods = unregistrations_from_params(Some(&unregister));
+        assert_eq!(methods, vec!["textDocument/inlayHint".to_string()]);
+
+        // Malformed params must not panic and yield empty lists.
+        assert!(registrations_from_params(Some(&serde_json::json!({ "bogus": 1 }))).is_empty());
+        assert!(unregistrations_from_params(None).is_empty());
     }
 
     #[test]

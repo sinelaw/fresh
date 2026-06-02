@@ -304,6 +304,19 @@ impl Editor {
                 AsyncMessage::LspDiagnosticRefresh { language } => {
                     self.handle_lsp_diagnostic_refresh(language);
                 }
+                AsyncMessage::LspDynamicCapabilities {
+                    language,
+                    server_name,
+                    register,
+                    registrations,
+                } => {
+                    self.handle_lsp_dynamic_capabilities(
+                        language,
+                        server_name,
+                        register,
+                        registrations,
+                    );
+                }
                 AsyncMessage::FileChanged { path } => {
                     self.handle_async_file_changed(path);
                 }

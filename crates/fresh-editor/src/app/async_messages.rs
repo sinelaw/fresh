@@ -901,6 +901,48 @@ impl Editor {
         self.pull_diagnostics_for_language(&language);
     }
 
+    /// Apply a dynamic capability (un)registration from the server, then — when
+    /// a capability newly turned on — kick off the corresponding requests for
+    /// buffers that were already open before the registration arrived (they
+    /// would otherwise never be requested, mirroring `LspInitialized`).
+    pub(super) fn handle_lsp_dynamic_capabilities(
+        &mut self,
+        language: String,
+        server_name: String,
+        register: bool,
+        registrations: Vec<(String, Option<serde_json::Value>)>,
+    ) {
+        tracing::info!(
+            "LSP ({}) server '{}' {} {} capability registration(s)",
+            language,
+            server_name,
+            if register {
+                "registered"
+            } else {
+                "unregistered"
+            },
+            registrations.len()
+        );
+
+        let __active_id = self.active_window;
+        let changed = self
+            .windows
+            .get_mut(&__active_id)
+            .and_then(|w| w.lsp.as_mut())
+            .is_some_and(|lsp| {
+                lsp.apply_dynamic_capabilities(&server_name, register, &registrations)
+            });
+
+        // Only re-issue requests on a net-new capability; an unregister or a
+        // no-op registration should not trigger a fresh round of requests.
+        if changed && register {
+            self.request_semantic_tokens_for_language(&language);
+            self.request_folding_ranges_for_language(&language);
+            self.request_inlay_hints_for_language(&language);
+            self.pull_diagnostics_for_language(&language);
+        }
+    }
+
     /// Re-pull diagnostics for all open buffers associated with the given language.
     pub(super) fn pull_diagnostics_for_language(&mut self, language: &str) {
         // Use the shared language-filtered buffer enumeration so requests
