@@ -39,8 +39,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_eks_terminal_args, build_ssh_terminal_args, ConnectionParams, EksTarget,
+    build_eks_terminal_args, build_ssh_terminal_args, ConnectionParams, EksConnection, EksTarget,
     LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
+    RemoteFileSystem, RemoteProcessSpawner,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -402,6 +403,49 @@ impl Authority {
         }
     }
 
+    /// Assemble a full EKS authority from a live [`EksConnection`].
+    ///
+    /// The high-level counterpart to [`Self::eks`]: wires the filesystem and
+    /// one-shot spawner onto the connection's agent channel
+    /// ([`RemoteFileSystem`] / [`RemoteProcessSpawner`], reused verbatim from
+    /// the SSH stack) and the long-running (LSP) spawner onto a per-server
+    /// `kubectl exec` ([`KubectlLongRunningSpawner`]). `base_env` is the
+    /// captured in-pod env probe applied to LSP spawns and `command_exists`.
+    ///
+    /// The caller must keep the `EksConnection` alive (in the session
+    /// keepalive bundle) — dropping it kills the carrier and tears down the
+    /// channel the returned authority rides on, exactly as SSH holds its
+    /// `SshConnection`.
+    pub fn eks_from_connection(
+        connection: &EksConnection,
+        target: EksTarget,
+        base_env: Vec<(String, String)>,
+        trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
+    ) -> Self {
+        let channel = connection.channel();
+        let filesystem: Arc<dyn FileSystem + Send + Sync> = Arc::new(RemoteFileSystem::new(
+            channel.clone(),
+            connection.connection_string().to_string(),
+        ));
+        let process_spawner: Arc<dyn ProcessSpawner> = Arc::new(RemoteProcessSpawner::new(
+            channel,
+            Arc::clone(&env),
+            Arc::clone(&trust),
+        ));
+        let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
+            KubectlLongRunningSpawner::with_env(target.clone(), base_env, Arc::clone(&trust)),
+        );
+        Self::eks(
+            filesystem,
+            process_spawner,
+            long_running_spawner,
+            &target,
+            trust,
+            env,
+        )
+    }
+
     /// Build an authority from a plugin payload (the data carried by the
     /// `editor.setAuthority(...)` op), gated by `trust` (the editor passes its
     /// live trust handle so the new authority shares it). All translation from
@@ -499,6 +543,9 @@ pub enum AuthorityPayloadError {
 }
 
 mod docker_spawner;
+mod eks_spawner;
+
+pub(crate) use eks_spawner::KubectlLongRunningSpawner;
 
 #[cfg(test)]
 mod tests {

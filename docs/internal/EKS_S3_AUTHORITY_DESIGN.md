@@ -7,11 +7,17 @@
 > `EksConnection` — the EKS analogue of `SshConnection`, reusing the
 > transport-agnostic `AgentChannel`. Plus `build_eks_terminal_args`,
 > `TerminalWrapper::eks`, and the `Authority::eks` constructor. SSH's
-> `connection.rs` is untouched (SSH provably unchanged). Unit-tested
-> (argv ordering, bootstrap framing, terminal re-parenting). **Not yet
-> wired:** the kubectl long-running (LSP) spawner with env/cwd, the async
-> `attachRemoteAgent` op + reconnect-respawn, the agent heartbeat,
-> per-session authority, and the `eks-workspace` plugin.
+> `connection.rs` is untouched (SSH provably unchanged). The kubectl
+> long-running (LSP) spawner (`authority/eks_spawner.rs`,
+> `KubectlLongRunningSpawner`) ships too — `sh -lc` wrapping for cwd/env
+> since `kubectl exec` has no `-w`/`-e`, `command_exists` via `command
+> -v` with the captured probe PATH, host-limit log-and-ignore — plus
+> `Authority::eks_from_connection` that assembles a full EKS authority
+> (RemoteFileSystem + RemoteProcessSpawner over the channel + the kubectl
+> LSP spawner). The per-session activation primitive
+> (`Editor::set_session_authority`) is in. Unit-tested throughout.
+> **Not yet wired:** the async `attachRemoteAgent` op + reconnect-respawn,
+> the agent heartbeat, live multi-session, and the `eks-workspace` plugin.
 
 Status: design. Nothing else here ships yet. Supersedes the earlier
 "EKS + S3 full cloud authority" draft, which proposed a bespoke

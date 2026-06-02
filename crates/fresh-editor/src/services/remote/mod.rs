@@ -40,6 +40,9 @@ pub use transport::{
     bootstrap_agent, EksConnection, EksTarget, KubectlExecTransport, RemoteTransport, StderrMode,
     TransportError,
 };
+/// Shared `kubectl exec` argv builder, used by the agent transport, the
+/// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
+pub(crate) use transport::kubectl_exec_argv;
 
 /// The Python agent source code, embedded at compile time.
 pub const AGENT_SOURCE: &str = include_str!("agent.py");
