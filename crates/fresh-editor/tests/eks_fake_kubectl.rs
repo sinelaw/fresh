@@ -91,7 +91,8 @@ fn eks_connection_round_trips_a_file_through_fake_kubectl() {
     fs.write_file(&file, b"cloud workspace")
         .expect("write_file over the agent channel");
     assert_eq!(
-        fs.read_file(&file).expect("read_file over the agent channel"),
+        fs.read_file(&file)
+            .expect("read_file over the agent channel"),
         b"cloud workspace"
     );
     // The bytes really landed on the local "pod" filesystem.
@@ -232,13 +233,19 @@ fn eks_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let mut reader = BufReader::new(stdout);
         let mut header = String::new();
-        reader.read_line(&mut header).await.expect("read header line");
+        reader
+            .read_line(&mut header)
+            .await
+            .expect("read header line");
         // Round-trip through `cat`, then close stdin so it drains and exits.
         stdin.write_all(b"pong\n").await.expect("write stdin");
         stdin.flush().await.expect("flush stdin");
         drop(stdin);
         let mut echoed = String::new();
-        reader.read_line(&mut echoed).await.expect("read echoed line");
+        reader
+            .read_line(&mut echoed)
+            .await
+            .expect("read echoed line");
         (header, echoed)
     });
 

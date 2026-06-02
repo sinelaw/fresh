@@ -722,7 +722,10 @@ mod tests {
         assert_eq!(base_env.len(), 2);
         assert_eq!(
             base_env[0],
-            ("PATH".to_string(), "/home/dev/.local/bin:/usr/bin".to_string())
+            (
+                "PATH".to_string(),
+                "/home/dev/.local/bin:/usr/bin".to_string()
+            )
         );
 
         // Minimal payload (only namespace + pod) parses too: context,

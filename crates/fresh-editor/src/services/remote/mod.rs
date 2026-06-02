@@ -25,8 +25,8 @@ pub use connection::spawn_local_agent_transport;
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;
 pub use connection::{
-    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with,
-    DEFAULT_HEARTBEAT_INTERVAL, ReconnectConfig,
+    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig,
+    DEFAULT_HEARTBEAT_INTERVAL,
 };
 pub use connection::{ConnectionParams, SshConnection, SshError};
 pub use filesystem::RemoteFileSystem;
@@ -39,13 +39,13 @@ pub use spawner::{
     LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError,
     SpawnResult, StdioChild,
 };
+/// Shared `kubectl exec` argv builder, used by the agent transport, the
+/// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
+pub(crate) use transport::kubectl_exec_argv;
 pub use transport::{
     bootstrap_agent, spawn_eks_reconnect_task, EksConnection, EksTarget, KubectlExecTransport,
     RemoteTransport, StderrMode, TransportError,
 };
-/// Shared `kubectl exec` argv builder, used by the agent transport, the
-/// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
-pub(crate) use transport::kubectl_exec_argv;
 
 /// The Python agent source code, embedded at compile time.
 pub const AGENT_SOURCE: &str = include_str!("agent.py");

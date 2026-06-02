@@ -703,10 +703,7 @@ mod tests {
             "channel stays connected while heartbeat pings"
         );
         assert!(
-            channel
-                .request("info", serde_json::json!({}))
-                .await
-                .is_ok(),
+            channel.request("info", serde_json::json!({})).await.is_ok(),
             "agent still answers after heartbeats"
         );
 

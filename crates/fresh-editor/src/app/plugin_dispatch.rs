@@ -3457,17 +3457,15 @@ impl Editor {
     fn handle_attach_remote_agent(&mut self, payload: serde_json::Value) {
         // Opaque at the fresh-core boundary; the concrete schema lives in
         // services::authority so core stays backend-agnostic.
-        let spec = match serde_json::from_value::<
-            crate::services::authority::RemoteAgentSpec,
-        >(payload)
-        {
-            Ok(spec) => spec,
-            Err(e) => {
-                tracing::warn!("attachRemoteAgent: invalid payload: {}", e);
-                self.set_status_message(format!("attachRemoteAgent rejected: {e}"));
-                return;
-            }
-        };
+        let spec =
+            match serde_json::from_value::<crate::services::authority::RemoteAgentSpec>(payload) {
+                Ok(spec) => spec,
+                Err(e) => {
+                    tracing::warn!("attachRemoteAgent: invalid payload: {}", e);
+                    self.set_status_message(format!("attachRemoteAgent rejected: {e}"));
+                    return;
+                }
+            };
 
         // Take owned handles up front so the immutable borrows of `self`
         // end before the mutable `set_status_message` / spawn below.
@@ -3494,12 +3492,12 @@ impl Editor {
                 crate::services::authority::connect_eks_authority(target, base_env, trust, env)
                     .await;
             let msg = match outcome {
-                Ok((authority, keepalive)) => {
-                    AsyncMessage::RemoteAttachReady(crate::services::async_bridge::RemoteAttachReady {
+                Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                    crate::services::async_bridge::RemoteAttachReady {
                         authority,
                         keepalive: Box::new(keepalive),
-                    })
-                }
+                    },
+                ),
                 Err(e) => AsyncMessage::RemoteAttachFailed {
                     error: e.to_string(),
                 },

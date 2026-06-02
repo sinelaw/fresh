@@ -441,6 +441,9 @@ mod tests {
         );
         assert_eq!(argv.last().unwrap(), &pycode);
         assert!(argv.contains(&"-i".to_string()));
-        assert_eq!(KubectlExecTransport::new(t).display(), "eks:arn:aws:eks:prod/dev/fresh-7c9f");
+        assert_eq!(
+            KubectlExecTransport::new(t).display(),
+            "eks:arn:aws:eks:prod/dev/fresh-7c9f"
+        );
     }
 }

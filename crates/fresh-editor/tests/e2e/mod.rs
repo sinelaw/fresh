@@ -137,6 +137,7 @@ pub mod overlay_extend_to_line_end;
 #[cfg(feature = "plugins")]
 pub mod panel_mode_window_switch_leak;
 pub mod paste;
+pub mod per_session_authority;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod popup_selection;
@@ -146,7 +147,6 @@ pub mod position_history_debug;
 pub mod position_history_truncate_debug;
 pub mod preview_lsp_popup_focus;
 pub mod preview_tabs;
-pub mod per_session_authority;
 pub mod prompt;
 pub mod prompt_editing;
 pub mod recovery;

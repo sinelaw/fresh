@@ -60,7 +60,11 @@ fn set_session_authority_on_active_window_updates_window_and_editor() -> anyhow:
     );
     // …and so does the window's own per-session handle.
     assert_eq!(
-        harness.editor_mut().active_window().authority().display_label,
+        harness
+            .editor_mut()
+            .active_window()
+            .authority()
+            .display_label,
         "Container:abc"
     );
     Ok(())
