@@ -9,7 +9,7 @@
 > `TerminalWrapper::eks`, and the `Authority::eks` constructor. SSH's
 > `connection.rs` is untouched (SSH provably unchanged). The kubectl
 > long-running (LSP) spawner (`authority/eks_spawner.rs`,
-> `KubectlLongRunningSpawner`) ships too — `sh -lc` wrapping for cwd/env
+> `KubectlLongRunningSpawner`) ships too — `sh -c` wrapping for cwd/env
 > since `kubectl exec` has no `-w`/`-e`, `command_exists` via `command
 > -v` with the captured probe PATH, host-limit log-and-ignore — plus
 > `Authority::eks_from_connection` that assembles a full EKS authority

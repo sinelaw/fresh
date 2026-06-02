@@ -100,8 +100,12 @@ impl KubectlLongRunningSpawner {
         // the script so no quoting of the user's argv is required.
         script.push_str("\"$0\" \"$@\"");
 
+        // `-c`, not `-lc`: env is injected explicitly via `env K=V` (from the
+        // captured probe), so a *login* shell is unwanted — it would source
+        // profile scripts that add startup latency and can leak noise onto the
+        // server's stdout. Same stance as `docker exec` (no login shell).
         let mut a = Vec::with_capacity(args.len() + 3);
-        a.push("-lc".to_string());
+        a.push("-c".to_string());
         a.push(script);
         a.push(command.to_string());
         a.extend(args.iter().cloned());
@@ -170,7 +174,10 @@ impl LongRunningSpawner for KubectlLongRunningSpawner {
         }
         script.push_str(&format!("command -v {}", shell_quote(command)));
 
-        let argv = kubectl_exec_argv(&self.target, &[], "sh", &["-lc".to_string(), script]);
+        // `-c` (non-login): base_env is replayed via explicit `export`s above,
+        // so the probe sees the same PATH the server will without sourcing
+        // login profiles. Matches the spawn_stdio wrapper.
+        let argv = kubectl_exec_argv(&self.target, &[], "sh", &["-c".to_string(), script]);
 
         match Command::new("kubectl")
             .args(&argv)
@@ -238,7 +245,7 @@ mod tests {
             Some(Path::new("/workspace")),
         );
         assert_eq!(cmd, "sh");
-        assert_eq!(args[0], "-lc");
+        assert_eq!(args[0], "-c");
         // cd first, then env (base then per-call), then exec the real argv.
         assert_eq!(
             args[1],
