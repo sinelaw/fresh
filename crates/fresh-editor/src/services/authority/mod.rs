@@ -39,9 +39,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_eks_terminal_args, build_ssh_terminal_args, ConnectionParams, EksConnection, EksTarget,
-    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
-    RemoteFileSystem, RemoteProcessSpawner,
+    build_eks_terminal_args, build_ssh_terminal_args, spawn_eks_reconnect_task, ConnectionParams,
+    EksConnection, EksTarget, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
+    ProcessSpawner, RemoteFileSystem, RemoteProcessSpawner, TransportError,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -531,6 +531,53 @@ impl Authority {
             env_provider: env,
         })
     }
+}
+
+/// Resources that must outlive an EKS [`Authority`]: the carrier
+/// connection (its `kubectl exec` child + heartbeat task) and the
+/// reconnect task. The editor parks this in its session-keepalive slot —
+/// the same one SSH uses for its `SshConnection` — so the agent channel
+/// survives the editor rebuild on attach. Dropping it tears the session
+/// down (reconnect aborted, then the connection's carrier killed).
+pub struct EksKeepalive {
+    // Field order matters for drop: the explicit `Drop` below runs first
+    // (aborting reconnect), then fields drop in declaration order —
+    // connection last, killing the carrier after nothing else uses it.
+    reconnect: tokio::task::JoinHandle<()>,
+    _connection: EksConnection,
+}
+
+impl Drop for EksKeepalive {
+    fn drop(&mut self) {
+        self.reconnect.abort();
+    }
+}
+
+/// Connect to an EKS pod and assemble its [`Authority`] plus the
+/// [`EksKeepalive`] that must be parked to keep it alive.
+///
+/// The async "connect" seam the planned `attachRemoteAgent` op and the
+/// editor restart path call (the EKS counterpart to SSH's `connect_remote`):
+/// bootstraps the agent ([`EksConnection::connect`]), starts the reconnect
+/// task, and assembles the authority via [`Authority::eks_from_connection`].
+/// `base_env` is the captured in-pod env probe (PATH/HOME/…) applied to LSP
+/// spawns and `command_exists`.
+pub async fn connect_eks_authority(
+    target: EksTarget,
+    base_env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
+    env: Arc<crate::services::env_provider::EnvProvider>,
+) -> Result<(Authority, EksKeepalive), TransportError> {
+    let connection = EksConnection::connect(target.clone()).await?;
+    let reconnect = spawn_eks_reconnect_task(&connection.channel(), target.clone());
+    let authority = Authority::eks_from_connection(&connection, target, base_env, trust, env);
+    Ok((
+        authority,
+        EksKeepalive {
+            reconnect,
+            _connection: connection,
+        },
+    ))
 }
 
 /// Error from translating a plugin payload into a live authority.
