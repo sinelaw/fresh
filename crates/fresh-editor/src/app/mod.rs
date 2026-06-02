@@ -501,6 +501,16 @@ pub struct Editor {
     terminal_width: u16,
     terminal_height: u16,
 
+    /// Last layout signature the plugin `resize` hook fired for, used
+    /// by `Editor::relayout` to dedupe notifications. The tuple is
+    /// `(terminal_width, terminal_height, dock_cols, file_explorer_cols)`
+    /// — the content geometry plugins observe. Deduping is what keeps
+    /// the orchestrator's resize→`dock_width`→relayout reaction from
+    /// looping: once the dock width settles, the signature stops
+    /// changing and the hook stops re-firing. `None` until the first
+    /// relayout.
+    last_layout_signature: Option<(u16, u16, u16, u16)>,
+
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own
     // LspManager rooted at its project root.

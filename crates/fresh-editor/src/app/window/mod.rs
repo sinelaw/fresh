@@ -314,6 +314,15 @@ pub struct Window {
     pub(crate) terminal_width: u16,
     pub(crate) terminal_height: u16,
 
+    /// Effective width (cols) of the editor-global left dock, pushed
+    /// down by `Editor::relayout` (the single layout funnel). Mirrored
+    /// here — like `terminal_width` — so per-window terminal sizing
+    /// (`resize_visible_terminals`) can subtract the dock without
+    /// reaching back to `Editor`. `0` when no dock is shown. This is a
+    /// derived cache, never a source of truth: `Editor::dock` owns the
+    /// real placement and `relayout` recomputes this from it.
+    pub(crate) dock_cols: u16,
+
     /// Editor-global resources shared by `Arc` clone (config, theme
     /// registry, keybindings, command registry, filesystem authority,
     /// the buffer-id allocator, …). See [`WindowResources`] for the
@@ -1579,6 +1588,7 @@ impl Window {
             chrome_layout: ChromeLayout::default(),
             terminal_width: 80,
             terminal_height: 24,
+            dock_cols: 0,
             preview: None,
             terminal_mode: false,
             terminal_mode_resume: std::collections::HashSet::new(),

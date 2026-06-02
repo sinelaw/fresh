@@ -219,13 +219,15 @@ impl crate::app::Editor {
             }
         }
 
-        // Resize the newly-active window's PTYs (mirrors
-        // `set_active_window`'s post-dive resize so the seeded
-        // terminal renders into the right cell rect on its first
-        // frame).
-        if let Some(win) = self.windows.get_mut(&id) {
-            win.resize_visible_terminals();
-        }
+        // Size the newly-created window's PTYs (mirrors
+        // `set_active_window`'s post-dive resize so the seeded terminal
+        // renders into the right cell rect on its first frame). Route
+        // through the funnel rather than `win.resize_visible_terminals()`
+        // directly: a brand-new window's `dock_cols` cache is still 0, and
+        // `relayout` pushes the current editor-global dock width into every
+        // window before sizing, so the seeded terminal accounts for a dock
+        // that's already showing.
+        self.relayout();
 
         // Plugin lifecycle: fire `window_created` first, then
         // `active_window_changed`. Order mirrors the
@@ -356,7 +358,7 @@ impl crate::app::Editor {
             },
         );
 
-        // Resize the newly-active window's visible terminal PTYs to
+        // Reflow the newly-active window's visible terminal PTYs to
         // match their dive-view split rects. Without this, a session
         // that was just previewed in the orchestrator picker
         // (`render_session_preview_into_rect` resizes PTYs to the
@@ -365,10 +367,10 @@ impl crate::app::Editor {
         // bottom of the dive view blank until something else triggers
         // a resize. Same applies for the inverse: dive away while a
         // session has a small split, dive back when the window is
-        // bigger — the terminal needs the new dimensions.
-        if let Some(win) = self.windows.get_mut(&id) {
-            win.resize_visible_terminals();
-        }
+        // bigger — the terminal needs the new dimensions. Route through
+        // the funnel so the dive-target window also picks up the current
+        // editor-global dock width (its `dock_cols` cache may be stale).
+        self.relayout();
     }
 
     /// Switch the active window and play a directional wipe over the

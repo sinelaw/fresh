@@ -4008,6 +4008,14 @@ impl Editor {
             width_pct,
             height_pct
         );
+
+        // Mounting a panel as the left dock carves a full-height column out
+        // of the chrome. Run the single layout funnel so terminals and
+        // viewports reflow to the post-dock width right away (a centered
+        // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
+        if as_dock {
+            self.relayout();
+        }
     }
 
     fn handle_update_floating_widget(&mut self, panel_id: u64, spec: fresh_core::api::WidgetSpec) {
@@ -4096,8 +4104,11 @@ impl Editor {
         // rows. Resizing here on every panel unmount restores the
         // full dive-view dimensions; for panels that didn't preview
         // anything (the new-session form, plugin overlays) this is a
-        // cheap no-op because the PTY sizes already match.
-        self.active_window_mut().resize_visible_terminals();
+        // cheap no-op because the PTY sizes already match. Unmounting the
+        // dock also frees its column, so route through the single layout
+        // funnel: it re-derives `dock_cols` (now 0 for a dock unmount) and
+        // reflows every window's terminals + viewports to the reclaimed width.
+        self.relayout();
         tracing::debug!("Unmounted floating widget panel {}", panel_id);
     }
 
@@ -4123,12 +4134,15 @@ impl Editor {
         let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
-        match op {
+        // Whether this op changed the chrome geometry (dock width/placement),
+        // so we know to re-derive the layout once the `fwp` borrow ends.
+        let geometry_changed = match op {
             "dock" => {
                 let requested = persisted.unwrap_or(arg as u16);
                 let width_cols = requested.clamp(10, max_cols);
                 fwp.placement = super::PanelPlacement::LeftDock { width_cols };
                 fwp.focused = true;
+                true
             }
             // Update the dock's width WITHOUT touching focus — used by the
             // plugin to make the dock responsive (re-issued on terminal
@@ -4140,14 +4154,30 @@ impl Editor {
                     let requested = persisted.unwrap_or(arg as u16);
                     let width_cols = requested.clamp(10, max_cols);
                     fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                    true
+                } else {
+                    false
                 }
             }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;
                 fwp.focused = true;
+                true
             }
-            "focus" => fwp.focused = true,
-            other => tracing::warn!("FloatingPanelControl: unknown op {other:?}"),
+            "focus" => {
+                fwp.focused = true;
+                false
+            }
+            other => {
+                tracing::warn!("FloatingPanelControl: unknown op {other:?}");
+                false
+            }
+        };
+        // The `fwp` mutable borrow ends above; now that the dock's
+        // placement/width is settled, run the single layout funnel so
+        // terminals, viewports and panels all reflow to the new chrome.
+        if geometry_changed {
+            self.relayout();
         }
     }
 

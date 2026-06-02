@@ -111,14 +111,10 @@ impl Editor {
             self.set_status_message(t!("explorer.closed").to_string());
         }
 
-        // Notify plugins that the viewport dimensions changed (sidebar affects available width)
-        self.plugin_manager.read().unwrap().run_hook(
-            "resize",
-            fresh_core::hooks::HookArgs::Resize {
-                width: self.terminal_width,
-                height: self.terminal_height,
-            },
-        );
+        // Showing/hiding the sidebar changes the editor's available width.
+        // Route through the single layout funnel so split viewports and
+        // terminal PTYs reflow and plugins get the (deduped) resize hook.
+        self.relayout();
     }
 
     pub fn show_file_explorer(&mut self) {

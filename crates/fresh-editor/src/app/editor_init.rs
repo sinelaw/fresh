@@ -203,6 +203,7 @@ impl Editor {
             keybindings: parts.keybindings,
             terminal_width: parts.terminal_width,
             terminal_height: parts.terminal_height,
+            last_layout_signature: None,
             tokio_runtime: parts.tokio_runtime,
             async_bridge: Some(parts.async_bridge),
             fs_manager: parts.fs_manager,

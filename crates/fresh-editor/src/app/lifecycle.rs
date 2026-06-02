@@ -264,46 +264,121 @@ impl Editor {
         );
     }
 
-    /// Resize all buffers to match new terminal size. Loops over every
-    /// `Window` so each one updates its own split viewports and visible
-    /// terminal PTYs; the plugin `resize` hook fires once for the editor
-    /// as a whole.
+    /// Adopt new terminal (screen) dimensions, then re-derive the whole
+    /// layout. This is the OS-terminal-resize entry point; it only
+    /// records the new screen size and defers everything else to the
+    /// single layout funnel, [`Editor::relayout`].
     pub fn resize(&mut self, width: u16, height: u16) {
         // Editor's canonical screen dimensions (used to seed new windows).
         self.terminal_width = width;
         self.terminal_height = height;
+        self.relayout();
+    }
 
+    /// The single layout funnel. Every event that can change the on-screen
+    /// geometry — an OS terminal resize, toggling/dragging the dock,
+    /// toggling or dragging the file explorer, creating/closing/resizing a
+    /// split — mutates only the relevant source-of-truth state and then
+    /// calls this. `relayout` reads that state, derives the authoritative
+    /// geometry once, and pushes it *down* (one-directional) to every
+    /// consumer: split viewports, terminal PTYs (for all windows), the
+    /// dock / floating-panel rerender, and the plugin `resize` hook.
+    ///
+    /// It is intentionally cheap to call redundantly: terminal PTY resizes
+    /// are idempotent (the PTY layer drops no-op size changes) and the
+    /// plugin hook is signature-deduped, so callers never need to decide
+    /// "did this actually change the layout?" — they just call `relayout`.
+    pub fn relayout(&mut self) {
+        // Derive the dock width from its placement (the source of truth),
+        // exactly as the renderer's `compute_dock_split` does, so the
+        // geometry we push down matches what gets painted.
+        let dock_cols = self.dock_cols();
+        let (width, height) = (self.terminal_width, self.terminal_height);
+
+        // Push the derived geometry down to every window. The dock is
+        // editor-global, so every window — not just the active one —
+        // sizes its terminals for the post-dock chrome, ready for a
+        // dive without a stale first frame.
         for window in self.windows.values_mut() {
-            window.resize(width, height);
+            window.apply_layout(width, height, dock_cols);
         }
 
-        // Refresh the plugin-facing snapshot BEFORE firing the
-        // resize hook. Without this, the orchestrator's resize
-        // handler reads `editor.getViewport()` from a snapshot
-        // whose `viewport.height` still reflects the pre-resize
-        // size — the one-way ratchet in `buildOpenSpec` then sees
-        // `old > old` and skips the update, leaving the picker
-        // stuck small even after a terminal-grow event. (The
-        // ratchet itself is correct; the input it consumes was
-        // stale.) Updating the snapshot here lets plugins observe
-        // the new dimensions when they react to the hook.
+        self.notify_layout_changed();
+    }
+
+    /// Effective width (cols) the left dock currently claims, or `0` when
+    /// no dock is shown / the terminal is too narrow for one. Delegates to
+    /// the renderer's `compute_dock_split` so this and the paint path can
+    /// never disagree about how wide the dock is.
+    pub(crate) fn dock_cols(&self) -> u16 {
+        let size = ratatui::layout::Rect::new(0, 0, self.terminal_width, self.terminal_height);
+        self.compute_dock_split(size)
+            .0
+            .map(|dock| dock.width)
+            .unwrap_or(0)
+    }
+
+    /// Fire the plugin `resize` hook and rerender mounted panels, but only
+    /// when the content geometry plugins observe has actually changed since
+    /// the last notification. The dedupe is load-bearing: the orchestrator
+    /// reacts to `resize` by re-issuing the dock's `dock_width`, which loops
+    /// back through `relayout`; without the signature guard that would
+    /// re-fire every frame. Once the dock width settles the signature stops
+    /// changing and the cascade stops.
+    fn notify_layout_changed(&mut self) {
+        let dock_cols = self.dock_cols();
+        // File-explorer width of the active window, measured against the
+        // post-dock chrome (matches the renderer and `resize_visible_terminals`).
+        let fe_cols = {
+            let win = self.active_window();
+            if win.file_explorer_visible {
+                win.file_explorer_width
+                    .to_cols(self.terminal_width.saturating_sub(dock_cols))
+            } else {
+                0
+            }
+        };
+        let signature = (
+            self.terminal_width,
+            self.terminal_height,
+            dock_cols,
+            fe_cols,
+        );
+        if self.last_layout_signature == Some(signature) {
+            return;
+        }
+        self.last_layout_signature = Some(signature);
+
+        // Refresh the plugin-facing snapshot BEFORE firing the resize
+        // hook. Without this, the orchestrator's resize handler reads
+        // `editor.getViewport()` from a snapshot whose dimensions still
+        // reflect the pre-resize size — the one-way ratchet in
+        // `buildOpenSpec` then sees `old > old` and skips the update,
+        // leaving the picker stuck small. Updating the snapshot here lets
+        // plugins observe the new dimensions when they react to the hook.
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
 
-        // Notify plugins of the resize so they can adjust layouts.
+        // Notify plugins of the layout change so they can adjust their own
+        // layouts. The hook still reports the screen dimensions; plugins
+        // that care about their available area read `getViewport()` (which
+        // reflects the dock / file-explorer carve-out) from the snapshot
+        // refreshed just above.
         self.plugin_manager.read().unwrap().run_hook(
             "resize",
-            fresh_core::hooks::HookArgs::Resize { width, height },
+            fresh_core::hooks::HookArgs::Resize {
+                width: self.terminal_width,
+                height: self.terminal_height,
+            },
         );
 
         // If a floating widget panel is currently mounted (the
-        // Orchestrator picker, New-Session form, plugin overlays),
-        // its cached `entries` were laid out against the old screen
-        // width — re-render against the new one so column widths,
-        // side borders and embed rects all reflect the new
-        // dimensions (Bug 13). The hook above lets plugins update
-        // their spec; this rerender picks up either the updated
-        // spec or the existing spec at the new width.
+        // Orchestrator picker / dock, New-Session form, plugin overlays),
+        // its cached `entries` were laid out against the old geometry —
+        // re-render against the new one so column widths, side borders and
+        // embed rects all reflect the new chrome (Bug 13). The hook above
+        // lets plugins update their spec; this rerender picks up either the
+        // updated spec or the existing spec at the new width.
         for panel_id in [
             self.dock.as_ref().map(|f| f.panel_id),
             self.floating_widget_panel.as_ref().map(|f| f.panel_id),
@@ -317,16 +392,22 @@ impl Editor {
 }
 
 impl crate::app::window::Window {
-    /// Adopt the new terminal dimensions for this window: update the
-    /// cached `terminal_width` / `terminal_height`, resize every split
-    /// viewport, and resize any visible terminal PTYs.
-    pub fn resize(&mut self, width: u16, height: u16) {
+    /// Adopt the geometry handed down by [`Editor::relayout`]: cache the
+    /// screen dimensions and the editor-global dock width, reseed every
+    /// split viewport against the post-dock editor width, and resize the
+    /// visible terminal PTYs. Per-split viewport dimensions are refined
+    /// again at paint time by `sync_viewport_to_content`; terminals have
+    /// no such paint-time sync, which is why their PTY size must be pushed
+    /// here.
+    pub fn apply_layout(&mut self, width: u16, height: u16, dock_cols: u16) {
         self.terminal_width = width;
         self.terminal_height = height;
+        self.dock_cols = dock_cols;
 
+        let editor_width = width.saturating_sub(dock_cols);
         if let Some(view_states) = self.split_view_states_mut() {
             for view_state in view_states.values_mut() {
-                view_state.viewport.resize(width, height);
+                view_state.viewport.resize(editor_width, height);
             }
         }
 

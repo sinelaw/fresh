@@ -243,9 +243,10 @@ impl Editor {
                 // Clear popup text selection drag state (selection remains in popup)
                 self.active_window_mut().mouse_state.selecting_in_popup = None;
 
-                // If we finished dragging a separator, resize visible terminals
+                // If we finished dragging a split separator, the split
+                // ratios changed: reflow through the single layout funnel.
                 if was_dragging_separator {
-                    self.active_window_mut().resize_visible_terminals();
+                    self.relayout();
                 }
 
                 needs_render = true;
@@ -2545,10 +2546,17 @@ impl Editor {
         if self.dock_resizing {
             let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
             let new_w = col.saturating_add(1).clamp(10, max_cols);
+            let mut changed = false;
             if let Some(fwp) = self.dock.as_mut() {
                 if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
+                    changed = *width_cols != new_w;
                     *width_cols = new_w;
                 }
+            }
+            // The dock got wider/narrower: reflow the chrome (terminals,
+            // viewports, panels) to the new dock width via the funnel.
+            if changed {
+                self.relayout();
             }
             return Ok(());
         }
@@ -2980,6 +2988,9 @@ impl Editor {
                     ExplorerWidth::Columns(new_cols)
                 }
             };
+            // The sidebar width changed: reflow terminals/viewports/panels
+            // through the single layout funnel.
+            self.relayout();
         }
 
         Ok(())
@@ -3047,6 +3058,9 @@ impl Editor {
             } else {
                 self.set_grouped_split_ratio(split_id, new_ratio);
             }
+            // Reflow live as the separator moves so terminals track the
+            // split sizes during the drag, not just on release.
+            self.relayout();
         }
 
         Ok(())
