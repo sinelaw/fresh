@@ -959,6 +959,18 @@ type WidgetSpec = {
 	flex: boolean;
 	key?: string | null;
 } | {
+	"kind": "divider";
+	/**
+	* Glyph repeated across the full width. Defaults to `─`.
+	*/
+	ch: string;
+	/**
+	* Optional whole-rule styling (e.g. a dim `fg`). Same shape as a
+	* styled segment's `style`.
+	*/
+	style?: Partial<OverlayOptions>;
+	key?: string | null;
+} | {
 	"kind": "list";
 	items: Array<TextPropertyEntry>;
 	itemKeys: Array<string>;

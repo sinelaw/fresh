@@ -1331,6 +1331,11 @@ fn default_list_visible_rows() -> u32 {
     20
 }
 
+/// Default glyph for a `Divider`: the light horizontal box-drawing rule.
+fn default_divider_char() -> String {
+    "─".to_string()
+}
+
 /// Default for `Tree::selected_index`. -1 ⇒ "no selection".
 fn default_tree_selected() -> i32 {
     -1
@@ -1498,6 +1503,25 @@ pub enum WidgetSpec {
         cols: u32,
         #[serde(default)]
         flex: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Full-width horizontal rule. The host draws `ch` repeated across
+    /// the panel's inner content width, so the separator always matches
+    /// the rendered width — including a user-dragged dock — without the
+    /// plugin computing the width itself. (A plugin-computed width forks
+    /// the host's authoritative width and drifts on resize/drag; this is
+    /// the declarative equivalent of `Spacer { flex: true }`, which fills
+    /// the row without the plugin knowing the gap size.)
+    Divider {
+        /// Glyph repeated across the full width. Defaults to `─`.
+        #[serde(default = "default_divider_char")]
+        ch: String,
+        /// Optional whole-rule styling (e.g. a dim `fg`). Same shape as a
+        /// styled segment's `style`.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

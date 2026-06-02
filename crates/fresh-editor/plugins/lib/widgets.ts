@@ -191,6 +191,25 @@ export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
 }
 
+/** Full-width horizontal rule. The host draws `ch` (default `─`)
+ * across the panel's inner content width, so the separator always
+ * matches the rendered width — including a user-dragged dock —
+ * without the plugin computing the width itself. This is the
+ * declarative analogue of `flexSpacer()`: express "a rule here",
+ * let the host (which owns the width) size it. Optional `style`
+ * picks the colour (e.g. a dim `fg` for a quiet separator). */
+export function divider(
+  options?: { ch?: string; style?: Partial<OverlayOptions>; key?: string },
+): WidgetSpec {
+  // Omit unset keys rather than passing `undefined`: the plugin bridge
+  // turns a present `undefined` into JSON `null`, which fails to
+  // deserialize as the host's `Option<…>` fields (see `styledRow`).
+  const spec: WidgetSpec = { kind: "divider", ch: options?.ch ?? "─" };
+  if (options?.style !== undefined) spec.style = options.style;
+  if (options?.key !== undefined) spec.key = options.key;
+  return spec;
+}
+
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
  * the full dataset of items + a `visibleRows` count; the widget

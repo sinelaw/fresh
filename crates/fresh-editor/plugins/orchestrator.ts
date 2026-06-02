@@ -22,6 +22,7 @@ import {
   flexSpacer,
   FloatingWidgetPanel,
   hintBar,
+  divider,
   key as widgetKey,
   labeledSection,
   list,
@@ -384,7 +385,8 @@ function dockDefaultWidth(): number {
 // Inner content width for a given dock width: the host reserves one
 // column for the right border plus an editor-side gutter, so list rows
 // get `dockWidth - 2` cells. Floored so a clamped/narrow dock still
-// renders something. Drives name/tag truncation and the `dockRule`.
+// renders something. Drives session name/tag truncation. (The header
+// divider is host-rendered via `divider()`, so it no longer needs this.)
 function dockContentCols(dockWidth: number): number {
   return Math.max(8, dockWidth - 2);
 }
@@ -1100,22 +1102,6 @@ function pruneSelection(): void {
 // the filter, the new-session button, and the list.
 function sessionsSeparator(): WidgetSpec {
   return spacer(0);
-}
-
-// A full-width horizontal rule (`────`) used in the dock to divide the
-// header chrome from the session list. Rendered in the dim disabled-menu
-// colour (a quiet grey, not the louder popup-border accent) so it reads
-// as a subtle separator rather than competing with the pills below.
-// `width` is the content width so it stops at the border.
-function dockRule(width: number): WidgetSpec {
-  return {
-    kind: "raw",
-    entries: [
-      styledRow([
-        { text: "─".repeat(Math.max(1, width)), style: { fg: "ui.menu_disabled_fg" } },
-      ]),
-    ],
-  };
 }
 
 // Smallest list height we'll show even when there are only a
@@ -2093,8 +2079,10 @@ function buildDockSpec(): WidgetSpec {
   // host (`dockDefaultWidth`, re-issued on resize), bounded by what the
   // host can actually grant: it keeps EDITOR_MIN (~20) cols for the
   // buffer, so on a narrow terminal the real dock is `screenW - 20` and
-  // below that it's hidden. Taking the min keeps name/tag truncation and
-  // the `dockRule` in step with the visible width.
+  // below that it's hidden. Taking the min keeps name/tag truncation
+  // roughly in step with the visible width. (The header divider is
+  // host-rendered at the true width via `divider()`, so it doesn't rely
+  // on this estimate.)
   const EDITOR_MIN_COLS = 20;
   const screenW = editor.getScreenSize().width;
   const grantable = screenW > 0 ? screenW - EDITOR_MIN_COLS : DOCK_WIDTH_COLS;
@@ -2209,7 +2197,10 @@ function buildDockSpec(): WidgetSpec {
       fullWidth: true,
       key: inConfirm ? undefined : "filter",
     }),
-    dockRule(contentW),
+    // Host-rendered full-width rule: it spans whatever width the dock is
+    // actually drawn at (incl. a user drag), so it can't drift from the
+    // chrome the way a plugin-computed `"─".repeat(width)` did.
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
     list({
       items,
       itemKeys,
