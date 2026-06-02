@@ -40,6 +40,28 @@ use std::path::PathBuf;
 /// the editor's periodic-redraw deadline so the tab refreshes while idle.
 pub(crate) const FG_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
 
+/// Combine the foreground process name with the program's OSC title into one
+/// tab label. The command leads (short, answers "what's running"); the OSC
+/// title follows as context, e.g. `python3 — root@host: ~/proj`.
+///
+/// Returns `None` only when both are absent, so the caller falls back to the
+/// default name. When the OSC title already names the command (e.g. vim's
+/// `file - VIM`), the command isn't prepended again to avoid `vim — … VIM`.
+fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
+    match (pty, osc) {
+        (Some(p), Some(o)) => {
+            if o.to_lowercase().contains(&p.to_lowercase()) {
+                Some(o.to_string())
+            } else {
+                Some(format!("{p} \u{2014} {o}"))
+            }
+        }
+        (Some(p), None) => Some(p.to_string()),
+        (None, Some(o)) => Some(o.to_string()),
+        (None, None) => None,
+    }
+}
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config
@@ -528,25 +550,25 @@ impl Window {
     /// group (`tcgetpgrp` + `/proc`) — is throttled to [`FG_POLL_INTERVAL`]
     /// and cached; the cached name is re-applied to the tab on every frame
     /// so the title is responsive to renders without re-running the syscall.
-    /// Precedence per terminal:
     ///
-    /// 1. **Foreground process name** — the command currently in the
-    ///    terminal's foreground process group (e.g. `python3` while a REPL
-    ///    runs, `bash` at the prompt). Mirrors tmux's
-    ///    `#{pane_current_command}` and is the primary source so a tab
-    ///    reflects what's actually running, even for programs (top,
-    ///    python3) that never emit a title.
-    /// 2. **OSC title** — what a program set via OSC 0/1/2. Used only as a
-    ///    fallback where the foreground process can't be read (currently
-    ///    every non-Linux platform).
-    /// 3. **Default** — `*Terminal N*` when nothing else is available.
+    /// The tab label **combines** two sources (see [`combine_terminal_title`]):
+    ///
+    /// - **Foreground process name** — the command currently in the
+    ///   terminal's foreground process group (e.g. `python3` while a REPL
+    ///   runs, `bash` at the prompt). Mirrors tmux's
+    ///   `#{pane_current_command}`; read on Linux, `None` elsewhere.
+    /// - **OSC title** — what a program set via OSC 0/1/2 (e.g. a shell's
+    ///   `user@host: ~/dir` prompt title, or vim's `file - VIM`).
+    ///
+    /// e.g. `python3 — root@host: ~/proj`. When only one is present that one
+    /// is used; when neither is, the default `*Terminal N*` stands.
     ///
     /// Terminals with an explicit (plugin-/command-derived) title are left
     /// untouched — like a tmux manual rename, an intentional name opts out
     /// of auto-naming.
     ///
-    /// Names are sanitized (control characters stripped, length capped) the
-    /// same way as the host window title, and applied without the
+    /// Both parts are sanitized (control characters stripped, length capped)
+    /// the same way as the host window title, and applied without the
     /// `name (k)` disambiguation used for plugin titles.
     pub fn sync_terminal_titles(&mut self) {
         // Refresh the foreground-name cache. A terminal is re-read when the
@@ -585,26 +607,21 @@ impl Window {
         }
 
         // Apply a title to every (non-explicit) terminal tab every frame,
-        // from the cached foreground name or the OSC fallback. Snapshot
-        // first so the mutable `buffer_metadata` borrow doesn't overlap the
-        // immutable reads above.
+        // combining the cached foreground name with the current OSC title.
+        // Snapshot first so the mutable `buffer_metadata` borrow doesn't
+        // overlap the immutable reads above.
         let mut updates: Vec<(BufferId, String)> = Vec::new();
         for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
             if self.terminal_explicit_titles.contains(buffer_id) {
                 continue;
             }
-            let name = self
-                .terminal_fg_cache
-                .get(buffer_id)
-                .cloned()
-                .or_else(|| {
-                    // Fallback: the OSC title, where the foreground process
-                    // isn't available (non-Linux).
-                    let handle = self.terminal_manager.get(*terminal_id)?;
-                    let osc = handle.state.lock().ok()?.title().to_string();
-                    let sanitized = crate::services::terminal_title::sanitize_title(&osc);
-                    (!sanitized.is_empty()).then_some(sanitized)
-                })
+            let pty = self.terminal_fg_cache.get(buffer_id).cloned();
+            let osc = self.terminal_manager.get(*terminal_id).and_then(|handle| {
+                let osc = handle.state.lock().ok()?.title().to_string();
+                let sanitized = crate::services::terminal_title::sanitize_title(&osc);
+                (!sanitized.is_empty()).then_some(sanitized)
+            });
+            let name = combine_terminal_title(pty.as_deref(), osc.as_deref())
                 .unwrap_or_else(|| format!("*Terminal {}*", terminal_id.0));
             updates.push((*buffer_id, name));
         }
@@ -1673,4 +1690,43 @@ fn encode_x10_mouse(
     let cb = cb + 32;
 
     Some(vec![0x1b, b'[', b'M', cb, cx, cy])
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::combine_terminal_title;
+
+    #[test]
+    fn combines_command_and_osc_title() {
+        assert_eq!(
+            combine_terminal_title(Some("python3"), Some("root@host: ~/proj")).as_deref(),
+            Some("python3 \u{2014} root@host: ~/proj")
+        );
+    }
+
+    #[test]
+    fn uses_single_source_when_only_one_present() {
+        assert_eq!(
+            combine_terminal_title(Some("bash"), None).as_deref(),
+            Some("bash")
+        );
+        assert_eq!(
+            combine_terminal_title(None, Some("root@host: ~/proj")).as_deref(),
+            Some("root@host: ~/proj")
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_command_already_in_osc_title() {
+        // vim sets its own OSC title; don't prepend "vim — … VIM".
+        assert_eq!(
+            combine_terminal_title(Some("vim"), Some("README.md (~/proj) - VIM")).as_deref(),
+            Some("README.md (~/proj) - VIM")
+        );
+    }
+
+    #[test]
+    fn none_when_neither_present() {
+        assert_eq!(combine_terminal_title(None, None), None);
+    }
 }
