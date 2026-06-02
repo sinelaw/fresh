@@ -595,11 +595,18 @@ impl RemoteAgentSpec {
 /// survives the editor rebuild on attach. Dropping it tears the session
 /// down (reconnect aborted, then the connection's carrier killed).
 pub struct EksKeepalive {
-    // Field order matters for drop: the explicit `Drop` below runs first
-    // (aborting reconnect), then fields drop in declaration order —
-    // connection last, killing the carrier after nothing else uses it.
+    // Drop runs the explicit `Drop` below first (aborting reconnect), then
+    // fields drop in declaration order: the connection (kills the carrier),
+    // then the runtime (shuts down its now-idle workers).
     reconnect: tokio::task::JoinHandle<()>,
     _connection: EksConnection,
+    // The load-bearing field: the dedicated runtime the agent channel +
+    // heartbeat + reconnect tasks run on. Owned here so they survive the editor
+    // restart the attach triggers — the editor's per-instance runtime is
+    // dropped during that rebuild, and if the channel rode *that* runtime its
+    // I/O tasks would die the instant the attach completed ("Channel closed"
+    // on every file op). SSH's `RemoteSession._runtime` does exactly this.
+    _runtime: tokio::runtime::Runtime,
 }
 
 impl Drop for EksKeepalive {
@@ -611,26 +618,67 @@ impl Drop for EksKeepalive {
 /// Connect to an EKS pod and assemble its [`Authority`] plus the
 /// [`EksKeepalive`] that must be parked to keep it alive.
 ///
-/// The async "connect" seam the planned `attachRemoteAgent` op and the
-/// editor restart path call (the EKS counterpart to SSH's `connect_remote`):
-/// bootstraps the agent ([`EksConnection::connect`]), starts the reconnect
-/// task, and assembles the authority via [`Authority::eks_from_connection`].
-/// `base_env` is the captured in-pod env probe (PATH/HOME/…) applied to LSP
-/// spawns and `command_exists`.
+/// The EKS counterpart to SSH's `connect_remote`: bootstraps the agent
+/// ([`EksConnection::connect`]) and the reconnect/heartbeat tasks **on a
+/// dedicated runtime owned by the returned keepalive** — *not* the caller's
+/// runtime. Installing the authority restarts the editor, dropping the
+/// editor's per-instance runtime; binding the channel there would kill it the
+/// moment the attach completes (regression: `agent_channel_survives_dropping_
+/// the_attach_runtime`). `base_env` is the captured in-pod env probe applied to
+/// LSP spawns and `command_exists`.
+///
+/// Stays `async` for callers, but the bootstrap needs `block_on` (which can't
+/// run inside the caller's async context), so it happens on a short-lived
+/// helper thread; the live runtime — with its channel/heartbeat/reconnect
+/// tasks — is handed back and parked in the keepalive.
 pub async fn connect_eks_authority(
     target: EksTarget,
     base_env: Vec<(String, String)>,
     trust: Arc<WorkspaceTrust>,
     env: Arc<crate::services::env_provider::EnvProvider>,
 ) -> Result<(Authority, EksKeepalive), TransportError> {
-    let connection = EksConnection::connect(target.clone()).await?;
-    let reconnect = spawn_eks_reconnect_task(&connection.channel(), target.clone());
+    type Built = Result<(EksConnection, tokio::task::JoinHandle<()>, tokio::runtime::Runtime), TransportError>;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
+    let bootstrap_target = target.clone();
+    std::thread::Builder::new()
+        .name("eks-connect".to_string())
+        .spawn(move || {
+            let built: Built = (|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name("eks-agent")
+                    .enable_all()
+                    .build()
+                    .map_err(|e| TransportError::AgentStartFailed(format!("runtime: {e}")))?;
+                // `block_on` drives the bootstrap; the channel/heartbeat/reconnect
+                // tasks it spawns live on `runtime`'s worker threads, which keep
+                // running after `block_on` returns and after this helper thread
+                // exits — until the `runtime` (moved into the keepalive) drops.
+                let (connection, reconnect) = runtime.block_on(async {
+                    let connection = EksConnection::connect(bootstrap_target.clone()).await?;
+                    let reconnect =
+                        spawn_eks_reconnect_task(&connection.channel(), bootstrap_target.clone());
+                    Ok::<_, TransportError>((connection, reconnect))
+                })?;
+                Ok((connection, reconnect, runtime))
+            })();
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(built);
+        })
+        .map_err(|e| TransportError::AgentStartFailed(format!("connect thread: {e}")))?;
+
+    let (connection, reconnect, runtime) = rx
+        .await
+        .map_err(|_| TransportError::AgentStartFailed("connect thread vanished".to_string()))??;
+
     let authority = Authority::eks_from_connection(&connection, target, base_env, trust, env);
     Ok((
         authority,
         EksKeepalive {
             reconnect,
             _connection: connection,
+            _runtime: runtime,
         },
     ))
 }

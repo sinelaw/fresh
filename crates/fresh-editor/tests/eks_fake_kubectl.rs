@@ -102,6 +102,69 @@ fn eks_connection_round_trips_a_file_through_fake_kubectl() {
     drop(connection);
 }
 
+/// Repro for the "Channel closed right after attach" bug: the agent channel
+/// must survive the editor's per-instance runtime being dropped — which is
+/// exactly what the attach-restart does (installing the authority restarts the
+/// editor, dropping its runtime). The keepalive has to own the runtime the
+/// channel runs on; if the channel instead rides the runtime the *caller*
+/// attached on, dropping that runtime kills the channel and every file op
+/// fails with "channel closed".
+///
+/// RED on the current code (channel binds to the caller's runtime; the
+/// keepalive owns no runtime); GREEN once the keepalive owns a dedicated one.
+#[test]
+fn agent_channel_survives_dropping_the_attach_runtime() {
+    ensure_fake_kubectl_on_path();
+    if !python3_available() {
+        eprintln!("skipping: python3 not found on PATH");
+        return;
+    }
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let ws = workspace.path().to_path_buf();
+    let f = ws.join("survive.txt");
+
+    // `editor_rt` models the editor's per-instance runtime: the attach runs on
+    // it, and the attach-restart then drops it.
+    let editor_rt = multi_thread_rt();
+    let (authority, _keepalive) = editor_rt
+        .block_on(connect_eks_authority(
+            target(&ws),
+            vec![],
+            Arc::new(WorkspaceTrust::permissive()),
+            Arc::new(EnvProvider::inactive()),
+        ))
+        .expect("connect over fake kubectl");
+
+    // Channel is live right after connect.
+    authority
+        .filesystem
+        .write_file(&f, b"alive")
+        .expect("write before the simulated restart");
+
+    // Simulate the editor restart: drop the editor's runtime while KEEPING the
+    // keepalive (production parks it in session_keepalive across the rebuild).
+    // The channel must keep working — that is the keepalive's entire job.
+    drop(editor_rt);
+
+    // After the drop, a bound-to-the-dropped-runtime channel makes `read_file`
+    // either return Err (channel closed) or panic (`block_on` on a dropped
+    // runtime). Catch both so the failure is a clean, descriptive RED.
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        authority.filesystem.read_file(&f)
+    }));
+    match read {
+        Ok(Ok(bytes)) => assert_eq!(bytes, b"alive"),
+        Ok(Err(e)) => panic!(
+            "agent channel closed after the editor runtime was dropped: {e} \
+             — the keepalive must own the runtime the channel runs on"
+        ),
+        Err(_) => panic!(
+            "read_file panicked after the editor runtime was dropped (block_on \
+             on a dropped runtime) — the keepalive must own the channel's runtime"
+        ),
+    }
+}
+
 #[test]
 fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
     ensure_fake_kubectl_on_path();
