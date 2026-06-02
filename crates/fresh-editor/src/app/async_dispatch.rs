@@ -425,9 +425,15 @@ impl Editor {
                 AsyncMessage::FileOpenShortcutsLoaded(shortcuts) => {
                     self.handle_file_open_shortcuts_loaded(shortcuts);
                 }
-                AsyncMessage::TerminalOutput { terminal_id } => {
+                AsyncMessage::TerminalOutput { terminal } => {
+                    // The message carries its owning window: terminal ids
+                    // collide across windows, so we trust the tag rather
+                    // than scanning windows for a matching id (which would
+                    // attribute output to the wrong session).
+                    let terminal_id = terminal.terminal;
+                    let owner = terminal.window;
                     // Terminal output received - check if we should auto-jump back to terminal mode
-                    tracing::trace!("Terminal output received for {:?}", terminal_id);
+                    tracing::trace!("Terminal output received for {}", terminal);
 
                     // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
                     // automatically re-enter terminal mode
@@ -456,16 +462,16 @@ impl Editor {
                         }
                     }
 
-                    // Notify plugins. Resolve the owning window so a plugin
-                    // can attribute output to a *session* even when it's a
-                    // background one (terminals live in their own window's
-                    // manager, not the active window's). Snapshot the cursor
-                    // row's text from that same window so prompt detection
-                    // works off-focus too. The grid lock is released before
-                    // `run_hook` runs to avoid holding it across plugin code.
-                    let owner = self.window_id_of_terminal(terminal_id);
-                    let last_line = owner
-                        .and_then(|wid| self.windows.get(&wid))
+                    // Notify plugins, attributing output to the owning
+                    // *session* even when it's a background one (terminals
+                    // live in their own window's manager, not the active
+                    // window's). Snapshot the cursor row's text from that
+                    // same window so prompt detection works off-focus too.
+                    // The grid lock is released before `run_hook` runs to
+                    // avoid holding it across plugin code.
+                    let last_line = self
+                        .windows
+                        .get(&owner)
                         .and_then(|w| w.terminal_manager.get(terminal_id))
                         .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
                         .unwrap_or_default();
@@ -473,7 +479,7 @@ impl Editor {
                         "terminal_output",
                         crate::services::plugins::hooks::HookArgs::TerminalOutput {
                             terminal_id: terminal_id.0 as u64,
-                            window_id: owner.map(|w| w.0).unwrap_or(0),
+                            window_id: owner.0,
                             last_line,
                         },
                     );
@@ -490,13 +496,15 @@ impl Editor {
                     );
                 }
                 AsyncMessage::TerminalExited {
-                    terminal_id,
+                    terminal,
                     exit_code,
                 } => {
-                    tracing::info!("Terminal {:?} exited", terminal_id);
-                    // Resolve the owning window before the cleanup below
-                    // closes the terminal (which would make the lookup fail).
-                    let exited_window_id = self.window_id_of_terminal(terminal_id);
+                    // The message is tagged with its owning window, so the
+                    // plugin hook is attributed correctly even for a
+                    // background session's terminal.
+                    let terminal_id = terminal.terminal;
+                    let exited_window_id = terminal.window;
+                    tracing::info!("Terminal {} exited", terminal);
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
                         .active_window()
@@ -602,7 +610,7 @@ impl Editor {
                         "terminal_exit",
                         crate::services::plugins::hooks::HookArgs::TerminalExited {
                             terminal_id: terminal_id.0 as u64,
-                            window_id: exited_window_id.map(|w| w.0).unwrap_or(0),
+                            window_id: exited_window_id.0,
                             exit_code,
                         },
                     );

@@ -1536,7 +1536,7 @@ impl Window {
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
-            terminal_manager: crate::services::terminal::TerminalManager::new(),
+            terminal_manager: crate::services::terminal::TerminalManager::new(id),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),

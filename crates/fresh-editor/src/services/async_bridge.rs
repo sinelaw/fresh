@@ -10,7 +10,6 @@
 //! - Computation should be sync (editing, rendering)
 //! - Main loop remains responsive and simple
 
-use crate::services::terminal::TerminalId;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
     CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
@@ -192,8 +191,12 @@ pub enum AsyncMessage {
     /// File open dialog: async shortcuts (Windows drive letters) loaded
     FileOpenShortcutsLoaded(Vec<crate::app::file_open::NavigationShortcut>),
 
-    /// Terminal output received (triggers redraw)
-    TerminalOutput { terminal_id: TerminalId },
+    /// Terminal output received (triggers redraw). Tagged with the
+    /// owning window: terminal ids are only unique within a window, so a
+    /// bare id can't be attributed to a session without guessing.
+    TerminalOutput {
+        terminal: fresh_core::WindowTerminalId,
+    },
 
     /// File watcher delivered an event for a path under a
     /// `WatchPath`-registered watcher. Routed to the
@@ -215,7 +218,7 @@ pub enum AsyncMessage {
     /// initial wiring sends `None` so plugin handlers see the variant
     /// shape that matches `HookArgs::TerminalExited`.
     TerminalExited {
-        terminal_id: TerminalId,
+        terminal: fresh_core::WindowTerminalId,
         exit_code: Option<i32>,
     },
 

@@ -181,6 +181,12 @@ impl TerminalHandle {
 
 /// Manager for multiple terminal sessions
 pub struct TerminalManager {
+    /// The window that owns this manager. Terminal IDs are only unique
+    /// within a single manager (each starts numbering at 0), so output
+    /// messages are tagged with `(window_id, terminal_id)` — see
+    /// [`fresh_core::WindowTerminalId`] — to stay unambiguous once they
+    /// leave this window's context (e.g. on the async bus).
+    window_id: fresh_core::WindowId,
     /// Map from terminal ID to handle
     terminals: HashMap<TerminalId, TerminalHandle>,
     /// Next terminal ID
@@ -190,13 +196,22 @@ pub struct TerminalManager {
 }
 
 impl TerminalManager {
-    /// Create a new terminal manager
-    pub fn new() -> Self {
+    /// Create a new terminal manager owned by `window_id`. The owner is
+    /// required (not defaulted) so output can never be attributed to the
+    /// wrong window: every terminal this manager spawns is tagged with
+    /// it.
+    pub fn new(window_id: fresh_core::WindowId) -> Self {
         Self {
+            window_id,
             terminals: HashMap::new(),
             next_id: 0,
             async_bridge: None,
         }
+    }
+
+    /// The window that owns this manager.
+    pub fn window_id(&self) -> fresh_core::WindowId {
+        self.window_id
     }
 
     /// Set the async bridge for communication with main loop
@@ -418,6 +433,11 @@ impl TerminalManager {
 
             // Spawn reader thread
             let terminal_id = id;
+            // Tag output/exit with the owning window so the main loop
+            // never has to guess which session a `Terminal-N` belongs to
+            // (ids collide across windows). `Copy`, so both threads below
+            // capture it independently.
+            let wt_id = fresh_core::WindowTerminalId::new(self.window_id, terminal_id);
             let pty_response_tx = command_tx.clone();
             thread::spawn(move || {
                 tracing::debug!("Terminal {:?} reader thread started", terminal_id);
@@ -502,7 +522,7 @@ impl TerminalManager {
                                 #[allow(clippy::let_underscore_must_use)]
                                 let _ = bridge.sender().send(
                                     crate::services::async_bridge::AsyncMessage::TerminalOutput {
-                                        terminal_id,
+                                        terminal: wt_id,
                                     },
                                 );
                             }
@@ -551,7 +571,7 @@ impl TerminalManager {
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = bridge.sender().send(
                         crate::services::async_bridge::AsyncMessage::TerminalExited {
-                            terminal_id,
+                            terminal: wt_id,
                             exit_code,
                         },
                     );
@@ -671,12 +691,6 @@ impl TerminalManager {
     }
 }
 
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Drop for TerminalManager {
     fn drop(&mut self) {
         self.shutdown_all();
@@ -757,6 +771,35 @@ mod tests {
     fn test_terminal_id_display() {
         let id = TerminalId(42);
         assert_eq!(format!("{}", id), "Terminal-42");
+    }
+
+    /// Terminal ids are per-window: each manager numbers from 0, so two
+    /// windows both hand out `Terminal-0`. The owning window is what
+    /// disambiguates them — output messages are tagged with the
+    /// `(window, terminal)` pair so a `Terminal-0` from one session can't
+    /// be attributed to another session's `Terminal-0`. (Regression
+    /// guard for the dock "pending output on the wrong session" bug.)
+    #[test]
+    fn terminal_ids_collide_across_windows_but_window_disambiguates() {
+        use fresh_core::{WindowId, WindowTerminalId};
+
+        let win_a = TerminalManager::new(WindowId(1));
+        let win_b = TerminalManager::new(WindowId(2));
+
+        // Both managers would assign the same local id to their first
+        // terminal — the namespaces are independent.
+        assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
+        assert_eq!(win_a.next_terminal_id(), TerminalId(0));
+
+        // Each manager knows its owner, so the global identity differs.
+        assert_eq!(win_a.window_id(), WindowId(1));
+        assert_eq!(win_b.window_id(), WindowId(2));
+        let a0 = WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id());
+        let b0 = WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id());
+        assert_ne!(
+            a0, b0,
+            "same local terminal id in different windows must be distinct globally"
+        );
     }
 
     #[test]
