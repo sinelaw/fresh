@@ -15,9 +15,13 @@
 > `Authority::eks_from_connection` that assembles a full EKS authority
 > (RemoteFileSystem + RemoteProcessSpawner over the channel + the kubectl
 > LSP spawner). The per-session activation primitive
-> (`Editor::set_session_authority`) is in. Unit-tested throughout.
-> **Not yet wired:** the async `attachRemoteAgent` op + reconnect-respawn,
-> the agent heartbeat, live multi-session, and the `eks-workspace` plugin.
+> (`Editor::set_session_authority`) is in. The agent heartbeat
+> (`spawn_heartbeat_task` — a periodic `info` ping, no agent.py change /
+> no protocol bump) ships and is wired into `EksConnection` so idle
+> `kubectl exec` streams survive LB/NAT idle timeouts; it self-terminates
+> via a `Weak` ref. Unit-tested throughout (incl. a real-agent heartbeat
+> test). **Not yet wired:** the async `attachRemoteAgent` op +
+> reconnect-respawn, live multi-session, and the `eks-workspace` plugin.
 
 Status: design. Nothing else here ships yet. Supersedes the earlier
 "EKS + S3 full cloud authority" draft, which proposed a bespoke

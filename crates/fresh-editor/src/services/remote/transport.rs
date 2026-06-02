@@ -256,6 +256,9 @@ pub struct EksConnection {
     process: Child,
     channel: Arc<AgentChannel>,
     display: String,
+    /// Keeps the idle `kubectl exec` stream warm against LB/NAT idle
+    /// timeouts. Aborted on drop so a dead carrier stops being pinged.
+    heartbeat: tokio::task::JoinHandle<()>,
 }
 
 impl EksConnection {
@@ -264,10 +267,15 @@ impl EksConnection {
         let transport = KubectlExecTransport::new(target);
         let (reader, writer, child) = bootstrap_agent(&transport, StderrMode::Inherit).await?;
         let channel = Arc::new(AgentChannel::new(reader, writer));
+        let heartbeat = crate::services::remote::spawn_heartbeat_task(
+            &channel,
+            crate::services::remote::DEFAULT_HEARTBEAT_INTERVAL,
+        );
         Ok(Self {
             process: child,
             channel,
             display: transport.display(),
+            heartbeat,
         })
     }
 
@@ -287,6 +295,8 @@ impl EksConnection {
 
 impl Drop for EksConnection {
     fn drop(&mut self) {
+        // Stop pinging a carrier we're about to kill.
+        self.heartbeat.abort();
         // Best-effort kill; the OS reaps on our exit if this fails. Same
         // shape as `SshConnection::Drop` (the crate denies
         // `let_underscore_must_use`, so we can't `let _ =` the result).

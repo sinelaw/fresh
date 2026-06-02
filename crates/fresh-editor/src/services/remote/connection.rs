@@ -332,6 +332,49 @@ where
     })
 }
 
+/// Default heartbeat interval. Comfortably under the smallest common
+/// load-balancer / NAT idle timeout (~5 min) so an otherwise-idle agent
+/// stream keeps generating traffic and isn't silently dropped.
+pub const DEFAULT_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Spawn a background task that pings the agent periodically so an idle
+/// connection's stream keeps producing traffic.
+///
+/// Long-lived agent streams that sit idle (no edits, no LSP chatter) get
+/// silently dropped by ELB / NAT idle timers after a few minutes — the
+/// client never sees a FIN, so the *next* request just hangs until it
+/// times out and the UI appears frozen. A cheap periodic `info` request
+/// keeps the NAT state-table entry warm. Shared by every agent transport
+/// (SSH and `kubectl exec` alike); `info` is already handled by every
+/// agent version, so no protocol bump is needed.
+///
+/// Holds only a `Weak` reference, so the task terminates on its own once
+/// the last owner of the channel is dropped — no JoinHandle bookkeeping
+/// is required to avoid a leak (callers may still `abort()` it to stop
+/// pinging immediately when the carrier dies). Pinging while disconnected
+/// is skipped; the reconnect task owns re-establishment.
+pub fn spawn_heartbeat_task(
+    channel: &std::sync::Arc<AgentChannel>,
+    interval: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    let weak = std::sync::Arc::downgrade(channel);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            let Some(channel) = weak.upgrade() else {
+                break;
+            };
+            if channel.is_connected() {
+                // Outcome ignored on purpose: a failed/timed-out ping
+                // already marks the channel disconnected (see `request`),
+                // and the reconnect task owns recovery from there. Bound
+                // to a named `_` to satisfy `deny(let_underscore_must_use)`.
+                let _ping = channel.request("info", serde_json::json!({})).await;
+            }
+        }
+    })
+}
+
 /// Establish a new SSH connection and return the raw transport + child process.
 ///
 /// Build a descriptive error when the SSH process closes stdout (EOF) without
@@ -645,6 +688,35 @@ mod tests {
         assert!(ConnectionParams::parse("hostonly").is_none());
         assert!(ConnectionParams::parse("@host").is_none());
         assert!(ConnectionParams::parse("user@").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn heartbeat_keeps_channel_warm_and_exits_on_drop() {
+        // Real agent over local stdio — no SSH/kubectl, same channel.
+        let channel = spawn_local_agent().await.expect("spawn local agent");
+        let handle = spawn_heartbeat_task(&channel, std::time::Duration::from_millis(30));
+
+        // Let several heartbeats fire; the channel must stay healthy.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            channel.is_connected(),
+            "channel stays connected while heartbeat pings"
+        );
+        assert!(
+            channel
+                .request("info", serde_json::json!({}))
+                .await
+                .is_ok(),
+            "agent still answers after heartbeats"
+        );
+
+        // Dropping the last strong ref lets the Weak-based task terminate
+        // on its own — proving it can't leak past the connection's life.
+        drop(channel);
+        tokio::time::timeout(std::time::Duration::from_secs(3), handle)
+            .await
+            .expect("heartbeat task exits after the channel is dropped")
+            .expect("heartbeat task did not panic");
     }
 
     #[test]
