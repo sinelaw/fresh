@@ -928,10 +928,14 @@ fn test_switch_project_double_click_parent_navigates_up() {
     let root = temp_dir.path().to_path_buf();
 
     // Create a parent/child structure. Start the editor inside the child so the
-    // ".." entry is meaningful, and place a unique marker in the parent.
+    // ".." entry is meaningful, and place a marker in the parent that the
+    // post-navigation wait keys off. The marker name is kept short on
+    // purpose: a long filename can itself be truncated with an ellipsis in
+    // a narrow browser column, so waiting on it would be sensitive to
+    // rendering width. "upok" can't truncate and appears nowhere else.
     let child = root.join("child");
     fs::create_dir(&child).unwrap();
-    fs::write(root.join("parent_marker.txt"), "marker").unwrap();
+    fs::create_dir(root.join("upok")).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), child.clone())
@@ -987,7 +991,7 @@ fn test_switch_project_double_click_parent_navigates_up() {
     // distinguishes "navigated up" from "selected parent as new
     // project root" is: the Switch Project browser is still open
     // (so its "Navigation:" header is on screen) AND the parent
-    // directory's marker file is now listed. The bug version
+    // directory's "upok" marker is now listed. The bug version
     // closes the browser to commit the selection; with the fix,
     // the browser stays open at the new path. We wait for both
     // conditions in one semantic wait so the test settles to a
@@ -996,10 +1000,10 @@ fn test_switch_project_double_click_parent_navigates_up() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Navigation:") && screen.contains("parent_marker.txt")
+            screen.contains("Navigation:") && screen.contains("upok")
         })
         .expect(
             "Folder browser must remain open and show the parent directory's contents \
-             after double-clicking '..'",
+             (the 'upok' marker) after double-clicking '..'",
         );
 }
