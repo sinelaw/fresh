@@ -1,6 +1,19 @@
 # EKS authority — remote editing into a Kubernetes pod
 
-Status: design. Nothing here ships yet. Supersedes the earlier
+> **Implementation status (foundational slice landed).** The
+> `RemoteTransport` seam (`services/remote/transport.rs`) ships:
+> `KubectlExecTransport`, the shared `kubectl_exec_argv` builder,
+> `agent_bootstrap_pycode`, the generic `bootstrap_agent`, and
+> `EksConnection` — the EKS analogue of `SshConnection`, reusing the
+> transport-agnostic `AgentChannel`. Plus `build_eks_terminal_args`,
+> `TerminalWrapper::eks`, and the `Authority::eks` constructor. SSH's
+> `connection.rs` is untouched (SSH provably unchanged). Unit-tested
+> (argv ordering, bootstrap framing, terminal re-parenting). **Not yet
+> wired:** the kubectl long-running (LSP) spawner with env/cwd, the async
+> `attachRemoteAgent` op + reconnect-respawn, the agent heartbeat,
+> per-session authority, and the `eks-workspace` plugin.
+
+Status: design. Nothing else here ships yet. Supersedes the earlier
 "EKS + S3 full cloud authority" draft, which proposed a bespoke
 `S3FileSystem`. That half is **deleted**: per the refined requirement,
 Fresh reaches workspace data *only through the pod*, so S3 never appears

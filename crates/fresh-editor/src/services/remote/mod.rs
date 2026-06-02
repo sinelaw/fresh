@@ -8,6 +8,7 @@ mod connection;
 mod filesystem;
 mod protocol;
 mod spawner;
+mod transport;
 
 pub use channel::AgentChannel;
 /// Test-only global: microseconds to sleep per chunk in the consumer loop.
@@ -31,9 +32,13 @@ pub use protocol::{
     write_params, AgentRequest, AgentResponse,
 };
 pub use spawner::{
-    build_ssh_terminal_args, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
-    ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError, SpawnResult,
-    StdioChild,
+    build_eks_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner, LocalProcessSpawner,
+    LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError,
+    SpawnResult, StdioChild,
+};
+pub use transport::{
+    bootstrap_agent, EksConnection, EksTarget, KubectlExecTransport, RemoteTransport, StderrMode,
+    TransportError,
 };
 
 /// The Python agent source code, embedded at compile time.

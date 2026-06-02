@@ -39,8 +39,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_ssh_terminal_args, ConnectionParams, LocalLongRunningSpawner, LocalProcessSpawner,
-    LongRunningSpawner, ProcessSpawner,
+    build_eks_terminal_args, build_ssh_terminal_args, ConnectionParams, EksTarget,
+    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -138,6 +138,20 @@ impl TerminalWrapper {
         Self {
             command: "ssh".to_string(),
             args: build_ssh_terminal_args(params, remote_dir),
+            manages_cwd: true,
+        }
+    }
+
+    /// Re-parent the integrated terminal into an EKS pod via
+    /// `kubectl exec -it … -- sh -lc 'cd <ws>; exec $SHELL -l'`. Same
+    /// re-parenting contract as [`Self::ssh`] / the `docker exec -w …`
+    /// wrapper: cwd is pinned through the wrapper's own args, so
+    /// `manages_cwd` is true and the terminal manager must not hand the
+    /// local PTY a pod-side cwd it can't honour.
+    pub fn eks(target: &EksTarget) -> Self {
+        Self {
+            command: "kubectl".to_string(),
+            args: build_eks_terminal_args(target),
             manages_cwd: true,
         }
     }
@@ -357,6 +371,37 @@ impl Authority {
         }
     }
 
+    /// Build an EKS authority: the remote-agent stack (filesystem + spawners,
+    /// already wired to the pod's `kubectl exec` agent channel) plus a
+    /// terminal wrapper that opens a shell *inside the pod*.
+    ///
+    /// Mirrors [`Self::ssh`] — the caller owns the connection and its
+    /// keepalive resources and threads the parts in. Unlike SSH, the label
+    /// is set from the target (there is no filesystem-side
+    /// `remote_connection_info()` that knows about an EKS pod, so identity
+    /// lives in the label per `AUTHORITY_DESIGN.md` principle 9). Path
+    /// translation is unset: the editor operates directly in the pod's path
+    /// space, exactly as SSH does.
+    pub fn eks(
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        process_spawner: Arc<dyn ProcessSpawner>,
+        long_running_spawner: Arc<dyn LongRunningSpawner>,
+        target: &EksTarget,
+        trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
+    ) -> Self {
+        Self {
+            filesystem,
+            process_spawner,
+            long_running_spawner,
+            terminal_wrapper: TerminalWrapper::eks(target),
+            display_label: target.display(),
+            path_translation: None,
+            workspace_trust: trust,
+            env_provider: env,
+        }
+    }
+
     /// Build an authority from a plugin payload (the data carried by the
     /// `editor.setAuthority(...)` op), gated by `trust` (the editor passes its
     /// live trust handle so the new authority shares it). All translation from
@@ -469,6 +514,34 @@ mod tests {
         assert!(auth.terminal_wrapper.args.is_empty());
         assert!(!auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
+    }
+
+    #[test]
+    fn eks_terminal_wrapper_reparents_into_pod() {
+        let target = EksTarget {
+            context: Some("prod".into()),
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: Some("/workspace".into()),
+        };
+        let wrapper = TerminalWrapper::eks(&target);
+        assert_eq!(wrapper.command, "kubectl");
+        // Re-parented shell must pin cwd through its own args.
+        assert!(wrapper.manages_cwd);
+        assert_eq!(wrapper.args[0], "--context");
+        assert!(wrapper.args.iter().any(|a| a == "-it"));
+        assert!(wrapper.args.iter().any(|a| a == "pod-1"));
+        // User shell override is a no-op for a cwd-managing wrapper, so the
+        // re-parenting into the pod stays intact.
+        let override_shell = crate::config::TerminalShellConfig {
+            command: "/usr/local/bin/fish".into(),
+            args: vec![],
+        };
+        let after = wrapper
+            .clone()
+            .with_user_shell_override(Some(&override_shell));
+        assert_eq!(after.command, "kubectl");
     }
 
     #[test]

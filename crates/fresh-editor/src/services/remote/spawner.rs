@@ -914,6 +914,36 @@ pub fn build_ssh_terminal_args(
     a
 }
 
+/// Build the `kubectl` argv that opens the integrated terminal as an
+/// interactive login shell *inside the pod*:
+///
+/// ```text
+/// [--context CTX] exec -it -n NS [-c C] POD -- sh -lc 'cd WS; exec "$SHELL" -l'
+/// ```
+///
+/// The EKS analogue of [`build_ssh_terminal_args`]. `-it` allocates a TTY (so
+/// resize / curses apps work — `kubectl` itself implements the resize
+/// protocol), and the `sh -lc` wrapper pins cwd, so the authority's terminal
+/// wrapper sets `manages_cwd = true`. A failed `cd` is non-fatal so the shell
+/// always starts; `exec` replaces the wrapper shell so closing the terminal
+/// tears the exec session down cleanly.
+pub fn build_eks_terminal_args(target: &crate::services::remote::EksTarget) -> Vec<String> {
+    let mut remote_cmd = String::new();
+    if let Some(dir) = target.workspace.as_deref().filter(|d| !d.is_empty()) {
+        let quoted = shell_quote(dir);
+        remote_cmd.push_str(&format!(
+            "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
+        ));
+    }
+    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    crate::services::remote::transport::kubectl_exec_argv(
+        target,
+        &["-it"],
+        "sh",
+        &["-lc".to_string(), remote_cmd],
+    )
+}
+
 /// Long-running spawner over SSH: each LSP server (or tool agent) gets its own
 /// `ssh user@host <remote-cmd>` subprocess, whose piped stdio *is* the remote
 /// process's stdio. Returning a real local [`tokio::process::Child`] (the ssh
@@ -1309,5 +1339,62 @@ mod tests {
         );
         // Empty dir is treated the same as no dir.
         assert_eq!(build_ssh_terminal_args(&params, Some("")), a);
+    }
+
+    #[test]
+    fn build_eks_terminal_args_allocates_tty_and_pins_cwd() {
+        let target = crate::services::remote::EksTarget {
+            context: Some("prod".into()),
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: Some("app".into()),
+            workspace: Some("/workspace".into()),
+        };
+        let a = build_eks_terminal_args(&target);
+        let expected: Vec<String> = [
+            "--context",
+            "prod",
+            "exec",
+            "-it",
+            "-n",
+            "dev",
+            "-c",
+            "app",
+            "pod-1",
+            "--",
+            "sh",
+            "-lc",
+            "d='/workspace'; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn build_eks_terminal_args_without_workspace_skips_cd() {
+        let target = crate::services::remote::EksTarget {
+            context: None,
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: None,
+        };
+        let a = build_eks_terminal_args(&target);
+        assert_eq!(
+            a,
+            vec![
+                "exec",
+                "-it",
+                "-n",
+                "dev",
+                "pod-1",
+                "--",
+                "sh",
+                "-lc",
+                "exec ${SHELL:-/bin/sh} -l",
+            ]
+        );
     }
 }
