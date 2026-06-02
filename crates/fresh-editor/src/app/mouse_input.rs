@@ -2553,9 +2553,18 @@ impl Editor {
                     *width_cols = new_w;
                 }
             }
-            // The dock got wider/narrower: reflow the chrome (terminals,
-            // viewports, panels) to the new dock width via the funnel.
             if changed {
+                // Persist the live width *before* relaying out. `relayout`
+                // fires the `resize` hook, and the orchestrator answers it
+                // by re-issuing the dock's responsive `dock_width`, which
+                // `handle_floating_panel_control` clamps against the
+                // persisted `dock_width` override. Updating that override
+                // here (not only on mouse-up) lets the user's dragged width
+                // win the round-trip — otherwise the responsive re-issue
+                // snaps the dock straight back and the drag does nothing.
+                self.dock_width = Some(new_w);
+                // The dock got wider/narrower: reflow the chrome (terminals,
+                // viewports, panels) to the new dock width via the funnel.
                 self.relayout();
             }
             return Ok(());
