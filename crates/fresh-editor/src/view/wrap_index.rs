@@ -1675,6 +1675,7 @@ mod tests {
             pad_to_column: None,
             style: None,
             gravity,
+            pad_with_space: true,
         };
 
         let mut decorations = IndexDecorations {
