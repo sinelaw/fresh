@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# Fake `kubectl` for end-to-end testing of the EKS authority WITHOUT a real
+# cluster and WITHOUT root.
+#
+# The EKS transport is, at bottom, "spawn `kubectl exec … -- python3 <agent>`
+# and talk to its stdio." This shim makes that runnable locally: it implements
+# the handful of subcommands the editor + `eks-workspace` plugin invoke,
+# routing `exec` to a process on *this* machine (the "pod") and returning
+# canned success for the management verbs.
+#
+# Subcommands handled:
+#   exec [-i|-it|-t] [-n NS] [-c C] POD -- CMD ARGS…   run CMD ARGS… locally
+#   get pods … -o name                                 -> pod/<FAKE_KUBECTL_POD>
+#   auth can-i create pods/exec …                      -> "yes" (exit 0)
+#   wait …                                             -> exit 0
+#   apply …                                            -> exit 0
+#   run NAME …                                         -> exit 0
+#   version …                                          -> a stub version line
+#   (anything else)                                    -> exit 0, logged to stderr
+#
+# `--context X` (and `--context=X`) are accepted and ignored.
+#
+# Environment:
+#   FAKE_KUBECTL_POD   pod name reported by `get pods`     (default: fake-pod)
+#   FAKE_KUBECTL_NS    if "1", run `exec` commands inside an unprivileged
+#                      user+pid namespace (`unshare --user --map-root-user
+#                      --pid --fork`) for light isolation. The real filesystem
+#                      stays visible so python3/sh/LSP binaries still resolve.
+#                      Default: off (run directly), which is all the protocol
+#                      tests need.
+#   FAKE_KUBECTL_LOG   if set, append a trace of each invocation to this file.
+#
+set -euo pipefail
+
+if [ -n "${FAKE_KUBECTL_LOG:-}" ]; then
+  printf '%s\n' "kubectl $*" >>"$FAKE_KUBECTL_LOG"
+fi
+
+# --- strip leading flags to find the subcommand ---------------------------
+# Some flags can precede the subcommand (the plugin issues
+# `kubectl -n NS get pods …`); value-taking ones must consume their value so
+# it isn't mistaken for the subcommand.
+args=("$@")
+while [ "${#args[@]}" -gt 0 ]; do
+  case "${args[0]}" in
+    --context=* | --namespace=*) args=("${args[@]:1}") ;;             # "--flag=value"
+    --context | --namespace | -n | -c | --cluster | --user)          # "--flag value"
+      args=("${args[@]:2}") ;;
+    -*) args=("${args[@]:1}") ;;                                      # boolean flag
+    *) break ;;
+  esac
+done
+
+sub="${args[0]:-}"
+
+case "$sub" in
+  exec)
+    # Everything after the literal "--" is the command to run in the "pod".
+    cmd=()
+    seen=0
+    for a in "$@"; do
+      if [ "$seen" -eq 1 ]; then cmd+=("$a"); fi
+      if [ "$a" = "--" ]; then seen=1; fi
+    done
+    if [ "${#cmd[@]}" -eq 0 ]; then
+      echo "fake-kubectl: exec with no command after --" >&2
+      exit 2
+    fi
+    if [ "${FAKE_KUBECTL_NS:-0}" = "1" ] && command -v unshare >/dev/null 2>&1; then
+      # Unprivileged user + pid namespace. Keeps the real fs mounted so the
+      # agent's python3 and any spawned tools are still found.
+      exec unshare --user --map-root-user --pid --fork -- "${cmd[@]}"
+    else
+      exec "${cmd[@]}"
+    fi
+    ;;
+
+  get)
+    # Only `get pods … -o name` is used; emit one fake running pod.
+    printf 'pod/%s\n' "${FAKE_KUBECTL_POD:-fake-pod}"
+    exit 0
+    ;;
+
+  auth)
+    # `auth can-i create pods/exec` — always permitted in the fake.
+    echo "yes"
+    exit 0
+    ;;
+
+  wait | apply | delete | label | annotate)
+    exit 0
+    ;;
+
+  run)
+    # `run NAME …` — report creation; the editor then `wait`s and `exec`s.
+    name="${args[1]:-fake-pod}"
+    printf 'pod/%s created\n' "$name"
+    exit 0
+    ;;
+
+  version)
+    echo "Client Version: v0.0.0-fake"
+    exit 0
+    ;;
+
+  "")
+    echo "fake-kubectl: no subcommand" >&2
+    exit 2
+    ;;
+
+  *)
+    echo "fake-kubectl: unhandled subcommand '$sub' (returning success)" >&2
+    exit 0
+    ;;
+esac
