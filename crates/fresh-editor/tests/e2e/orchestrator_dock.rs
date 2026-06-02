@@ -910,14 +910,16 @@ fn dock_close_reflows_buffer_to_full_width() {
     );
 }
 
-/// F7: creating a worktree session in a repo with no commits (unborn
-/// HEAD) must explain what to do — `git worktree add` otherwise fails
-/// with the cryptic "fatal: invalid reference: HEAD", which the form
-/// used to surface verbatim.
+/// F7: creating a worktree session in a repo with no commits surfaces
+/// git's *real* failure verbatim, rather than a synthesized guess at the
+/// cause. An earlier version assumed any failed HEAD probe meant "no
+/// commits yet" and replaced the error with that message — but a
+/// non-zero git exit can have other causes (corrupt repo, etc.), so we
+/// always show what git actually said instead of guessing.
 #[test]
-fn dock_new_session_in_uncommitted_repo_explains_unborn_head() {
+fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     // `setup_project` runs `git init` but never commits, so HEAD is
-    // unborn — exactly the condition that produced the raw git error.
+    // unborn — `git worktree add` fails with a `fatal:` reference error.
     let (_tmp, root) = setup_project("freshrepo");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -938,11 +940,10 @@ fn dock_new_session_in_uncommitted_repo_explains_unborn_head() {
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // The friendly explanation appears; the raw git error must not.
-    h.wait_until(|h| h.screen_to_string().contains("no commits yet"))
+    // git's actual error is surfaced (a `fatal:` line from the failed
+    // `git worktree add`), not a synthesized substitute.
+    h.wait_until(|h| h.screen_to_string().contains("fatal"))
         .unwrap();
-    h.assert_screen_contains("make an initial commit");
-    h.assert_screen_not_contains("invalid reference");
 }
 
 /// F5: the dock filter must reset when focus leaves the dock, so
