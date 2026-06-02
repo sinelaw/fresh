@@ -5272,6 +5272,23 @@ editor.on("resize", () => {
 // progress bars, not just newline-terminated lines.
 // =============================================================================
 
+// `sessionState` buckets `working`/`idle` from `lastOutputAt` at render
+// time, but a re-render only happens on *new* output. So when a session
+// goes quiet nothing repaints it, and the row freezes on `working` until
+// some unrelated event forces a redraw. This schedules one refresh just
+// past the idle window so the working→idle flip happens on its own. The
+// token collapses back-to-back outputs into a single pending sweep, and
+// because it covers the *most recent* output across all sessions, the
+// sweep recomputes (and idles) every quiet session at once.
+let idleSweepToken = 0;
+function scheduleIdleSweep(): void {
+  const token = ++idleSweepToken;
+  void editor.delay(IDLE_AFTER_MS + 100).then(() => {
+    if (idleSweepToken !== token) return;
+    refreshOpenDialog();
+  });
+}
+
 editor.on("terminal_output", (payload) => {
   const s = orchestratorSessions.get(payload.window_id);
   if (s) {
@@ -5281,6 +5298,9 @@ editor.on("terminal_output", (payload) => {
     s.lastOutputAt = Date.now();
     s.state = "working";
     refreshOpenDialog();
+    // Ensure the row flips back to idle once output stops, even if no
+    // further event arrives to trigger a render.
+    scheduleIdleSweep();
   }
 });
 
