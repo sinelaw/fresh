@@ -366,6 +366,7 @@ impl Editor {
                     Some(info.key.clone())
                 };
                 crate::input::commands::Suggestion {
+                    description_spans: None,
                     text: info.name.clone(),
                     description,
                     value: Some(info.key.clone()),

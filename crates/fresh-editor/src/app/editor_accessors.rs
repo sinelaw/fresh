@@ -531,6 +531,31 @@ impl Editor {
         self.active_window
     }
 
+    /// Find the window that owns `terminal_id`, if any. Terminals live in
+    /// their owning window's `terminal_manager`, so a background session's
+    /// terminal is invisible from `active_window()` — this scans every
+    /// window. Used to attribute `TerminalOutput`/`TerminalExited` to the
+    /// right session even when it isn't the focused one.
+    pub fn window_id_of_terminal(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> Option<fresh_core::WindowId> {
+        self.windows
+            .iter()
+            .find(|(_, w)| w.terminal_manager.get(terminal_id).is_some())
+            .map(|(id, _)| *id)
+    }
+
+    /// True iff the editor-global dock is open AND currently holds
+    /// keyboard focus. Test helpers use this to wait for `Toggle Dock`'s
+    /// async focus-grab to settle before dispatching subsequent keys;
+    /// without that readiness check, keys can race into the editor
+    /// during the gap and the test silently waits for a dock response
+    /// that never comes.
+    pub fn is_dock_focused(&self) -> bool {
+        self.dock.as_ref().is_some_and(|d| d.focused)
+    }
+
     /// Allocate the next globally-unique `BufferId`. Use this in
     /// `impl Editor` handler bodies that mint new buffer ids. Handlers
     /// that have already moved to `impl Window` use
@@ -644,6 +669,67 @@ impl Editor {
         self.windows
             .get_mut(&id)
             .expect("active_window id must be a member of sessions")
+    }
+
+    /// Borrow one of the two coexisting widget-panel slots (centered
+    /// modal vs. left dock). See `PanelSlot`.
+    pub(crate) fn panel(
+        &self,
+        slot: crate::app::PanelSlot,
+    ) -> Option<&crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => self.floating_widget_panel.as_ref(),
+            crate::app::PanelSlot::Dock => self.dock.as_ref(),
+        }
+    }
+
+    /// Mutable handle to one of the two widget-panel slots.
+    pub(crate) fn panel_mut(
+        &mut self,
+        slot: crate::app::PanelSlot,
+    ) -> Option<&mut crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => self.floating_widget_panel.as_mut(),
+            crate::app::PanelSlot::Dock => self.dock.as_mut(),
+        }
+    }
+
+    /// Mutable handle to the slot *option* itself (for take/assign).
+    pub(crate) fn panel_opt_mut(
+        &mut self,
+        slot: crate::app::PanelSlot,
+    ) -> &mut Option<crate::app::FloatingWidgetState> {
+        match slot {
+            crate::app::PanelSlot::Floating => &mut self.floating_widget_panel,
+            crate::app::PanelSlot::Dock => &mut self.dock,
+        }
+    }
+
+    /// Which slot currently holds the panel with this id, if any.
+    #[cfg(feature = "plugins")]
+    pub(crate) fn slot_of_panel(&self, panel_id: u64) -> Option<crate::app::PanelSlot> {
+        if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.panel_id == panel_id)
+        {
+            Some(crate::app::PanelSlot::Floating)
+        } else if self.dock.as_ref().is_some_and(|f| f.panel_id == panel_id) {
+            Some(crate::app::PanelSlot::Dock)
+        } else {
+            None
+        }
+    }
+
+    /// Map a panel sentinel buffer-id back to its slot.
+    pub(crate) fn slot_for_panel_buffer(buffer_id: BufferId) -> Option<crate::app::PanelSlot> {
+        if buffer_id == crate::app::FLOATING_PANEL_BUFFER_ID {
+            Some(crate::app::PanelSlot::Floating)
+        } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
+            Some(crate::app::PanelSlot::Dock)
+        } else {
+            None
+        }
     }
 
     /// The active window's layout-cache (split-leaf rects, tab rects,

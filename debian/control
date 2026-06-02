@@ -1,0 +1,23 @@
+Source: fresh-editor
+Section: editors
+Priority: optional
+Maintainer: Noam Lewis <i9uqoqj7k@mozmail.com>
+Build-Depends:
+ debhelper-compat (= 12),
+ cargo,
+ rustc (>= 1.70),
+ pkg-config,
+ libclang-dev
+Standards-Version: 4.7.0
+Homepage: https://sinelaw.github.io/fresh/
+Vcs-Browser: https://github.com/sinelaw/fresh
+Vcs-Git: https://github.com/sinelaw/fresh.git
+Rules-Requires-Root: no
+
+Package: fresh-editor
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: lightweight fast terminal-based text editor with LSP and TypeScript plugins
+ Fresh is a lightweight, fast terminal-based text editor with LSP support
+ and TypeScript plugins. It provides syntax highlighting, code completion,
+ and other IDE-like features in a minimal terminal interface.

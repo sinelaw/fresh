@@ -47,6 +47,12 @@ export interface DisplayEntry {
   label: string;
   /** Secondary text (e.g., code snippet) */
   description?: string;
+  /**
+   * Styled rendering of the secondary text. When present, these spans are
+   * rendered instead of the plain `description` string — e.g. a code-line
+   * snippet with the matching word highlighted.
+   */
+  descriptionSpans?: StyledText[];
   /** Location for preview and navigation */
   location?: Location;
   /** Severity for visual styling */
@@ -942,6 +948,7 @@ export class Finder<T> {
       (entry, i) => ({
         text: entry.label,
         description: entry.description,
+        description_spans: entry.descriptionSpans,
         // The preview pane uses `value` as the authoritative
         // `path:line:col` for the result. We must not rely on parsing the
         // user-facing label, which may carry source badges (e.g. "[term]")

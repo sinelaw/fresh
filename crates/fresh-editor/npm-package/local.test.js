@@ -89,12 +89,6 @@ function runTest(VERSION) {
         const src = path.join("..", file);
         if (fs.existsSync(src)) fs.copyFileSync(src, file);
     });
-    ["plugins", "themes"].forEach(dir => {
-        const src = path.join("..", dir);
-        if (fs.existsSync(src)) {
-            fs.cpSync(src, dir, { recursive: true });
-        }
-    });
 
     console.log("[OK] Files prepared\n");
 
@@ -121,11 +115,6 @@ function runTest(VERSION) {
     ["binary.js", "binary-install.js", "install.js", "run-fresh.js"].forEach(file => {
         if (fs.existsSync(file)) fs.copyFileSync(file, path.join(tempDir, file));
     });
-    ["plugins", "themes"].forEach(dir => {
-        if (fs.existsSync(dir)) {
-            fs.cpSync(dir, path.join(tempDir, dir), { recursive: true });
-        }
-    });
     ["README.md", "LICENSE", "CHANGELOG.md"].forEach(file => {
         if (fs.existsSync(file)) fs.copyFileSync(file, path.join(tempDir, file));
     });
@@ -147,9 +136,6 @@ function runTest(VERSION) {
         console.log("\nCleaning up...");
         ["package.json", "README.md", "LICENSE", "CHANGELOG.md"].forEach(f => {
             if (fs.existsSync(f)) fs.unlinkSync(f);
-        });
-        ["plugins", "themes"].forEach(d => {
-            if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true });
         });
         if (fs.existsSync(tarball)) fs.unlinkSync(tarball);
         if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -175,9 +161,6 @@ function runTest(VERSION) {
     console.log("Cleaning up generated files in repo...");
     ["package.json", "README.md", "LICENSE", "CHANGELOG.md"].forEach(file => {
         if (fs.existsSync(file)) fs.unlinkSync(file);
-    });
-    ["plugins", "themes"].forEach(dir => {
-        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     });
     if (fs.existsSync(tarball)) fs.unlinkSync(tarball);
 

@@ -839,3 +839,77 @@ fn test_live_diff_down_arrow_traverses_deletion_block() {
          Screen at moment of Down:\n{screen_before_down}",
     );
 }
+
+/// Regression for #2177: at a degenerate effective text width (here a
+/// tiny `wrap_column`, but a narrow split pane or a wide gutter reaches
+/// the same condition), normal lines stop wrapping — but the deletion
+/// virtual line used to be force-wrapped at width 1, splitting the OLD
+/// content one character per row ("single-letter wrapping").
+///
+/// With the fix the virtual-line wrap mirrors the source-line bail-out
+/// (`available_width < 2` → don't wrap), so the OLD content stays on a
+/// single row and its distinctive substring is visible contiguously.
+/// Before the fix every grapheme sat on its own row and the substring
+/// never appeared, so the final assertion failed.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_removed_line_not_split_per_char_at_tiny_width() {
+    let repo = GitTestRepo::new();
+
+    // Committed baseline (the OLD / HEAD reference). Deliberately free of
+    // `-` characters so the only `-` that can appear on screen is the
+    // deletion gutter glyph we wait on (a `->` return arrow would be a
+    // false positive). The body line carries a distinctive token we
+    // later assert renders contiguously.
+    repo.create_file(
+        "src/note.rs",
+        "pub fn greet() {\n    println!(\"LIVEDIFF_OLD_DISTINCTIVE_TOKEN hello there friend\");\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("baseline");
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // Working tree: rewrite the body line into something with very low
+    // Sørensen–Dice similarity to the original, so the hunk splits into
+    // separate removed + added halves and the deletion emits the OLD
+    // virtual line this test inspects (a 1-token swap would render as an
+    // in-place `modified` with no virtual line). Still `-`-free.
+    repo.modify_file(
+        "src/note.rs",
+        "pub fn greet() {\n    panic!(\"COMPLETELY_DIFFERENT_REWRITE_PAYLOAD_DROPPING_SIMILARITY_FAR_BELOW_THE_THRESHOLD\");\n}\n",
+    );
+
+    // `wrap_column = 2` drives the per-row content width below the gutter
+    // (`effective_width - gutter_width < 2`) regardless of the 120-col
+    // window — the same degenerate condition a narrow split pane or a
+    // very wide gutter would reach.
+    let mut config = Config::default();
+    config.editor.line_wrap = true;
+    config.editor.wrap_column = Some(2);
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, repo.path.clone()).unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/note.rs");
+
+    // Wait for the deletion virtual line to render — its `-` gutter glyph
+    // appears in both the buggy (per-char) and fixed layouts.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '-'))
+        .unwrap();
+
+    // The OLD line was `    println!("LIVEDIFF_OLD_DISTINCTIVE_TOKEN ...")`.
+    // With per-char wrapping this run is shattered one grapheme per row
+    // and the substring never appears; with the fix the removed line
+    // renders on a single row, so the token is contiguous.
+    let screen = harness.screen_to_string();
+    assert!(
+        has_text(&screen, "LIVEDIFF_OLD_DISTINCTIVE_TOKEN"),
+        "removed line should render on a single row, not one char per \
+         row (#2177). Screen:\n{screen}"
+    );
+}

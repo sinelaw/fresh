@@ -1,7 +1,0 @@
-#!/bin/sh
-set -e
-
-# Create symlink from /usr/bin/fresh to the actual binary
-ln -sf /usr/share/fresh-editor/fresh /usr/bin/fresh
-
-#DEBHELPER#

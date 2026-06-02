@@ -366,6 +366,13 @@ type PromptSuggestion = {
 	*/
 	disabled?: boolean;
 	/**
+	* Optional styled rendering of `description`. When present, the
+	* suggestion list renders these spans (in order) in place of the
+	* plain `description` text — letting a plugin highlight a portion
+	* of the row, e.g. the symbol word inside a code-line snippet.
+	*/
+	description_spans?: Array<StyledText>;
+	/**
 	* Optional keyboard shortcut
 	*/
 	keybinding?: string;
@@ -457,14 +464,19 @@ type WindowInfo = {
 	*/
 	root: string;
 	/**
-	* Project this session belongs to — the canonical repo
-	* root (or arbitrary directory) the user pointed the
-	* new-session form at. `null` for legacy sessions that
-	* predate the Project Path field. The Orchestrator Open
-	* dialog filters by this so the "this project's sessions"
-	* view is one keystroke away from the all-projects view.
+	* Project this session belongs to — the canonical repo root
+	* (or arbitrary directory) the user pointed the new-session
+	* form at. For sessions without an explicit project (legacy
+	* sessions, the launch session, sessions created outside the
+	* orchestrator's new-session form) this equals `root` — the
+	* host normalises at the API boundary so plugins never have
+	* to deal with `null`/`undefined`/`""` ambiguity (`??` only
+	* falls through on `null`, but the orchestrator's
+	* `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
+	* which then becomes a poisoned lex sort key — observed as
+	* the Windows-only dock reorder).
 	*/
-	project_path?: string | null;
+	project_path: string;
 	/**
 	* `true` when the session shares its working tree with
 	* other sessions (worktree-creation was off at session
@@ -1744,6 +1756,20 @@ interface EditorAPI {
 	*/
 	getBufferLineCount(): Promise<number | null>;
 	/**
+	* Cursor info for the active composite (side-by-side diff) buffer.
+	* 
+	* Resolves with `null` when the active buffer is not a composite
+	* buffer, otherwise an object describing the focused pane and the
+	* 0-indexed source line shown in each pane on the cursor's aligned
+	* row (`null` where a pane has no content on that row). Lets a plugin
+	* map a side-by-side cursor back to a concrete file version + line.
+	*/
+	getCompositeCursorInfo(): Promise<{
+		focusedPane: number;
+		paneCount: number;
+		lines: Array<number | null>;
+	} | null>;
+	/**
 	* Scroll a split to center a specific line in the viewport
 	* Line is 0-indexed (0 = first line)
 	*/
@@ -2290,9 +2316,7 @@ interface EditorAPI {
 	*/
 	clearOverlaysInRange(bufferId: number, start: number, end: number): boolean;
 	/**
-	* Clear overlays in a single namespace that overlap with a byte range.
-	* Unlike clearOverlaysInRange, overlays in other namespaces (e.g.
-	* editor-owned LSP diagnostics) are left untouched.
+	* Clear overlays in a namespace that overlap with a byte range
 	*/
 	clearOverlaysInRangeForNamespace(bufferId: number, namespace: string, start: number, end: number): boolean;
 	/**
@@ -2478,7 +2502,7 @@ interface EditorAPI {
 	* 
 	* Uses typed Vec<Suggestion> - serde validates field names at runtime
 	*/
-	setPromptSuggestions(suggestions: PromptSuggestion[], selectedIndex?: number): boolean;
+	setPromptSuggestions(suggestions: PromptSuggestion[], selectedIndex?: number | null): boolean;
 	setPromptInputSync(sync: boolean): boolean;
 	/**
 	* Set the title shown in the floating-overlay prompt's frame
@@ -2571,6 +2595,12 @@ interface EditorAPI {
 	* `activeWindow()` after.
 	*/
 	setActiveWindow(id: number): boolean;
+	/**
+	* Switch the active window with a directional wipe on the
+	* incoming content. `from_edge`: "top" | "bottom" | "left" |
+	* "right". See `PluginCommand::SetActiveWindowAnimated`.
+	*/
+	setActiveWindowAnimated(id: number, fromEdge: string): boolean;
 	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.
@@ -2863,7 +2893,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean): boolean;
 	/**
 	* Replace the spec of the currently-mounted floating widget panel.
 	*/
@@ -2872,6 +2902,12 @@ interface EditorAPI {
 	* Tear down the floating widget panel.
 	*/
 	unmountFloatingWidget(panelId: number): boolean;
+	/**
+	* Control a mounted floating panel's placement / focus without
+	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
+	* "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+	*/
+	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
 	* Spawn a process (async, returns request_id)
 	* 
@@ -3333,12 +3369,18 @@ interface HookEventMap {
 		}[];
 	};
 	// ── PTY terminals (see crates/fresh-core/src/hooks.rs) ───────────────────
+	// `window_id` is the editor window owning the terminal (== session id),
+	// so a plugin can attribute output to a session: output from ANY terminal
+	// in the window counts, and it fires on every PTY read (in-place redraws
+	// and carriage-return progress bars register, not just newlines).
 	terminal_output: {
 		terminal_id: number;
+		window_id: number;
 		last_line: string;
 	};
 	terminal_exit: {
 		terminal_id: number;
+		window_id: number;
 		exit_code: number | null;
 	};
 	// ── filesystem watching (watchPath plugin API) ────────────────────────────

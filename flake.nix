@@ -103,13 +103,13 @@
             // {
               inherit cargoArtifacts;
 
-              # Include runtime assets
+              # Include runtime assets that aren't already embedded in the binary.
+              # Plugins (embed-plugins feature) and themes (build.rs BUILTIN_THEMES)
+              # are compiled in, so they don't need a disk copy.
               postInstall = ''
                 mkdir -p $out/share/fresh-editor
                 cp -r crates/fresh-editor/queries $out/share/fresh-editor/
-                cp -r crates/fresh-editor/themes $out/share/fresh-editor/
                 cp -r crates/fresh-editor/keymaps $out/share/fresh-editor/
-                cp -r crates/fresh-editor/plugins $out/share/fresh-editor/
               '';
 
               meta.mainProgram = "fresh";

@@ -195,13 +195,12 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         || scope_lower.starts_with("entity.name.trait")
         || scope_lower.starts_with("support.type")
         || scope_lower.starts_with("support.class")
-        || scope_lower.starts_with("storage.type")
     {
         return Some(HighlightCategory::Type);
     }
 
-    // Storage modifiers (pub, static, const as keywords)
-    if scope_lower.starts_with("storage.modifier") {
+    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
+    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
     }
 
@@ -2005,6 +2004,22 @@ mod tests {
         assert_eq!(
             scope_to_category("punctuation.accessor"),
             Some(HighlightCategory::PunctuationDelimiter)
+        );
+    }
+
+    #[test]
+    fn test_storage_type_keyword() {
+        assert_eq!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("storage.type.class"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_ne!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Type)
         );
     }
 

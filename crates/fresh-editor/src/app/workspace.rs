@@ -1007,6 +1007,7 @@ impl crate::app::window::Window {
                             self.resources.config.editor.wrap_indent,
                             self.resolve_wrap_column_for_buffer(second_buffer_id),
                             self.resources.config.editor.rulers.clone(),
+                            self.resources.config.editor.scroll_offset,
                         );
                         self.buffers
                             .split_view_states_mut()

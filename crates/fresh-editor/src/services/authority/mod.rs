@@ -22,8 +22,10 @@
 //! - `Authority::local(trust, env)` — host filesystem + host spawner + host
 //!   shell. Always available; the editor boots with this. Trust + env are
 //!   mandatory shared handles.
-//! - `Authority::ssh(filesystem, spawner, long_running, trust, env)` — used by
-//!   the `fresh user@host:path` startup flow.
+//! - `Authority::ssh(filesystem, spawner, long_running, params, remote_dir,
+//!   trust, env)` — used by the `fresh user@host:path` startup flow. `params`
+//!   and `remote_dir` build the `ssh -t …` terminal wrapper so the integrated
+//!   terminal opens on the remote host.
 //! - `Authority::from_plugin_payload(payload, trust, env)` — built from the
 //!   `editor.setAuthority(...)` plugin op. The payload is a tagged shape
 //!   (filesystem kind + spawner kind + terminal wrapper + label); it stays
@@ -37,7 +39,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
+    build_ssh_terminal_args, ConnectionParams, LocalLongRunningSpawner, LocalProcessSpawner,
+    LongRunningSpawner, ProcessSpawner,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -120,6 +123,22 @@ impl TerminalWrapper {
             command: crate::services::terminal::manager::detect_shell(),
             args: Vec::new(),
             manages_cwd: false,
+        }
+    }
+
+    /// Re-parent the integrated terminal onto the remote host over SSH:
+    /// `ssh -t … user@host 'cd <dir>; exec $SHELL -l'`. Like the
+    /// `docker exec -w …` wrapper, this pins cwd through its own args
+    /// (`cd <dir>`), so `manages_cwd` is true and the terminal manager
+    /// must not call `CommandBuilder::cwd()` with a remote path the local
+    /// PTY can't honour. Without this, SSH authorities would fall back to
+    /// the local host shell and the embedded terminal would run on the
+    /// *local* machine instead of the remote host.
+    pub fn ssh(params: &ConnectionParams, remote_dir: Option<&str>) -> Self {
+        Self {
+            command: "ssh".to_string(),
+            args: build_ssh_terminal_args(params, remote_dir),
+            manages_cwd: true,
         }
     }
 
@@ -311,10 +330,18 @@ impl Authority {
     /// ([`RemoteLongRunningSpawner`](crate::services::remote::RemoteLongRunningSpawner)),
     /// so LSP servers run on the remote host rather than the host-local
     /// fallback that earlier versions used.
+    ///
+    /// `params` / `remote_dir` build the integrated-terminal wrapper so the
+    /// embedded terminal opens a shell *on the remote host* (`ssh -t …`)
+    /// rooted at the workspace, matching where the filesystem and spawners
+    /// already act. Earlier versions hardcoded the local host shell here,
+    /// so terminals silently ran on the local machine.
     pub fn ssh(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
         long_running_spawner: Arc<dyn LongRunningSpawner>,
+        params: &ConnectionParams,
+        remote_dir: Option<&str>,
         trust: Arc<WorkspaceTrust>,
         env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Self {
@@ -322,7 +349,7 @@ impl Authority {
             filesystem,
             process_spawner,
             long_running_spawner,
-            terminal_wrapper: TerminalWrapper::host_shell(),
+            terminal_wrapper: TerminalWrapper::ssh(params, remote_dir),
             display_label: String::new(),
             path_translation: None,
             workspace_trust: trust,

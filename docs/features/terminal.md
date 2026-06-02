@@ -49,7 +49,7 @@ By default the integrated terminal runs `$SHELL` (or the platform default if `$S
 }
 ```
 
-The override applies to host-shell terminals; plugin-managed wrappers (e.g. `docker exec` when attached to a devcontainer) keep their own spawn contract.
+The override applies to host-shell terminals; wrappers that re-parent the shell keep their own spawn contract and ignore `terminal.shell`. This includes `docker exec` when attached to a devcontainer and the `ssh -t` wrapper used when [editing a remote over SSH](./ssh.md) — in those cases the terminal opens the shell *inside the container / on the remote host*, rooted at the workspace.
 
 ## Tips and Quirks
 

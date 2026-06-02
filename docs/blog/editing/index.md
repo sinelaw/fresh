@@ -1,5 +1,7 @@
 ---
 title: "Editing Features"
+date: 2026-02-11
+description: "Multi-cursor, search & replace, move lines, block selection, sort, case conversion, and more."
 outline: false
 ---
 

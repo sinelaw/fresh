@@ -82,6 +82,7 @@ impl Editor {
             Some(enabled_names.join(", "))
         };
         suggestions.push(Suggestion {
+            description_spans: None,
             text: format!("{} (all enabled)", language),
             description: all_description,
             value: Some(language.clone()),
@@ -98,6 +99,7 @@ impl Editor {
             let name = config.display_name();
             let status = if config.enabled { "" } else { " [disabled]" };
             suggestions.push(Suggestion {
+                description_spans: None,
                 text: format!("{}/{}{}", language, name, status),
                 description: Some(format!("Command: {}", config.command)),
                 value: Some(format!("{}/{}", language, name)),
@@ -294,6 +296,7 @@ impl Editor {
                 for name in &server_names {
                     let description = Some(format!("Server: {}", name));
                     suggestions.push(Suggestion {
+                        description_spans: None,
                         text: format!("{}/{}", lang, name),
                         description,
                         // Value carries "language/server_name" so the handler
@@ -314,6 +317,7 @@ impl Editor {
                     .map(|c| format!("Command: {}", c.command));
 
                 suggestions.push(Suggestion {
+                    description_spans: None,
                     text: lang.clone(),
                     description,
                     value: Some(lang.clone()),

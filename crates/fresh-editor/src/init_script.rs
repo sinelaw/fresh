@@ -570,6 +570,19 @@ pub enum CheckSeverity {
 /// (`init/unconditional-preference`, `init/unconditional-plugin-load`)
 /// are deliberately not implemented here — they're strict-mode concerns
 /// that can grow on top of this foundation.
+#[cfg(not(feature = "plugins"))]
+pub fn check(config_dir: &Path) -> CheckReport {
+    // Without `plugins` there is no QuickJS runtime to execute `init.ts`, so
+    // there is nothing to syntax-check and `oxc` is not compiled in. Report a
+    // clean result so callers behave as if the file is absent/valid.
+    CheckReport {
+        ok: true,
+        diagnostics: Vec::new(),
+        path: init_ts_path(config_dir),
+    }
+}
+
+#[cfg(feature = "plugins")]
 pub fn check(config_dir: &Path) -> CheckReport {
     use oxc_allocator::Allocator;
     use oxc_parser::Parser;
@@ -631,6 +644,7 @@ pub fn check(config_dir: &Path) -> CheckReport {
 }
 
 /// Convert a byte offset into a (line, column) pair, 1-based, for display.
+#[cfg(feature = "plugins")]
 fn line_col(source: &str, offset: usize) -> (u32, u32) {
     let clipped = source.get(..offset).unwrap_or(source);
     let line = 1 + clipped.bytes().filter(|&b| b == b'\n').count();

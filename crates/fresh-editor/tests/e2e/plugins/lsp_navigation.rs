@@ -240,6 +240,141 @@ fn test_lsp_navigation_no_match_fallback() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Confirming a result jumps the cursor to the *exact* position of the
+/// symbol name (including column), not the start of the declaration line.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_jumps_to_precise_column() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+    open_symbol_navigation(&mut harness)?;
+
+    // Default selection is MyClass (index 0); step down to myMethod (index 2).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        selected_suggestion_text(h).is_some_and(|t| t.contains("[method] myMethod"))
+    })?;
+
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.process_async_and_render()?;
+
+    // `myMethod` is indented two spaces, so its name starts at column 3. The
+    // status bar must show that column — the cursor lands on the name, not at
+    // column 1 (the start of the declaration line). Observing the rendered
+    // column proves the precise-column jump.
+    harness.wait_until(|h| h.screen_to_string().contains("Col 3"))?;
+    assert!(
+        harness.screen_to_string().contains("Col 3"),
+        "Enter should jump to the symbol name's column (Col 3). Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    Ok(())
+}
+
+/// Preview is non-destructive: browsing the list (and cancelling) never
+/// moves the cursor — only confirming with Enter does.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_cancel_restores_cursor() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Move to a known starting position: line 3 (`    return true;`).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 3, Col 1"))?;
+
+    open_symbol_navigation(&mut harness)?;
+
+    // Browse the list (preview moves the cursor so each symbol scrolls into
+    // view) — the status bar tracks the previewed symbol, not line 3.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.process_async_and_render()?;
+
+    // Cancel — the cursor (and status bar) must return to the start position.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 3, Col 1"))?;
+    assert!(
+        harness.screen_to_string().contains("Ln 3, Col 1"),
+        "Esc should restore the original cursor position (Ln 3, Col 1). Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    Ok(())
+}
+
+/// Each result row shows a snippet of the symbol's source line. The method
+/// signature (with its argument list) appears only in the snippet, never in
+/// the `[kind] name` label — so finding it proves the snippet is rendered.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_shows_line_snippet() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+    open_symbol_navigation(&mut harness)?;
+    harness.render()?;
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("myMethod(a:"),
+        "Results list should show the source-line snippet next to the symbol. Screen:\n{}",
+        screen
+    );
+
+    Ok(())
+}
+
+/// Moving through the list paints an overlay marker on the current symbol's
+/// name in the buffer.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_highlights_symbol_overlay() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+    open_symbol_navigation(&mut harness)?;
+
+    // Move to myMethod so its name is previewed (and overlaid) in the buffer.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        selected_suggestion_text(h).is_some_and(|t| t.contains("[method] myMethod"))
+    })?;
+    harness.process_async_and_render()?;
+
+    // The high-contrast theme (Config default) paints search matches — which
+    // the overlay reuses — with bg [255, 255, 0].
+    let match_bg = Color::Rgb(255, 255, 0);
+    let row = buffer_overlay_row_text(&harness, match_bg)
+        .expect("an overlay marker should be painted on the current symbol in the buffer");
+    assert!(
+        row.contains("myMethod"),
+        "overlay should mark the myMethod name in the buffer, got row: {row}"
+    );
+
+    Ok(())
+}
+
+/// Scan the buffer region for a cell painted with `match_bg` and return that
+/// row's text. We skip the menu/tab rows (y < 2 — the active tab is also
+/// yellow) and the rightmost column (x >= 90 — a render edge artifact), and
+/// stay in the top half of the screen, above the bottom-anchored finder
+/// popup whose snippet highlight reuses the same colour.
+fn buffer_overlay_row_text(harness: &EditorTestHarness, match_bg: Color) -> Option<String> {
+    let screen = harness.screen_to_string();
+    let buffer_rows = (screen.lines().count() / 2) as u16;
+
+    for y in 2..buffer_rows {
+        for x in 0..90u16 {
+            if harness
+                .get_cell_style(x, y)
+                .is_some_and(|s| s.bg == Some(match_bg))
+            {
+                return Some(harness.screen_row_text(y));
+            }
+        }
+    }
+    None
+}
+
 /// Scan the screen for a cell styled with `suggestion_selected_bg`
 /// (the visual highlight colour for the currently-selected suggestion)
 /// and return the cleaned text of the row.

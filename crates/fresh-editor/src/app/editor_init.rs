@@ -260,6 +260,7 @@ impl Editor {
             plugin_global_state: parts.plugin_global_state,
             warning_log: None,
             status_log_path: None,
+            #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             last_path_change_for_test: None,
             last_watch_response_for_test: None,
@@ -275,6 +276,9 @@ impl Editor {
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
+            dock: None,
+            dock_width: None,
+            dock_resizing: false,
         }
     }
 
@@ -686,6 +690,7 @@ impl Editor {
             config.editor.wrap_indent,
             config.editor.wrap_column,
             config.editor.rulers.clone(),
+            config.editor.scroll_offset,
         );
         split_view_states.insert(initial_split_id, initial_view_state);
 
@@ -773,10 +778,14 @@ impl Editor {
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
-        // 2. From embedded plugins (for cargo-binstall and `cargo run`,
-        //    when embed-plugins feature is enabled)
-        // 3. User plugins directory (~/.config/fresh/plugins)
-        // 4. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
+        // 1. Embedded plugins (compiled into the binary via the
+        //    embed-plugins feature, default on for every shipped build).
+        // 2. User plugins directory (~/.config/fresh/plugins).
+        // 3. Package manager installed plugins (~/.config/fresh/plugins/packages/*).
+        // No working-directory or exe-dir lookup: a user project with a folder
+        // named `plugins/` (a Vite/Rollup project, a Hugo site) is not a Fresh
+        // plugin source, and packagers no longer ship plugins/ alongside the
+        // binary now that the bundled set is fully embedded.
         // Plugin schemas populated lazily by plugins calling
         // `editor.definePluginConfig(...)` at load time. See
         // `handle_register_plugin_config_schema`.
@@ -784,26 +793,9 @@ impl Editor {
         if plugin_manager.read().unwrap().is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
-            // Check next to executable first (for cargo-dist installations)
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(exe_dir) = exe_path.parent() {
-                    let exe_plugin_dir = exe_dir.join("plugins");
-                    if exe_plugin_dir.exists() {
-                        plugin_dirs.push(exe_plugin_dir);
-                    }
-                }
-            }
-
-            // No working-directory `plugins/` check: a user project with a
-            // folder named `plugins/` (e.g. a Vite/Rollup project, a Hugo
-            // site) is not a Fresh plugin source. Bundled plugins for the
-            // dev workflow come in via the embedded fallback below; user
-            // plugins live under `<config_dir>/plugins/`. See issue #1722.
-
-            // If no disk plugins found, try embedded plugins (cargo-binstall builds).
-            // `enable_embedded_plugins` lets tests opt out so they get exactly
-            // the plugin set they pre-populated under `<config_dir>/plugins/`,
-            // without the bundled set leaking in.
+            // Embedded plugins. `enable_embedded_plugins` lets tests opt out so
+            // they get exactly the plugin set they pre-populated under
+            // `<config_dir>/plugins/`, without the bundled set leaking in.
             #[cfg(feature = "embed-plugins")]
             if enable_embedded_plugins && plugin_dirs.is_empty() {
                 if let Some(embedded_dir) =

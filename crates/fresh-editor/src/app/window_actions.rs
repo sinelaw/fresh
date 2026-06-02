@@ -284,6 +284,32 @@ impl crate::app::Editor {
 
         let previous_id = self.active_window;
 
+        // A plugin-defined editor mode (`editor.setEditorMode`) tied to a
+        // mounted floating widget panel — the Orchestrator picker
+        // (`orchestrator-open`) or new-session form (`orchestrator-new-form`)
+        // — is transient UI state that belongs to the *panel*, not to the
+        // window it was opened over. `setEditorMode` writes to whatever
+        // window is active when the plugin calls it, so a plugin that
+        // switches the active window while its panel is still mounted
+        // (the orchestrator "dive": `setActiveWindow(target)` first, then
+        // `closeOpenDialog()` which runs `setEditorMode(null)`) lands the
+        // clear on the *incoming* window and leaves the *outgoing* one
+        // stuck in the panel's mode. That stuck mode stays masked while the
+        // window sits in terminal mode, then silently swallows every
+        // printable key the moment the user leaves terminal mode (e.g.
+        // opens a file via quick-open) — the buffer ignores all keyboard
+        // input until the user switches sessions back and forth (which
+        // re-dives into the window and finally clears it). Clear any
+        // panel-scoped mode on the outgoing window here so it can never
+        // outlive the switch. vi-mode and other persistent per-window modes
+        // are unaffected: they never have a floating panel mounted during a
+        // window switch.
+        if self.floating_widget_panel.is_some() {
+            if let Some(win) = self.windows.get_mut(&previous_id) {
+                win.editor_mode = None;
+            }
+        }
+
         // Lazy materialization: if this window's saved workspace hasn't
         // been restored yet, restore it now (before seeding) so the
         // dive lands on real content rather than an empty buffer.
@@ -343,6 +369,52 @@ impl crate::app::Editor {
         if let Some(win) = self.windows.get_mut(&id) {
             win.resize_visible_terminals();
         }
+    }
+
+    /// Switch the active window and play a directional wipe over the
+    /// editor content as the incoming window appears. The editor
+    /// content geometry is layout-driven (identical for any session),
+    /// so the outgoing window's last content rect is the right area to
+    /// animate. `capture_before_all` snapshots the previous frame (the
+    /// outgoing window) and `SlideIn` slides the new content in over it.
+    pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
+        let animate = self.active_window != id
+            && self.windows.contains_key(&id)
+            && self.config().editor.animations;
+        // Wipe the ENTIRE window — menu bar, explorer, tabs, splits, and
+        // status bar — i.e. everything to the right of the dock. That's
+        // the chrome area from the dock split, not just the buffer's
+        // content rect. The dock column itself stays put.
+        let full = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.terminal_width,
+            height: self.terminal_height,
+        };
+        let (_dock, area) = self.compute_dock_split(full);
+        self.set_active_window(id);
+        if !animate {
+            return;
+        }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        use crate::view::animation::{AnimationKind, Edge};
+        let from = match from_edge {
+            "top" => Edge::Top,
+            "bottom" => Edge::Bottom,
+            "left" => Edge::Left,
+            "right" => Edge::Right,
+            _ => Edge::Bottom,
+        };
+        self.active_window_mut().animations.start(
+            area,
+            AnimationKind::SlideIn {
+                from,
+                duration: std::time::Duration::from_millis(180),
+                delay: std::time::Duration::ZERO,
+            },
+        );
     }
 
     /// Cycle to the next open window in the workspace.

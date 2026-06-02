@@ -263,13 +263,14 @@ fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
         CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
-        DynamicRegistrationClientCapabilities, FoldingRangeCapability,
-        FoldingRangeClientCapabilities, FoldingRangeKind, FoldingRangeKindCapability,
-        GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
-        InlayHintClientCapabilities, MarkupKind, PublishDiagnosticsClientCapabilities,
-        RenameClientCapabilities, SignatureHelpClientCapabilities, TagSupport,
-        TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
-        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+        DiagnosticWorkspaceClientCapabilities, DynamicRegistrationClientCapabilities,
+        FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
+        FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
+        HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
+        PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
+        SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
+        TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
+        WorkspaceEditClientCapabilities,
     };
 
     ClientCapabilities {
@@ -284,6 +285,22 @@ fn create_client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             workspace_folders: Some(true),
+            // Advertise support for server-initiated `workspace/configuration`
+            // pulls. Servers like pyright gate features on this: without it
+            // they never ask the client for settings and silently fall back
+            // to their defaults — e.g. pyright's inlay hints default OFF, so
+            // no type/parameter hints are ever produced. We answer these
+            // pulls in `resolve_workspace_configuration`, sourcing the
+            // requested section from each server's `initialization_options`.
+            configuration: Some(true),
+            // Accept server-driven diagnostic refreshes. We handle
+            // `workspace/diagnostic/refresh` (re-pulling diagnostics for all
+            // open docs), but servers only send it when the client advertises
+            // refresh support — e.g. rust-analyzer fires it once indexing
+            // finishes, which is when the first real diagnostics exist.
+            diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {

@@ -144,8 +144,13 @@ pub fn render_settings(
     // Calculate modal size (90% of screen width, 90% height to fill most of available space)
     let modal_width = (area.width * 90 / 100).min(160);
     let modal_height = area.height * 90 / 100;
-    let modal_x = (area.width.saturating_sub(modal_width)) / 2;
-    let modal_y = (area.height.saturating_sub(modal_height)) / 2;
+    // Offsets must be ABSOLUTE — `area.x` / `area.y` are nonzero when
+    // `area` is the chrome region right of the dock (or a bottom-anchored
+    // split). Centring with bare `area.width / 2` placed the modal at the
+    // FRAME origin, where the dock then over-drew its left edge — hiding
+    // the title bar and clipping the rounded top-left corner.
+    let modal_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
+    let modal_y = area.y + (area.height.saturating_sub(modal_height)) / 2;
 
     let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height);
 

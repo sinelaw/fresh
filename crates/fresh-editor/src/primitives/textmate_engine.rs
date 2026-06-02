@@ -611,7 +611,6 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
 
     // Types
     if scope_lower.starts_with("entity.name.type")
-        || scope_lower.starts_with("storage.type")
         || scope_lower.starts_with("support.type")
         || scope_lower.starts_with("entity.name.class")
     {
@@ -637,8 +636,8 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         return Some(HighlightCategory::Variable);
     }
 
-    // Storage modifiers (pub, static, const, etc.)
-    if scope_lower.starts_with("storage.modifier") {
+    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
+    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
     }
 
@@ -683,6 +682,18 @@ mod tests {
         assert_eq!(
             scope_to_category("variable.parameter"),
             Some(HighlightCategory::Variable)
+        );
+        assert_eq!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("storage.type.class"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_ne!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Type)
         );
     }
 

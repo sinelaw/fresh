@@ -56,6 +56,13 @@ pub struct Suggestion {
     #[serde(default)]
     #[ts(optional)]
     pub disabled: Option<bool>,
+    /// Optional styled rendering of `description`. When present, the
+    /// suggestion list renders these spans (in order) in place of the
+    /// plain `description` text — letting a plugin highlight a portion
+    /// of the row, e.g. the symbol word inside a code-line snippet.
+    #[serde(default)]
+    #[ts(optional)]
+    pub description_spans: Option<Vec<crate::api::StyledText>>,
     /// Optional keyboard shortcut
     #[serde(default)]
     #[ts(optional)]
@@ -84,6 +91,7 @@ impl Suggestion {
             description: None,
             value: None,
             disabled: None,
+            description_spans: None,
             keybinding: None,
             source: None,
         }

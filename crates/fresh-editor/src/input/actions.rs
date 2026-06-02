@@ -2843,6 +2843,7 @@ pub fn action_to_events(
         | Action::ToggleHorizontalScrollbar
         | Action::FocusFileExplorer
         | Action::FocusEditor
+        | Action::ToggleDockFocus
         | Action::SetBackground
         | Action::SetBackgroundBlend
         | Action::FileExplorerUp

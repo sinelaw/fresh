@@ -49,8 +49,11 @@ mod mouse_input;
 mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;
+mod overlay;
 mod path_utils;
+#[cfg(feature = "plugins")]
 mod plugin_commands;
+#[cfg(feature = "plugins")]
 mod plugin_dispatch;
 mod popup_actions;
 mod popup_dialogs;
@@ -84,6 +87,7 @@ mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
 pub mod warning_domains;
+mod widget_runtime;
 pub mod window;
 mod window_actions;
 pub mod window_resources;
@@ -795,6 +799,7 @@ pub struct Editor {
     /// the underlying notify backend spawns a thread, so it's
     /// nicer to defer until the first `watchPath` call). See
     /// `services/file_watcher.rs`.
+    #[cfg(feature = "plugins")]
     file_watcher_manager: crate::services::file_watcher::FileWatcherManager,
 
     /// Test-only sink for `path_changed` plugin events. Captured
@@ -933,7 +938,26 @@ pub struct Editor {
     /// overlay is modal-ish (input is routed to it) and stacking
     /// floaters would obscure each other without a usable focus
     /// model. Mounting a second one replaces the first.
+    ///
+    /// This is the **centered modal** slot (`PanelSlot::Floating`): the
+    /// orchestrator picker, the new-session form, and other plugin
+    /// modals. The persistent left dock lives in a separate slot
+    /// (`dock`) so the two can coexist (a modal opens *over* the editor
+    /// while the dock stays visible). Routing is by `PanelSlot`.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
+
+    /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
+    /// shown. Independent of `floating_widget_panel` so the dock persists
+    /// while a centered modal is open. Always rendered as a `LeftDock`.
+    pub(crate) dock: Option<FloatingWidgetState>,
+
+    /// Persisted width (columns) of the orchestrator left dock after the
+    /// user drags its right border. `None` until first resized; when set,
+    /// `FloatingPanelControl{op:"dock"}` restores this instead of the
+    /// plugin's default so the width survives toggling the dock off/on.
+    pub(crate) dock_width: Option<u16>,
+    /// True while the user is dragging the dock's right border to resize.
+    pub(crate) dock_resizing: bool,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the
@@ -943,17 +967,69 @@ pub struct Editor {
 /// rect instead.
 pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 
+/// Sentinel `BufferId` for the editor-global **dock** panel — distinct
+/// from `FLOATING_PANEL_BUFFER_ID` so the dock and a centered modal can
+/// both live in the widget registry (and be hit-tested) at the same
+/// time. See `Editor::dock` and `PanelSlot`.
+pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
+
+/// Selects which of the two coexisting widget-panel slots an operation
+/// targets: the centered modal overlay (`Floating`, the picker /
+/// new-session form / plugin modals) or the persistent editor-global
+/// left `Dock`. They occupy disjoint screen regions and render together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelSlot {
+    Floating,
+    Dock,
+}
+
+impl PanelSlot {
+    pub(crate) fn buffer_id(self) -> BufferId {
+        match self {
+            PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
+            PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+        }
+    }
+}
+
 /// A widget panel rendered as a centered floating overlay rather
 /// than into a virtual buffer. The panel still lives in the shared
 /// `widget_registry` (so the existing reconcile / widget-command /
 /// mutate paths apply), but its rendered entries are painted into
 /// the overlay rect at draw time instead of being written into a
 /// virtual buffer.
+/// Where a floating widget panel is anchored on screen.
+//
+// The variants are only *constructed* by the plugin-gated floating-panel
+// handlers, but they are matched throughout the shared widget runtime and
+// render/input code, so the enum itself stays un-gated. Suppress the
+// "never constructed" lint in plugin-less builds.
+#[cfg_attr(not(any(feature = "plugins", test)), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelPlacement {
+    /// Centered modal overlay sized by `width_pct`/`height_pct`
+    /// (the historical default; dims the background, captures keys).
+    Centered,
+    /// Full-height column pinned to the left of the entire editor
+    /// chrome (left of the menu bar, splits, and status bar). The
+    /// chrome is laid out in the remaining width; no background
+    /// dimming. Non-modal — see `FloatingWidgetState::focused`.
+    LeftDock { width_cols: u16 },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FloatingWidgetState {
     pub panel_id: crate::widgets::PanelId,
     pub width_pct: u8,
     pub height_pct: u8,
+    /// On-screen anchor. Defaults to `Centered` on mount; a plugin
+    /// re-anchors to a dock via `FloatingPanelControl{op:"dock"}`.
+    pub placement: PanelPlacement,
+    /// Whether keys route to this panel. Always true for `Centered`
+    /// (modal). For `LeftDock` a plugin toggles this via
+    /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
+    /// underneath stays keyboard-usable while the dock is visible.
+    pub focused: bool,
     /// Most-recently rendered entries. Refreshed on every spec /
     /// command / mutate; painted into the overlay rect at draw
     /// time.
@@ -1343,6 +1419,7 @@ impl Editor {
 /// - Special keys: "RET", "TAB", "ESC", "SPC", "DEL", "BS"
 /// - Modifiers: "C-" (Control), "M-" (Alt/Meta), "S-" (Shift)
 /// - Combinations: "C-n", "M-x", "C-M-s", etc.
+#[cfg(any(feature = "plugins", test))]
 fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -1471,6 +1548,91 @@ mod tests {
 
         assert_eq!(editor.buffers().len(), 1);
         assert!(!editor.should_quit());
+    }
+
+    fn default_test_editor() -> Editor {
+        let (dir_context, temp) = test_dir_context();
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        Editor::new(
+            Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap()
+    }
+
+    fn test_panel(placement: PanelPlacement, focused: bool) -> FloatingWidgetState {
+        FloatingWidgetState {
+            panel_id: 1,
+            width_pct: 50,
+            height_pct: 50,
+            placement,
+            focused,
+            entries: Vec::new(),
+            focus_cursor: None,
+            embeds: Vec::new(),
+            overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
+            last_inner_rect: None,
+        }
+    }
+
+    /// The overlay layer stack always terminates in the editor base layer,
+    /// which owns the keyboard, so a fresh editor resolves to its active
+    /// window's context.
+    #[test]
+    fn overlay_stack_base_layer_owns_keyboard() {
+        use crate::app::overlay::LayerKind;
+        use crate::input::keybindings::KeyContext;
+
+        let editor = default_test_editor();
+        let layers = editor.overlay_layers();
+        let base = layers.last().expect("at least the base layer");
+        assert_eq!(base.kind, LayerKind::Editor);
+        assert!(base.owns_keyboard);
+        assert!(!base.blocks_terminal_input);
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// P1 invariant preserved through the P2 layer walk: a *focused* dock
+    /// owns the keyboard (`KeyContext::Dock`); once blurred it falls
+    /// through to the editor underneath so the buffer stays usable.
+    #[test]
+    fn focused_dock_owns_keyboard_blurred_falls_through() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+
+        editor.dock.as_mut().unwrap().focused = false;
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// A focused centered modal outranks a focused dock — when the
+    /// new-session form opens on top of the dock, the modal owns input.
+    #[test]
+    fn centered_modal_outranks_dock() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
+        // The centered modal resolves as Normal (not Dock).
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
     }
 
     #[test]

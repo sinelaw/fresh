@@ -982,12 +982,14 @@ impl EditorServer {
         }
 
         // Process control messages
-        eprintln!(
-            "[server] Processing {} control messages",
-            control_messages.len()
-        );
+        if !control_messages.is_empty() {
+            tracing::debug!(
+                "[server] Processing {} control messages",
+                control_messages.len()
+            );
+        }
         for (idx, msg) in control_messages {
-            eprintln!("[server] Control message from client {}: {:?}", idx, msg);
+            tracing::debug!("[server] Control message from client {}: {:?}", idx, msg);
             // Always process Quit, even from disconnected clients
             if let ClientControl::Quit = msg {
                 tracing::info!("Client requested quit, shutting down");
@@ -995,8 +997,9 @@ impl EditorServer {
                 continue;
             }
 
-            // Always process OpenFiles - it's a one-shot command from clients that disconnect immediately
-            if let ClientControl::OpenFiles { .. } = msg {
+            // Always process OpenFiles / OpenWindow - they're one-shot
+            // commands from clients that disconnect immediately
+            if let ClientControl::OpenFiles { .. } | ClientControl::OpenWindow { .. } = msg {
                 // Fall through to process it
             } else if disconnected.contains(&idx) {
                 // Skip other messages from disconnected clients
@@ -1074,6 +1077,25 @@ impl EditorServer {
                         }
 
                         resize_occurred = true; // Force re-render
+                    }
+                }
+                ClientControl::OpenWindow { path } => {
+                    if let Some(ref mut editor) = self.editor {
+                        let path = std::path::PathBuf::from(path);
+                        if path.is_absolute() {
+                            let label = path
+                                .file_name()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                            let id = editor.create_window_at(path, label);
+                            editor.set_active_window(id);
+                            resize_occurred = true; // Force re-render
+                        } else {
+                            tracing::warn!(
+                                "OpenWindow rejected: path must be absolute: {:?}",
+                                path
+                            );
+                        }
                     }
                 }
                 ClientControl::Quit => unreachable!(), // Handled above

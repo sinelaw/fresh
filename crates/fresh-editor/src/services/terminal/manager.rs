@@ -290,6 +290,21 @@ impl TerminalManager {
             // The built-in emulator is alacritty-based so xterm-256color is appropriate.
             cmd.env("TERM", "xterm-256color");
 
+            // Advertise this editor's local control socket to local child
+            // shells via FRESH_SESSION, so a `fresh` launched from inside
+            // this embedded terminal forwards file/dir opens back to us
+            // instead of starting a second editor. Only for the local host
+            // shell: `manages_cwd` (== `skip_cwd`) marks docker/ssh-style
+            // wrappers, whose inner `fresh` runs on another host where this
+            // unix socket isn't reachable. (A nested `fresh` that can't reach
+            // the socket falls back to running inline, so this gate is an
+            // optimization, not a correctness requirement.)
+            if !skip_cwd {
+                if let Some(session_id) = crate::server::local_control::local_session_id() {
+                    cmd.env("FRESH_SESSION", session_id);
+                }
+            }
+
             // On Windows, set additional environment variables that help with ConPTY
             #[cfg(windows)]
             {

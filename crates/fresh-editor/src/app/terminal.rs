@@ -359,7 +359,7 @@ impl Window {
                             let _ = line_numbers;
                             let _ = highlight_current_line;
                             view_state
-                                .apply_config_defaults(false, false, false, false, None, rulers);
+                                .apply_config_defaults(false, false, false, false, None, rulers, 0);
                             // Terminal output is ANSI-sequenced and
                             // assumes a fixed column count; wrapping
                             // would mangle cursor positioning.

@@ -93,6 +93,7 @@ impl Editor {
                     self.active_window()
                         .resolve_wrap_column_for_buffer(current_buffer_id),
                     self.config.editor.rulers.clone(),
+                    self.config.editor.scroll_offset,
                 );
 
                 // Copy keyed states from source split for OTHER buffers (not the active one).

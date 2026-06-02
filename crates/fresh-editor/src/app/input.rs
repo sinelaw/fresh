@@ -160,10 +160,18 @@ impl Editor {
         // visible underneath. Skip the unfocused-popup interception so
         // pressing Esc in a settings dialog still closes the dialog
         // rather than reaching past it to dismiss a stale popup.
-        if self.settings_state.as_ref().is_some_and(|s| s.visible)
-            || self.menu_state.active_menu.is_some()
-            || self.is_prompting()
-        {
+        //
+        // Ask the overlay stack directly rather than re-listing the modal
+        // fields: any layer ranked *above* the popup layer that owns the
+        // keyboard is exactly Settings / Menu / Prompt (the only layers
+        // above Popup). `popup_visible` above guarantees a Popup layer is
+        // present, so `take_while` stops before the editor base layer.
+        let blocked_by_higher_modal = self
+            .overlay_layers()
+            .iter()
+            .take_while(|l| l.kind != crate::app::overlay::LayerKind::Popup)
+            .any(|l| l.owns_keyboard);
+        if blocked_by_higher_modal {
             return None;
         }
 
@@ -232,43 +240,171 @@ impl Editor {
         }
     }
 
-    /// Determine the current keybinding context based on UI state
-    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+    /// Build the editor's overlay stack, ordered top-first (highest
+    /// keyboard-focus precedence first), ending with the always-present
+    /// editor base layer.
+    ///
+    /// This is the single source of truth for overlay precedence: focus
+    /// resolution (`get_key_context`), the unfocused-popup modal guard
+    /// (`resolve_unfocused_popup_action`), the terminal-input gate
+    /// (`dispatch_terminal_input`), and the mouse early-capture ladder
+    /// (`handle_mouse`) all read from this list rather than keeping their
+    /// own conditional ladders.
+    pub(crate) fn overlay_layers(&self) -> Vec<crate::app::overlay::Layer> {
+        use crate::app::overlay::{Layer, LayerKind};
         use crate::input::keybindings::KeyContext;
 
-        // Priority order: Settings > Menu > Prompt > Popup (only when
-        // editor-pane focused) > CompositeBuffer > Current context
-        // (FileExplorer or Normal).
+        let mut layers = Vec::new();
+
+        // Event-debug dialog intercepts every key event ahead of every
+        // other path (see `handle_key_event`), so it sits at the top of
+        // the stack. Its dispatcher is custom (no `KeyContext`).
+        if self.active_window().is_event_debug_active() {
+            layers.push(Layer {
+                kind: LayerKind::EventDebug,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // Full-screen modals own the keyboard whenever they are present.
         if self.settings_state.as_ref().is_some_and(|s| s.visible) {
-            KeyContext::Settings
-        } else if self.menu_state.active_menu.is_some() {
-            KeyContext::Menu
-        } else if self.is_prompting() {
-            KeyContext::Prompt
-        } else if self.popups_capture_keys()
+            layers.push(Layer {
+                kind: LayerKind::Settings,
+                owns_keyboard: true,
+                key_context: Some(KeyContext::Settings),
+                blocks_terminal_input: true,
+            });
+        }
+        // Keybinding editor and calibration wizard install their own
+        // input dispatchers (see `input_dispatch.rs`), so they are
+        // transparent to `KeyContext`-driven keybinding resolution
+        // (`key_context: None`) — but they fully own the keyboard while
+        // present and block PTY routing.
+        if self.keybinding_editor.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::KeybindingEditor,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        if self.calibration_wizard.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::CalibrationWizard,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // The workspace-trust prompt is a `global_popups` entry with its
+        // own modal z-band, key handler and mouse handler. When it's the
+        // top of the global stack it takes the place of the generic
+        // `Popup` layer so the dedicated handlers can be reached by
+        // top-down kind dispatch (`handle_mouse`, `input_dispatch`).
+        let trust_on_top = self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        });
+        if trust_on_top {
+            layers.push(Layer {
+                kind: LayerKind::WorkspaceTrust,
+                owns_keyboard: self.popups_capture_keys(),
+                key_context: Some(KeyContext::Popup),
+                blocks_terminal_input: true,
+            });
+        }
+        if self.menu_state.active_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::Menu,
+                owns_keyboard: true,
+                key_context: Some(KeyContext::Menu),
+                blocks_terminal_input: true,
+            });
+        }
+        if self.is_prompting() {
+            layers.push(Layer {
+                kind: LayerKind::Prompt,
+                owns_keyboard: true,
+                key_context: Some(KeyContext::Prompt),
+                blocks_terminal_input: true,
+            });
+        }
+        // A non-trust popup is *present* whenever visible, but only *owns*
+        // the keyboard while capturing (`popups_capture_keys`); a
+        // merely-visible unfocused popup falls through. Either way a
+        // visible popup blocks PTY routing — it covers the active buffer.
+        if !trust_on_top
             && (self.global_popups.is_visible() || self.active_state().popups.is_visible())
         {
-            KeyContext::Popup
-        } else if self.floating_widget_panel.is_some() {
-            // A modal floating panel (picker / new-session form /
-            // plugin overlay) is the keyboard owner. Resolve keys
-            // as Normal regardless of the underlying buffer's stale
-            // `key_context` (which can still be Terminal when the
-            // panel was opened from a python3 session). Without
-            // this, `should_check_mode_bindings = matches!(ctx,
-            // Normal)` skipped the mode-keybinding lookup for any
-            // Ctrl/Alt chord the plugin had bound on the panel's
-            // mode, e.g. `Alt+N` for "new session from the picker".
-            KeyContext::Normal
-        } else if self
+            layers.push(Layer {
+                kind: LayerKind::Popup,
+                owns_keyboard: self.popups_capture_keys(),
+                key_context: Some(KeyContext::Popup),
+                blocks_terminal_input: true,
+            });
+        }
+        // The centered widget modal (picker / new-session form / plugin
+        // overlay) owns the keyboard when focused. It resolves as `Normal`
+        // regardless of the underlying buffer's (possibly stale) context so
+        // mode-keybinding lookups still fire for the panel's own chords.
+        // It blocks PTY routing whenever present — the modal sits on top
+        // of (and obscures) the active terminal buffer.
+        if let Some(f) = self.floating_widget_panel.as_ref() {
+            layers.push(Layer {
+                kind: LayerKind::FloatingModal,
+                owns_keyboard: f.focused,
+                key_context: Some(KeyContext::Normal),
+                blocks_terminal_input: true,
+            });
+        }
+        // The editor-global dock owns the keyboard only while focused; a
+        // blurred dock stays visible but lets the buffer underneath keep
+        // the keyboard *and* receive PTY routing (the dock lives beside
+        // the chrome, not over it).
+        if let Some(d) = self.dock.as_ref() {
+            layers.push(Layer {
+                kind: LayerKind::Dock,
+                owns_keyboard: d.focused,
+                key_context: Some(KeyContext::Dock),
+                blocks_terminal_input: d.focused,
+            });
+        }
+        // The editor content is the keyboard owner of last resort.
+        let base_context = if self
             .active_window()
             .is_composite_buffer(self.active_buffer())
         {
             KeyContext::CompositeBuffer
         } else {
-            // Use the current context (can be FileExplorer or Normal)
             self.active_window().key_context.clone()
-        }
+        };
+        layers.push(Layer {
+            kind: LayerKind::Editor,
+            owns_keyboard: true,
+            key_context: Some(base_context),
+            blocks_terminal_input: false,
+        });
+
+        layers
+    }
+
+    /// True iff any overlay layer is currently blocking key routing to a
+    /// terminal buffer's PTY child. The single source of truth for the
+    /// "is anything modal up?" question.
+    pub(crate) fn presents_blocking_overlay(&self) -> bool {
+        crate::app::overlay::any_layer_blocks_terminal_input(&self.overlay_layers())
+    }
+
+    /// Determine the current keybinding context based on UI state.
+    ///
+    /// Returns the `KeyContext` of the topmost overlay layer that owns the
+    /// keyboard (see [`Editor::overlay_layers`]).
+    pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
+        crate::app::overlay::resolve_focus_context(&self.overlay_layers())
+            .expect("editor base layer always owns the keyboard")
     }
 
     /// Handle a key event and return whether it was handled
@@ -324,8 +460,37 @@ impl Editor {
         // command dispatcher; printable chars feed `textInputChar` to
         // the focused TextInput. Mouse clicks outside the panel are
         // swallowed (handled in `mouse_input`).
-        if self.floating_widget_panel.is_some()
-            && self.dispatch_floating_widget_key(code, modifiers)
+        // A focused centered modal takes keyboard precedence over the
+        // dock (e.g. the New-Session form opened on top of the dock).
+        if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.focused)
+            && self.dispatch_floating_widget_key(super::PanelSlot::Floating, code, modifiers)
+        {
+            return Ok(());
+        }
+        // A focused dock swallows keys in the dispatch below, so the global
+        // focus-toggle (default Alt+O) would never be able to hand focus back
+        // to the editor once you've dived in. Resolve it here, ahead of the
+        // dock's own key handling, so the toggle is symmetric (same key in and
+        // out). Only the blur-out direction needs this early hook — focusing a
+        // blurred/hidden dock is handled by ordinary keybinding resolution
+        // since the editor owns the keyboard in that state.
+        if self.dock.as_ref().is_some_and(|f| f.focused) {
+            let ctx = self.get_key_context();
+            let resolved = self
+                .keybindings
+                .read()
+                .ok()
+                .map(|kb| kb.resolve(&key_event, ctx));
+            if matches!(resolved, Some(Action::ToggleDockFocus)) {
+                self.handle_action(Action::ToggleDockFocus)?;
+                return Ok(());
+            }
+        }
+        if self.dock.as_ref().is_some_and(|f| f.focused)
+            && self.dispatch_floating_widget_key(super::PanelSlot::Dock, code, modifiers)
         {
             return Ok(());
         }
@@ -446,8 +611,18 @@ impl Editor {
         // Only check buffer mode keybindings when the editor buffer has focus.
         // FileExplorer, Menu, Prompt, Popup contexts should not trigger mode bindings
         // (e.g. markdown-source's Enter handler should not fire while the explorer is focused).
-        let should_check_mode_bindings =
-            matches!(context, crate::input::keybindings::KeyContext::Normal);
+        //
+        // CompositeBuffer is included so a composite buffer's plugin-defined
+        // mode (e.g. the review-diff `diff-view` mode) can bind keys the core
+        // composite handling leaves free — like Enter / Alt+O to open the file
+        // under the cursor. Keys the mode does not bind fall through unchanged
+        // to the composite router and the CompositeBuffer keymap below, so
+        // built-in hunk navigation (n/p/]/[) and close (q) are unaffected.
+        let should_check_mode_bindings = matches!(
+            context,
+            crate::input::keybindings::KeyContext::Normal
+                | crate::input::keybindings::KeyContext::CompositeBuffer
+        );
 
         if should_check_mode_bindings {
             // effective_mode() returns buffer-local mode if present, else global mode.
@@ -1282,6 +1457,7 @@ impl Editor {
                                 self.active_window()
                                     .resolve_wrap_column_for_buffer(buffer_id),
                                 self.config.editor.rulers.clone(),
+                                0,
                             );
                             // Terminals don't wrap — keep escape
                             // sequences intact, mirroring the regular
@@ -1764,6 +1940,24 @@ impl Editor {
             Action::ResetBufferSettings => self.reset_buffer_settings(),
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.active_window_mut().focus_editor(),
+            Action::ToggleDockFocus => {
+                // Bounce keyboard focus between the editor/explorer area and
+                // the orchestrator dock. `dock` is `Some` whenever the dock is
+                // mounted (focused or merely visible-but-blurred); the helpers
+                // flip `focused` and fire the matching `focus`/`blur`
+                // widget_event so the plugin's mirror stays in sync.
+                match self.dock.as_ref().map(|d| d.focused) {
+                    Some(true) => self.blur_floating_panel(super::PanelSlot::Dock),
+                    Some(false) => self.refocus_floating_panel(super::PanelSlot::Dock),
+                    // Dock hidden: hand off to the orchestrator plugin's
+                    // show-dock command so one key both opens and focuses it.
+                    None => {
+                        return self.handle_action(Action::PluginAction(
+                            "orchestrator_dock_toggle".to_string(),
+                        ));
+                    }
+                }
+            }
             Action::FileExplorerUp => self.file_explorer_navigate_up(),
             Action::FileExplorerDown => self.file_explorer_navigate_down(),
             Action::FileExplorerPageUp => self.file_explorer_page_up(),
@@ -2486,6 +2680,29 @@ impl Editor {
         Ok(())
     }
 
+    /// Fire a `widget_event` at the plugin owning the dock, keyed to the
+    /// `sessions` widget. Used for dock-only gestures (Enter-activate,
+    /// the Alt+T/Alt+I/Alt+P filter toggles) that the dialog handles via
+    /// an editor mode the dock can't use — see `dispatch_floating_widget_key`.
+    fn fire_dock_widget_event(&self, panel_id: u64, event_type: &str) {
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key: "sessions".to_string(),
+                    event_type: event_type.to_string(),
+                    payload: serde_json::json!({}),
+                },
+            );
+        }
+    }
+
     /// Route a keystroke to the floating widget panel when one is
     /// mounted. Returns `true` if the key was consumed.
     ///
@@ -2498,14 +2715,158 @@ impl Editor {
     /// currently focused TextInput.
     fn dispatch_floating_widget_key(
         &mut self,
+        slot: super::PanelSlot,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
-        let panel_id = match self.floating_widget_panel.as_ref() {
+        let panel_id = match self.panel(slot) {
             Some(fwp) => fwp.panel_id,
-            None => return false,
+            None => {
+                tracing::warn!(
+                    target: "fresh::dock",
+                    ?slot,
+                    ?code,
+                    "dispatch_floating_widget_key: no panel mounted in slot — returning false"
+                );
+                return false;
+            }
         };
+        tracing::warn!(
+            target: "fresh::dock",
+            panel_id,
+            ?slot,
+            ?code,
+            modifiers = ?modifiers,
+            placement = ?self.panel(slot).map(|f| f.placement),
+            focused = ?self.panel(slot).map(|f| f.focused),
+            "dispatch_floating_widget_key: entry"
+        );
+        // The left dock handles Enter / Esc / Space / "/" here, at the
+        // floating-panel layer, *independent of editor modes*. Editor
+        // modes (`defineMode`) resolve against the active buffer's mode,
+        // which the dock floats over — so a session whose buffer has a
+        // local mode would shadow any global dock mode. Up/Down fall
+        // through to the generic smart-key list nav below (which fires
+        // the `select` event the plugin live-switches on).
+        if matches!(
+            self.panel(slot).map(|f| f.placement),
+            Some(super::PanelPlacement::LeftDock { .. })
+        ) {
+            let on_filter = self
+                .widget_registry
+                .focus_key(panel_id)
+                .map(|k| k == "filter")
+                .unwrap_or(false);
+            match code {
+                KeyCode::Esc => {
+                    if on_filter {
+                        // Return from the filter to the session list.
+                        self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
+                    } else {
+                        // Leave the dock — focus the editor; dock stays visible.
+                        self.blur_floating_panel(slot);
+                    }
+                    return true;
+                }
+                KeyCode::Enter => {
+                    if on_filter {
+                        // Return from the filter to the session list.
+                        self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
+                    } else {
+                        // Activate the highlighted row. The plugin attaches a
+                        // discovered (on-disk) worktree as a new session, or —
+                        // for a row already backed by a live window — blurs to
+                        // the editor (the dock stays visible). Handled
+                        // plugin-side so the discovered-vs-live decision lives
+                        // next to the dialog's identical `activate` logic, not
+                        // split across the host (was: always blur, which
+                        // silently dropped the on-disk attach in the dock).
+                        self.fire_dock_widget_event(panel_id, "dock_activate");
+                    }
+                    return true;
+                }
+                KeyCode::Char('/') if modifiers.is_empty() => {
+                    self.set_panel_focus_and_notify(panel_id, "filter".to_string());
+                    return true;
+                }
+                KeyCode::Char('t' | 'T') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+T toggles "show all worktrees". In the dialog this is
+                    // an OPEN_MODE chord, but the dock has no editor mode (it
+                    // floats over the active buffer's mode), so route it as a
+                    // dock widget_event the plugin maps to the same toggle —
+                    // otherwise it falls through to the generic chord path and
+                    // merely blurs the dock.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_worktrees");
+                    return true;
+                }
+                KeyCode::Char('i' | 'I') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+I toggles "show empty/1-file sessions" — same dock
+                    // routing rationale as Alt+T above.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_trivial");
+                    return true;
+                }
+                KeyCode::Char('p' | 'P') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+P flips the project scope (current ↔ all) — same dock
+                    // routing rationale as Alt+T above.
+                    self.fire_dock_widget_event(panel_id, "dock_toggle_scope");
+                    return true;
+                }
+                KeyCode::Char('n' | 'N') if modifiers.contains(KeyModifiers::ALT) => {
+                    // Alt+N opens the new-session form. Handled here (not
+                    // via an editor mode) because the dock floats over the
+                    // active buffer's mode; fire a `dock_new` widget_event
+                    // the plugin turns into "+ New" — and which now leaves
+                    // the dock mounted (the form is a separate slot).
+                    if self
+                        .plugin_manager
+                        .read()
+                        .unwrap()
+                        .has_hook_handlers("widget_event")
+                    {
+                        self.plugin_manager.read().unwrap().run_hook(
+                            "widget_event",
+                            crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                                panel_id,
+                                widget_key: "sessions".to_string(),
+                                event_type: "dock_new".to_string(),
+                                payload: serde_json::json!({}),
+                            },
+                        );
+                    }
+                    return true;
+                }
+                KeyCode::Char(' ') => {
+                    // Toggle the highlighted row's multi-select checkbox
+                    // (plugin owns the selection set).
+                    let has_handler = self
+                        .plugin_manager
+                        .read()
+                        .unwrap()
+                        .has_hook_handlers("widget_event");
+                    tracing::warn!(
+                        target: "fresh::dock",
+                        panel_id,
+                        has_handler,
+                        focus_key = ?self.widget_registry.focus_key(panel_id),
+                        "dispatch_floating_widget_key: Space on LeftDock — firing dock_space widget_event"
+                    );
+                    if has_handler {
+                        self.plugin_manager.read().unwrap().run_hook(
+                            "widget_event",
+                            crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                                panel_id,
+                                widget_key: "sessions".to_string(),
+                                event_type: "dock_space".to_string(),
+                                payload: serde_json::json!({}),
+                            },
+                        );
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
         let key_name: Option<&str> = match code {
             KeyCode::Esc => {
                 // Mode-binding precedence: a plugin's `defineMode`
@@ -2552,7 +2913,7 @@ impl Editor {
                         },
                     );
                 }
-                self.floating_widget_panel = None;
+                *self.panel_opt_mut(slot) = None;
                 let _ = self.widget_registry.unmount(panel_id);
                 return true;
             }
@@ -2645,12 +3006,20 @@ impl Editor {
                     return false;
                 }
             }
-            // Ctrl/Alt-modified chords with no mode binding are
-            // swallowed by the floating panel without further action —
-            // a modal dialog must not leak keys to global bindings
-            // like Ctrl-P or Alt-F. Plain (or Shift-only) chars feed
-            // printable text into the focused TextInput.
+            // Ctrl/Alt-modified chords with no mode binding: a centered
+            // modal swallows them (it must not leak keys to global
+            // bindings like Ctrl-P). The non-modal dock does the
+            // opposite — an unhandled shortcut returns focus to the
+            // editor (blur) and falls through so the editor handles it
+            // (e.g. Ctrl-P opens the command palette).
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                if matches!(
+                    self.panel(slot).map(|f| f.placement),
+                    Some(super::PanelPlacement::LeftDock { .. })
+                ) {
+                    self.blur_floating_panel(slot);
+                    return false;
+                }
                 return true;
             }
             let ch = if modifiers.contains(KeyModifiers::SHIFT) {

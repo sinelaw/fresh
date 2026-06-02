@@ -2493,6 +2493,7 @@ impl Window {
                 cfg.wrap_indent,
                 wrap_column,
                 cfg.rulers,
+                cfg.scroll_offset,
             );
         }
 
@@ -3292,6 +3293,7 @@ impl Window {
         mgr.set_split_buffer(leaf, buffer_id);
         if let Some(view_state) = vs_map.get_mut(&leaf) {
             view_state.switch_buffer(buffer_id);
+            view_state.add_buffer(buffer_id);
         }
     }
 }

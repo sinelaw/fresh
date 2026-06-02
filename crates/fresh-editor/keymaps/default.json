@@ -1818,6 +1818,42 @@
       "when": "normal"
     },
     {
+      "comment": "Orchestrator dock — toggle keyboard focus between the editor/explorer area and the persistent left session dock (the dog-picture column). Press once to dive into the dock, again to return to the editor — same key both ways (the Zed/Yazelix focus-toggle model). When the dock is hidden it is opened and focused. Mnemonic: 'O' for Orchestrator. Bound per-context rather than globally so it does not shadow the live-grep prompt's Alt+O (toggle whole-word). The 'dock' binding lets you blur back out from inside the focused dock.",
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "dock"
+    },
+    {
       "comment": "Live Grep prompt — cycle to the next *available* search provider. Built-ins are git-grep → rg → ag → ack → grep (git-grep first when inside a repo, falls through otherwise); user plugins can register more via editor.getPluginApi(\"live-grep\")?.registerProvider(...). Skips providers whose isAvailable() returns false. Mnemonic: 'p' for Provider.",
       "key": "p",
       "modifiers": ["alt"],

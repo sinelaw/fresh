@@ -9,7 +9,6 @@ use super::super::folding::FoldIndicator;
 use crate::primitives::highlighter::HighlightSpan;
 use crate::view::margin::LineIndicator;
 use crate::view::overlay::Overlay;
-use crate::view::virtual_text::VirtualText;
 use ratatui::style::Style;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -31,7 +30,6 @@ pub(crate) struct DecorationContext {
     /// Used by the per-cell sweep in `render_view_lines` to advance an
     /// active set without re-scanning the full overlay list each cell.
     pub overlay_position_index: Vec<usize>,
-    pub virtual_text_lookup: HashMap<usize, Vec<VirtualText>>,
     /// Diagnostic lines indexed by line-start byte offset.
     pub diagnostic_lines: HashSet<usize>,
     /// Inline diagnostic text per line. Derived from viewport overlays;

@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Protocol version - must match between client and server
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// v2: added `ClientControl::OpenWindow` (open a directory as a new
+/// orchestrator window), used by the nested-terminal forwarding path.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +124,14 @@ pub enum ClientControl {
         #[serde(default)]
         wait: bool,
     },
+    /// Request to open a directory as a new orchestrator window/session.
+    ///
+    /// Unlike `OpenFiles` (which opens buffers in the current window),
+    /// this pops a brand-new window rooted at `path` and focuses it.
+    /// Used when a `fresh <dir>` is invoked from inside Fresh's own
+    /// embedded terminal: the directory becomes a new session instead
+    /// of launching a second editor in the terminal.
+    OpenWindow { path: String },
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -217,6 +228,20 @@ mod tests {
         let parsed: ClientHello = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.term_size.cols, 120);
         assert_eq!(parsed.term_size.rows, 40);
+    }
+
+    #[test]
+    fn test_open_window_roundtrip() {
+        let msg = ClientControl::OpenWindow {
+            path: "/home/user/project".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        // serde(rename_all = "snake_case") should tag it "open_window"
+        assert!(json.contains("\"type\":\"open_window\""));
+        match serde_json::from_str::<ClientControl>(&json).unwrap() {
+            ClientControl::OpenWindow { path } => assert_eq!(path, "/home/user/project"),
+            other => panic!("expected OpenWindow, got {:?}", other),
+        }
     }
 
     #[test]

@@ -275,6 +275,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 wrap_column,
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
         }
 
@@ -462,6 +463,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 wrap_column,
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
         }
 
@@ -720,6 +722,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 wrap_column,
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
         }
 
@@ -1064,6 +1067,7 @@ impl crate::app::window::Window {
                 cfg.wrap_indent,
                 wrap_column,
                 cfg.rulers,
+                cfg.scroll_offset,
             );
             // Auto-activate page view if configured for this language
             if let Some(page_width) = page_view {

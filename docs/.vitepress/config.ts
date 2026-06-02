@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { genFeed } from "./genFeed";
 
 export default defineConfig({
   title: "Fresh",
@@ -9,11 +10,25 @@ export default defineConfig({
   outDir: "../dist/docs",
   srcExclude: ["internal/**"],
 
-  head: [["link", { rel: "icon", href: "/docs/logo.svg" }]],
+  head: [
+    ["link", { rel: "icon", href: "/docs/logo.svg" }],
+    [
+      "link",
+      {
+        rel: "alternate",
+        type: "application/rss+xml",
+        title: "Fresh Blog",
+        href: "/docs/feed.rss",
+      },
+    ],
+  ],
 
   cleanUrls: true,
   lastUpdated: true,
   appearance: "force-dark",
+
+  buildEnd: genFeed,
+
   themeConfig: {
     logo: { light: "/logo.svg", dark: "/logo.svg" },
 
@@ -32,11 +47,8 @@ export default defineConfig({
           { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },
           { text: "Fresh 0.2.18", link: "/blog/fresh-0.2.18/" },
-          { text: "Fresh 0.2.9", link: "/blog/fresh-0.2.9/" },
-          { text: "Fresh 0.2", link: "/blog/fresh-0.2/" },
-          { text: "Editing Features", link: "/blog/editing" },
-          { text: "Productivity Features", link: "/blog/productivity" },
-          { text: "Customization & Themes", link: "/blog/themes" },
+          { text: "More…", link: "/blog/" },
+          { text: "RSS Feed", link: "/feed.rss", target: "_blank", rel: "noopener" },
         ],
       },
       {

@@ -79,6 +79,11 @@ pub struct Suggestion {
     pub text: String,
     /// Optional description
     pub description: Option<String>,
+    /// Optional styled rendering of `description`. When present, these
+    /// spans are rendered (in order) instead of the plain `description`
+    /// string, letting a suggestion highlight part of its row (e.g. the
+    /// symbol word inside a code-line snippet).
+    pub description_spans: Option<Vec<fresh_core::api::StyledText>>,
     /// The value to use when selected (defaults to text if None)
     pub value: Option<String>,
     /// Whether this suggestion is disabled (greyed out)
@@ -95,6 +100,7 @@ impl Suggestion {
         Self {
             text,
             description: None,
+            description_spans: None,
             value: None,
             disabled: false,
             keybinding: None,
@@ -107,6 +113,7 @@ impl Suggestion {
         Self {
             text,
             description: None,
+            description_spans: None,
             value: None,
             disabled: true,
             keybinding: None,
@@ -116,6 +123,14 @@ impl Suggestion {
 
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
+        self
+    }
+
+    pub fn with_description_spans(
+        mut self,
+        spans: Option<Vec<fresh_core::api::StyledText>>,
+    ) -> Self {
+        self.description_spans = spans;
         self
     }
 
@@ -153,7 +168,7 @@ struct CommandDef {
     custom_contexts: &'static [&'static str],
 }
 
-use KeyContext::{FileExplorer, Normal, Terminal};
+use KeyContext::{CompositeBuffer, Dock, FileExplorer, Normal, Terminal};
 
 /// All builtin command definitions as static data.
 /// Translation happens at runtime via the loop in get_all_commands().
@@ -790,6 +805,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         desc_key: "cmd.focus_editor_desc",
         action: || Action::FocusEditor,
         contexts: &[FileExplorer],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_dock_focus",
+        desc_key: "cmd.toggle_dock_focus_desc",
+        action: || Action::ToggleDockFocus,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
         custom_contexts: &[],
     },
     CommandDef {

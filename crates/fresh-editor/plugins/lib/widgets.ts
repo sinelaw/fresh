@@ -755,14 +755,20 @@ export class FloatingWidgetPanel {
    * existing panel. */
   mount(
     spec: WidgetSpec,
-    options: { widthPct?: number; heightPct?: number } = {},
+    options: { widthPct?: number; heightPct?: number; asDock?: boolean } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
     const editor = (globalThis as any).editor;
     const wp = options.widthPct ?? 60;
     const hp = options.heightPct ?? 40;
     this.mounted = true;
-    return editor.mountFloatingWidget(this.panelId, spec, wp, hp);
+    return editor.mountFloatingWidget(
+      this.panelId,
+      spec,
+      wp,
+      hp,
+      options.asDock ?? false,
+    );
   }
 
   /** Re-render the panel against the given spec; instance state on

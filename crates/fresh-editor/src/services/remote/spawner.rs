@@ -863,6 +863,57 @@ fn build_ssh_args(
     a
 }
 
+/// Assemble the `ssh` argv for an *interactive terminal* under a remote
+/// authority. Unlike [`build_ssh_args`] (one-shot, non-interactive LSP /
+/// probe spawns) this:
+///
+/// * forces remote PTY allocation with `-t` so the remote shell behaves
+///   interactively (job control, line editing, a real prompt);
+/// * omits `BatchMode=yes` so auth prompts (key passphrase, password,
+///   2FA) can surface *inside* the embedded terminal rather than failing;
+/// * runs an interactive login shell (`exec ${SHELL:-/bin/sh} -l`) after
+///   `cd`-ing into the workspace, so the user lands where the editor is
+///   rooted with their normal remote environment.
+///
+/// Returned as the argv *after* the leading `ssh` program name; the caller
+/// (the SSH terminal wrapper) sets `command = "ssh"` and these as `args`.
+pub fn build_ssh_terminal_args(
+    params: &crate::services::remote::ConnectionParams,
+    remote_dir: Option<&str>,
+) -> Vec<String> {
+    let mut a = vec![
+        "-t".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+    ];
+    if let Some(port) = params.port {
+        a.push("-p".to_string());
+        a.push(port.to_string());
+    }
+    if let Some(ref identity) = params.identity_file {
+        a.push("-i".to_string());
+        a.push(identity.to_string_lossy().into_owned());
+    }
+    a.push(format!("{}@{}", params.user, params.host));
+
+    // Land in the workspace (when known), then hand control to the user's
+    // login shell. `remote_dir` is whatever path the URL pointed at, which
+    // may be a *file* (`fresh ssh://host/proj/main.rs`) — so fall back to
+    // its parent dir, and treat a failed `cd` as non-fatal so the shell
+    // always starts. `exec` replaces the ssh-side shell so closing the
+    // terminal tears the session down cleanly.
+    let mut remote_cmd = String::new();
+    if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
+        let quoted = shell_quote(dir);
+        remote_cmd.push_str(&format!(
+            "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
+        ));
+    }
+    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    a.push(remote_cmd);
+    a
+}
+
 /// Long-running spawner over SSH: each LSP server (or tool agent) gets its own
 /// `ssh user@host <remote-cmd>` subprocess, whose piped stdio *is* the remote
 /// process's stdio. Returning a real local [`tokio::process::Child`] (the ssh
@@ -1207,5 +1258,56 @@ mod tests {
         .map(String::from)
         .collect();
         assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn build_ssh_terminal_args_forces_tty_and_login_shell() {
+        let params = crate::services::remote::ConnectionParams {
+            user: "u".into(),
+            host: "h".into(),
+            port: Some(2222),
+            identity_file: Some(std::path::PathBuf::from("/k")),
+        };
+        let a = build_ssh_terminal_args(&params, Some("/proj dir"));
+        let expected: Vec<String> = [
+            "-t",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-p",
+            "2222",
+            "-i",
+            "/k",
+            "u@h",
+            "d='/proj dir'; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+        // No BatchMode — interactive auth must be able to prompt in the PTY.
+        assert!(!a.iter().any(|s| s == "BatchMode=yes"));
+    }
+
+    #[test]
+    fn build_ssh_terminal_args_without_dir_skips_cd() {
+        let params = crate::services::remote::ConnectionParams {
+            user: "u".into(),
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+        };
+        let a = build_ssh_terminal_args(&params, None);
+        assert_eq!(
+            a,
+            vec![
+                "-t",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "u@h",
+                "exec ${SHELL:-/bin/sh} -l",
+            ]
+        );
+        // Empty dir is treated the same as no dir.
+        assert_eq!(build_ssh_terminal_args(&params, Some("")), a);
     }
 }

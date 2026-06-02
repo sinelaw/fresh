@@ -406,15 +406,19 @@ pub struct WindowInfo {
     /// Absolute project root.
     #[ts(type = "string")]
     pub root: PathBuf,
-    /// Project this session belongs to — the canonical repo
-    /// root (or arbitrary directory) the user pointed the
-    /// new-session form at. `null` for legacy sessions that
-    /// predate the Project Path field. The Orchestrator Open
-    /// dialog filters by this so the "this project's sessions"
-    /// view is one keystroke away from the all-projects view.
-    #[ts(type = "string | null")]
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub project_path: Option<PathBuf>,
+    /// Project this session belongs to — the canonical repo root
+    /// (or arbitrary directory) the user pointed the new-session
+    /// form at. For sessions without an explicit project (legacy
+    /// sessions, the launch session, sessions created outside the
+    /// orchestrator's new-session form) this equals `root` — the
+    /// host normalises at the API boundary so plugins never have
+    /// to deal with `null`/`undefined`/`""` ambiguity (`??` only
+    /// falls through on `null`, but the orchestrator's
+    /// `WindowInfo` round-trips a `Some(PathBuf::new())` as `""`,
+    /// which then becomes a poisoned lex sort key — observed as
+    /// the Windows-only dock reorder).
+    #[ts(type = "string")]
+    pub project_path: PathBuf,
     /// `true` when the session shares its working tree with
     /// other sessions (worktree-creation was off at session
     /// time, or the session lives in a non-git directory).
@@ -595,7 +599,7 @@ pub struct LayoutHints {
 ///
 /// When a theme key is used, the color is resolved at render time,
 /// so overlays automatically update when the theme changes.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
 #[ts(export)]
 pub enum OverlayColorSpec {
@@ -655,7 +659,7 @@ impl OverlayColorSpec {
 ///
 /// This struct provides a type-safe way to specify overlay styling
 /// with optional theme key references for colors.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 #[derive(Default)]
@@ -708,7 +712,7 @@ pub struct OverlayOptions {
 /// "ui.help_key_fg" } }`. `None` style means "no styling override";
 /// each consumer applies its own default (e.g. the floating-prompt
 /// title uses `prompt_fg` + bold).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct StyledText {
@@ -2195,6 +2199,13 @@ pub enum PluginCommand {
     /// `editor.activeWindow()` after.
     SetActiveWindow { id: WindowId },
 
+    /// Like `SetActiveWindow`, but plays a directional wipe on the
+    /// newly-active window's editor content as it appears. `from_edge`
+    /// is "top" | "bottom" | "left" | "right" (the edge the incoming
+    /// content slides in from). Used by the orchestrator dock so that
+    /// arrowing up/down the session list wipes the window up/down.
+    SetActiveWindowAnimated { id: WindowId, from_edge: String },
+
     /// Close a session and drop its associated state. Refuses to
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.
@@ -3209,6 +3220,14 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Get cursor info for the active composite (side-by-side diff) buffer
+    /// (async). Resolves with `{ focusedPane, paneCount, lines }` or `null`
+    /// when the active buffer is not a composite buffer.
+    GetCompositeCursorInfo {
+        /// Request ID for async response
+        request_id: u64,
+    },
+
     /// Open `path` as a regular buffer in forced large-file (file-backed)
     /// mode regardless of file size. Designed for buffers whose backing
     /// file will grow under them (e.g. a temp file fed by `spawnProcess`
@@ -3734,6 +3753,10 @@ pub enum PluginCommand {
         spec: WidgetSpec,
         width_pct: u8,
         height_pct: u8,
+        /// When true, mount into the editor-global left **dock** slot
+        /// (persists alongside a centered modal) rather than as a
+        /// centered overlay.
+        as_dock: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget
@@ -3744,6 +3767,17 @@ pub enum PluginCommand {
     /// Tear down the floating widget panel. No-op when no floating
     /// panel is mounted, or when the `panel_id` doesn't match.
     UnmountFloatingWidget { panel_id: u64 },
+
+    /// Control a mounted floating widget panel's placement / focus
+    /// without re-sending its spec. `op` is one of:
+    /// - "dock"   — re-anchor as a full-height left dock; `arg` is the
+    ///   dock width in columns. The dock is non-modal: the editor
+    ///   underneath stays rendered and (when blurred) keyboard-usable.
+    /// - "center" — restore the default centered-overlay placement.
+    /// - "focus"  — route keys to the panel (modal-ish capture).
+    /// - "blur"   — stop routing keys to the panel; it stays rendered
+    ///   so focus returns to the editor while the dock remains visible.
+    FloatingPanelControl { panel_id: u64, op: String, arg: f64 },
 }
 
 impl PluginCommand {

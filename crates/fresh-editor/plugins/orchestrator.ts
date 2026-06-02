@@ -42,7 +42,17 @@ const editor = getEditor();
 // Types
 // =============================================================================
 
-type AgentState = "running" | "awaiting" | "ready" | "errored" | "killed";
+// A session's coarse activity, inferred from its agent terminal:
+//   "working" — the terminal emitted output within the last
+//               IDLE_AFTER_MS (the agent is actively producing).
+//   "idle"    — quiet: waiting for input, finished, exited, or just
+//               sitting. Also the honest default before we've seen any
+//               output, since we have no evidence of work yet.
+// This is deliberately only two states: it's all the terminal-output
+// signal can honestly support. We don't poll the process, so "working"
+// means "printing", not "alive" — an agent that goes quiet to think
+// reads as idle until it prints again.
+type AgentState = "working" | "idle";
 
 // One row in the completion popup. `kind: "history"` items
 // render with a leading `↶` marker + italic styling so the user
@@ -61,19 +71,26 @@ interface AgentSession {
   // Absolute filesystem root.
   root: string;
   // Canonical project root this session belongs to (set at
-  // create time from the Project Path field). `null` for
-  // sessions created outside the new-session form (e.g. the
-  // editor's base session, or sessions from before the
-  // Project Path field shipped).
-  projectPath: string | null;
+  // create time from the Project Path field). Equals `root`
+  // for sessions without an explicit project — the host
+  // normalises at the API boundary so plugins never have to
+  // distinguish `null`/`undefined`/`""`.
+  projectPath: string;
   // `true` if the session was created with the worktree
   // checkbox unchecked (shared worktree / non-git path).
   sharedWorktree: boolean;
   // The terminal id Orchestrator spawned in this session, if any.
   terminalId: number | null;
-  // Last parsed agent state. "active" is computed at render
-  // time from `editor.activeWindow()`, not stored.
+  // Coarse activity, recomputed from `lastOutputAt` at render time
+  // (see `sessionState`). Not authoritative on its own — the timestamp
+  // is. ("active" — the focused window — is computed separately from
+  // `editor.activeWindow()`.)
   state: AgentState;
+  // Wall-clock ms of the most recent terminal_output for this session,
+  // or null if it has never produced output (or has no terminal). This
+  // is the real signal; `state` is just `Date.now() - lastOutputAt`
+  // bucketed against IDLE_AFTER_MS.
+  lastOutputAt: number | null;
   // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
   // `true` when this row is a worktree discovered on disk (via
@@ -331,6 +348,60 @@ interface OpenDialogState {
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
+// When the open panel is mounted as the persistent left dock rather
+// than the centered modal picker. The dock reuses the same panel +
+// `openDialog` state; these flags drive the dock-only behaviours
+// (live-switch on nav, Enter/Esc blur instead of close).
+let dockMode = false;
+// True while the dock is visible but blurred — keyboard focus is in
+// the editor and the dock just reflects the active session. The
+// toggle command re-focuses; Enter/Esc blur.
+let dockBlurred = false;
+// Monotonic token so a rapid run of ↑/↓ only commits the *last*
+// selection after the debounce window (30ms) — see `scheduleDockSwitch`.
+let dockSwitchToken = 0;
+// Default dock width on a "typical" terminal, and the bounds the
+// responsive width is clamped to. The dock scales with the terminal
+// (`dockDefaultWidth`) between these; a user drag still overrides it
+// (the host persists the dragged width — see `handle_floating_panel_control`).
+const DOCK_WIDTH_COLS = 32;
+const DOCK_MIN_WIDTH_COLS = 24;
+const DOCK_MAX_WIDTH_COLS = 40;
+// Fraction of the terminal width the dock targets by default.
+const DOCK_WIDTH_FRACTION = 0.28;
+
+// Responsive default dock width: ~`DOCK_WIDTH_FRACTION` of the terminal,
+// clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
+// grows/shrinks with the window. Falls back to the fixed default when the
+// screen size isn't known yet.
+function dockDefaultWidth(): number {
+  const w = editor.getScreenSize().width;
+  if (w <= 0) return DOCK_WIDTH_COLS;
+  const target = Math.round(w * DOCK_WIDTH_FRACTION);
+  return Math.max(DOCK_MIN_WIDTH_COLS, Math.min(DOCK_MAX_WIDTH_COLS, target));
+}
+
+// Inner content width for a given dock width: the host reserves one
+// column for the right border plus an editor-side gutter, so list rows
+// get `dockWidth - 2` cells. Floored so a clamped/narrow dock still
+// renders something. Drives name/tag truncation and the `dockRule`.
+function dockContentCols(dockWidth: number): number {
+  return Math.max(8, dockWidth - 2);
+}
+// Which dock zone has keyboard focus: the session list (default) or the
+// filter input. Tracked from the host's `focus` widget_event. The host
+// (dispatch_floating_widget_key) reads the panel focus directly to route
+// Enter/Esc/Space//'; this mirror is informational for the plugin.
+let dockFocus: "list" | "filter" = "list";
+// Full focused-widget mirror for the open dialog (both dock and
+// centered-picker modes). Updated from every `focus` widget_event.
+// Used by `toggleSelectCurrent` so a Space keypress while focus is
+// on a filter checkbox toggles *that* checkbox rather than the list
+// — see the OPEN_MODE `["Space", "orchestrator_toggle_select"]`
+// binding below for why the mode binding can't be made conditional
+// upstream (it has to swallow Space unconditionally to keep it out
+// of the filter text-input).
+let pickerFocusKey: string = "sessions";
 // Scope is remembered across opens of the picker (module state
 // survives dialog close). Defaults to "all" so the picker opens
 // showing every session; flipping it with the Project control / Alt+P
@@ -439,19 +510,20 @@ function reconcileSessions(): void {
         id: s.id,
         label: s.label,
         root: s.root,
-        projectPath: s.project_path ?? null,
+        projectPath: s.project_path,
         sharedWorktree: s.shared_worktree ?? false,
         terminalId: null,
-        // The base session has no agent; everything else
-        // defaults to "running" until a terminal_output /
-        // terminal_exit arrives.
-        state: "running",
+        // Idle until the terminal actually prints something — we have
+        // no evidence of work yet. `lastOutputAt` is the real signal;
+        // `state` is recomputed from it at render time.
+        state: "idle",
+        lastOutputAt: null,
         createdAt: Date.now(),
       });
     } else {
       existing.label = s.label;
       existing.root = s.root;
-      if (s.project_path != null) existing.projectPath = s.project_path;
+      existing.projectPath = s.project_path;
       if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
     }
   }
@@ -548,7 +620,10 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
             projectPath: listed.mainRoot,
             sharedWorktree: false,
             terminalId: null,
-            state: "ready",
+            // Discovered on-disk rows have no live terminal; they render
+            // a `· on-disk` tag, not a pill, so state is moot — idle.
+            state: "idle",
+            lastOutputAt: null,
             createdAt: Date.now(),
             discovered: true,
             branch: wt.branch,
@@ -575,13 +650,21 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
 // Session display helpers
 // =============================================================================
 
-const STATE_GLYPH: Record<AgentState, string> = {
-  running: "RUN ",
-  awaiting: "WAIT",
-  ready: "DONE",
-  errored: "ERR ",
-  killed: "KILL",
-};
+// A session counts as "working" only if its terminal printed something
+// within this window. Agents are bursty — they pause to think or wait on
+// the model between chunks — so a few seconds of grace keeps the dot from
+// flickering idle mid-task. Too long and a finished agent reads as busy;
+// 5s is a reasonable middle.
+const IDLE_AFTER_MS = 5000;
+
+// Coarse activity for a session, derived purely from how recently its
+// terminal produced output. This is the single source of truth — the
+// stored `state` field is just a cache of this for persistence/sorting.
+// No output ever (or no terminal) ⇒ idle: we have no evidence of work.
+function sessionState(s: AgentSession): AgentState {
+  if (s.lastOutputAt === null) return "idle";
+  return Date.now() - s.lastOutputAt < IDLE_AFTER_MS ? "working" : "idle";
+}
 
 function ageString(createdAt: number): string {
   const sec = Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
@@ -589,6 +672,41 @@ function ageString(createdAt: number): string {
   if (sec < 3600) return `${Math.floor(sec / 60)}m`;
   return `${Math.floor(sec / 3600)}h`;
 }
+
+// =============================================================================
+// Status symbol
+//
+// Each live session shows a single status symbol in the row's left margin —
+// before the checkbox and name — so every name lines up in the same column
+// regardless of state. Activity is derived from how recently the session's
+// terminal printed (see `sessionState`):
+//
+//   working : `*` in the warning/progress colour — terminal actively printing
+//   idle    : `✓` in the added/green colour       — quiet / waiting / done
+//
+// `*` is ASCII; `✓` (U+2713) is a single-cell glyph present in essentially
+// every terminal font — both avoid the box-drawing / half-block / emoji
+// glyphs that render unevenly. Colours are theme keys so they track the
+// active theme. On-disk (discovered) rows have no agent process, so they get
+// no symbol (a blank margin) and keep their `· on-disk` tag instead.
+// =============================================================================
+
+interface StatusSymbol {
+  // The single glyph painted in the left margin.
+  glyph: string;
+  // Theme key for the glyph colour, resolved by the host.
+  fg: string;
+}
+
+const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
+  // In progress — amber/warning, an asterisk reads as "busy/spinner".
+  working: { glyph: "*", fg: "diagnostic.warning_fg" },
+  // Done/quiet — green check, the universal "complete" mark.
+  idle: { glyph: "✓", fg: "file_status_added_fg" },
+};
+
+// Width of the left status margin: glyph + trailing space.
+const STATUS_MARGIN_W = 2;
 
 // =============================================================================
 // Open dialog — widget-based session picker (Phase 1 of the
@@ -614,7 +732,10 @@ function ageString(createdAt: number): string {
 // the session root for sessions that predate the field (the base
 // session, externally-created windows).
 function projectKeyOf(s: AgentSession): string {
-  return s.projectPath ?? s.root;
+  // The host guarantees `projectPath` is always a non-empty string
+  // (defaults to `root` when no explicit project is set), so no
+  // `?? root` / `|| root` defence is needed here.
+  return s.projectPath;
 }
 
 // The project the user is currently "in" — the active window's
@@ -681,12 +802,17 @@ function filterSessions(needle: string): number[] {
   // at the top and other projects' below, and within each project the
   // pre-existing live sessions come first with the discovered on-disk
   // worktrees listed after them.
+  // The dock is persistent and switches the active session constantly,
+  // so it must NOT reorder as the active project changes — pin a stable
+  // order (project, then id). The modal picker, opened fresh each time,
+  // keeps the current-project-first grouping.
+  const pinCurrentFirst = !dockMode;
   const byProjectThenId = (a: number, b: number): number => {
     const sa = orchestratorSessions.get(a)!;
     const sb = orchestratorSessions.get(b)!;
     const aCur = projectKeyOf(sa) === cur ? 0 : 1;
     const bCur = projectKeyOf(sb) === cur ? 0 : 1;
-    if (aCur !== bCur) return aCur - bCur;
+    if (pinCurrentFirst && aCur !== bCur) return aCur - bCur;
     const ka = projectKeyOf(sa);
     const kb = projectKeyOf(sb);
     if (ka !== kb) return ka < kb ? -1 : 1;
@@ -729,37 +855,33 @@ function filterSessions(needle: string): number[] {
   return matches.map((m) => m.id);
 }
 
-// Width of the NAME column before the trailing PROJECT column kicks
-// in (filled only for cross-project rows). Kept in sync with
-// `sessionsColumnHeader`. There is no id column — the numeric window
-// id is an internal handle the user never needs in the list; rows are
-// identified by name, the active one rendered bold and on-disk
-// worktrees flagged with a `· on-disk` tag.
-const LIST_NAME_W = 24;
-
-// Header row above the session list: `NAME …   PROJECT`.
+// Header row above the session list: a single dim `NAME`, indented to
+// sit over the per-row name (status margin + checkbox = STATUS_MARGIN_W
+// + 4 cols). The status symbol lives in the left margin now, so there's
+// no separate status column to label.
 function sessionsColumnHeader(): WidgetSpec {
+  const text = " ".repeat(STATUS_MARGIN_W + 4) + "NAME";
   return {
     kind: "raw",
     entries: [
-      styledRow([
-        {
-          // 4-space lead aligns under the per-row `[ ] ` checkbox.
-          text: "    " + "NAME".padEnd(LIST_NAME_W) + "PROJECT",
-          style: { fg: "ui.menu_disabled_fg" },
-        },
-      ]),
+      styledRow([{ text, style: { fg: "ui.menu_disabled_fg" } }]),
     ],
   };
 }
 
 // Build one rendered list-item row for `id`:
-//   `[ ] ` <name + on-disk tag>   <project basename>
-// The active session's name renders bold; discovered (on-disk,
-// unopened) worktrees render dim with a `· on-disk` tag instead of a
-// glyph. The project column is filled only for sessions that don't
-// belong to the current project.
-function renderListItem(id: number, activeId: number): TextPropertyEntry {
+//   `<sym> [ ] <name>  <project basename>`
+// A leading status symbol (working `*` / idle `✓`, blank for on-disk rows)
+// sits in the left margin so every name lines up regardless of state. Then
+// the multi-select checkbox, the name (active bold, discovered dim), and an
+// optional cross-project basename tag. `contentWidth` is the list column's
+// inner width in cells — the dock passes ~30, the modal passes its wider
+// session-column width.
+function renderListItem(
+  id: number,
+  activeId: number,
+  contentWidth: number,
+): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) {
     return styledRow([{ text: "(unknown)" }]);
@@ -768,9 +890,22 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   const isDiscovered = !!s.discovered;
   const isChecked = openDialog?.selectedIds.has(id) ?? false;
 
-  // Leading multi-select checkbox. `[x]` when this row is in the
-  // bulk selection, `[ ]` otherwise — toggled with Space (the
-  // rebindable `orchestrator_toggle_select`) or a click.
+  // Left status margin: live sessions get a coloured working/idle symbol
+  // (recomputed from the output timestamp at render time — the stored
+  // `state` can be stale since nothing fires when a session goes quiet).
+  // On-disk rows have no agent, so they get a blank margin of the same
+  // width to keep names aligned.
+  const marginEntry = isDiscovered
+    ? { text: " ".repeat(STATUS_MARGIN_W) }
+    : (() => {
+        const sym = STATE_SYMBOL[sessionState(s)];
+        return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
+      })();
+
+  // Multi-select checkbox. `[x]` when this row is in the bulk selection,
+  // `[ ]` otherwise — toggled with Space (the rebindable
+  // `orchestrator_toggle_select`) or a click. Kept contiguous with the
+  // name (`[ ] <name>`) — other code and tests key off that.
   const checkbox = {
     text: isChecked ? "[x] " : "[ ] ",
     style: isChecked
@@ -779,6 +914,7 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
   };
 
   const entries: { text: string; style?: Record<string, unknown> }[] = [
+    marginEntry,
     checkbox,
     {
       text: s.label,
@@ -789,28 +925,38 @@ function renderListItem(id: number, activeId: number): TextPropertyEntry {
         : undefined,
     },
   ];
-  // Visible width of the NAME column so far (label + tags), used
-  // to pad out to LIST_NAME_W before the PROJECT column.
-  let nameWidth = s.label.length;
+  // Running tally of the row width so far (margin + checkbox + name).
+  let leftWidth = STATUS_MARGIN_W + 4 + s.label.length;
+
+  // On-disk tag for discovered worktrees — they have no live state, so
+  // this is how the row advertises it's an unopened on-disk worktree.
   if (isDiscovered) {
-    entries.push({
-      text: " · on-disk",
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    });
-    nameWidth += 10;
+    const tag = " · on-disk";
+    if (leftWidth + tag.length <= contentWidth) {
+      entries.push({
+        text: tag,
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      });
+      leftWidth += tag.length;
+    }
   }
-  // PROJECT column: basename for cross-project rows only; current-
-  // project rows leave it blank (the whole list is one project when
-  // scoped, so this column is empty then).
+
+  // PROJECT tag: basename for cross-project rows only; current-project
+  // rows leave it blank. Its presence/absence is the switch signal other
+  // code waits on, so keep it unless it genuinely doesn't fit.
   const proj = projectKeyOf(s);
   if (proj !== currentProjectKey()) {
-    const pad = Math.max(1, LIST_NAME_W - nameWidth);
-    entries.push({ text: " ".repeat(pad) });
-    entries.push({
-      text: editor.pathBasename(proj),
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    });
+    const tag = editor.pathBasename(proj);
+    const tagText = "  " + tag;
+    if (leftWidth + tagText.length <= contentWidth) {
+      entries.push({
+        text: tagText,
+        style: { fg: "ui.menu_disabled_fg", italic: true },
+      });
+      leftWidth += tagText.length;
+    }
   }
+
   return styledRow(entries as Parameters<typeof styledRow>[0]);
 }
 
@@ -832,7 +978,9 @@ function buildPreviewEntries(
   }
   const activeId = editor.activeWindow();
   const isActive = s.id === activeId;
-  const stateText = isActive ? "ACT" : STATE_GLYPH[s.state].trim();
+  // The focused window is labelled "active"; everything else shows its
+  // live working/idle activity (recomputed from the output timestamp).
+  const stateText = isActive ? "active" : sessionState(s);
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: stateText,
@@ -868,7 +1016,13 @@ function buildPreviewEntries(
 // a real checkout, so Archive (which moves the worktree) doesn't apply
 // and Delete simply forgets the session without touching the directory.
 function ownsWorktree(s: AgentSession): boolean {
-  return !!s.discovered || (!!s.projectPath && !s.sharedWorktree);
+  // "Has an explicit project that's separate from this session's
+  // root" means the session is a worktree of that project — Archive
+  // / Delete apply. `projectPath === root` is the "no separate
+  // project" case (host normalises absence → root); skip those too.
+  return (
+    !!s.discovered || (s.projectPath !== s.root && !s.sharedWorktree)
+  );
 }
 
 // =============================================================================
@@ -924,8 +1078,9 @@ function bulkEligible(action: BulkAction, id: number): boolean {
   // Delete forgets any session. When it owns a worktree the worktree is
   // removed too; otherwise (launch/in-place) it's just dropped.
   if (action === "delete") return id > 0 || !!s.discovered;
-  // Archive moves the worktree to the graveyard, so it needs one.
-  return ownsWorktree(s);
+  // Archive applies to any session: a worktree session moves to the
+  // graveyard; a launch/in-place session is recorded at its own root.
+  return id > 0 || !!s.discovered;
 }
 
 function eligibleSelected(action: BulkAction): number[] {
@@ -945,6 +1100,22 @@ function pruneSelection(): void {
 // the filter, the new-session button, and the list.
 function sessionsSeparator(): WidgetSpec {
   return spacer(0);
+}
+
+// A full-width horizontal rule (`────`) used in the dock to divide the
+// header chrome from the session list. Rendered in the dim disabled-menu
+// colour (a quiet grey, not the louder popup-border accent) so it reads
+// as a subtle separator rather than competing with the pills below.
+// `width` is the content width so it stops at the border.
+function dockRule(width: number): WidgetSpec {
+  return {
+    kind: "raw",
+    entries: [
+      styledRow([
+        { text: "─".repeat(Math.max(1, width)), style: { fg: "ui.menu_disabled_fg" } },
+      ]),
+    ],
+  };
 }
 
 // Smallest list height we'll show even when there are only a
@@ -967,6 +1138,19 @@ function maxListRowsForScreen(): number {
   // Trivial-filter + Filter + separator + header = 7) = 14. Floor at
   // MIN_LIST_ROWS so a tiny terminal still shows something.
   return Math.max(MIN_LIST_ROWS, panelH - 14);
+}
+
+// Inner width (cells) of the modal picker's session column, used to
+// size name/tag truncation. The panel is 90% of the terminal and the
+// sessions `labeledSection` is `widthPct: 34` of that; subtract the
+// section's border (2) + inner padding (2). Floored so a narrow terminal
+// still renders a usable column.
+function modalSessionColWidth(): number {
+  const screen = editor.getScreenSize();
+  const w = screen.width > 0 ? screen.width : 80;
+  const panelW = Math.floor(w * 0.9);
+  const sectionW = Math.floor(panelW * 0.34);
+  return Math.max(dockContentCols(DOCK_MIN_WIDTH_COLS), sectionW - 4);
 }
 
 // Compose the right-hand preview pane. Normally it shows info
@@ -1117,16 +1301,15 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   //
   //  * Stop: only a live session with an agent terminal can be
   //    stopped (the launch session has none).
-  //  * Archive: needs an owned worktree to move to the graveyard.
+  //  * Archive: every session can be archived — a worktree session moves
+  //    to the graveyard; a launch/in-place session is recorded at its own
+  //    root. Closing the last live window opens a replacement first.
   //  * Delete: forgets the session, removing the worktree only when one
-  //    is owned (otherwise the directory is left untouched).
-  //  * Archive/Delete are both refused on the last live window — the
-  //    editor must always host at least one.
-  const hasWorktree = ownsWorktree(s);
-  const isLastWindow = s.id > 0 && liveWindowCount() <= 1;
+  //    is owned (otherwise the directory is left untouched); the last
+  //    live window likewise gets a replacement before it closes.
   const stopDisabled = s.discovered || !s.terminalId;
-  const archiveDisabled = !hasWorktree || isLastWindow;
-  const deleteDisabled = isLastWindow;
+  const archiveDisabled = false;
+  const deleteDisabled = false;
   const buttonRow = row(
     button("Visit", { intent: "primary", key: "visit" }),
     spacer(2),
@@ -1383,8 +1566,9 @@ function buildOpenSpec(): WidgetSpec {
   // rows when there are few sessions) so the dialog stays
   // vertically full rather than collapsing to a short floating box.
   openDialog.listVisibleRows = maxListRowsForScreen();
+  const colWidth = modalSessionColWidth();
   const activeId = editor.activeWindow();
-  const items = filtered.map((id) => renderListItem(id, activeId));
+  const items = filtered.map((id) => renderListItem(id, activeId, colWidth));
   const itemKeys = filtered.map(String);
   const selIdx = filtered.length === 0
     ? -1
@@ -1684,7 +1868,7 @@ function refreshOpenDialog(): void {
   } else if (openDialog.selectedIndex < 0) {
     openDialog.selectedIndex = 0;
   }
-  openPanel.update(buildOpenSpec());
+  openPanel.update(dockMode ? buildDockSpec() : buildOpenSpec());
   // The list widget's `selectedIndex` in the spec is initial-only;
   // pin it via mutation so re-renders don't snap back to 0.
   if (openDialog.filteredIds.length > 0) {
@@ -1692,8 +1876,25 @@ function refreshOpenDialog(): void {
   }
 }
 
-function openControlRoom(): void {
-  if (openPanel) return;
+function openControlRoom(opts: { dock?: boolean } = {}): void {
+  const asDock = opts?.dock === true;
+  if (openPanel) {
+    // A panel already occupies the shared dock/dialog slot. If the dock
+    // is showing and the user asked for the modal picker (Orchestrator:
+    // Open), the dock already *is* the live session list — refocus it
+    // and say so, rather than silently doing nothing. The modal and the
+    // dock share one panel + state today, so they can't both render at
+    // once; full coexistence is the deferred P1 redesign (see
+    // docs/internal/orchestrator-dock-gaps.md). An `asDock` re-entry
+    // (Toggle Dock) never reaches here — `toggleDock` handles it first.
+    if (!asDock && dockMode) {
+      restoreDockAfterForm();
+      editor.setStatus(
+        "Orchestrator: the dock already lists sessions — hide it (Toggle Dock) to open the full picker",
+      );
+    }
+    return;
+  }
   reconcileSessions();
   // Summarise on-disk session content up front so the trivial filter
   // has data on the first render.
@@ -1721,14 +1922,46 @@ function openControlRoom(): void {
     hideTrivial: lastHideTrivial,
     bulkInFlight: null,
   };
+  // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
+  // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
+  // dock wants stable lex order, the modal picker wants current-first.
+  // Doing the filter first (when `dockMode` is still its previous /
+  // initial `false` value) made the dock's INITIAL render use current-
+  // first ordering, while every subsequent `refreshOpenDialog`
+  // (active_window_changed, window_created, …) used the stable lex
+  // sort. Switching the active project then visibly reordered the
+  // dock list — precisely what the dock comment forbids.
+  openPanel = new FloatingWidgetPanel();
+  if (asDock) {
+    dockMode = true;
+    dockBlurred = false;
+  } else {
+    dockMode = false;
+  }
   openDialog.filteredIds = filterSessions("");
   const activeIdx = openDialog.filteredIds.indexOf(activeId);
   openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-  openPanel = new FloatingWidgetPanel();
-  // 90% × 90% of the terminal — the open dialog wants room for
-  // a real session list + preview pane, unlike the new-session
-  // form which stays compact.
-  openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+  if (asDock) {
+    // Persistent, non-modal full-height left column. Mount, then
+    // re-anchor to the dock (which sets the content-wrap width to the
+    // dock columns) and re-render so the spec lays out at dock width.
+    // Mount straight into the host's dedicated dock slot so it
+    // coexists with a centered modal (the New-Session form) instead
+    // of being replaced by it. `asDock` carves the left column and
+    // wraps the content to the dock width.
+    openPanel.mount(buildDockSpec(), {
+      widthPct: 100,
+      heightPct: 100,
+      asDock: true,
+    });
+    editor.floatingPanelControl(openPanel.id(), "dock", dockDefaultWidth());
+    openPanel.update(buildDockSpec());
+  } else {
+    // 90% × 90% of the terminal — the open dialog wants room for
+    // a real session list + preview pane, unlike the new-session
+    // form which stays compact.
+    openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+  }
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
@@ -1739,8 +1972,23 @@ function openControlRoom(): void {
   // selection. The host clamps to the first tabbable when "visit"
   // isn't in the spec (empty filter result, no session), which is
   // safe — there's nothing to act on then anyway.
-  openPanel.setFocusKey("visit");
-  editor.setEditorMode(OPEN_MODE);
+  // In the dock the focusable session list is the default focus
+  // (↑↓ switch, Enter blurs to editor). The modal lands on Visit.
+  const initialFocus = asDock ? "sessions" : "visit";
+  openPanel.setFocusKey(initialFocus);
+  // Seed the `pickerFocusKey` mirror — `setFocusKey` only fires the
+  // `focus` widget_event when the inner key actually *changes*, so on
+  // a fresh mount it may not fire (no previous focus to differ from).
+  pickerFocusKey = initialFocus;
+  if (asDock) {
+    // The dock has no editor mode — its keys are handled at the host
+    // floating-panel layer (mode bindings would be shadowed by the
+    // active session's buffer mode).
+    dockFocus = "list";
+    editor.setEditorMode(null);
+  } else {
+    editor.setEditorMode(OPEN_MODE);
+  }
 
   // Discover worktrees that exist on disk but aren't open yet and
   // fold them into the list. Async (it shells out to git per
@@ -1755,8 +2003,282 @@ function closeOpenDialog(): void {
     openPanel = null;
   }
   openDialog = null;
+  dockMode = false;
+  dockBlurred = false;
   editor.setEditorMode(null);
 }
+
+// ---------------------------------------------------------------------
+// Global left dock
+//
+// The dock reuses the open-dialog state/panel but is mounted as a
+// full-height, non-modal left column (host `floatingPanelControl`
+// "dock"). It renders a single-column session list (the modal's
+// two-pane picker would be unreadable at dock width). Navigating the
+// list switches the active window live (debounced), so the editor to
+// the dock's right *is* the preview.
+// ---------------------------------------------------------------------
+
+// Single-line compact detail for the selected session, pinned just
+// above the action row. One line keeps the list-fill maths exact.
+function dockDetailLine(s: AgentSession | undefined): WidgetSpec | null {
+  if (!s || s.discovered) return null;
+  return {
+    kind: "raw",
+    entries: [
+      styledRow([
+        { text: "▸ ", style: { fg: "ui.help_key_fg" } },
+        { text: s.branch || "(detached)", style: { fg: "ui.menu_disabled_fg" } },
+      ]),
+    ],
+  };
+}
+
+// Action buttons for the selected live session — same keys as the
+// modal's preview pane so the existing widget_event handlers fire.
+function dockActionRow(s: AgentSession | undefined): WidgetSpec | null {
+  if (!s || s.discovered) return null;
+  const hasWorktree = ownsWorktree(s);
+  const isLastWindow = s.id > 0 && liveWindowCount() <= 1;
+  return row(
+    button("Stop", { key: "stop", disabled: !s.terminalId }),
+    spacer(1),
+    button("Arch", { key: "archive", disabled: !hasWorktree || isLastWindow }),
+    spacer(1),
+    button("Del", { intent: "danger", key: "delete", disabled: isLastWindow }),
+    flexSpacer(),
+  );
+}
+
+// Compact in-place confirmation for the dock (Delete is the only
+// action that confirms). Reuses `confirm-cancel` / `confirm-<action>`
+// keys so the modal's handlers run unchanged. Two lines.
+function dockConfirmRows(
+  confirm: { action: BulkAction; ids: number[] },
+): WidgetSpec[] {
+  const cap = confirm.action[0].toUpperCase() + confirm.action.slice(1);
+  const id = confirm.ids[0];
+  const label = orchestratorSessions.get(id)?.label ?? `#${id}`;
+  return [
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: `${cap} ${label}?`,
+            style: { fg: "ui.status_error_indicator_fg", bold: true },
+          },
+        ]),
+      ],
+    },
+    row(
+      button("Cancel", { key: "confirm-cancel" }),
+      spacer(1),
+      button(`${cap}`, { intent: "danger", key: `confirm-${confirm.action}` }),
+      flexSpacer(),
+    ),
+  ];
+}
+
+// Compact single-column spec for the dock. Reuses the same `sessions`
+// list key + filter/scope/action keys as the modal so the existing
+// `widget_event` handlers fire unchanged. The session list fills the
+// available height; the hint bar is pinned to the bottom by sizing the
+// list to consume everything above the fixed bottom block.
+function buildDockSpec(): WidgetSpec {
+  if (!openDialog) return col();
+  const filtered = openDialog.filteredIds;
+  const activeId = editor.activeWindow();
+  // Content width tracks the responsive dock width we request from the
+  // host (`dockDefaultWidth`, re-issued on resize), bounded by what the
+  // host can actually grant: it keeps EDITOR_MIN (~20) cols for the
+  // buffer, so on a narrow terminal the real dock is `screenW - 20` and
+  // below that it's hidden. Taking the min keeps name/tag truncation and
+  // the `dockRule` in step with the visible width.
+  const EDITOR_MIN_COLS = 20;
+  const screenW = editor.getScreenSize().width;
+  const grantable = screenW > 0 ? screenW - EDITOR_MIN_COLS : DOCK_WIDTH_COLS;
+  const dockW = Math.min(dockDefaultWidth(), grantable);
+  const contentW = dockContentCols(dockW);
+  const items = filtered.map((id) => renderListItem(id, activeId, contentW));
+  const itemKeys = filtered.map(String);
+  const selIdx = filtered.length === 0
+    ? -1
+    : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
+  const selected = selIdx >= 0 ? orchestratorSessions.get(filtered[selIdx]) : undefined;
+  const confirm = openDialog.pendingConfirm;
+  const inConfirm = confirm !== null;
+  const scope = openDialog.scope;
+  const newKey = editor.getKeybindingLabel(
+    "orchestrator_open_new_from_picker",
+    OPEN_MODE,
+  );
+  const newLabel = newKey ? `+ New ${newKey}` : "+ New";
+  // Dock toggle labels stay terse — the dock is narrow, and the rebind
+  // hints live in the wider modal picker. Just the plain noun here.
+  const worktreeLabel = "all worktrees";
+  // Checked = show trivial (empty / single-file) sessions; unchecked
+  // (default) hides them so the dock focuses on real work. Same
+  // `hide-trivial` widget key the modal uses, so the existing
+  // `widget_event` toggle handler fires for the dock too.
+  const trivialLabel = "show empty";
+
+  // Pinned bottom block: a confirm prompt (separator + 2 rows) OR
+  // detail + actions (separator + 0–2 rows), then the hint bar. The
+  // list is sized to consume the height above so the hint stays glued
+  // to the bottom.
+  const hintRow = row(
+    flexSpacer(),
+    hintBar([
+      { keys: "↑↓", label: "switch" },
+      { keys: "Enter", label: "edit" },
+      { keys: "Esc", label: "editor" },
+    ]),
+    flexSpacer(),
+  );
+  let bottom: WidgetSpec[];
+  let bottomRows: number;
+  if (inConfirm && confirm) {
+    bottom = [sessionsSeparator(), ...dockConfirmRows(confirm), hintRow];
+    bottomRows = 1 + 2 + 1;
+  } else {
+    const detail = dockDetailLine(selected);
+    const actions = dockActionRow(selected);
+    bottom = [];
+    bottomRows = 1; // hint
+    if (detail || actions) {
+      bottom.push(sessionsSeparator());
+      bottomRows += 1;
+    }
+    if (detail) {
+      bottom.push(detail);
+      bottomRows += 1;
+    }
+    if (actions) {
+      bottom.push(actions);
+      bottomRows += 1;
+    }
+    bottom.push(hintRow);
+  }
+
+  // Size the list to fill the dock. The dock draws only a right border
+  // (no top/bottom), so its content area is the full terminal height.
+  // Fixed top chrome is 6 rows (title, New/scope, worktrees toggle,
+  // empty/1-file toggle, filter, rule).
+  const screen = editor.getScreenSize();
+  const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - 6 - bottomRows);
+  openDialog.listVisibleRows = listRows;
+
+  return col(
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
+        ]),
+      ],
+    },
+    row(
+      button(newLabel, {
+        intent: "primary",
+        key: inConfirm ? undefined : "new-session",
+      }),
+      flexSpacer(),
+      button(scope === "current" ? "this ▾" : "all ▾", {
+        key: inConfirm ? undefined : "scope-toggle",
+      }),
+    ),
+    row(
+      toggle(openDialog.showWorktrees, worktreeLabel, {
+        key: inConfirm ? undefined : "worktree-show",
+      }),
+      flexSpacer(),
+    ),
+    row(
+      toggle(!openDialog.hideTrivial, trivialLabel, {
+        key: inConfirm ? undefined : "hide-trivial",
+      }),
+      flexSpacer(),
+    ),
+    text({
+      value: openDialog.filter.value,
+      cursorByte: openDialog.filter.cursor,
+      label: "Filter",
+      placeholder: "/ to search",
+      fullWidth: true,
+      key: inConfirm ? undefined : "filter",
+    }),
+    dockRule(contentW),
+    list({
+      items,
+      itemKeys,
+      selectedIndex: selIdx,
+      visibleRows: listRows,
+      // Focusable in the dock (unlike the modal, where Up/Down forward
+      // from the filter): the list itself is the default focus so
+      // ↑↓ drive live-switch and Enter blurs to the editor.
+      focusable: !inConfirm,
+      key: inConfirm ? undefined : "sessions",
+    }),
+    ...bottom,
+  );
+}
+
+// Commit the highlighted session as the active window after a short
+// debounce, so holding ↑/↓ to traverse the list doesn't thrash through
+// every session in between. `fromEdge` drives the directional wipe.
+function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
+  const token = ++dockSwitchToken;
+  console.warn(`[dock-switch] scheduled token=${token} fromEdge=${fromEdge}`);
+  void (async () => {
+    await editor.delay(30);
+    if (token !== dockSwitchToken) {
+      console.warn(`[dock-switch] token=${token} superseded by ${dockSwitchToken}`);
+      return;
+    }
+    if (!openDialog || !openPanel || !dockMode || dockBlurred) {
+      console.warn(
+        `[dock-switch] token=${token} skipped: openDialog=${!!openDialog} openPanel=${!!openPanel} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
+      );
+      return;
+    }
+    const id = openDialog.filteredIds[openDialog.selectedIndex];
+    if (typeof id !== "number" || id <= 0) {
+      console.warn(`[dock-switch] token=${token} no valid id: ${id}`);
+      return;
+    }
+    if (orchestratorSessions.get(id)?.discovered) {
+      console.warn(`[dock-switch] token=${token} id=${id} is discovered, skipping`);
+      return;
+    }
+    if (id === editor.activeWindow()) {
+      console.warn(`[dock-switch] token=${token} id=${id} already active`);
+      return;
+    }
+    console.warn(`[dock-switch] token=${token} firing setActiveWindow(${id}) fromEdge=${fromEdge}`);
+    if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
+    else editor.setActiveWindow(id);
+  })();
+}
+
+// Toggle command (bind to a key of choice; reachable as
+// "Orchestrator: Toggle Dock" in the command palette). Simple
+// 2-state: visible → hide, hidden → show + focus. (A blurred-but-
+// visible dock is re-focused by clicking it.) A 3-state toggle can't
+// work reliably because invoking the toggle via a chord first blurs
+// the focused dock — the toggle would then always see "blurred".
+function toggleDock(): void {
+  if (openPanel && dockMode) {
+    closeOpenDialog();
+    return;
+  }
+  // A centered modal picker is open — leave it alone.
+  if (openPanel) return;
+  openControlRoom({ dock: true });
+}
+
+registerHandler("orchestrator_dock_toggle", toggleDock);
 
 // Stop every process one session owns. Sends SIGTERM first via the
 // host's `signalWindow` (which fans out through the window's
@@ -1866,7 +2388,8 @@ function pickNextActiveSession(excludeId: number): number {
 
 // Number of real editor windows. Discovered on-disk rows have negative
 // ids and are not windows. The editor must always host at least one
-// window, so deleting/archiving the last live window is refused.
+// window; archiving/deleting the last live window therefore opens a
+// replacement first (see `ensureReplacementWindow`).
 function liveWindowCount(): number {
   let n = 0;
   for (const s of orchestratorSessions.values()) {
@@ -1875,17 +2398,64 @@ function liveWindowCount(): number {
   return n;
 }
 
+// Closing the last live window would leave the editor with nothing to
+// show, so before archiving/deleting the sole remaining session we open
+// a fresh terminal session in `projectRoot` — the project that session
+// belonged to, i.e. "the last project" — and dive into it. The new
+// window becomes active, so the caller can then close the old one
+// normally. No-op when another live window already exists (the caller
+// just switches to it instead). Returns true when a replacement opened.
+async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
+  if (liveWindowCount() > 1) return false;
+  const label = editor.pathBasename(projectRoot) || "session";
+  try {
+    const result = await editor.createWindowWithTerminal({
+      root: projectRoot,
+      label,
+      cwd: projectRoot,
+    });
+    // `createWindowWithTerminal` fires `window_created`, which reconciles
+    // the new window into the model; set it eagerly too so the immediate
+    // close-and-switch below sees a second live window.
+    orchestratorSessions.set(result.windowId, {
+      id: result.windowId,
+      label,
+      root: projectRoot,
+      projectPath: projectRoot,
+      sharedWorktree: false,
+      terminalId: result.terminalId,
+      state: "idle",
+      lastOutputAt: null,
+      createdAt: Date.now(),
+    });
+    return true;
+  } catch (e) {
+    editor.setStatus(
+      `Orchestrator: could not open a replacement session — ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    return false;
+  }
+}
+
 // Resolve the *main* repo root a session's worktree belongs to, so
 // `git worktree move/remove` runs from a stable directory (never from
 // inside the tree being moved/removed). Prefers the canonical
 // `projectPath` recorded at create/discovery time, falling back to
 // resolving from the worktree itself.
 async function worktreeRepoRoot(s: AgentSession): Promise<string | null> {
-  if (s.projectPath) {
-    const r = await resolveCanonicalRepoRoot(s.projectPath);
-    if (r) return r;
+  // `projectPath` is the canonical repo root when the session is a
+  // worktree of a separate project, and equals `root` otherwise (the
+  // host normalises absence → root). Resolve once; if the canonical
+  // path is unavailable (non-git, etc.), fall back to `root` so the
+  // caller still gets something to dedupe against.
+  const r = await resolveCanonicalRepoRoot(s.projectPath);
+  if (r) return r;
+  if (s.projectPath !== s.root) {
+    return await resolveCanonicalRepoRoot(s.root);
   }
-  return await resolveCanonicalRepoRoot(s.root);
+  return null;
 }
 
 interface LifecycleResult {
@@ -1905,76 +2475,86 @@ interface LifecycleResult {
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  // Archive moves the worktree to the graveyard — only sessions that
-  // own one can be archived. A launch/in-place session has no separate
-  // worktree, so there's nothing to move; use Delete to forget it.
-  if (!ownsWorktree(s)) {
-    return { ok: false, err: "no worktree to archive — use Delete to forget this session" };
-  }
-  // The editor must keep at least one window; closing the last one
-  // would orphan the move. Refuse before touching the worktree.
-  if (s.id > 0 && liveWindowCount() <= 1) {
-    return { ok: false, err: "cannot archive the last window — open another session first" };
-  }
-  const repoRoot = await worktreeRepoRoot(s);
-  if (!repoRoot) return { ok: false, err: "not a git repository" };
+  const removable = ownsWorktree(s);
 
-  // Live session: close_window refuses to close the active window, so
-  // switch away first, then SIGKILL the process group (so pty
-  // children release worktree locks) and close the editor session.
+  // Live session: the editor must always host a window. If this is the
+  // only one, open a replacement in its project first; then switch away
+  // (close_window refuses the active window), SIGKILL the process group
+  // so pty children release any worktree locks, and close the session.
   if (!s.discovered && id > 0) {
+    await ensureReplacementWindow(s.projectPath ?? s.root);
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
     if (s.terminalId) editor.signalWindow(id, "SIGKILL");
     editor.closeWindow(id);
-    // Brief settle so the filesystem reflects the pty's exit before
-    // we move the worktree out from under it.
-    await editor.delay(250);
+    // Brief settle so the filesystem reflects the pty's exit before we
+    // move the worktree out from under it.
+    if (removable) await editor.delay(250);
   }
 
-  const archivedRoot = editor.pathJoin(
-    editor.getDataDir(),
-    "orchestrator",
-    slugify(repoRoot),
-    ".archived",
-    s.label,
-  );
-  const parent = editor.pathDirname(archivedRoot);
-  if (!editor.createDir(parent)) {
-    return { ok: false, err: `could not create ${parent}`, repoRoot };
-  }
-  // git worktree move keeps git's internal bookkeeping consistent
-  // (the new path stays registered as a worktree).
-  const moveRes = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
-    repoRoot,
-  );
-  if (moveRes.exit_code !== 0) {
-    return {
-      ok: false,
-      err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+  if (removable) {
+    // Owns a worktree: move it to the `.archived/` graveyard so git's
+    // bookkeeping stays consistent and Unarchive can move it back.
+    const repoRoot = await worktreeRepoRoot(s);
+    if (!repoRoot) return { ok: false, err: "not a git repository" };
+    const archivedRoot = editor.pathJoin(
+      editor.getDataDir(),
+      "orchestrator",
+      slugify(repoRoot),
+      ".archived",
+      s.label,
+    );
+    const parent = editor.pathDirname(archivedRoot);
+    if (!editor.createDir(parent)) {
+      return { ok: false, err: `could not create ${parent}`, repoRoot };
+    }
+    const moveRes = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "worktree", "move", s.root, archivedRoot],
       repoRoot,
-    };
+    );
+    if (moveRes.exit_code !== 0) {
+      return {
+        ok: false,
+        err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+        repoRoot,
+      };
+    }
+    const manifest = loadArchiveManifest(repoRoot);
+    manifest.sessions.push({
+      label: s.label,
+      root: archivedRoot,
+      original_root: s.root,
+      branch: s.branch || s.label,
+      archived_at: new Date().toISOString(),
+    });
+    saveArchiveManifest(repoRoot, manifest);
+    // A discovered row has no window_closed hook to drop it — remove it
+    // from the model directly.
+    if (s.discovered) {
+      orchestratorSessions.delete(id);
+      discoveredIdByPath.delete(s.root);
+    }
+    return { ok: true, repoRoot };
   }
 
+  // In-place / launch session: there's no separate worktree to move, so
+  // archiving just records the session at its own root (original_root ===
+  // root, no graveyard move) — listing it as archived and letting a
+  // future Unarchive reopen a window there — then drops the live record.
+  // The window was already closed above.
+  const repoRoot = (await resolveCanonicalRepoRoot(s.root)) ?? s.root;
   const manifest = loadArchiveManifest(repoRoot);
   manifest.sessions.push({
     label: s.label,
-    root: archivedRoot,
+    root: s.root,
     original_root: s.root,
     branch: s.branch || s.label,
     archived_at: new Date().toISOString(),
   });
   saveArchiveManifest(repoRoot, manifest);
-
-  // A discovered row has no window_closed hook to drop it — remove it
-  // from the model directly.
-  if (s.discovered) {
-    orchestratorSessions.delete(id);
-    discoveredIdByPath.delete(s.root);
-  }
+  orchestratorSessions.delete(id);
   return { ok: true, repoRoot };
 }
 
@@ -2189,19 +2769,16 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 async function deleteOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: "session gone" };
-  // The editor must keep at least one window. Refuse before any
-  // close/worktree-removal so a removable session can't `git worktree
-  // remove` the tree the live editor is still sitting in.
-  if (s.id > 0 && liveWindowCount() <= 1) {
-    return { ok: false, err: "cannot delete the last window — open another session first" };
-  }
   const removable = ownsWorktree(s);
 
   if (!s.discovered && id > 0) {
-    // close_window refuses to close the active (and the last) window,
-    // so swap away first. SIGKILL only when there's an agent terminal —
-    // a launch/in-place session has none, and signalling it must never
-    // touch the editor itself.
+    // The editor must keep at least one window. If this is the only live
+    // one, open a replacement in its project first (so a removable
+    // session can't `git worktree remove` the tree the editor is still
+    // sitting in, and the editor never goes empty). Then swap away
+    // (close_window refuses the active window), SIGKILL only when there's
+    // an agent terminal — a launch/in-place session has none — and close.
+    await ensureReplacementWindow(s.projectPath ?? s.root);
     if (id === editor.activeWindow()) {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
@@ -2243,6 +2820,12 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   if (s.discovered) {
     orchestratorSessions.delete(id);
     discoveredIdByPath.delete(s.root);
+  } else if (id > 0) {
+    // Drop the live record explicitly. `close_window` fires
+    // `window_closed` → reconcile, which also prunes it, but an in-place
+    // / launch session left the directory untouched, so without this it
+    // could linger in the model and "come back" when the dialog reopens.
+    orchestratorSessions.delete(id);
   }
   return { ok: true, repoRoot };
 }
@@ -2367,8 +2950,26 @@ editor.defineMode(
   true,
 );
 
+// The dock's Enter / Esc / Space / "/" are handled at the host's
+// floating-panel layer (see dispatch_floating_widget_key), not via an
+// editor mode — `defineMode` bindings resolve against the active
+// buffer's mode, which the dock floats over, so a session with a
+// buffer-local mode would shadow them. Up/Down use the host's generic
+// list smart-keys, which fire the `select` event we live-switch on.
+
 registerHandler("orchestrator_open_new_from_picker", () => {
   if (!openDialog) return;
+  // The New-Session form is a centered modal in the host's dedicated
+  // floating slot, which coexists with the dock's own slot. From the
+  // dock, leave the dock mounted underneath (it keeps showing the live
+  // session list); from the centered picker, replace it with the form.
+  if (dockMode) {
+    // Hand keyboard focus to the form by blurring the dock; the host
+    // routes keys to the focused centered modal first.
+    dockBlurred = true;
+    openForm({ fromPicker: true });
+    return;
+  }
   closeOpenDialog();
   openForm({ fromPicker: true });
 });
@@ -2376,6 +2977,7 @@ registerHandler("orchestrator_open_new_from_picker", () => {
 registerHandler("orchestrator_focus_filter", () => {
   if (!openDialog || !openPanel) return;
   openPanel.setFocusKey("filter");
+  if (dockMode) dockFocus = "filter";
 });
 
 // Space (rebindable): toggle the highlighted row in/out of the bulk
@@ -2384,11 +2986,32 @@ registerHandler("orchestrator_focus_filter", () => {
 // (so the now-absent "visit" focus would otherwise be clamped to a
 // random tabbable), and when the selection drops back below two the
 // per-session preview — with its "visit" button — returns.
-registerHandler("orchestrator_toggle_select", () => {
+function toggleSelectCurrent(): void {
   if (!openDialog || !openPanel) return;
   // Inert while a confirm prompt is up — the selection is frozen
   // behind the confirmation panel.
   if (openDialog.pendingConfirm) return;
+  // Context-sensitive Space dispatch. OPEN_MODE binds Space to
+  // `orchestrator_toggle_select` *unconditionally* — it must, to keep
+  // Space out of the filter text input (the host's
+  // dispatch_floating_widget_key defers any explicitly-bound mode key
+  // before the text-input path). We branch on the focused widget so
+  // Space on the filter checkboxes / scope chip toggles *that*
+  // control rather than the list multi-select. Other focused widgets
+  // (sessions list, Visit button, +New, the filter input itself) fall
+  // through to the list multi-select — preserving today's behaviour
+  // for widgets that don't expose a natural toggle.
+  switch (pickerFocusKey) {
+    case "worktree-show":
+      toggleShowWorktrees();
+      return;
+    case "hide-trivial":
+      toggleHideTrivial();
+      return;
+    case "scope-toggle":
+      toggleScope();
+      return;
+  }
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number") return;
   const wasBulk = selectedSessions().length >= 2;
@@ -2399,6 +3022,12 @@ registerHandler("orchestrator_toggle_select", () => {
   }
   clearDialogError();
   refreshOpenDialog();
+  // The dock has no bulk preview pane / Visit button; just toggle the
+  // checkbox and keep focus on the list.
+  if (dockMode) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+    return;
+  }
   const isBulk = selectedSessions().length >= 2;
   if (!wasBulk && isBulk) {
     // Entering bulk mode — land focus on a bulk button (Up/Down from
@@ -2408,7 +3037,8 @@ registerHandler("orchestrator_toggle_select", () => {
     // Back to single preview — restore focus to Visit.
     openPanel.setFocusKey("visit");
   }
-});
+}
+registerHandler("orchestrator_toggle_select", toggleSelectCurrent);
 
 function toggleScope(): void {
   if (!openDialog) return;
@@ -3601,13 +4231,29 @@ function closeForm(): void {
   editor.setEditorMode(null);
 }
 
+// When the New-Session form was opened on top of a still-mounted dock,
+// closing the form returns keyboard focus to the dock (rather than
+// reopening a centered picker). Returns true when it handled the
+// restore — i.e. the dock is live.
+function restoreDockAfterForm(): boolean {
+  if (!openPanel || !dockMode) return false;
+  dockBlurred = false;
+  dockFocus = "list";
+  editor.floatingPanelControl(openPanel.id(), "focus", 0);
+  openPanel.setFocusKey("sessions");
+  refreshOpenDialog();
+  return true;
+}
+
 // Cancel path: tear down the form, and if it was reached via the
 // picker (Alt+N or "+ New Session" button), reopen the picker so
 // Esc behaves like a true "back" rather than dropping the user
-// into the bare editor.
+// into the bare editor. When the dock is still mounted underneath,
+// just hand focus back to it instead.
 function cancelForm(): void {
   const wasFromPicker = !!form?.fromPicker;
   closeForm();
+  if (restoreDockAfterForm()) return;
   if (wasFromPicker) {
     openControlRoom();
   }
@@ -3756,6 +4402,13 @@ async function submitForm(): Promise<void> {
   if (createWorktree) appendHistory("branch", reportedBranch);
 
   closeForm();
+  // When the form was opened over the dock, the new session dives in
+  // below — hand keyboard focus to the dived-into terminal by blurring
+  // the dock (it stays visible and refreshes to show the new row).
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  }
 
   // Spawn the new window + agent terminal atomically. Compared to
   // the legacy `createWindow → window_created hook → createTerminal`
@@ -3800,6 +4453,8 @@ async function submitForm(): Promise<void> {
       branch: reportedBranch || undefined,
     };
     orchestratorSessions.set(id, tracked);
+    // Refresh the dock so the freshly-created session shows up.
+    if (openPanel && dockMode) refreshOpenDialog();
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to start session — ${
@@ -4053,33 +4708,12 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   if (!openDialog || !openPanel) return;
   const id = openDialog.filteredIds[openDialog.selectedIndex];
   if (typeof id !== "number" || id <= 0) return;
-  // Archive moves the worktree to the graveyard, so it only applies to
-  // a session that owns one. A launch/in-place session runs inside a
-  // real checkout with no `git worktree` entry — Archive would have
-  // nothing to move (and must never rm-rf the user's actual project).
-  // Delete forgets the session and removes the worktree only when one
-  // is owned. Both refuse the last live window (the editor must keep at
-  // least one) — surface that before the confirm step.
-  if (action === "archive" || action === "delete") {
-    const session = orchestratorSessions.get(id);
-    if (session && session.id > 0 && liveWindowCount() <= 1) {
-      setDialogError(
-        `cannot ${action} session [${id}] ${session.label} — it's the last window; open another session first`,
-      );
-      refreshOpenDialog();
-      return;
-    }
-  }
-  if (action === "archive") {
-    const session = orchestratorSessions.get(id);
-    if (session && !ownsWorktree(session)) {
-      setDialogError(
-        `cannot archive session [${id}] ${session.label} — it has no dedicated worktree; use Delete to forget it`,
-      );
-      refreshOpenDialog();
-      return;
-    }
-  }
+  // Every live session can be stopped/archived/deleted now: Archive
+  // records a launch/in-place session at its own root (no worktree to
+  // move) and worktree sessions move to the graveyard; closing the last
+  // live window opens a replacement first (see `ensureReplacementWindow`
+  // in `archiveOne` / `deleteOne`). So no eligibility refusal here — just
+  // confirm and run.
   openDialog.pendingConfirm = { action, ids: [id] };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
@@ -4208,6 +4842,7 @@ editor.on("widget_event", (e) => {
       form = null;
       formPanel = null;
       editor.setEditorMode(null);
+      if (restoreDockAfterForm()) return;
       if (wasFromPicker) {
         openControlRoom();
       }
@@ -4220,6 +4855,82 @@ editor.on("widget_event", (e) => {
   // Open dialog (session picker)
   // ---------------------------------------------------------------------
   if (openPanel && openDialog && e.panel_id === openPanel.id()) {
+    if (e.event_type === "blur") {
+      // Host fired this because focus left the dock (Enter/Esc dive or
+      // leave, editor click, or an unhandled chord like Ctrl+P). The
+      // dock stays visible; the host stops routing keys to it.
+      if (dockMode) dockBlurred = true;
+      return;
+    }
+    if (e.event_type === "focus") {
+      // Focus (re-)entered the dock / picker — a mouse click on a
+      // row/filter, a host-driven focus move, or the symmetric
+      // refocus_floating_panel notification fired by the host's
+      // un-dive mouse handler. Track the zone (dockFocus) and the
+      // exact focused widget (pickerFocusKey); mark the dock active.
+      if (typeof e.widget_key === "string" && e.widget_key.length > 0) {
+        pickerFocusKey = e.widget_key;
+      }
+      if (dockMode) {
+        dockBlurred = false;
+        dockFocus = e.widget_key === "filter" ? "filter" : "list";
+      }
+      return;
+    }
+    if (e.event_type === "dock_space") {
+      // Host Space on the dock → toggle the highlighted row's
+      // multi-select checkbox.
+      if (dockMode) toggleSelectCurrent();
+      return;
+    }
+    if (e.event_type === "dock_new") {
+      // Host Alt+N on the dock → open the new-session form. The form is
+      // a centered modal in a separate slot, so the dock stays visible.
+      if (dockMode) {
+        dockBlurred = true;
+        openForm({ fromPicker: true });
+      }
+      return;
+    }
+    if (e.event_type === "dock_activate") {
+      // Host Enter on the dock's session list. Mirrors the dialog's
+      // `activate` branch: a discovered (on-disk) worktree has no live
+      // window to switch to, so attach a fresh session at it; any other
+      // row is already active via the arrow live-switch, so Enter just
+      // hands keyboard focus to the editor (the dock stays visible).
+      if (!dockMode || !openPanel || !openDialog) return;
+      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
+      if (sel && sel.discovered) {
+        void attachToWorktree({
+          root: sel.root,
+          projectPath: sel.projectPath ?? sel.root,
+          label: sel.label,
+          branch: sel.branch,
+          discoveredId: sel.id,
+        });
+        return;
+      }
+      dockBlurred = true;
+      editor.floatingPanelControl(openPanel.id(), "blur", 0);
+      editor.setEditorMode(null);
+      return;
+    }
+    if (e.event_type === "dock_toggle_worktrees") {
+      // Host Alt+T on the dock — the dialog's OPEN_MODE chord has no
+      // equivalent in the dock (no editor mode), so the host routes it
+      // here. Share the same flip the click/Alt+T-in-dialog use.
+      if (dockMode) toggleShowWorktrees();
+      return;
+    }
+    if (e.event_type === "dock_toggle_trivial") {
+      if (dockMode) toggleHideTrivial();
+      return;
+    }
+    if (e.event_type === "dock_toggle_scope") {
+      if (dockMode) toggleScope();
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === "filter") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const value = payload.value;
@@ -4254,9 +4965,23 @@ editor.on("widget_event", (e) => {
     ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
+      console.warn(
+        `[dock-select] event reached plugin: idx=${idx} widget_key=${e.widget_key} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
+      );
       if (typeof idx === "number") {
+        const prevIdx = openDialog.selectedIndex;
         openDialog.selectedIndex = idx;
         clearDialogError();
+        if (dockMode) {
+          // The editor to the dock's right is the preview: arrowing
+          // the list switches the active window live (debounced),
+          // wiping down when moving down the list and up when moving up.
+          openPanel.update(buildDockSpec());
+          openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+          const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
+          scheduleDockSwitch(fromEdge);
+          return;
+        }
         // Update preview pane.
         openPanel.update(buildOpenSpec());
         // Re-pin the list selection so the spec re-emit doesn't
@@ -4297,6 +5022,14 @@ editor.on("widget_event", (e) => {
       }
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
         editor.setActiveWindow(id);
+      }
+      if (dockMode && openPanel) {
+        // Dock stays visible; Enter just hands keyboard focus to the
+        // editor (the session is already active via live-switch).
+        editor.floatingPanelControl(openPanel.id(), "blur");
+        dockBlurred = true;
+        editor.setEditorMode(null);
+        return;
       }
       closeOpenDialog();
       return;
@@ -4464,54 +5197,61 @@ editor.on("active_window_changed", () => {
 // viewport at the same time.
 editor.on("resize", () => {
   if (openDialog && openPanel) {
-    // buildOpenSpec refits `listVisibleRows` to the session count
-    // (bounded by the new screen budget) on the refresh below.
+    // Make the dock responsive: re-issue its width on every resize so it
+    // scales with the terminal. Uses the focus-preserving `dock_width`
+    // op (not `dock`, which would steal keyboard focus back from the
+    // editor); the host ignores it unless the panel is docked and still
+    // lets a user-dragged width win. buildOpenSpec/buildDockSpec also
+    // refit `listVisibleRows` + content width on the refresh below.
+    if (dockMode) {
+      editor.floatingPanelControl(openPanel.id(), "dock_width", dockDefaultWidth());
+    }
     refreshOpenDialog();
   }
 });
 
 // =============================================================================
-// Agent state inference from terminal output / exit
+// Agent activity tracking from terminal output / exit
+//
+// We only claim what the terminal can prove: a session is "working" while
+// it's actively printing, "idle" once it goes quiet. The signal is the
+// timestamp of the last output; `sessionState` buckets it against
+// IDLE_AFTER_MS at render time. We don't poll the process, so this tracks
+// *output*, not liveness — a wedged agent reads idle, same as a finished
+// one, which is the honest limit of what we can see from here.
+//
+// Keyed by `window_id`, not the one terminal id Orchestrator spawned: a
+// session is its editor window (its id == the session id), so output from
+// ANY terminal in that window counts — a second shell the user opened, an
+// agent that re-execs, etc. The host fires `terminal_output` on every PTY
+// read, so this also lights up for in-place redraws and carriage-return
+// progress bars, not just newline-terminated lines.
 // =============================================================================
 
-// Match common AI-agent prompts: "(Y/n)", "(y/N)", "Press <key>",
-// or a trailing question mark followed by optional whitespace.
-// Conservative — false positives mistakenly classify a busy
-// agent as "awaiting", which is recoverable by next output;
-// false negatives are worse (user thinks agent is busy when
-// it's actually waiting), so we err on the side of detecting.
-const AWAITING_RX = /(\(\s*[YyNn]\s*\/\s*[YyNn]\s*\):?\s*$)|(Press\s+(?:enter|return|any\s+key)[^\n]*$)|(\?\s*$)/i;
-
 editor.on("terminal_output", (payload) => {
-  const last = payload.last_line || "";
-  for (const s of orchestratorSessions.values()) {
-    if (s.terminalId === payload.terminal_id) {
-      // RUNNING is the default; flip to AWAITING only when the
-      // last visible line matches a prompt pattern. New output
-      // that doesn't match restores RUNNING — agents usually
-      // print their next chunk over the prompt line, so this
-      // gives the right transition even for chatty agents.
-      s.state = AWAITING_RX.test(last) ? "awaiting" : "running";
-      break;
-    }
+  const s = orchestratorSessions.get(payload.window_id);
+  if (s) {
+    // Stamp the moment of output. `sessionState` turns this into
+    // working/idle; the cached `state` is updated so persistence and
+    // any non-render reader see a fresh value too.
+    s.lastOutputAt = Date.now();
+    s.state = "working";
+    refreshOpenDialog();
   }
-  refreshOpenDialog();
 });
 
 editor.on("terminal_exit", (payload) => {
-  for (const s of orchestratorSessions.values()) {
-    if (s.terminalId === payload.terminal_id) {
-      const code = payload.exit_code;
-      // exit_code is currently always null (the editor's
-      // wait-status capture is a follow-up). Treat unknown as
-      // ready — Orchestrator doesn't have a better heuristic and
-      // mis-marking a real error as "ready" is recoverable
-      // (the user opens the dive and sees the failure).
-      s.state = code === null || code === 0 ? "ready" : "errored";
-      break;
-    }
+  const s = orchestratorSessions.get(payload.window_id);
+  if (s) {
+    // A terminal in this session ended — it can't be the source of work
+    // anymore. Drop to idle and clear the timestamp so the row reads idle
+    // immediately rather than riding out the IDLE_AFTER_MS tail. If another
+    // terminal in the same window is still printing, the next
+    // `terminal_output` re-marks it working within the debounce window.
+    s.lastOutputAt = null;
+    s.state = "idle";
+    refreshOpenDialog();
   }
-  refreshOpenDialog();
 });
 
 // =============================================================================
@@ -4547,6 +5287,13 @@ editor.registerCommand(
   "Orchestrator: Kill Selected",
   "Close the session highlighted in the open Orchestrator prompt",
   "orchestrator_kill",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "Orchestrator: Toggle Dock",
+  "Show/hide the persistent left session dock (↑↓ switches windows live)",
+  "orchestrator_dock_toggle",
   null,
   { terminalBypass: true },
 );

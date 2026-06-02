@@ -134,6 +134,7 @@ impl Editor {
                 };
 
                 crate::input::commands::Suggestion {
+                    description_spans: None,
                     text: display_name,
                     description,
                     value: Some(buffer_id.0.to_string()),
