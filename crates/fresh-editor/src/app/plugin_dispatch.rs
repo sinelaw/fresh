@@ -487,18 +487,10 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_label(LeafId(split_id), label);
+                self.handle_set_split_label(split_id, label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .clear_label(split_id);
+                self.handle_clear_split_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 self.handle_get_split_by_label(label, request_id);
@@ -645,10 +637,7 @@ impl Editor {
                 self.handle_add_plugin_config_field(plugin_name, field_name, field_schema);
             }
             PluginCommand::ReloadThemes { apply_theme } => {
-                self.reload_themes();
-                if let Some(theme_name) = apply_theme {
-                    self.apply_theme(&theme_name);
-                }
+                self.handle_reload_themes(apply_theme);
             }
             PluginCommand::RegisterGrammar {
                 language,
@@ -700,13 +689,7 @@ impl Editor {
                 self.handle_await_next_key(callback_id);
             }
             PluginCommand::SetKeyCaptureActive { active } => {
-                self.active_window_mut().key_capture_active = active;
-                if !active {
-                    // Capture window closed; any leftover queued keys
-                    // were intended for the plugin and should not now
-                    // leak into the editor's normal dispatch.
-                    self.active_window_mut().pending_key_capture_buffer.clear();
-                }
+                self.handle_set_key_capture_active(active);
             }
             PluginCommand::SetPromptSuggestions {
                 suggestions,
@@ -715,54 +698,31 @@ impl Editor {
                 self.handle_set_prompt_suggestions(suggestions, selected_index);
             }
             PluginCommand::SetPromptInputSync { sync } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.sync_input_on_navigate = sync;
-                }
+                self.handle_set_prompt_input_sync(sync);
             }
             PluginCommand::SetPromptTitle { title } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.title = title;
-                }
+                self.handle_set_prompt_title(title);
             }
             PluginCommand::SetPromptFooter { footer } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.footer = footer;
-                }
+                self.handle_set_prompt_footer(footer);
             }
             PluginCommand::SetPromptToolbar { spec } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.toolbar_widget = spec;
-                }
+                self.handle_set_prompt_toolbar(spec);
             }
             PluginCommand::ToggleOverlayToolbarWidget { key } => {
                 self.toggle_overlay_toolbar_widget(&key);
             }
             PluginCommand::SetPromptStatus { status } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.status = status;
-                }
+                self.handle_set_prompt_status(status);
             }
             PluginCommand::SetPromptSelectedIndex { index } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    let len = prompt.suggestions.len();
-                    if len > 0 {
-                        let clamped = (index as usize).min(len - 1);
-                        prompt.selected_suggestion = Some(clamped);
-                    }
-                }
+                self.handle_set_prompt_selected_index(index);
             }
 
             // ==================== Session lifecycle ====================
             // See docs/internal/orchestrator-sessions-design.md.
             PluginCommand::CreateWindow { root, label } => {
-                if !root.is_absolute() {
-                    tracing::warn!(
-                        "CreateWindow rejected: root must be absolute, got {:?}",
-                        root
-                    );
-                } else {
-                    let _ = self.create_window_at(root, label);
-                }
+                self.handle_create_window(root, label);
             }
             PluginCommand::CreateWindowWithTerminal {
                 root,
@@ -802,15 +762,7 @@ impl Editor {
             }
 
             PluginCommand::PreviewWindowInRect { id } => {
-                // Validate: only honour if the session exists and
-                // is not the active one (no point previewing the
-                // session whose UI is already on screen).
-                self.preview_window_id = match id {
-                    Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => {
-                        Some(sid)
-                    }
-                    _ => None,
-                };
+                self.handle_preview_window_in_rect(id);
             }
 
             // ==================== Command/Mode Registration ====================
@@ -822,26 +774,14 @@ impl Editor {
                 token_name,
                 title,
             } => {
-                if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title)
-                {
-                    tracing::warn!("Failed to register statusbar element: {}", e);
-                }
+                self.handle_register_status_bar_element(plugin_name, token_name, title);
             }
             PluginCommand::SetStatusBarValue {
                 buffer_id,
                 key,
                 value,
             } => {
-                if let Err(e) =
-                    self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
-                {
-                    // Plugins compute the value asynchronously off a lagging
-                    // state snapshot, then publish to the buffer that was
-                    // active when they started. If that buffer closed in the
-                    // meantime the value is simply discarded — an expected,
-                    // benign race, not a misuse worth warning about.
-                    tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
-                }
+                self.handle_set_status_bar_value(buffer_id, key, value);
             }
             PluginCommand::UnregisterCommand { name } => {
                 self.handle_unregister_command(name);
@@ -926,9 +866,7 @@ impl Editor {
                 self.handle_start_animation_virtual_buffer(id, buffer_id, kind);
             }
             PluginCommand::CancelAnimation { id } => {
-                self.active_window_mut()
-                    .animations
-                    .cancel(crate::view::animation::AnimationId::from_raw(id));
+                self.handle_cancel_animation(id);
             }
 
             // ==================== LSP Commands ====================
@@ -979,8 +917,7 @@ impl Editor {
             }
 
             PluginCommand::ClearAuthority => {
-                tracing::info!("Plugin cleared authority; restoring local");
-                self.clear_authority();
+                self.handle_clear_authority();
             }
 
             PluginCommand::SetEnv { snippet, dir } => {
@@ -1138,11 +1075,7 @@ impl Editor {
 
             // ==================== Review Diff Commands ====================
             PluginCommand::SetReviewDiffHunks { hunks } => {
-                self.active_window_mut().review_hunks = hunks;
-                tracing::debug!(
-                    "Set {} review hunks",
-                    self.active_window_mut().review_hunks.len()
-                );
+                self.handle_set_review_diff_hunks(hunks);
             }
 
             // ==================== Vi Mode Commands ====================
@@ -1291,14 +1224,10 @@ impl Editor {
                 self.flush_layout();
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
-                let split_id = self.split_manager().active_split();
-                self.active_window_mut()
-                    .composite_next_hunk(split_id, buffer_id);
+                self.handle_composite_next_hunk(buffer_id);
             }
             PluginCommand::CompositePrevHunk { buffer_id } => {
-                let split_id = self.split_manager().active_split();
-                self.active_window_mut()
-                    .composite_prev_hunk(split_id, buffer_id);
+                self.handle_composite_prev_hunk(buffer_id);
             }
 
             // ==================== Buffer Groups ====================
@@ -1545,6 +1474,151 @@ impl Editor {
         } else {
             self.handle_open_file_in_background(path);
         }
+    }
+
+    // ── Handlers extracted from the dispatch match ───────────────────────
+
+    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_label(LeafId(split_id), label);
+    }
+
+    fn handle_clear_split_label(&mut self, split_id: SplitId) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .clear_label(split_id);
+    }
+
+    fn handle_reload_themes(&mut self, apply_theme: Option<String>) {
+        self.reload_themes();
+        if let Some(theme_name) = apply_theme {
+            self.apply_theme(&theme_name);
+        }
+    }
+
+    fn handle_set_key_capture_active(&mut self, active: bool) {
+        self.active_window_mut().key_capture_active = active;
+        if !active {
+            // Capture window closed; any leftover queued keys were intended
+            // for the plugin and should not leak into normal dispatch.
+            self.active_window_mut().pending_key_capture_buffer.clear();
+        }
+    }
+
+    fn handle_set_prompt_input_sync(&mut self, sync: bool) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.sync_input_on_navigate = sync;
+        }
+    }
+
+    fn handle_set_prompt_title(&mut self, title: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.title = title;
+        }
+    }
+
+    fn handle_set_prompt_footer(&mut self, footer: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.footer = footer;
+        }
+    }
+
+    fn handle_set_prompt_toolbar(&mut self, spec: Option<fresh_core::api::WidgetSpec>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.toolbar_widget = spec;
+        }
+    }
+
+    fn handle_set_prompt_status(&mut self, status: String) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.status = status;
+        }
+    }
+
+    fn handle_set_prompt_selected_index(&mut self, index: u32) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            let len = prompt.suggestions.len();
+            if len > 0 {
+                prompt.selected_suggestion = Some((index as usize).min(len - 1));
+            }
+        }
+    }
+
+    fn handle_create_window(&mut self, root: std::path::PathBuf, label: String) {
+        if !root.is_absolute() {
+            tracing::warn!(
+                "CreateWindow rejected: root must be absolute, got {:?}",
+                root
+            );
+        } else {
+            let _ = self.create_window_at(root, label);
+        }
+    }
+
+    fn handle_preview_window_in_rect(&mut self, id: Option<fresh_core::WindowId>) {
+        // Only honour if the session exists and is not the active one
+        // (no point previewing the session whose UI is already on screen).
+        self.preview_window_id = match id {
+            Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => Some(sid),
+            _ => None,
+        };
+    }
+
+    fn handle_register_status_bar_element(
+        &mut self,
+        plugin_name: String,
+        token_name: String,
+        title: String,
+    ) {
+        if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title) {
+            tracing::warn!("Failed to register statusbar element: {}", e);
+        }
+    }
+
+    fn handle_set_status_bar_value(&mut self, buffer_id: u64, key: String, value: String) {
+        if let Err(e) =
+            self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
+        {
+            // Plugins compute asynchronously off a lagging state snapshot, so
+            // the target buffer may have closed — an expected, benign race.
+            tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
+        }
+    }
+
+    fn handle_cancel_animation(&mut self, id: u64) {
+        self.active_window_mut()
+            .animations
+            .cancel(crate::view::animation::AnimationId::from_raw(id));
+    }
+
+    fn handle_clear_authority(&mut self) {
+        tracing::info!("Plugin cleared authority; restoring local");
+        self.clear_authority();
+    }
+
+    fn handle_set_review_diff_hunks(&mut self, hunks: Vec<fresh_core::api::ReviewHunk>) {
+        self.active_window_mut().review_hunks = hunks;
+        tracing::debug!(
+            "Set {} review hunks",
+            self.active_window_mut().review_hunks.len()
+        );
+    }
+
+    fn handle_composite_next_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_next_hunk(split_id, buffer_id);
+    }
+
+    fn handle_composite_prev_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_prev_hunk(split_id, buffer_id);
     }
 
     // ── Virtual-buffer display configuration ────────────────────────────
