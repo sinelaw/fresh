@@ -3771,6 +3771,130 @@ fn server_command_is_rust_analyzer(server_command: &str) -> bool {
         .contains("rust-analyzer")
 }
 
+/// Build a null-result JSON-RPC response for `id`.
+fn null_response(id: i64) -> JsonRpcResponse {
+    JsonRpcResponse {
+        jsonrpc: "2.0".to_string(),
+        id,
+        result: Some(Value::Null),
+        error: None,
+    }
+}
+
+/// Parse the `{type, message}` body common to `window/showMessage` and
+/// `window/logMessage`. Returns `None` for malformed params.
+fn parse_window_message(
+    params: Option<Value>,
+    default_type: i64,
+) -> Option<(LspMessageType, String)> {
+    let msg = serde_json::from_value::<serde_json::Map<String, Value>>(params?).ok()?;
+    let type_num = msg
+        .get("type")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(default_type);
+    let message = msg
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no message)")
+        .to_string();
+    let message_type = match type_num {
+        1 => LspMessageType::Error,
+        2 => LspMessageType::Warning,
+        3 => LspMessageType::Info,
+        _ => LspMessageType::Log,
+    };
+    Some((message_type, message))
+}
+
+/// Emit a tracing record for an LSP window message at the level matching
+/// `message_type`.
+fn log_lsp_message(message_type: LspMessageType, language: &str, message: &str) {
+    match message_type {
+        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
+        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
+        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
+    }
+}
+
+/// Parse a `$/progress` notification into `(token, LspProgressValue)`.
+/// Returns `None` for unknown kinds or malformed params.
+fn parse_progress_notification(
+    params: Option<Value>,
+    language: &str,
+) -> Option<(String, LspProgressValue)> {
+    let progress = serde_json::from_value::<serde_json::Map<String, Value>>(params?).ok()?;
+    let token = progress
+        .get("token")
+        .and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let value_obj = progress.get("value").and_then(|v| v.as_object())?;
+    let kind = value_obj.get("kind").and_then(|v| v.as_str());
+    let value = match kind {
+        Some("begin") => {
+            let title = value_obj
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Working...")
+                .to_string();
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let percentage = value_obj
+                .get("percentage")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32);
+            tracing::info!(
+                "LSP ({}) progress begin: {} {:?} {:?}",
+                language,
+                title,
+                message,
+                percentage
+            );
+            LspProgressValue::Begin {
+                title,
+                message,
+                percentage,
+            }
+        }
+        Some("report") => {
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let percentage = value_obj
+                .get("percentage")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32);
+            tracing::trace!(
+                "LSP ({}) progress report: {:?} {:?}",
+                language,
+                message,
+                percentage
+            );
+            LspProgressValue::Report {
+                message,
+                percentage,
+            }
+        }
+        Some("end") => {
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            tracing::info!("LSP ({}) progress end: {:?}", language, message);
+            LspProgressValue::End { message }
+        }
+        _ => return None,
+    };
+    Some((token, value))
+}
+
 /// Standalone function to handle and dispatch messages (for reader task)
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::let_underscore_must_use)] // oneshot/mpsc send results are best-effort; receiver drop is not actionable
@@ -3834,12 +3958,7 @@ async fn handle_message_dispatch(
                 "window/workDoneProgress/create" => {
                     // Server wants to create a progress token - acknowledge it
                     tracing::trace!("Acknowledging workDoneProgress/create (id={})", request.id);
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/configuration" => {
                     // The server is pulling configuration for one or more named
@@ -3897,12 +4016,7 @@ async fn handle_message_dispatch(
                             registrations,
                         });
                     }
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "client/unregisterCapability" => {
                     // Mirror of registerCapability: the server is withdrawing a
@@ -3926,12 +4040,7 @@ async fn handle_message_dispatch(
                             registrations,
                         });
                     }
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/diagnostic/refresh" => {
                     // Server wants us to re-pull diagnostics for all open documents
@@ -3943,12 +4052,7 @@ async fn handle_message_dispatch(
                     let _ = async_tx.send(AsyncMessage::LspDiagnosticRefresh {
                         language: language.to_string(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/inlayHint/refresh" => {
                     // Server learned more (e.g. a cross-file type change) and
@@ -3962,12 +4066,7 @@ async fn handle_message_dispatch(
                     let _ = async_tx.send(AsyncMessage::LspInlayHintRefresh {
                         language: language.to_string(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/semanticTokens/refresh" => {
                     // Same idea as inlayHint/refresh, for semantic highlighting.
@@ -3978,12 +4077,7 @@ async fn handle_message_dispatch(
                     let _ = async_tx.send(AsyncMessage::LspSemanticTokensRefresh {
                         language: language.to_string(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/applyEdit" => {
                     // Server asks client to apply a workspace edit (e.g. during executeCommand)
@@ -4027,12 +4121,7 @@ async fn handle_message_dispatch(
                         method: request.method.clone(),
                         params: request.params.clone(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
             };
 
@@ -4105,168 +4194,33 @@ async fn handle_notification_dispatch(
             }
         }
         "window/showMessage" => {
-            if let Some(params) = notification.params {
-                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
-                    let message = msg
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no message)")
-                        .to_string();
-
-                    let message_type = match message_type_num {
-                        1 => LspMessageType::Error,
-                        2 => LspMessageType::Warning,
-                        3 => LspMessageType::Info,
-                        _ => LspMessageType::Log,
-                    };
-
-                    // Log it as well
-                    match message_type {
-                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => {
-                            tracing::warn!("LSP ({}): {}", language, message)
-                        }
-                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
-                        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
-                    }
-
-                    // Send to UI
-                    let _ = async_tx.send(AsyncMessage::LspWindowMessage {
-                        language: language.to_string(),
-                        message_type,
-                        message,
-                    });
-                }
+            if let Some((message_type, message)) = parse_window_message(notification.params, 3) {
+                log_lsp_message(message_type, language, &message);
+                let _ = async_tx.send(AsyncMessage::LspWindowMessage {
+                    language: language.to_string(),
+                    message_type,
+                    message,
+                });
             }
         }
         "window/logMessage" => {
-            if let Some(params) = notification.params {
-                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
-                    let message = msg
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no message)")
-                        .to_string();
-
-                    let message_type = match message_type_num {
-                        1 => LspMessageType::Error,
-                        2 => LspMessageType::Warning,
-                        3 => LspMessageType::Info,
-                        _ => LspMessageType::Log,
-                    };
-
-                    // Log it as well
-                    match message_type {
-                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => {
-                            tracing::warn!("LSP ({}): {}", language, message)
-                        }
-                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
-                        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
-                    }
-
-                    // Send to UI
-                    let _ = async_tx.send(AsyncMessage::LspLogMessage {
-                        language: language.to_string(),
-                        message_type,
-                        message,
-                    });
-                }
+            if let Some((message_type, message)) = parse_window_message(notification.params, 4) {
+                log_lsp_message(message_type, language, &message);
+                let _ = async_tx.send(AsyncMessage::LspLogMessage {
+                    language: language.to_string(),
+                    message_type,
+                    message,
+                });
             }
         }
         "$/progress" => {
-            if let Some(params) = notification.params {
-                if let Ok(progress) =
-                    serde_json::from_value::<serde_json::Map<String, Value>>(params)
-                {
-                    let token = progress
-                        .get("token")
-                        .and_then(|v| {
-                            v.as_str()
-                                .map(|s| s.to_string())
-                                .or_else(|| v.as_i64().map(|n| n.to_string()))
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    if let Some(value_obj) = progress.get("value").and_then(|v| v.as_object()) {
-                        let kind = value_obj.get("kind").and_then(|v| v.as_str());
-
-                        let value = match kind {
-                            Some("begin") => {
-                                let title = value_obj
-                                    .get("title")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Working...")
-                                    .to_string();
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let percentage = value_obj
-                                    .get("percentage")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|p| p as u32);
-
-                                tracing::info!(
-                                    "LSP ({}) progress begin: {} {:?} {:?}",
-                                    language,
-                                    title,
-                                    message,
-                                    percentage
-                                );
-
-                                Some(LspProgressValue::Begin {
-                                    title,
-                                    message,
-                                    percentage,
-                                })
-                            }
-                            Some("report") => {
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let percentage = value_obj
-                                    .get("percentage")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|p| p as u32);
-
-                                tracing::trace!(
-                                    "LSP ({}) progress report: {:?} {:?}",
-                                    language,
-                                    message,
-                                    percentage
-                                );
-
-                                Some(LspProgressValue::Report {
-                                    message,
-                                    percentage,
-                                })
-                            }
-                            Some("end") => {
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-
-                                tracing::info!("LSP ({}) progress end: {:?}", language, message);
-
-                                Some(LspProgressValue::End { message })
-                            }
-                            _ => None,
-                        };
-
-                        if let Some(value) = value {
-                            let _ = async_tx.send(AsyncMessage::LspProgress {
-                                language: language.to_string(),
-                                token,
-                                value,
-                            });
-                        }
-                    }
-                }
+            if let Some((token, value)) = parse_progress_notification(notification.params, language)
+            {
+                let _ = async_tx.send(AsyncMessage::LspProgress {
+                    language: language.to_string(),
+                    token,
+                    value,
+                });
             }
         }
         "experimental/serverStatus" => {
