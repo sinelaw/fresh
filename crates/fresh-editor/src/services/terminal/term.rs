@@ -175,10 +175,42 @@ impl TerminalState {
     /// Resize the terminal
     pub fn resize(&mut self, cols: u16, rows: u16) {
         if cols != self.cols || rows != self.rows {
+            use alacritty_terminal::grid::Dimensions;
+
+            let cols_changed = cols != self.cols;
             self.cols = cols;
             self.rows = rows;
             let size = TermSize::new(cols as usize, rows as usize);
             self.term.resize(size);
+
+            // A resize perturbs `history_size()` — the value `flush_new_scrollback`
+            // diffs against `synced_history_lines` to find lines to stream to the
+            // backing file. If we don't reconcile the counter, the streamer either
+            // skips scrolled-off lines (lost scrollback) or re-emits old rows
+            // (duplicates). The right reconciliation depends on *why* the history
+            // changed:
+            //
+            // * Width change (reflow): alacritty re-wraps existing scrollback, so
+            //   the line count shifts for content already in the backing file.
+            //   Re-anchor the counter to the new history size — the shifted lines
+            //   are re-wraps of bytes we already persisted, not new content, so
+            //   they must not be re-written. (Persisted scrollback keeps the wrap
+            //   width it was captured at; we deliberately do not rewrite history,
+            //   which would be O(history) I/O and a visible resize hiccup.)
+            //
+            // * Pure height change (no reflow): rows only move across the
+            //   visible/history boundary, so leave the counter untouched.
+            //   - Shrink pushes the top rows up into scrollback: they are new
+            //     content, and a stale-low counter makes the next flush write
+            //     them (no loss).
+            //   - Grow pulls rows back onto the screen, shrinking history below
+            //     the counter; `flush_new_scrollback`'s `current <= synced`
+            //     guard then suppresses those rows until genuinely new lines
+            //     scroll off again (no duplicates).
+            if cols_changed {
+                self.synced_history_lines = self.term.grid().history_size();
+            }
+
             self.dirty = true;
         }
     }
@@ -760,6 +792,79 @@ mod tests {
         state.resize(100, 30);
         assert_eq!(state.size(), (100, 30));
         assert!(state.is_dirty());
+    }
+
+    /// Resize re-anchors `synced_history_lines` to the reflowed grid so the
+    /// incremental streamer can't lose/duplicate lines afterwards.
+    #[test]
+    fn test_resize_reanchors_synced_history() {
+        let mut state = TerminalState::new(80, 24);
+        for i in 0..200 {
+            state.process_output(format!("line {i}\r\n").as_bytes());
+        }
+        // Drain into the backing-file mirror (a Vec sink).
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        assert_eq!(state.synced_history_lines(), state.history_size());
+
+        // Widen: reflow shrinks history; counter must follow, not stay stale.
+        state.resize(200, 24);
+        assert_eq!(state.synced_history_lines(), state.history_size());
+        // No phantom "new" lines to flush right after a resize.
+        let mut after: Vec<u8> = Vec::new();
+        assert_eq!(state.flush_new_scrollback(&mut after).unwrap(), 0);
+    }
+
+    /// A pure height *shrink* (cols unchanged) pushes the top visible rows into
+    /// scrollback. Those rows are genuinely new history, so the counter must
+    /// stay low enough that the next flush writes them — they must not be
+    /// dropped. Guards against re-anchoring `synced` on every resize.
+    #[test]
+    fn test_height_shrink_streams_spilled_rows() {
+        let mut state = TerminalState::new(80, 24);
+        // Fill the screen (no scroll-off yet) with identifiable rows.
+        for i in 0..24 {
+            state.process_output(format!("row{i:02}\r\n").as_bytes());
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let before = state.synced_history_lines();
+
+        // Shrink height only — alacritty pushes the top rows into history.
+        state.resize(80, 10);
+        assert!(
+            state.history_size() > before,
+            "shrink should push rows into history"
+        );
+        // The spilled rows are new content and must be flushed (not skipped).
+        let mut spill: Vec<u8> = Vec::new();
+        let written = state.flush_new_scrollback(&mut spill).unwrap();
+        assert!(written > 0, "spilled rows must be streamed, got {written}");
+    }
+
+    /// A pure height *grow* (cols unchanged) pulls rows from scrollback back
+    /// onto the screen. Those rows are already in the backing file, so when
+    /// they later scroll off again they must not be streamed a second time.
+    #[test]
+    fn test_height_grow_does_not_reflow_duplicate() {
+        let mut state = TerminalState::new(80, 24);
+        for i in 0..100 {
+            state.process_output(format!("line {i}\r\n").as_bytes());
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let synced_before = state.synced_history_lines();
+
+        // Grow height only: pulls rows from history back onto the screen.
+        state.resize(80, 40);
+        // Counter is left untouched; the flush guard suppresses the pulled rows.
+        assert_eq!(state.synced_history_lines(), synced_before);
+        let mut after: Vec<u8> = Vec::new();
+        assert_eq!(
+            state.flush_new_scrollback(&mut after).unwrap(),
+            0,
+            "growing height must not re-stream rows already in the backing file"
+        );
     }
 
     /// `last_visible_line` returns the text on the cursor row, with
