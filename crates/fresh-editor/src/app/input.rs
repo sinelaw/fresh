@@ -2511,16 +2511,38 @@ impl Editor {
                     if on_filter {
                         // Return from the filter to the session list.
                         self.set_panel_focus_and_notify(panel_id, "sessions".to_string());
-                    } else {
-                        // Activate the highlighted row. The plugin attaches a
-                        // discovered (on-disk) worktree as a new session, or —
-                        // for a row already backed by a live window — blurs to
-                        // the editor (the dock stays visible). Handled
-                        // plugin-side so the discovered-vs-live decision lives
-                        // next to the dialog's identical `activate` logic, not
-                        // split across the host (was: always blur, which
-                        // silently dropped the on-disk attach in the dock).
+                    } else if self
+                        .widget_registry
+                        .focus_key(panel_id)
+                        .map(|k| k == "sessions" || k.is_empty())
+                        .unwrap_or(true)
+                    {
+                        // Enter on the session list activates the highlighted
+                        // row. The plugin attaches a discovered (on-disk)
+                        // worktree as a new session, or — for a row already
+                        // backed by a live window — blurs to the editor (the
+                        // dock stays visible). Handled plugin-side so the
+                        // discovered-vs-live decision lives next to the
+                        // dialog's identical `activate` logic, not split across
+                        // the host (was: always blur, which silently dropped
+                        // the on-disk attach in the dock).
                         self.fire_dock_widget_event(panel_id, "dock_activate");
+                    } else {
+                        // A button or toggle is keyboard-focused (Tab-cycled
+                        // onto "+ New", "Manage", "view", the project menu, or
+                        // a checkbox). Run THAT control's action via the
+                        // generic smart-key dispatcher — which fires `activate`
+                        // for a Button and `toggle` for a Toggle — instead of
+                        // the list's dock_activate. Without this, Enter on a
+                        // focused button silently fell through to dock_activate
+                        // and merely re-focused the session list, so buttons
+                        // worked with the mouse but not the keyboard.
+                        self.handle_widget_command(
+                            panel_id,
+                            fresh_core::api::WidgetAction::Key {
+                                key: "Enter".to_string(),
+                            },
+                        );
                     }
                     return true;
                 }

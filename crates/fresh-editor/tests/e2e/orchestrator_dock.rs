@@ -296,6 +296,49 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     h.assert_screen_contains("Orchestrator");
 }
 
+/// Enter on a Tab-focused dock button runs THAT button's action, not the
+/// session list's dive. The dock's `dispatch_floating_widget_key` Enter
+/// branch used to fire `dock_activate` unconditionally — so once the user
+/// Tab-cycled focus onto a button (or checkbox), Enter ignored the focused
+/// control and merely re-focused the list. Buttons worked with the mouse
+/// but not the keyboard. Enter now routes through the smart-key dispatcher
+/// when focus is off the list, activating the focused Button/Toggle.
+#[test]
+fn dock_enter_on_focused_button_runs_button_action() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Focus opens on the sessions list. One Tab lands on the "+ New"
+    // button (spec-order first tabbable). Enter must open the new-session
+    // form — the same thing a click on "+ New" does — not dive the list.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.assert_screen_contains("New Session");
+
+    // Esc the form; the dock is still mounted and re-focused on the list.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // Walk focus to the "view:" toggle button (sessions → new-session →
+    // manage → view-toggle) and Enter it. The label flips card↔compact,
+    // proving Enter activated the focused button rather than diving.
+    h.assert_screen_contains("view: card");
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    h.assert_screen_contains("view: compact");
+}
+
 #[test]
 fn dock_slash_filters_and_enter_returns_to_list() {
     let (_tmp, root) = setup_project("alphaproj");
