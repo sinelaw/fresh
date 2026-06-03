@@ -602,7 +602,7 @@ pub struct Editor {
     pending_authority: Option<crate::services::authority::Authority>,
 
     /// Keepalive bundle queued alongside `pending_authority` for a
-    /// connection-backed authority (remote agent / EKS), parked by the
+    /// connection-backed authority (remote agent / K8s), parked by the
     /// restart loop so the live carrier + reconnect/heartbeat tasks
     /// survive the rebuild. `None` for synchronously-constructible
     /// authorities (local, docker). See

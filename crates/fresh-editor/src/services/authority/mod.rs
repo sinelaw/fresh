@@ -39,8 +39,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_eks_terminal_args, build_ssh_terminal_args, spawn_eks_reconnect_task, ConnectionParams,
-    EksConnection, EksTarget, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
+    build_kube_terminal_args, build_ssh_terminal_args, spawn_kube_reconnect_task, ConnectionParams,
+    KubeConnection, KubeTarget, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
     ProcessSpawner, RemoteFileSystem, RemoteProcessSpawner, TransportError,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
@@ -143,16 +143,16 @@ impl TerminalWrapper {
         }
     }
 
-    /// Re-parent the integrated terminal into an EKS pod via
+    /// Re-parent the integrated terminal into a K8s pod via
     /// `kubectl exec -it … -- sh -lc 'cd <ws>; exec $SHELL -l'`. Same
     /// re-parenting contract as [`Self::ssh`] / the `docker exec -w …`
     /// wrapper: cwd is pinned through the wrapper's own args, so
     /// `manages_cwd` is true and the terminal manager must not hand the
     /// local PTY a pod-side cwd it can't honour.
-    pub fn eks(target: &EksTarget) -> Self {
+    pub fn kube(target: &KubeTarget) -> Self {
         Self {
             command: "kubectl".to_string(),
-            args: build_eks_terminal_args(target),
+            args: build_kube_terminal_args(target),
             manages_cwd: true,
         }
     }
@@ -372,22 +372,22 @@ impl Authority {
         }
     }
 
-    /// Build an EKS authority: the remote-agent stack (filesystem + spawners,
+    /// Build a K8s authority: the remote-agent stack (filesystem + spawners,
     /// already wired to the pod's `kubectl exec` agent channel) plus a
     /// terminal wrapper that opens a shell *inside the pod*.
     ///
     /// Mirrors [`Self::ssh`] — the caller owns the connection and its
     /// keepalive resources and threads the parts in. Unlike SSH, the label
     /// is set from the target (there is no filesystem-side
-    /// `remote_connection_info()` that knows about an EKS pod, so identity
+    /// `remote_connection_info()` that knows about a K8s pod, so identity
     /// lives in the label per `AUTHORITY_DESIGN.md` principle 9). Path
     /// translation is unset: the editor operates directly in the pod's path
     /// space, exactly as SSH does.
-    pub fn eks(
+    pub fn kube(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
         long_running_spawner: Arc<dyn LongRunningSpawner>,
-        target: &EksTarget,
+        target: &KubeTarget,
         trust: Arc<WorkspaceTrust>,
         env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Self {
@@ -395,7 +395,7 @@ impl Authority {
             filesystem,
             process_spawner,
             long_running_spawner,
-            terminal_wrapper: TerminalWrapper::eks(target),
+            terminal_wrapper: TerminalWrapper::kube(target),
             display_label: target.display(),
             path_translation: None,
             workspace_trust: trust,
@@ -403,22 +403,22 @@ impl Authority {
         }
     }
 
-    /// Assemble a full EKS authority from a live [`EksConnection`].
+    /// Assemble a full K8s authority from a live [`KubeConnection`].
     ///
-    /// The high-level counterpart to [`Self::eks`]: wires the filesystem and
+    /// The high-level counterpart to [`Self::k8s`]: wires the filesystem and
     /// one-shot spawner onto the connection's agent channel
     /// ([`RemoteFileSystem`] / [`RemoteProcessSpawner`], reused verbatim from
     /// the SSH stack) and the long-running (LSP) spawner onto a per-server
     /// `kubectl exec` ([`KubectlLongRunningSpawner`]). `base_env` is the
     /// captured in-pod env probe applied to LSP spawns and `command_exists`.
     ///
-    /// The caller must keep the `EksConnection` alive (in the session
+    /// The caller must keep the `KubeConnection` alive (in the session
     /// keepalive bundle) — dropping it kills the carrier and tears down the
     /// channel the returned authority rides on, exactly as SSH holds its
     /// `SshConnection`.
-    pub fn eks_from_connection(
-        connection: &EksConnection,
-        target: EksTarget,
+    pub fn kube_from_connection(
+        connection: &KubeConnection,
+        target: KubeTarget,
         base_env: Vec<(String, String)>,
         trust: Arc<WorkspaceTrust>,
         env: Arc<crate::services::env_provider::EnvProvider>,
@@ -436,7 +436,7 @@ impl Authority {
         let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
             KubectlLongRunningSpawner::with_env(target.clone(), base_env, Arc::clone(&trust)),
         );
-        Self::eks(
+        Self::kube(
             filesystem,
             process_spawner,
             long_running_spawner,
@@ -550,7 +550,7 @@ pub struct RemoteAgentSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RemoteTransportSpec {
-    /// Exec into a pod on an EKS (or any kube) cluster.
+    /// Exec into a pod on a K8s (or any kube) cluster.
     KubectlExec {
         #[serde(default)]
         context: Option<String>,
@@ -566,7 +566,7 @@ pub enum RemoteTransportSpec {
 impl RemoteAgentSpec {
     /// Resolve into the connect parameters: the pod target and the
     /// captured env to apply to LSP spawns.
-    pub fn into_eks_target(self) -> (EksTarget, Vec<(String, String)>) {
+    pub fn into_kube_target(self) -> (KubeTarget, Vec<(String, String)>) {
         match self.transport {
             RemoteTransportSpec::KubectlExec {
                 context,
@@ -575,7 +575,7 @@ impl RemoteAgentSpec {
                 container,
                 workspace,
             } => (
-                EksTarget {
+                KubeTarget {
                     context,
                     namespace,
                     pod,
@@ -588,18 +588,18 @@ impl RemoteAgentSpec {
     }
 }
 
-/// Resources that must outlive an EKS [`Authority`]: the carrier
+/// Resources that must outlive a K8s [`Authority`]: the carrier
 /// connection (its `kubectl exec` child + heartbeat task) and the
 /// reconnect task. The editor parks this in its session-keepalive slot —
 /// the same one SSH uses for its `SshConnection` — so the agent channel
 /// survives the editor rebuild on attach. Dropping it tears the session
 /// down (reconnect aborted, then the connection's carrier killed).
-pub struct EksKeepalive {
+pub struct KubeKeepalive {
     // Drop runs the explicit `Drop` below first (aborting reconnect), then
     // fields drop in declaration order: the connection (kills the carrier),
     // then the runtime (shuts down its now-idle workers).
     reconnect: tokio::task::JoinHandle<()>,
-    _connection: EksConnection,
+    _connection: KubeConnection,
     // The load-bearing field: the dedicated runtime the agent channel +
     // heartbeat + reconnect tasks run on. Owned here so they survive the editor
     // restart the attach triggers — the editor's per-instance runtime is
@@ -609,17 +609,17 @@ pub struct EksKeepalive {
     _runtime: tokio::runtime::Runtime,
 }
 
-impl Drop for EksKeepalive {
+impl Drop for KubeKeepalive {
     fn drop(&mut self) {
         self.reconnect.abort();
     }
 }
 
-/// Connect to an EKS pod and assemble its [`Authority`] plus the
-/// [`EksKeepalive`] that must be parked to keep it alive.
+/// Connect to a K8s pod and assemble its [`Authority`] plus the
+/// [`KubeKeepalive`] that must be parked to keep it alive.
 ///
-/// The EKS counterpart to SSH's `connect_remote`: bootstraps the agent
-/// ([`EksConnection::connect`]) and the reconnect/heartbeat tasks **on a
+/// The K8s counterpart to SSH's `connect_remote`: bootstraps the agent
+/// ([`KubeConnection::connect`]) and the reconnect/heartbeat tasks **on a
 /// dedicated runtime owned by the returned keepalive** — *not* the caller's
 /// runtime. Installing the authority restarts the editor, dropping the
 /// editor's per-instance runtime; binding the channel there would kill it the
@@ -631,15 +631,15 @@ impl Drop for EksKeepalive {
 /// run inside the caller's async context), so it happens on a short-lived
 /// helper thread; the live runtime — with its channel/heartbeat/reconnect
 /// tasks — is handed back and parked in the keepalive.
-pub async fn connect_eks_authority(
-    target: EksTarget,
+pub async fn connect_kube_authority(
+    target: KubeTarget,
     base_env: Vec<(String, String)>,
     trust: Arc<WorkspaceTrust>,
     env: Arc<crate::services::env_provider::EnvProvider>,
-) -> Result<(Authority, EksKeepalive), TransportError> {
+) -> Result<(Authority, KubeKeepalive), TransportError> {
     type Built = Result<
         (
-            EksConnection,
+            KubeConnection,
             tokio::task::JoinHandle<()>,
             tokio::runtime::Runtime,
         ),
@@ -649,12 +649,12 @@ pub async fn connect_eks_authority(
     let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
     let bootstrap_target = target.clone();
     std::thread::Builder::new()
-        .name("eks-connect".to_string())
+        .name("kube-connect".to_string())
         .spawn(move || {
             let built: Built = (|| {
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
-                    .thread_name("eks-agent")
+                    .thread_name("kube-agent")
                     .enable_all()
                     .build()
                     .map_err(|e| TransportError::AgentStartFailed(format!("runtime: {e}")))?;
@@ -663,9 +663,9 @@ pub async fn connect_eks_authority(
                 // running after `block_on` returns and after this helper thread
                 // exits — until the `runtime` (moved into the keepalive) drops.
                 let (connection, reconnect) = runtime.block_on(async {
-                    let connection = EksConnection::connect(bootstrap_target.clone()).await?;
+                    let connection = KubeConnection::connect(bootstrap_target.clone()).await?;
                     let reconnect =
-                        spawn_eks_reconnect_task(&connection.channel(), bootstrap_target.clone());
+                        spawn_kube_reconnect_task(&connection.channel(), bootstrap_target.clone());
                     Ok::<_, TransportError>((connection, reconnect))
                 })?;
                 Ok((connection, reconnect, runtime))
@@ -679,10 +679,10 @@ pub async fn connect_eks_authority(
         .await
         .map_err(|_| TransportError::AgentStartFailed("connect thread vanished".to_string()))??;
 
-    let authority = Authority::eks_from_connection(&connection, target, base_env, trust, env);
+    let authority = Authority::kube_from_connection(&connection, target, base_env, trust, env);
     Ok((
         authority,
-        EksKeepalive {
+        KubeKeepalive {
             reconnect,
             _connection: connection,
             _runtime: runtime,
@@ -700,9 +700,9 @@ pub enum AuthorityPayloadError {
 }
 
 mod docker_spawner;
-mod eks_spawner;
+mod kube_spawner;
 
-pub(crate) use eks_spawner::KubectlLongRunningSpawner;
+pub(crate) use kube_spawner::KubectlLongRunningSpawner;
 
 #[cfg(test)]
 mod tests {
@@ -721,15 +721,15 @@ mod tests {
     }
 
     #[test]
-    fn eks_terminal_wrapper_reparents_into_pod() {
-        let target = EksTarget {
+    fn kube_terminal_wrapper_reparents_into_pod() {
+        let target = KubeTarget {
             context: Some("prod".into()),
             namespace: "dev".into(),
             pod: "pod-1".into(),
             container: None,
             workspace: Some("/workspace".into()),
         };
-        let wrapper = TerminalWrapper::eks(&target);
+        let wrapper = TerminalWrapper::kube(&target);
         assert_eq!(wrapper.command, "kubectl");
         // Re-parented shell must pin cwd through its own args.
         assert!(wrapper.manages_cwd);
@@ -756,7 +756,7 @@ mod tests {
         let json = serde_json::json!({
             "transport": {
                 "kind": "kubectl-exec",
-                "context": "arn:aws:eks:prod",
+                "context": "k3d-dev",
                 "namespace": "dev",
                 "pod": "fresh-7c9f",
                 "container": "app",
@@ -768,8 +768,8 @@ mod tests {
             ]
         });
         let spec: RemoteAgentSpec = serde_json::from_value(json).expect("spec parses");
-        let (target, base_env) = spec.into_eks_target();
-        assert_eq!(target.context.as_deref(), Some("arn:aws:eks:prod"));
+        let (target, base_env) = spec.into_kube_target();
+        assert_eq!(target.context.as_deref(), Some("k3d-dev"));
         assert_eq!(target.namespace, "dev");
         assert_eq!(target.pod, "fresh-7c9f");
         assert_eq!(target.container.as_deref(), Some("app"));
@@ -789,7 +789,7 @@ mod tests {
             "transport": { "kind": "kubectl-exec", "namespace": "dev", "pod": "p" }
         });
         let spec2: RemoteAgentSpec = serde_json::from_value(minimal).expect("minimal parses");
-        let (t2, env2) = spec2.into_eks_target();
+        let (t2, env2) = spec2.into_kube_target();
         assert!(t2.context.is_none() && t2.container.is_none() && t2.workspace.is_none());
         assert!(env2.is_empty());
     }

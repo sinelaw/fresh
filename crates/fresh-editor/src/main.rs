@@ -3751,7 +3751,7 @@ fn real_main() -> AnyhowResult<()> {
 
     // Process-lifetime keepalive for a connection-backed authority.
     // Seeded from the SSH startup session (if any); replaced when a
-    // plugin attaches a remote agent (EKS) mid-session via
+    // plugin attaches a remote agent (K8s) mid-session via
     // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
     // tears the previous connection down. Boxed opaquely so this loop
     // never names a backend.
@@ -3923,7 +3923,7 @@ fn real_main() -> AnyhowResult<()> {
         if let Some(new_authority) = editor.take_pending_authority() {
             tracing::info!("Authority transition queued; restarting editor");
             current_authority = new_authority;
-            // A connection-backed authority (remote agent / EKS) queues
+            // A connection-backed authority (remote agent / K8s) queues
             // its keepalive alongside the authority. Adopt it here so the
             // live carrier + reconnect/heartbeat tasks survive into the
             // next iteration; the previous keepalive drops (tearing down

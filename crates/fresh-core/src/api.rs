@@ -3656,7 +3656,7 @@ pub enum PluginCommand {
     ClearAuthority,
 
     /// Attach to a remote agent over a transport that requires a live
-    /// connection (today: `kubectl exec` into an EKS pod). Unlike
+    /// connection (today: `kubectl exec` into a K8s pod). Unlike
     /// `SetAuthority` — which builds a synchronously-constructible
     /// backend and restarts immediately — this kicks off an *async*
     /// connect (spawn the carrier, bootstrap the agent, await `ready`);

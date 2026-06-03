@@ -35,7 +35,7 @@ pub use protocol::{
     write_params, AgentRequest, AgentResponse,
 };
 pub use spawner::{
-    build_eks_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner, LocalProcessSpawner,
+    build_kube_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner, LocalProcessSpawner,
     LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError,
     SpawnResult, StdioChild,
 };
@@ -43,7 +43,7 @@ pub use spawner::{
 /// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
 pub(crate) use transport::kubectl_exec_argv;
 pub use transport::{
-    bootstrap_agent, spawn_eks_reconnect_task, EksConnection, EksTarget, KubectlExecTransport,
+    bootstrap_agent, spawn_kube_reconnect_task, KubeConnection, KubeTarget, KubectlExecTransport,
     RemoteTransport, StderrMode, TransportError,
 };
 

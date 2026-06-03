@@ -472,7 +472,7 @@ impl Editor {
     /// Install a new authority that owns a live connection, parking its
     /// keepalive bundle so the connection survives the restart.
     ///
-    /// Remote-agent backends (SSH-style, EKS) hold carrier processes,
+    /// Remote-agent backends (SSH-style, K8s) hold carrier processes,
     /// reconnect/heartbeat tasks, and a Tokio handle that must outlive
     /// the `Editor` rebuild — exactly the role of the daemon's
     /// `session_keepalive` slot. The restart loop pairs

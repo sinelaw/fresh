@@ -921,13 +921,13 @@ pub fn build_ssh_terminal_args(
 /// [--context CTX] exec -it -n NS [-c C] POD -- sh -lc 'cd WS; exec "$SHELL" -l'
 /// ```
 ///
-/// The EKS analogue of [`build_ssh_terminal_args`]. `-it` allocates a TTY (so
+/// The K8s analogue of [`build_ssh_terminal_args`]. `-it` allocates a TTY (so
 /// resize / curses apps work — `kubectl` itself implements the resize
 /// protocol), and the `sh -lc` wrapper pins cwd, so the authority's terminal
 /// wrapper sets `manages_cwd = true`. A failed `cd` is non-fatal so the shell
 /// always starts; `exec` replaces the wrapper shell so closing the terminal
 /// tears the exec session down cleanly.
-pub fn build_eks_terminal_args(target: &crate::services::remote::EksTarget) -> Vec<String> {
+pub fn build_kube_terminal_args(target: &crate::services::remote::KubeTarget) -> Vec<String> {
     let mut remote_cmd = String::new();
     if let Some(dir) = target.workspace.as_deref().filter(|d| !d.is_empty()) {
         let quoted = shell_quote(dir);
@@ -1342,15 +1342,15 @@ mod tests {
     }
 
     #[test]
-    fn build_eks_terminal_args_allocates_tty_and_pins_cwd() {
-        let target = crate::services::remote::EksTarget {
+    fn build_kube_terminal_args_allocates_tty_and_pins_cwd() {
+        let target = crate::services::remote::KubeTarget {
             context: Some("prod".into()),
             namespace: "dev".into(),
             pod: "pod-1".into(),
             container: Some("app".into()),
             workspace: Some("/workspace".into()),
         };
-        let a = build_eks_terminal_args(&target);
+        let a = build_kube_terminal_args(&target);
         let expected: Vec<String> = [
             "--context",
             "prod",
@@ -1373,15 +1373,15 @@ mod tests {
     }
 
     #[test]
-    fn build_eks_terminal_args_without_workspace_skips_cd() {
-        let target = crate::services::remote::EksTarget {
+    fn build_kube_terminal_args_without_workspace_skips_cd() {
+        let target = crate::services::remote::KubeTarget {
             context: None,
             namespace: "dev".into(),
             pod: "pod-1".into(),
             container: None,
             workspace: None,
         };
-        let a = build_eks_terminal_args(&target);
+        let a = build_kube_terminal_args(&target);
         assert_eq!(
             a,
             vec![

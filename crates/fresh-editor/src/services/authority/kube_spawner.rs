@@ -1,4 +1,4 @@
-//! Long-running (stdio) spawner for EKS authorities.
+//! Long-running (stdio) spawner for K8s authorities.
 //!
 //! The container analogue of `docker_spawner.rs`: each LSP server (or tool
 //! agent) gets its own `kubectl exec -i … -- <server>` subprocess whose piped
@@ -32,12 +32,12 @@ use tokio::process::Command;
 
 use crate::services::process_hidden::HideWindow;
 use crate::services::remote::{
-    kubectl_exec_argv, EksTarget, LongRunningSpawner, SpawnError, StdioChild,
+    kubectl_exec_argv, KubeTarget, LongRunningSpawner, SpawnError, StdioChild,
 };
 use crate::services::workspace_trust::{gate, WorkspaceTrust};
 
 pub(crate) struct KubectlLongRunningSpawner {
-    target: EksTarget,
+    target: KubeTarget,
     /// Captured in-pod env probe (PATH/HOME/LANG/…). Applied to every server
     /// and to `command_exists` so binary discovery matches what the server
     /// will see. Empty when no probe ran.
@@ -47,7 +47,7 @@ pub(crate) struct KubectlLongRunningSpawner {
 
 impl KubectlLongRunningSpawner {
     pub(crate) fn with_env(
-        target: EksTarget,
+        target: KubeTarget,
         base_env: Vec<(String, String)>,
         trust: Arc<WorkspaceTrust>,
     ) -> Self {
@@ -62,7 +62,7 @@ impl KubectlLongRunningSpawner {
     /// [`super::docker_spawner`] for the rationale (production always knows
     /// whether it captured a probe).
     #[cfg(test)]
-    pub(crate) fn new(target: EksTarget) -> Self {
+    pub(crate) fn new(target: KubeTarget) -> Self {
         Self::with_env(target, Vec::new(), Arc::new(WorkspaceTrust::permissive()))
     }
 
@@ -213,8 +213,8 @@ fn shell_quote(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn target() -> EksTarget {
-        EksTarget {
+    fn target() -> KubeTarget {
+        KubeTarget {
             context: None,
             namespace: "dev".into(),
             pod: "pod-1".into(),

@@ -3,7 +3,7 @@
 //! The agent bootstrap — stream `AGENT_SOURCE` into a `python3` process on
 //! the far side, wait for its `ready` line, check the protocol version, then
 //! hand the stdio pair to an [`AgentChannel`] — is identical regardless of
-//! *how* we reach that far side. SSH spawns `ssh … python3 …`; EKS spawns
+//! *how* we reach that far side. SSH spawns `ssh … python3 …`; K8s spawns
 //! `kubectl exec … -- python3 …`. The only thing that differs is the carrier
 //! command.
 //!
@@ -35,7 +35,7 @@ use crate::services::remote::AGENT_SOURCE;
 /// integrated terminal in the right place; file/process operations carry
 /// their own absolute paths and don't need it.
 #[derive(Debug, Clone)]
-pub struct EksTarget {
+pub struct KubeTarget {
     /// kubeconfig context to select (`--context`); `None` uses the current one.
     pub context: Option<String>,
     pub namespace: String,
@@ -46,13 +46,13 @@ pub struct EksTarget {
     pub workspace: Option<String>,
 }
 
-impl EksTarget {
-    /// Stable, human-readable identity, e.g. `eks:prod/dev/pod-7c9f`.
+impl KubeTarget {
+    /// Stable, human-readable identity, e.g. `k8s:prod/dev/pod-7c9f`.
     pub fn display(&self) -> String {
         let ctx = self.context.as_deref().unwrap_or("-");
         match &self.container {
-            Some(c) => format!("eks:{ctx}/{}/{}/{c}", self.namespace, self.pod),
-            None => format!("eks:{ctx}/{}/{}", self.namespace, self.pod),
+            Some(c) => format!("k8s:{ctx}/{}/{}/{c}", self.namespace, self.pod),
+            None => format!("k8s:{ctx}/{}/{}", self.namespace, self.pod),
         }
     }
 }
@@ -61,14 +61,14 @@ impl EksTarget {
 ///
 /// Shared by the agent transport (`-i`, running `python3 …`), the
 /// long-running LSP spawner (`-i`, running the server), and — via
-/// [`build_eks_terminal_args`](super::build_eks_terminal_args) — the
+/// [`build_kube_terminal_args`](super::build_kube_terminal_args) — the
 /// integrated terminal (`-it`, running a login shell). Everything after `--`
 /// is exec'd directly by `kubectl` (no remote shell), so unlike the SSH path
 /// no shell-quoting of the command is required.
 ///
 /// Layout: `[--context CTX] exec <flags…> -n NS [-c C] POD -- command args…`.
 pub(crate) fn kubectl_exec_argv(
-    target: &EksTarget,
+    target: &KubeTarget,
     flags: &[&str],
     command: &str,
     args: &[String],
@@ -125,17 +125,17 @@ pub trait RemoteTransport: Send + Sync {
     fn display(&self) -> String;
 }
 
-/// `kubectl exec` carrier — runs the agent inside an EKS (or any kube) pod.
+/// `kubectl exec` carrier — runs the agent inside a Kubernetes pod (any cluster: EKS/GKE/AKS/k3d).
 pub struct KubectlExecTransport {
-    target: EksTarget,
+    target: KubeTarget,
 }
 
 impl KubectlExecTransport {
-    pub fn new(target: EksTarget) -> Self {
+    pub fn new(target: KubeTarget) -> Self {
         Self { target }
     }
 
-    pub fn target(&self) -> &EksTarget {
+    pub fn target(&self) -> &KubeTarget {
         &self.target
     }
 }
@@ -249,10 +249,10 @@ pub async fn bootstrap_agent(
 
 /// Active agent connection over a [`RemoteTransport`].
 ///
-/// The EKS analogue of [`SshConnection`](super::SshConnection): owns the
+/// The K8s analogue of [`SshConnection`](super::SshConnection): owns the
 /// carrier child and the [`AgentChannel`] the editor's remote filesystem and
 /// spawners ride on. Dropping it kills the carrier.
-pub struct EksConnection {
+pub struct KubeConnection {
     process: Child,
     channel: Arc<AgentChannel>,
     display: String,
@@ -261,9 +261,9 @@ pub struct EksConnection {
     heartbeat: tokio::task::JoinHandle<()>,
 }
 
-impl EksConnection {
+impl KubeConnection {
     /// Bootstrap the agent inside the pod named by `target`.
-    pub async fn connect(target: EksTarget) -> Result<Self, TransportError> {
+    pub async fn connect(target: KubeTarget) -> Result<Self, TransportError> {
         let transport = KubectlExecTransport::new(target);
         let (reader, writer, child) = bootstrap_agent(&transport, StderrMode::Inherit).await?;
         let channel = Arc::new(AgentChannel::new(reader, writer));
@@ -293,9 +293,9 @@ impl EksConnection {
     }
 }
 
-/// Reconnect task for an EKS agent channel: when the channel drops, it
+/// Reconnect task for a K8s agent channel: when the channel drops, it
 /// re-bootstraps the agent by re-running `kubectl exec` against the pod and
-/// hot-swaps the transport via `replace_transport`. The EKS analogue of
+/// hot-swaps the transport via `replace_transport`. The K8s analogue of
 /// [`spawn_reconnect_task`](super::spawn_reconnect_task), reusing the generic
 /// [`spawn_reconnect_task_with`](super::spawn_reconnect_task_with).
 ///
@@ -304,9 +304,9 @@ impl EksConnection {
 /// pod" callback (`AUTHORITY_DESIGN.md` open question 3) layers on later. A
 /// same-name reconnect still covers transient stream drops (the common idle /
 /// network-blip case).
-pub fn spawn_eks_reconnect_task(
+pub fn spawn_kube_reconnect_task(
     channel: &Arc<AgentChannel>,
-    target: EksTarget,
+    target: KubeTarget,
 ) -> tokio::task::JoinHandle<()> {
     let connect_fn = move || {
         let target = target.clone();
@@ -325,11 +325,11 @@ pub fn spawn_eks_reconnect_task(
         Arc::clone(channel),
         connect_fn,
         crate::services::remote::ReconnectConfig::default(),
-        "EKS remote",
+        "K8s remote",
     )
 }
 
-impl Drop for EksConnection {
+impl Drop for KubeConnection {
     fn drop(&mut self) {
         // Stop pinging a carrier we're about to kill.
         self.heartbeat.abort();
@@ -344,9 +344,9 @@ impl Drop for EksConnection {
 mod tests {
     use super::*;
 
-    fn target() -> EksTarget {
-        EksTarget {
-            context: Some("arn:aws:eks:prod".to_string()),
+    fn target() -> KubeTarget {
+        KubeTarget {
+            context: Some("k3d-dev".to_string()),
             namespace: "dev".to_string(),
             pod: "fresh-7c9f".to_string(),
             container: None,
@@ -361,7 +361,7 @@ mod tests {
             argv,
             vec![
                 "--context",
-                "arn:aws:eks:prod",
+                "k3d-dev",
                 "exec",
                 "-i",
                 "-n",
@@ -409,17 +409,17 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn eks_reconnect_task_spawns_and_aborts_cleanly() {
+    async fn kube_reconnect_task_spawns_and_aborts_cleanly() {
         // We can't run a real `kubectl exec` here, but we can verify the
         // task's lifecycle over a live (local-agent) channel: while the
         // channel is connected the task idles (it only acts on disconnect),
         // and aborting it terminates promptly without panicking. The actual
         // reconnect path is exercised by the generic `spawn_reconnect_task_with`
-        // tests; this guards the EKS wiring on top of it.
+        // tests; this guards the K8s wiring on top of it.
         let channel = crate::services::remote::spawn_local_agent()
             .await
             .expect("spawn local agent");
-        let handle = spawn_eks_reconnect_task(&channel, target());
+        let handle = spawn_kube_reconnect_task(&channel, target());
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(channel.is_connected(), "channel healthy; reconnect idles");
         handle.abort();
@@ -443,7 +443,7 @@ mod tests {
         assert!(argv.contains(&"-i".to_string()));
         assert_eq!(
             KubectlExecTransport::new(t).display(),
-            "eks:arn:aws:eks:prod/dev/fresh-7c9f"
+            "k8s:k3d-dev/dev/fresh-7c9f"
         );
     }
 }

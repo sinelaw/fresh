@@ -3481,7 +3481,7 @@ impl Editor {
         // runtime and report back via the bridge instead of blocking the
         // event loop. On success the main loop installs the authority +
         // keepalive and restarts; on failure it surfaces the error.
-        let (target, base_env) = spec.into_eks_target();
+        let (target, base_env) = spec.into_kube_target();
         let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
         let env = std::sync::Arc::clone(&self.authority.env_provider);
         let label = target.display();
@@ -3492,7 +3492,7 @@ impl Editor {
 
         runtime.spawn(async move {
             let outcome =
-                crate::services::authority::connect_eks_authority(target, base_env, trust, env)
+                crate::services::authority::connect_kube_authority(target, base_env, trust, env)
                     .await;
             let msg = match outcome {
                 Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(

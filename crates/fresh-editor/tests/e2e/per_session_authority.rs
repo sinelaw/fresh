@@ -83,7 +83,7 @@ fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow
         HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
     )?;
 
-    // A real attach would pass an `EksKeepalive`; the slot is opaque
+    // A real attach would pass an `KubeKeepalive`; the slot is opaque
     // `Box<dyn Any + Send>`, so any owned value exercises the wiring.
     let keepalive: Box<dyn std::any::Any + Send> = Box::new(());
     let remote_root = std::path::PathBuf::from("/workspace");

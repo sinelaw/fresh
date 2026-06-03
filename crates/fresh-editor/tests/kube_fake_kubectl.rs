@@ -1,6 +1,6 @@
-//! End-to-end EKS tests against a fake `kubectl` — no cluster, no root.
+//! End-to-end K8s tests against a fake `kubectl` — no cluster, no root.
 //!
-//! The EKS authority is, at bottom, "spawn `kubectl exec … -- <cmd>` and speak
+//! The K8s authority is, at bottom, "spawn `kubectl exec … -- <cmd>` and speak
 //! to it." `tests/fixtures/fake-kube/kubectl` makes that runnable locally: it
 //! runs the post-`--` command on this machine (the "pod") and returns canned
 //! success for the management verbs. So these tests drive the *real*
@@ -15,9 +15,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Once};
 
 use fresh::model::filesystem::FileSystem;
-use fresh::services::authority::{connect_eks_authority, RemoteAgentSpec};
+use fresh::services::authority::{connect_kube_authority, RemoteAgentSpec};
 use fresh::services::env_provider::EnvProvider;
-use fresh::services::remote::{EksConnection, EksTarget, RemoteFileSystem};
+use fresh::services::remote::{KubeConnection, KubeTarget, RemoteFileSystem};
 use fresh::services::workspace_trust::WorkspaceTrust;
 
 static PATH_INIT: Once = Once::new();
@@ -54,8 +54,8 @@ fn multi_thread_rt() -> tokio::runtime::Runtime {
         .expect("runtime")
 }
 
-fn target(workspace: &std::path::Path) -> EksTarget {
-    EksTarget {
+fn target(workspace: &std::path::Path) -> KubeTarget {
+    KubeTarget {
         context: Some("fake-ctx".to_string()),
         namespace: "test".to_string(),
         pod: "fake-pod".to_string(),
@@ -65,7 +65,7 @@ fn target(workspace: &std::path::Path) -> EksTarget {
 }
 
 #[test]
-fn eks_connection_round_trips_a_file_through_fake_kubectl() {
+fn kube_connection_round_trips_a_file_through_fake_kubectl() {
     ensure_fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
@@ -79,14 +79,14 @@ fn eks_connection_round_trips_a_file_through_fake_kubectl() {
     // The real connect: real argv, real agent bootstrap, real channel — only
     // the cluster is faked.
     let connection = rt
-        .block_on(EksConnection::connect(target(&ws)))
-        .expect("EksConnection::connect over fake kubectl");
+        .block_on(KubeConnection::connect(target(&ws)))
+        .expect("KubeConnection::connect over fake kubectl");
     assert!(connection.is_connected(), "agent channel is live");
 
     // A write+read round-trip over the real RemoteFileSystem exercises the
     // whole transport: kubectl_exec_argv → fake kubectl → local python agent →
     // AgentChannel → filesystem protocol.
-    let fs = RemoteFileSystem::new(connection.channel(), "eks:test/fake-pod".to_string());
+    let fs = RemoteFileSystem::new(connection.channel(), "k8s:test/fake-pod".to_string());
     let file = ws.join("hello.txt");
     fs.write_file(&file, b"cloud workspace")
         .expect("write_file over the agent channel");
@@ -127,7 +127,7 @@ fn agent_channel_survives_dropping_the_attach_runtime() {
     // it, and the attach-restart then drops it.
     let editor_rt = multi_thread_rt();
     let (authority, _keepalive) = editor_rt
-        .block_on(connect_eks_authority(
+        .block_on(connect_kube_authority(
             target(&ws),
             vec![],
             Arc::new(WorkspaceTrust::permissive()),
@@ -176,7 +176,7 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
     let workspace = tempfile::tempdir().expect("tempdir");
     let ws = workspace.path().to_path_buf();
 
-    // The exact JSON the eks-workspace plugin emits and the
+    // The exact JSON the k8s-workspace plugin emits and the
     // `attachRemoteAgent` op parses — driven through the real
     // parse → connect path `handle_attach_remote_agent` runs (minus the
     // editor's runtime/bridge hop, which is trivial plumbing).
@@ -191,11 +191,11 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
         "base_env": [["E2E_BASE", "base"]],
     });
     let spec: RemoteAgentSpec = serde_json::from_value(json).expect("attach spec parses");
-    let (target, base_env) = spec.into_eks_target();
+    let (target, base_env) = spec.into_kube_target();
 
     let rt = multi_thread_rt();
     let (authority, _keepalive) = rt
-        .block_on(connect_eks_authority(
+        .block_on(connect_kube_authority(
             target,
             base_env,
             Arc::new(WorkspaceTrust::permissive()),
@@ -203,7 +203,7 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
         ))
         .expect("connect from parsed attach spec");
 
-    assert!(authority.display_label.starts_with("eks:"));
+    assert!(authority.display_label.starts_with("k8s:"));
     assert_eq!(authority.terminal_wrapper.command, "kubectl");
 
     // The connected authority's filesystem works end to end.
@@ -213,7 +213,7 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
 }
 
 #[test]
-fn eks_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
+fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
     ensure_fake_kubectl_on_path();
     if !python3_available() {
         eprintln!("skipping: python3 not found on PATH");
@@ -230,17 +230,17 @@ fn eks_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
     // Assemble the full authority over the fake cluster. `base_env` is the
     // captured in-pod probe applied to LSP spawns / command_exists.
     let (authority, _keepalive) = rt
-        .block_on(connect_eks_authority(
+        .block_on(connect_kube_authority(
             target(&ws),
             vec![("E2E_BASE".to_string(), "base".to_string())],
             std::sync::Arc::clone(&trust),
             std::sync::Arc::clone(&env),
         ))
-        .expect("connect_eks_authority over fake kubectl");
+        .expect("connect_kube_authority over fake kubectl");
 
     // The authority is shaped correctly.
     assert_eq!(authority.terminal_wrapper.command, "kubectl");
-    assert!(authority.display_label.starts_with("eks:"));
+    assert!(authority.display_label.starts_with("k8s:"));
 
     // Filesystem (agent channel).
     let f = ws.join("a.txt");

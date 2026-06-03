@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Fake `kubectl` for end-to-end testing of the EKS authority WITHOUT a real
+# Fake `kubectl` for end-to-end testing of the Kubernetes authority WITHOUT a real
 # cluster and WITHOUT root.
 #
-# The EKS transport is, at bottom, "spawn `kubectl exec … -- python3 <agent>`
+# The Kubernetes transport is, at bottom, "spawn `kubectl exec … -- python3 <agent>`
 # and talk to its stdio." This shim makes that runnable locally: it implements
-# the handful of subcommands the editor + `eks-workspace` plugin invoke,
+# the handful of subcommands the editor + `k8s-workspace` plugin invoke,
 # routing `exec` to a process on *this* machine (the "pod") and returning
 # canned success for the management verbs.
 #

@@ -738,7 +738,7 @@ impl EditorServer {
             self.current_authority = auth;
         }
         // Adopt the keepalive that rode with a connection-backed authority
-        // (remote agent / EKS) so its carrier + reconnect/heartbeat tasks
+        // (remote agent / K8s) so its carrier + reconnect/heartbeat tasks
         // survive the rebuild; the previous keepalive drops, tearing down
         // any prior remote session. A local/docker transition carries
         // none, leaving the current session untouched.

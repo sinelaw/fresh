@@ -2990,7 +2990,7 @@ interface EditorAPI {
 	clearAuthority(): void;
 	/**
 	* Attach to a remote agent that needs a live connection (today a
-	* `kubectl exec` agent in an EKS pod). The connect is asynchronous:
+	* `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous:
 	* this returns immediately, the editor connects in the background,
 	* and only on success installs the authority and restarts (on
 	* failure it surfaces the error and stays put). Fire-and-forget,

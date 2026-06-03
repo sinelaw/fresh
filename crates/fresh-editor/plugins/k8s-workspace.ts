@@ -2,9 +2,9 @@
 const editor = getEditor();
 
 /**
- * EKS Workspace Plugin
+ * Kubernetes Workspace Plugin
  *
- * Bring-your-own-cluster / bring-your-own-AWS management for editing inside
+ * Bring-your-own-cluster management for editing inside
  * an ephemeral Kubernetes pod. Everything customizable funnels through one
  * small `Provider` contract: given a workspace target, produce the pod
  * coordinates to attach to (and reverse it on disconnect).
@@ -16,14 +16,14 @@ const editor = getEditor();
  *                    the escape hatch for Terraform/Helm/CDK/internal CLIs
  *
  * The plugin only ever does host-side work via `editor.spawnHostProcess`
- * (which inherits the user's kubeconfig + AWS credential chain) and hands
+ * (which inherits the user's kubeconfig + cloud credential chain) and hands
  * the resolved pod to core via `editor.attachRemoteAgent(...)`. Core owns
  * the agent bootstrap + the editor restart; the plugin owns the lifecycle.
  *
- * Config is layered: a repo-local `.fresh/eks.json` (shareable team
+ * Config is layered: a repo-local `.fresh/k8s.json` (shareable team
  * targets) plus a zero-config fallback that prompts for namespace/pod.
  *
- * See docs/internal/EKS_WORKSPACE_PLUGIN_DESIGN.md.
+ * See docs/internal/K8S_WORKSPACE_PLUGIN_DESIGN.md.
  */
 
 // =============================================================================
@@ -79,7 +79,7 @@ interface TargetConfig {
   confirmCreate?: boolean;
 }
 
-interface EksConfig {
+interface K8sConfig {
   defaultTarget?: string;
   targets: Record<string, TargetConfig>;
 }
@@ -95,23 +95,23 @@ interface ActiveSession {
 // =============================================================================
 
 function configPath(): string {
-  return editor.pathJoin(editor.getCwd(), ".fresh", "eks.json");
+  return editor.pathJoin(editor.getCwd(), ".fresh", "k8s.json");
 }
 
-function loadConfig(): EksConfig | null {
+function loadConfig(): K8sConfig | null {
   const path = configPath();
   if (!editor.fileExists(path)) return null;
   const text = editor.readFile(path);
   if (text === null) return null;
   try {
-    const parsed = editor.parseJsonc(text) as EksConfig;
+    const parsed = editor.parseJsonc(text) as K8sConfig;
     if (!parsed || typeof parsed !== "object" || !parsed.targets) {
-      editor.setStatus("EKS: .fresh/eks.json has no `targets`");
+      editor.setStatus("K8s: .fresh/k8s.json has no `targets`");
       return null;
     }
     return parsed;
   } catch (e) {
-    editor.setStatus(`EKS: failed to parse .fresh/eks.json: ${errMsg(e)}`);
+    editor.setStatus(`K8s: failed to parse .fresh/k8s.json: ${errMsg(e)}`);
     return null;
   }
 }
@@ -237,19 +237,19 @@ async function resolveProvider(
       return await attachExisting(provider.context, provider.namespace, target.workspace);
 
     case "command": {
-      editor.setStatus(`EKS: provisioning '${name}'…`);
+      editor.setStatus(`K8s: provisioning '${name}'…`);
       const res = await editor.spawnHostProcess(
         provider.up.command,
         expandArgs(provider.up.args, vars),
         provider.up.cwd ? expand(provider.up.cwd, vars) : undefined,
       );
       if (res.exit_code !== 0) {
-        editor.setStatus(`EKS: provisioning failed: ${firstLine(res.stderr || res.stdout)}`);
+        editor.setStatus(`K8s: provisioning failed: ${firstLine(res.stderr || res.stdout)}`);
         return null;
       }
       const coords = parsePodCoords(res.stdout);
       if (!coords) {
-        editor.setStatus("EKS: provisioning command emitted no PodCoords JSON");
+        editor.setStatus("K8s: provisioning command emitted no PodCoords JSON");
         return null;
       }
       return withWorkspace(coords, target.workspace);
@@ -259,7 +259,7 @@ async function resolveProvider(
       if (!(await confirmCreate(target, name))) return null;
       const text = editor.readFile(expand(provider.template, vars));
       if (text === null) {
-        editor.setStatus(`EKS: manifest not found: ${provider.template}`);
+        editor.setStatus(`K8s: manifest not found: ${provider.template}`);
         return null;
       }
       // Apply the rendered manifest via stdin is not available, so write a
@@ -274,7 +274,7 @@ async function resolveProvider(
         expand(provider.template, vars),
       ]);
       if (applied.exit_code !== 0) {
-        editor.setStatus(`EKS: kubectl apply failed: ${firstLine(applied.stderr)}`);
+        editor.setStatus(`K8s: kubectl apply failed: ${firstLine(applied.stderr)}`);
         return null;
       }
       const pod = await promptPod(provider.context, provider.namespace);
@@ -286,7 +286,7 @@ async function resolveProvider(
         provider.waitTimeoutSec ?? 180,
       );
       if (!ok) {
-        editor.setStatus(`EKS: pod ${pod} did not become Ready`);
+        editor.setStatus(`K8s: pod ${pod} did not become Ready`);
         return null;
       }
       return withWorkspace(
@@ -311,7 +311,7 @@ async function resolveProvider(
         "trap : TERM INT; sleep infinity & wait",
       ]);
       if (created.exit_code !== 0) {
-        editor.setStatus(`EKS: kubectl run failed: ${firstLine(created.stderr)}`);
+        editor.setStatus(`K8s: kubectl run failed: ${firstLine(created.stderr)}`);
         return null;
       }
       const ok = await waitReady(
@@ -321,7 +321,7 @@ async function resolveProvider(
         provider.waitTimeoutSec ?? 180,
       );
       if (!ok) {
-        editor.setStatus(`EKS: pod ${podName} did not become Ready`);
+        editor.setStatus(`K8s: pod ${podName} did not become Ready`);
         return null;
       }
       return withWorkspace(
@@ -344,7 +344,7 @@ function firstLine(s: string): string {
 async function confirmCreate(target: TargetConfig, name: string): Promise<boolean> {
   if (target.confirmCreate === false) return true;
   const answer = await editor.prompt(
-    `Create a cloud workspace pod for '${name}'? This may incur cost. (y/N)`,
+    `Create a cloud workspace pod for '${name}'? This may create a pod (and incur cost on managed clusters). (y/N)`,
     "",
   );
   return answer !== null && /^y(es)?$/i.test(answer.trim());
@@ -361,7 +361,7 @@ async function attachExisting(
 ): Promise<PodCoords | null> {
   let ns = namespace;
   if (!ns) {
-    const entered = await editor.prompt("EKS namespace:", "default");
+    const entered = await editor.prompt("Kubernetes namespace:", "default");
     if (entered === null || entered.trim() === "") return null;
     ns = entered.trim();
   }
@@ -384,7 +384,7 @@ async function promptPod(
     "name",
   ]);
   if (res.exit_code !== 0) {
-    editor.setStatus(`EKS: kubectl get pods failed: ${firstLine(res.stderr)}`);
+    editor.setStatus(`K8s: kubectl get pods failed: ${firstLine(res.stderr)}`);
     return null;
   }
   const pods = res.stdout
@@ -392,7 +392,7 @@ async function promptPod(
     .map((l) => l.trim().replace(/^pod\//, ""))
     .filter((l) => l.length > 0);
   if (pods.length === 0) {
-    editor.setStatus(`EKS: no Running pods in namespace ${namespace}`);
+    editor.setStatus(`K8s: no Running pods in namespace ${namespace}`);
     return null;
   }
   const hint = pods.length === 1 ? pods[0] : pods.slice(0, 5).join(", ");
@@ -400,7 +400,7 @@ async function promptPod(
   if (chosen === null || chosen.trim() === "") return null;
   const name = chosen.trim();
   if (!pods.includes(name)) {
-    editor.setStatus(`EKS: pod '${name}' is not a Running pod in ${namespace}`);
+    editor.setStatus(`K8s: pod '${name}' is not a Running pod in ${namespace}`);
     return null;
   }
   return name;
@@ -410,9 +410,9 @@ async function promptPod(
 // Connect / Disconnect
 // =============================================================================
 
-const SESSION_KEY = "eks.activeSession";
+const SESSION_KEY = "k8s.activeSession";
 
-async function chooseTarget(config: EksConfig): Promise<[string, TargetConfig] | null> {
+async function chooseTarget(config: K8sConfig): Promise<[string, TargetConfig] | null> {
   const names = Object.keys(config.targets);
   if (names.length === 0) return null;
   if (names.length === 1) return [names[0], config.targets[names[0]]];
@@ -424,7 +424,7 @@ async function chooseTarget(config: EksConfig): Promise<[string, TargetConfig] |
   const name = chosen.trim();
   const target = config.targets[name];
   if (!target) {
-    editor.setStatus(`EKS: unknown target '${name}'`);
+    editor.setStatus(`K8s: unknown target '${name}'`);
     return null;
   }
   return [name, target];
@@ -452,12 +452,12 @@ async function connectWorkspace(): Promise<void> {
   // agent bootstrap; here we catch the RBAC gotcha early with a clear error.
   if (!(await canExec(coords.context, coords.namespace))) {
     editor.setStatus(
-      `EKS: missing 'create pods/exec' on ${coords.namespace} — exec/attach will be denied (K8s WebSocket-exec RBAC)`,
+      `K8s: missing 'create pods/exec' on ${coords.namespace} — exec/attach will be denied (K8s WebSocket-exec RBAC)`,
     );
     return;
   }
 
-  editor.setStatus(`EKS: probing env in ${coords.pod}…`);
+  editor.setStatus(`K8s: probing env in ${coords.pod}…`);
   const baseEnv = await probeEnv(coords);
 
   const spec: RemoteAgentSpec = {
@@ -476,7 +476,7 @@ async function connectWorkspace(): Promise<void> {
   const session: ActiveSession = { targetName: name, coords };
   editor.setGlobalState(SESSION_KEY, session as unknown);
 
-  editor.setStatus(`EKS: attaching to ${coords.namespace}/${coords.pod}…`);
+  editor.setStatus(`K8s: attaching to ${coords.namespace}/${coords.pod}…`);
   // Fire-and-forget: core connects asynchronously and restarts on success.
   editor.attachRemoteAgent(spec);
 }
@@ -498,7 +498,7 @@ async function disconnectWorkspace(): Promise<void> {
         cwd: editor.getCwd(),
         ...(target?.vars ?? {}),
       };
-      editor.setStatus("EKS: tearing down workspace…");
+      editor.setStatus("K8s: tearing down workspace…");
       await editor.spawnHostProcess(
         provider.down.command,
         expandArgs(provider.down.args, vars),
@@ -513,24 +513,24 @@ async function disconnectWorkspace(): Promise<void> {
 // Registration
 // =============================================================================
 
-function eks_connect(): void {
-  connectWorkspace().catch((e) => editor.setStatus(`EKS: ${errMsg(e)}`));
+function k8s_connect(): void {
+  connectWorkspace().catch((e) => editor.setStatus(`K8s: ${errMsg(e)}`));
 }
 
-function eks_disconnect(): void {
-  disconnectWorkspace().catch((e) => editor.setStatus(`EKS: ${errMsg(e)}`));
+function k8s_disconnect(): void {
+  disconnectWorkspace().catch((e) => editor.setStatus(`K8s: ${errMsg(e)}`));
 }
 
-registerHandler("eks_connect", eks_connect);
-registerHandler("eks_disconnect", eks_disconnect);
+registerHandler("k8s_connect", k8s_connect);
+registerHandler("k8s_disconnect", k8s_disconnect);
 
 editor.registerCommand(
-  "EKS: Connect workspace",
-  "Connect to a cloud workspace pod on your EKS cluster",
-  "eks_connect",
+  "K8s: Connect Workspace",
+  "Connect / attach to a Kubernetes pod workspace via kubectl exec — edit inside a remote pod on any cluster: EKS, GKE, AKS, k3d, minikube, kind. Keywords: kubernetes k8s kubectl pod container cluster remote cloud workspace attach.",
+  "k8s_connect",
 );
 editor.registerCommand(
-  "EKS: Disconnect",
-  "Detach from the cloud workspace and restore local editing",
-  "eks_disconnect",
+  "K8s: Disconnect Workspace",
+  "Disconnect / detach from the Kubernetes pod workspace and restore local editing. Keywords: kubernetes k8s kubectl pod cluster remote cloud disconnect detach.",
+  "k8s_disconnect",
 );
