@@ -1216,101 +1216,34 @@ impl Editor {
             Action::CommandPalette => {
                 // CommandPalette now delegates to QuickOpen (which starts with ">" prefix
                 // for command mode). Toggle if already open.
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if prompt.prompt_type == PromptType::QuickOpen {
-                        self.cancel_prompt();
-                        return Ok(());
-                    }
+                if self.close_quick_open_if_open() {
+                    return Ok(());
                 }
                 self.start_quick_open();
             }
             Action::QuickOpen => {
-                // Toggle Quick Open: close if already open, otherwise open it
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if prompt.prompt_type == PromptType::QuickOpen {
-                        self.cancel_prompt();
-                        return Ok(());
-                    }
+                if self.close_quick_open_if_open() {
+                    return Ok(());
                 }
-
-                // Start Quick Open with file suggestions (default mode)
                 self.start_quick_open();
             }
             Action::QuickOpenBuffers => {
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if prompt.prompt_type == PromptType::QuickOpen {
-                        self.cancel_prompt();
-                        return Ok(());
-                    }
+                if self.close_quick_open_if_open() {
+                    return Ok(());
                 }
                 self.start_quick_open_with_prefix("#");
             }
             Action::QuickOpenFiles => {
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if prompt.prompt_type == PromptType::QuickOpen {
-                        self.cancel_prompt();
-                        return Ok(());
-                    }
+                if self.close_quick_open_if_open() {
+                    return Ok(());
                 }
                 self.start_quick_open_with_prefix("");
             }
             Action::OpenLiveGrep => {
-                // Invoke the live_grep plugin's start_live_grep handler.
-                // This still produces the bottom-anchored Finder UI today
-                // — Phase 2/3 of issue #1796 will swap in the floating
-                // overlay rendering. The Action exists now so users get a
-                // direct keybinding (Alt+/) instead of palette-only access.
-                #[cfg(feature = "plugins")]
-                {
-                    let result = self
-                        .plugin_manager
-                        .read()
-                        .unwrap()
-                        .execute_action_async("start_live_grep");
-                    if let Some(result) = result {
-                        match result {
-                            Ok(receiver) => {
-                                self.pending_plugin_actions
-                                    .push(("start_live_grep".to_string(), receiver));
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Live Grep unavailable: {}", e));
-                            }
-                        }
-                    } else {
-                        self.set_status_message("Live Grep plugin not loaded".to_string());
-                    }
-                }
-                #[cfg(not(feature = "plugins"))]
-                {
-                    self.set_status_message("Live Grep requires the plugins feature".to_string());
-                }
+                self.handle_action(Action::PluginAction("start_live_grep".to_string()))?;
             }
             Action::ResumeLiveGrep => {
-                // Resume runs the *same* flow as a fresh Live Grep — the
-                // plugin's `resume_live_grep` re-opens the identical overlay
-                // (toolbar, scopes, footer) seeded with the last query. No
-                // bespoke core overlay; "resume" is just "start" with
-                // prepopulated data.
-                #[cfg(feature = "plugins")]
-                {
-                    let result = self
-                        .plugin_manager
-                        .read()
-                        .unwrap()
-                        .execute_action_async("resume_live_grep");
-                    if let Some(result) = result {
-                        match result {
-                            Ok(receiver) => {
-                                self.pending_plugin_actions
-                                    .push(("resume_live_grep".to_string(), receiver));
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Live Grep unavailable: {}", e));
-                            }
-                        }
-                    }
-                }
+                self.handle_action(Action::PluginAction("resume_live_grep".to_string()))?;
             }
             Action::ToggleUtilityDock => {
                 use crate::view::split::SplitRole;
@@ -1350,11 +1283,9 @@ impl Editor {
                 }
             }
             Action::CycleLiveGrepProvider => {
-                // Only meaningful while the Live Grep overlay is
-                // open. Detect via prompt state — both
-                // `PromptType::LiveGrep` (Resume's pre-seeded
-                // overlay) and `Plugin{custom_type:"live-grep"}`
-                // (the live-running plugin's prompt) qualify.
+                // Only meaningful while the Live Grep overlay is open. Detect via prompt state —
+                // both `PromptType::LiveGrep` (Resume's pre-seeded overlay) and
+                // `Plugin{custom_type:"live-grep"}` (the live-running plugin's prompt) qualify.
                 let in_live_grep = self
                     .active_window()
                     .prompt
@@ -1371,155 +1302,10 @@ impl Editor {
                     );
                     return Ok(());
                 }
-                #[cfg(feature = "plugins")]
-                {
-                    let result = self
-                        .plugin_manager
-                        .read()
-                        .unwrap()
-                        .execute_action_async("live_grep_cycle_provider");
-                    if let Some(result) = result {
-                        match result {
-                            Ok(receiver) => {
-                                self.pending_plugin_actions
-                                    .push(("live_grep_cycle_provider".to_string(), receiver));
-                            }
-                            Err(e) => {
-                                self.set_status_message(format!("Live Grep cycle failed: {}", e));
-                            }
-                        }
-                    } else {
-                        self.set_status_message("Live Grep plugin not loaded".to_string());
-                    }
-                }
-                #[cfg(not(feature = "plugins"))]
-                {
-                    self.set_status_message(
-                        "Live Grep cycle requires the plugins feature".to_string(),
-                    );
-                }
+                self.handle_action(Action::PluginAction("live_grep_cycle_provider".to_string()))?;
             }
             Action::OpenTerminalInDock => {
-                use crate::model::event::SplitDirection;
-                use crate::view::split::SplitRole;
-                if let Some(dock_leaf) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .find_leaf_by_role(SplitRole::UtilityDock)
-                {
-                    // Existing dock — focus it and let the regular
-                    // open_terminal path attach a new terminal tab.
-                    self.windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
-                        .expect("active window must have a populated split layout")
-                        .set_active_split(dock_leaf);
-                    self.open_terminal();
-                } else {
-                    // No dock yet. Spawn the PTY first so we have a
-                    // real terminal buffer to seed the new dock leaf
-                    // with — otherwise the leaf would carry the
-                    // user's previously-active buffer as a placeholder
-                    // and that buffer would linger as a phantom tab in
-                    // the dock alongside the terminal.
-                    let Some(terminal_id) = self.spawn_terminal_session() else {
-                        return Ok(());
-                    };
-                    let buffer_id = self.create_terminal_buffer_detached(terminal_id);
-                    // Split at the root so the dock spans the full
-                    // width below any pre-existing side-by-side panes.
-                    match self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
-                        .expect("active window must have a populated split layout")
-                        .split_root_positioned(SplitDirection::Horizontal, buffer_id, 0.7, false)
-                    {
-                        Ok(new_leaf) => {
-                            let mut view_state = crate::view::split::SplitViewState::with_buffer(
-                                self.terminal_width,
-                                self.terminal_height,
-                                buffer_id,
-                            );
-                            // Terminal-dedicated splits never show line
-                            // numbers or current-line highlight — the
-                            // buffer is a PTY scrollback view, not source
-                            // code. (Mirrors the plugin-terminal split
-                            // setup in `create_plugin_terminal`.)
-                            view_state.apply_config_defaults(
-                                false,
-                                false,
-                                self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-                                self.config.editor.wrap_indent,
-                                self.active_window()
-                                    .resolve_wrap_column_for_buffer(buffer_id),
-                                self.config.editor.rulers.clone(),
-                                0,
-                            );
-                            // Terminals don't wrap — keep escape
-                            // sequences intact, mirroring the regular
-                            // open_terminal path.
-                            view_state.viewport.line_wrap_enabled = false;
-                            self.windows
-                                .get_mut(&self.active_window)
-                                .and_then(|w| w.split_view_states_mut())
-                                .expect("active window must have a populated split layout")
-                                .insert(new_leaf, view_state);
-                            self.windows
-                                .get_mut(&self.active_window)
-                                .and_then(|w| w.split_manager_mut())
-                                .expect("active window must have a populated split layout")
-                                .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
-                            self.windows
-                                .get_mut(&self.active_window)
-                                .and_then(|w| w.split_manager_mut())
-                                .expect("active window must have a populated split layout")
-                                .set_active_split(new_leaf);
-                            // Mirror open_terminal's post-attach
-                            // bookkeeping. Skip set_active_buffer —
-                            // the leaf already shows the terminal and
-                            // its tab list contains only the terminal,
-                            // exactly the desired final state.
-                            self.active_window_mut().terminal_mode = true;
-                            self.active_window_mut().key_context =
-                                crate::input::keybindings::KeyContext::Terminal;
-                            self.active_window_mut().resize_visible_terminals();
-                            let exit_key = self
-                                .keybindings
-                                .read()
-                                .unwrap()
-                                .find_keybinding_for_action(
-                                    "terminal_escape",
-                                    crate::input::keybindings::KeyContext::Terminal,
-                                )
-                                .unwrap_or_else(|| "Ctrl+Space".to_string());
-                            self.set_status_message(
-                                rust_i18n::t!(
-                                    "terminal.opened",
-                                    id = terminal_id.0,
-                                    exit_key = exit_key
-                                )
-                                .to_string(),
-                            );
-                            tracing::info!(
-                                "Opened terminal {:?} into new dock leaf {:?} (buffer {:?})",
-                                terminal_id,
-                                new_leaf,
-                                buffer_id
-                            );
-                        }
-                        Err(e) => {
-                            self.set_status_message(format!(
-                                "Failed to create dock for terminal: {}",
-                                e
-                            ));
-                            return Ok(());
-                        }
-                    }
-                }
+                self.handle_open_terminal_in_dock()?;
             }
             Action::ToggleLineWrap => {
                 let new_value = !self.config.editor.line_wrap;
@@ -2123,22 +1909,7 @@ impl Editor {
                 self.set_status_message(
                     t!("search.case_sensitive_state", state = state).to_string(),
                 );
-                // Update incremental highlights if in search prompt, otherwise re-run completed search
-                // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if matches!(
-                        prompt.prompt_type,
-                        PromptType::Search
-                            | PromptType::ReplaceSearch
-                            | PromptType::QueryReplaceSearch
-                    ) {
-                        let query = prompt.input.clone();
-                        self.update_search_highlights(&query);
-                    }
-                } else if let Some(search_state) = &self.active_window().search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                }
+                self.refresh_active_search();
             }
             Action::ToggleSearchWholeWord => {
                 self.active_window_mut().search_whole_word =
@@ -2149,22 +1920,7 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(t!("search.whole_word_state", state = state).to_string());
-                // Update incremental highlights if in search prompt, otherwise re-run completed search
-                // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if matches!(
-                        prompt.prompt_type,
-                        PromptType::Search
-                            | PromptType::ReplaceSearch
-                            | PromptType::QueryReplaceSearch
-                    ) {
-                        let query = prompt.input.clone();
-                        self.update_search_highlights(&query);
-                    }
-                } else if let Some(search_state) = &self.active_window().search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                }
+                self.refresh_active_search();
             }
             Action::ToggleSearchRegex => {
                 self.active_window_mut().search_use_regex = !self.active_window().search_use_regex;
@@ -2174,22 +1930,7 @@ impl Editor {
                     "disabled"
                 };
                 self.set_status_message(t!("search.regex_state", state = state).to_string());
-                // Update incremental highlights if in search prompt, otherwise re-run completed search
-                // Check prompt FIRST since we want to use current prompt input, not stale search_state
-                if let Some(prompt) = &self.active_window_mut().prompt {
-                    if matches!(
-                        prompt.prompt_type,
-                        PromptType::Search
-                            | PromptType::ReplaceSearch
-                            | PromptType::QueryReplaceSearch
-                    ) {
-                        let query = prompt.input.clone();
-                        self.update_search_highlights(&query);
-                    }
-                } else if let Some(search_state) = &self.active_window().search_state {
-                    let query = search_state.query.clone();
-                    self.perform_search(&query);
-                }
+                self.refresh_active_search();
             }
             Action::ToggleSearchConfirmEach => {
                 self.active_window_mut().search_confirm_each =
@@ -3056,5 +2797,143 @@ impl Editor {
         // is the exclusive owner of the input channel until it
         // unmounts.
         true
+    }
+
+    /// If the Quick Open prompt is currently open, cancel it and return `true`.
+    /// All four Quick Open variants (CommandPalette, QuickOpen, QuickOpenBuffers,
+    /// QuickOpenFiles) toggle off when invoked while the picker is already visible.
+    fn close_quick_open_if_open(&mut self) -> bool {
+        if let Some(prompt) = &self.active_window_mut().prompt {
+            if prompt.prompt_type == PromptType::QuickOpen {
+                self.cancel_prompt();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Re-run the active search after a search-option flag is toggled.
+    /// If a search prompt is open, updates incremental highlights from the
+    /// prompt's current input. Otherwise re-executes the last completed search.
+    fn refresh_active_search(&mut self) {
+        if let Some(prompt) = &self.active_window_mut().prompt {
+            if matches!(
+                prompt.prompt_type,
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
+            ) {
+                let query = prompt.input.clone();
+                self.update_search_highlights(&query);
+            }
+        } else if let Some(search_state) = &self.active_window().search_state {
+            let query = search_state.query.clone();
+            self.perform_search(&query);
+        }
+    }
+
+    /// Open a terminal in the utility dock, creating the dock split if none exists yet.
+    fn handle_open_terminal_in_dock(&mut self) -> AnyhowResult<()> {
+        use crate::model::event::SplitDirection;
+        use crate::view::split::SplitRole;
+
+        if let Some(dock_leaf) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .find_leaf_by_role(SplitRole::UtilityDock)
+        {
+            // Existing dock — focus it and let the regular open_terminal path attach a new tab.
+            self.windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_manager_mut())
+                .expect("active window must have a populated split layout")
+                .set_active_split(dock_leaf);
+            self.open_terminal();
+            return Ok(());
+        }
+
+        // No dock yet. Spawn the PTY first so we have a real terminal buffer to seed the new
+        // dock leaf with — otherwise the leaf would carry the user's previously-active buffer
+        // as a placeholder and that buffer would linger as a phantom tab in the dock.
+        let Some(terminal_id) = self.spawn_terminal_session() else {
+            return Ok(());
+        };
+        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+
+        // Split at the root so the dock spans the full width below any pre-existing side-by-side panes.
+        let new_leaf = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .split_root_positioned(SplitDirection::Horizontal, buffer_id, 0.7, false)
+            .map_err(|e| {
+                self.set_status_message(format!("Failed to create dock for terminal: {}", e));
+            });
+        let Ok(new_leaf) = new_leaf else {
+            return Ok(());
+        };
+
+        let mut view_state = crate::view::split::SplitViewState::with_buffer(
+            self.terminal_width,
+            self.terminal_height,
+            buffer_id,
+        );
+        // Terminal-dedicated splits never show line numbers or current-line highlight.
+        // (Mirrors the plugin-terminal split setup in `create_plugin_terminal`.)
+        view_state.apply_config_defaults(
+            false,
+            false,
+            self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+            self.config.editor.wrap_indent,
+            self.active_window()
+                .resolve_wrap_column_for_buffer(buffer_id),
+            self.config.editor.rulers.clone(),
+            0,
+        );
+        // Terminals don't wrap — keep escape sequences intact.
+        view_state.viewport.line_wrap_enabled = false;
+
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .insert(new_leaf, view_state);
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_leaf_role(new_leaf, Some(SplitRole::UtilityDock));
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_active_split(new_leaf);
+
+        // Mirror open_terminal's post-attach bookkeeping.
+        self.active_window_mut().terminal_mode = true;
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
+        self.active_window_mut().resize_visible_terminals();
+
+        let exit_key = self
+            .keybindings
+            .read()
+            .unwrap()
+            .find_keybinding_for_action(
+                "terminal_escape",
+                crate::input::keybindings::KeyContext::Terminal,
+            )
+            .unwrap_or_else(|| "Ctrl+Space".to_string());
+        self.set_status_message(
+            rust_i18n::t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
+        );
+        tracing::info!(
+            "Opened terminal {:?} into new dock leaf {:?} (buffer {:?})",
+            terminal_id,
+            new_leaf,
+            buffer_id
+        );
+        Ok(())
     }
 }
