@@ -281,12 +281,11 @@ fn block_select_action(
         let current_2d = byte_to_2d(&state.buffer, cursor.position);
 
         // If not in block mode, start block selection
-        let block_anchor =
-            if cursor.selection_mode != SelectionMode::Block || cursor.block_anchor.is_none() {
-                current_2d
-            } else {
-                cursor.block_anchor.unwrap()
-            };
+        let block_anchor = if cursor.selection_mode != SelectionMode::Block {
+            current_2d
+        } else {
+            cursor.block_anchor.unwrap_or(current_2d)
+        };
 
         // Calculate new 2D position based on direction
         let new_2d = match direction {
@@ -442,11 +441,10 @@ fn convert_block_selection_to_cursors(
     }
 
     // Add new cursors for remaining lines
-    let mut next_cursor_id = cursors.count();
-    for (position, anchor) in cursor_positions.into_iter().skip(1) {
+    for (next_cursor_id, (position, anchor)) in
+        (cursors.count()..).zip(cursor_positions.into_iter().skip(1))
+    {
         let cursor_id = CursorId(next_cursor_id);
-        next_cursor_id += 1;
-
         events.push(Event::AddCursor {
             cursor_id,
             position,
@@ -1328,17 +1326,20 @@ fn handle_insert_tab(
     }
 }
 
-fn handle_move_up(
+/// Move or extend selection up by one line, using visual columns for wide-character accuracy.
+///
+/// When `extend_selection` is false (MoveUp): collapses any selection to the top edge first
+/// (VSCode/Sublime behavior, issue #1566), then respects Emacs mark mode via deselect_on_move.
+/// When `extend_selection` is true (SelectUp): keeps the existing anchor fixed and extends it.
+fn handle_vertical_up(
     state: &mut EditorState,
     cursors: &Cursors,
     events: &mut Vec<Event>,
     estimated_line_length: usize,
+    extend_selection: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
-        // When a selection is active in normal (non-Emacs-mark) mode,
-        // vertical motion starts from the TOP edge of the selection,
-        // matching VSCode/Sublime/browser behavior (issue #1566).
-        let from_pos = if cursor.deselect_on_move {
+        let from_pos = if !extend_selection && cursor.deselect_on_move {
             cursor
                 .selection_range()
                 .map(|r| r.start)
@@ -1347,28 +1348,23 @@ fn handle_move_up(
             cursor.position
         };
 
-        // Calculate visual column first (iterator is dropped after this call)
         let (current_visual_column, _) =
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
-
-        // Use sticky_column if set (now stores visual column), otherwise use current visual column
         let goal_visual_column = if cursor.sticky_column > 0 {
             cursor.sticky_column
         } else {
             current_visual_column
         };
 
-        // Now create iterator for navigation
         let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
-
         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
-            // Calculate byte offset from visual column, ensuring valid character boundary
             let prev_line_text = prev_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
             let new_pos = prev_line_start + byte_offset;
 
-            // Preserve anchor if deselect_on_move is false (Emacs mark mode)
-            let new_anchor = if cursor.deselect_on_move {
+            let new_anchor = if extend_selection {
+                Some(cursor.anchor.unwrap_or(cursor.position))
+            } else if cursor.deselect_on_move {
                 None
             } else {
                 cursor.anchor
@@ -1380,23 +1376,24 @@ fn handle_move_up(
                 old_anchor: cursor.anchor,
                 new_anchor,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: goal_visual_column, // Preserve the goal visual column
+                new_sticky_column: goal_visual_column,
             });
         }
     }
 }
 
-fn handle_move_down(
+/// Move or extend selection down by one line, using visual columns for wide-character accuracy.
+///
+/// See [`handle_vertical_up`] for the `extend_selection` contract.
+fn handle_vertical_down(
     state: &mut EditorState,
     cursors: &Cursors,
     events: &mut Vec<Event>,
     estimated_line_length: usize,
+    extend_selection: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
-        // When a selection is active in normal (non-Emacs-mark) mode,
-        // vertical motion starts from the BOTTOM edge of the selection,
-        // matching VSCode/Sublime/browser behavior (issue #1566).
-        let from_pos = if cursor.deselect_on_move {
+        let from_pos = if !extend_selection && cursor.deselect_on_move {
             cursor
                 .selection_range()
                 .map(|r| r.end)
@@ -1405,31 +1402,25 @@ fn handle_move_down(
             cursor.position
         };
 
-        // Calculate visual column first (iterator is dropped after this call)
         let (current_visual_column, _) =
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
-
-        // Use sticky_column if set (now stores visual column), otherwise use current visual column
         let goal_visual_column = if cursor.sticky_column > 0 {
             cursor.sticky_column
         } else {
             current_visual_column
         };
 
-        // Now create iterator for navigation
         let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
-
-        // Consume current line
-        iter.next_line();
+        iter.next_line(); // consume current line
 
         if let Some((next_line_start, next_line_content)) = iter.next_line() {
-            // Calculate byte offset from visual column, ensuring valid character boundary
             let next_line_text = next_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
             let new_pos = next_line_start + byte_offset;
 
-            // Preserve anchor if deselect_on_move is false (Emacs mark mode)
-            let new_anchor = if cursor.deselect_on_move {
+            let new_anchor = if extend_selection {
+                Some(cursor.anchor.unwrap_or(cursor.position))
+            } else if cursor.deselect_on_move {
                 None
             } else {
                 cursor.anchor
@@ -1441,21 +1432,24 @@ fn handle_move_down(
                 old_anchor: cursor.anchor,
                 new_anchor,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: goal_visual_column, // Preserve the goal visual column
+                new_sticky_column: goal_visual_column,
             });
         }
     }
 }
 
-fn handle_move_page_up(
+/// Scroll up by one page, moving or extending the selection.
+///
+/// See [`handle_vertical_up`] for the `extend_selection` contract.
+fn handle_page_up(
     state: &mut EditorState,
     cursors: &Cursors,
     events: &mut Vec<Event>,
     viewport_height: u16,
     estimated_line_length: usize,
+    extend_selection: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
-        // Move up by viewport height
         let lines_to_move = viewport_height.saturating_sub(1) as usize;
         let mut iter = state
             .buffer
@@ -1463,7 +1457,6 @@ fn handle_move_page_up(
         let current_line_start = iter.current_position();
         let current_column = cursor.position - current_line_start;
 
-        // Use sticky_column if set, otherwise use current column
         let goal_column = if cursor.sticky_column > 0 {
             cursor.sticky_column
         } else {
@@ -1481,8 +1474,9 @@ fn handle_move_page_up(
             }
         }
 
-        // Preserve anchor if deselect_on_move is false (Emacs mark mode)
-        let new_anchor = if cursor.deselect_on_move {
+        let new_anchor = if extend_selection {
+            Some(cursor.anchor.unwrap_or(cursor.position))
+        } else if cursor.deselect_on_move {
             None
         } else {
             cursor.anchor
@@ -1494,20 +1488,23 @@ fn handle_move_page_up(
             old_anchor: cursor.anchor,
             new_anchor,
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column, // Preserve the goal column
+            new_sticky_column: goal_column,
         });
     }
 }
 
-fn handle_move_page_down(
+/// Scroll down by one page, moving or extending the selection.
+///
+/// See [`handle_vertical_up`] for the `extend_selection` contract.
+fn handle_page_down(
     state: &mut EditorState,
     cursors: &Cursors,
     events: &mut Vec<Event>,
     viewport_height: u16,
     estimated_line_length: usize,
+    extend_selection: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
-        // Move down by viewport height
         let lines_to_move = viewport_height.saturating_sub(1) as usize;
         let mut iter = state
             .buffer
@@ -1515,15 +1512,13 @@ fn handle_move_page_down(
         let current_line_start = iter.current_position();
         let current_column = cursor.position - current_line_start;
 
-        // Use sticky_column if set, otherwise use current column
         let goal_column = if cursor.sticky_column > 0 {
             cursor.sticky_column
         } else {
             current_column
         };
 
-        // Consume current line
-        iter.next_line();
+        iter.next_line(); // consume current line
 
         let mut new_pos = cursor.position;
         for _ in 0..lines_to_move {
@@ -1531,14 +1526,14 @@ fn handle_move_page_down(
                 let line_len = line_content.trim_end_matches('\n').len();
                 new_pos = line_start + goal_column.min(line_len);
             } else {
-                // Reached end of buffer - clamp to last valid position
                 new_pos = max_cursor_position(&state.buffer);
                 break;
             }
         }
 
-        // Preserve anchor if deselect_on_move is false (Emacs mark mode)
-        let new_anchor = if cursor.deselect_on_move {
+        let new_anchor = if extend_selection {
+            Some(cursor.anchor.unwrap_or(cursor.position))
+        } else if cursor.deselect_on_move {
             None
         } else {
             cursor.anchor
@@ -1550,105 +1545,31 @@ fn handle_move_page_down(
             old_anchor: cursor.anchor,
             new_anchor,
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column, // Preserve the goal column
+            new_sticky_column: goal_column,
         });
     }
 }
 
-fn handle_select_page_up(
+/// Delete using a cursor-relative boundary computed by `compute_range`.
+///
+/// If the cursor has an active selection, deletes that instead.  Used to
+/// consolidate the identical boilerplate across DeleteWord* variants.
+fn delete_by_boundary(
     state: &mut EditorState,
     cursors: &Cursors,
     events: &mut Vec<Event>,
-    viewport_height: u16,
-    estimated_line_length: usize,
+    compute_range: impl Fn(&Buffer, &Cursor) -> Option<Range<usize>>,
 ) {
-    for (cursor_id, cursor) in cursors.iter() {
-        let lines_to_move = viewport_height.saturating_sub(1) as usize;
-        let mut iter = state
-            .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        let current_line_start = iter.current_position();
-        let current_column = cursor.position - current_line_start;
-        let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-        // Use sticky_column if set, otherwise use current column
-        let goal_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_column
-        };
-
-        let mut new_pos = cursor.position;
-        for _ in 0..lines_to_move {
-            if let Some((line_start, line_content)) = iter.prev() {
-                let line_len = line_content.trim_end_matches('\n').len();
-                new_pos = line_start + goal_column.min(line_len);
-            } else {
-                new_pos = 0;
-                break;
-            }
-        }
-
-        events.push(Event::MoveCursor {
-            cursor_id,
-            old_position: cursor.position,
-            new_position: new_pos,
-            old_anchor: cursor.anchor,
-            new_anchor: Some(anchor),
-            old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column, // Preserve the goal column
-        });
-    }
-}
-
-fn handle_select_page_down(
-    state: &mut EditorState,
-    cursors: &Cursors,
-    events: &mut Vec<Event>,
-    viewport_height: u16,
-    estimated_line_length: usize,
-) {
-    for (cursor_id, cursor) in cursors.iter() {
-        let lines_to_move = viewport_height.saturating_sub(1) as usize;
-        let mut iter = state
-            .buffer
-            .line_iterator(cursor.position, estimated_line_length);
-        let current_line_start = iter.current_position();
-        let current_column = cursor.position - current_line_start;
-        let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-        // Use sticky_column if set, otherwise use current column
-        let goal_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_column
-        };
-
-        // Consume current line
-        iter.next_line();
-
-        let mut new_pos = cursor.position;
-        for _ in 0..lines_to_move {
-            if let Some((line_start, line_content)) = iter.next_line() {
-                let line_len = line_content.trim_end_matches('\n').len();
-                new_pos = line_start + goal_column.min(line_len);
-            } else {
-                // Reached end of buffer - clamp to last valid position
-                new_pos = max_cursor_position(&state.buffer);
-                break;
-            }
-        }
-
-        events.push(Event::MoveCursor {
-            cursor_id,
-            old_position: cursor.position,
-            new_position: new_pos,
-            old_anchor: cursor.anchor,
-            new_anchor: Some(anchor),
-            old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column, // Preserve the goal column
-        });
-    }
+    let deletions: Vec<_> = cursors
+        .iter()
+        .filter_map(|(cursor_id, cursor)| {
+            cursor
+                .selection_range()
+                .or_else(|| compute_range(&state.buffer, cursor))
+                .map(|range| (cursor_id, range))
+        })
+        .collect();
+    apply_deletions(state, deletions, events);
 }
 
 fn handle_delete_backward(
@@ -2040,11 +1961,11 @@ pub fn action_to_events(
         }
 
         Action::MoveUp => {
-            handle_move_up(state, cursors, &mut events, estimated_line_length);
+            handle_vertical_up(state, cursors, &mut events, estimated_line_length, false);
         }
 
         Action::MoveDown => {
-            handle_move_down(state, cursors, &mut events, estimated_line_length);
+            handle_vertical_down(state, cursors, &mut events, estimated_line_length, false);
         }
 
         Action::MoveLineStart => {
@@ -2138,22 +2059,24 @@ pub fn action_to_events(
         }
 
         Action::MovePageUp => {
-            handle_move_page_up(
+            handle_page_up(
                 state,
                 cursors,
                 &mut events,
                 viewport_height,
                 estimated_line_length,
+                false,
             );
         }
 
         Action::MovePageDown => {
-            handle_move_page_down(
+            handle_page_down(
                 state,
                 cursors,
                 &mut events,
                 viewport_height,
                 estimated_line_length,
+                false,
             );
         }
 
@@ -2174,71 +2097,11 @@ pub fn action_to_events(
         }
 
         Action::SelectUp => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
-                    .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                // Use sticky_column if set, otherwise use current column
-                let goal_column = if cursor.sticky_column > 0 {
-                    cursor.sticky_column
-                } else {
-                    current_column
-                };
-
-                if let Some((prev_line_start, prev_line_content)) = iter.prev() {
-                    let prev_line_len = prev_line_content.trim_end_matches('\n').len();
-                    let new_pos = prev_line_start + goal_column.min(prev_line_len);
-
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        old_position: cursor.position,
-                        new_position: new_pos,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(anchor),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: goal_column, // Preserve the goal column
-                    });
-                }
-            }
+            handle_vertical_up(state, cursors, &mut events, estimated_line_length, true);
         }
 
         Action::SelectDown => {
-            for (cursor_id, cursor) in cursors.iter() {
-                let mut iter = state
-                    .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let current_line_start = iter.current_position();
-                let current_column = cursor.position - current_line_start;
-                let anchor = cursor.anchor.unwrap_or(cursor.position);
-
-                // Use sticky_column if set, otherwise use current column
-                let goal_column = if cursor.sticky_column > 0 {
-                    cursor.sticky_column
-                } else {
-                    current_column
-                };
-
-                // Skip current line, then get next line
-                iter.next_line();
-                if let Some((next_line_start, next_line_content)) = iter.next_line() {
-                    let next_line_len = next_line_content.trim_end_matches('\n').len();
-                    let new_pos = next_line_start + goal_column.min(next_line_len);
-
-                    events.push(Event::MoveCursor {
-                        cursor_id,
-                        old_position: cursor.position,
-                        new_position: new_pos,
-                        old_anchor: cursor.anchor,
-                        new_anchor: Some(anchor),
-                        old_sticky_column: cursor.sticky_column,
-                        new_sticky_column: goal_column, // Preserve the goal column
-                    });
-                }
-            }
+            handle_vertical_down(state, cursors, &mut events, estimated_line_length, true);
         }
 
         Action::SelectToParagraphUp => {
@@ -2322,22 +2185,24 @@ pub fn action_to_events(
         }
 
         Action::SelectPageUp => {
-            handle_select_page_up(
+            handle_page_up(
                 state,
                 cursors,
                 &mut events,
                 viewport_height,
                 estimated_line_length,
+                true,
             );
         }
 
         Action::SelectPageDown => {
-            handle_select_page_down(
+            handle_page_down(
                 state,
                 cursors,
                 &mut events,
                 viewport_height,
                 estimated_line_length,
+                true,
             );
         }
 
@@ -2421,70 +2286,25 @@ pub fn action_to_events(
         }
 
         Action::DeleteWordBackward => {
-            // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    if let Some(range) = cursor.selection_range() {
-                        Some((cursor_id, range))
-                    } else {
-                        let word_start = find_word_start_left(&state.buffer, cursor.position);
-                        if word_start < cursor.position {
-                            Some((cursor_id, word_start..cursor.position))
-                        } else {
-                            None
-                        }
-                    }
-                })
-                .collect();
-
-            // Now get text and create events
-            apply_deletions(state, deletions, &mut events);
+            delete_by_boundary(state, cursors, &mut events, |buf, c| {
+                let start = find_word_start_left(buf, c.position);
+                (start < c.position).then_some(start..c.position)
+            });
         }
 
         Action::DeleteWordForward => {
-            // Collect ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    if let Some(range) = cursor.selection_range() {
-                        Some((cursor_id, range))
-                    } else {
-                        let word_end = find_word_start_right(&state.buffer, cursor.position);
-                        if cursor.position < word_end {
-                            Some((cursor_id, cursor.position..word_end))
-                        } else {
-                            None
-                        }
-                    }
-                })
-                .collect();
-
-            // Now get text and create events
-            apply_deletions(state, deletions, &mut events);
+            delete_by_boundary(state, cursors, &mut events, |buf, c| {
+                let end = find_word_start_right(buf, c.position);
+                (c.position < end).then_some(c.position..end)
+            });
         }
 
         Action::DeleteViWordEnd => {
-            // Delete from cursor to vim word end (inclusive of last char)
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    if let Some(range) = cursor.selection_range() {
-                        Some((cursor_id, range))
-                    } else {
-                        let word_end = find_vi_word_end(&state.buffer, cursor.position);
-                        // +1 because vim 'de' is inclusive of the last character
-                        let end = (word_end + 1).min(state.buffer.len());
-                        if cursor.position < end {
-                            Some((cursor_id, cursor.position..end))
-                        } else {
-                            None
-                        }
-                    }
-                })
-                .collect();
-
-            apply_deletions(state, deletions, &mut events);
+            // +1 because vim 'de' is inclusive of the last character
+            delete_by_boundary(state, cursors, &mut events, |buf, c| {
+                let end = (find_vi_word_end(buf, c.position) + 1).min(buf.len());
+                (c.position < end).then_some(c.position..end)
+            });
         }
 
         Action::DeleteLine => {
