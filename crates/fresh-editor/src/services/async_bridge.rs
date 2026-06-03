@@ -250,8 +250,14 @@ pub enum AsyncMessage {
     /// Git status updated (future: git integration)
     GitStatusChanged { status: String },
 
-    /// File explorer initialized with tree view
-    FileExplorerInitialized(FileTreeView),
+    /// File explorer initialized with tree view. Carries the id of the window
+    /// that requested it: a background preview/materialize can init a
+    /// *non-active* window's explorer, so the view must land on that window —
+    /// applying it to whatever is active would clobber an unrelated explorer.
+    FileExplorerInitialized {
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    },
 
     /// File explorer node toggle completed
     FileExplorerToggleNode(NodeId),
@@ -259,9 +265,13 @@ pub enum AsyncMessage {
     /// File explorer node refresh completed
     FileExplorerRefreshNode(NodeId),
 
-    /// File explorer expand to path completed
-    /// Contains the updated FileTreeView with the path expanded and selected
-    FileExplorerExpandedToPath(FileTreeView),
+    /// File explorer expand to path completed. Carries the requesting window id
+    /// (see `FileExplorerInitialized`) so the expanded view returns to its own
+    /// window rather than the active one.
+    FileExplorerExpandedToPath {
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    },
 
     /// Plugin-related async messages
     Plugin(fresh_core::api::PluginAsyncMessage),

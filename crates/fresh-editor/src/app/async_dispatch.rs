@@ -326,8 +326,8 @@ impl Editor {
                     tracing::info!("Git status changed: {}", status);
                     // TODO: Handle git status changes
                 }
-                AsyncMessage::FileExplorerInitialized(view) => {
-                    self.handle_file_explorer_initialized(view);
+                AsyncMessage::FileExplorerInitialized { window, view } => {
+                    self.handle_file_explorer_initialized(window, view);
                 }
                 AsyncMessage::FileExplorerToggleNode(node_id) => {
                     self.handle_file_explorer_toggle_node(node_id);
@@ -335,8 +335,8 @@ impl Editor {
                 AsyncMessage::FileExplorerRefreshNode(node_id) => {
                     self.handle_file_explorer_refresh_node(node_id);
                 }
-                AsyncMessage::FileExplorerExpandedToPath(view) => {
-                    self.handle_file_explorer_expanded_to_path(view);
+                AsyncMessage::FileExplorerExpandedToPath { window, view } => {
+                    self.handle_file_explorer_expanded_to_path(window, view);
                 }
                 AsyncMessage::Plugin(plugin_msg) => {
                     use fresh_core::api::{JsCallbackId, PluginAsyncMessage};

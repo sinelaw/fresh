@@ -1410,54 +1410,28 @@ impl Editor {
 
 impl Editor {
     /// Handle file explorer initialized
-    pub(super) fn handle_file_explorer_initialized(&mut self, mut view: FileTreeView) {
-        tracing::info!("File explorer initialized");
-
-        // Load root .gitignore
-        let root_id = view.tree().root_id();
-        let root_path = view.tree().get_node(root_id).map(|n| n.entry.path.clone());
-
-        if let Some(root_path) = root_path {
-            crate::app::file_operations::load_gitignore_via_fs(
-                self.authority.filesystem.as_ref(),
-                &mut view,
-                &root_path,
-            );
-            tracing::debug!("Loaded root .gitignore from {:?}", root_path);
-        }
-
-        // Apply show_hidden / show_gitignored settings.
-        // Use pending session-restore values if present, otherwise fall back
-        // to the persisted config so the setting survives across sessions.
-        let show_hidden = self
-            .active_window_mut()
-            .pending_file_explorer_show_hidden
-            .take()
-            .unwrap_or(self.config.file_explorer.show_hidden);
-        view.ignore_patterns_mut().set_show_hidden(show_hidden);
-        tracing::debug!("Applied show_hidden={} on init", show_hidden);
-
-        let show_gitignored = self
-            .active_window_mut()
-            .pending_file_explorer_show_gitignored
-            .take()
-            .unwrap_or(self.config.file_explorer.show_gitignored);
-        view.ignore_patterns_mut()
-            .set_show_gitignored(show_gitignored);
-        tracing::debug!("Applied show_gitignored={} on init", show_gitignored);
-
-        view.set_compact_directories(self.config.file_explorer.compact_directories);
-
-        self.active_window_mut().file_explorer = Some(view);
-        self.set_status_message(t!("status.file_explorer_ready").to_string());
-
-        // If the user opened the explorer while a file from a nested
-        // directory was active, the sync triggered by toggle_file_explorer
-        // ran before this initialization completed (file_explorer was still
-        // None) and did nothing. Run it again now so the tree auto-expands
-        // to reveal the current file on first open (issue #1569).
-        if self.file_explorer_visible() {
-            self.active_window_mut().sync_file_explorer_to_active_file();
+    pub(super) fn handle_file_explorer_initialized(
+        &mut self,
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    ) {
+        tracing::info!("File explorer initialized for window {window}");
+        let defaults = crate::app::file_explorer::FileExplorerViewDefaults {
+            show_hidden: self.config.file_explorer.show_hidden,
+            show_gitignored: self.config.file_explorer.show_gitignored,
+            compact_directories: self.config.file_explorer.compact_directories,
+        };
+        let is_active = window == self.active_window_id();
+        // Route the result back to the window that asked for it. If that window
+        // is gone (closed before its tree finished building), drop it. The
+        // window applies the view to itself, so a background-built tree can
+        // never clobber a different (active) window's explorer.
+        let Some(win) = self.windows.get_mut(&window) else {
+            return;
+        };
+        win.install_initialized_file_explorer(view, defaults);
+        if is_active {
+            self.set_status_message(t!("status.file_explorer_ready").to_string());
         }
     }
 
@@ -1473,13 +1447,18 @@ impl Editor {
     }
 
     /// Handle file explorer expanded to path
-    pub(super) fn handle_file_explorer_expanded_to_path(&mut self, mut view: FileTreeView) {
+    pub(super) fn handle_file_explorer_expanded_to_path(
+        &mut self,
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    ) {
         tracing::trace!(
-            "handle_file_explorer_expanded_to_path: restoring file_explorer after async expand"
+            "handle_file_explorer_expanded_to_path: restoring file_explorer for window {window}"
         );
-        view.update_scroll_for_selection();
-        self.active_window_mut().file_explorer = Some(view);
-        self.active_window_mut().file_explorer_sync_in_progress = false;
+        // Route to the requesting window (see `handle_file_explorer_initialized`).
+        if let Some(win) = self.windows.get_mut(&window) {
+            win.install_expanded_file_explorer(view);
+        }
     }
 }
 

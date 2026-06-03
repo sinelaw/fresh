@@ -11,6 +11,16 @@ pub struct FileExplorerClipboard {
     pub is_cut: bool,
 }
 
+/// Config-derived defaults handed to `Window::install_initialized_file_explorer`
+/// so the apply logic lives on `Window` without it borrowing the editor's
+/// `Config` (which would clash with the `&mut Window` borrow).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FileExplorerViewDefaults {
+    pub show_hidden: bool,
+    pub show_gitignored: bool,
+    pub compact_directories: bool,
+}
+
 /// Outcome of a single filesystem-level paste op (`paste_one_fs_op`).
 /// The `SourceRemovalFailed` variant is a partial success: the destination
 /// exists but the original source could not be removed, so the file is
@@ -1601,6 +1611,9 @@ impl crate::app::window::Window {
         };
         let fs_manager = Arc::clone(&self.resources.fs_manager);
         let sender = self.bridge.sender();
+        // Tag the result with *this* window so it lands here even if another
+        // window is active by the time the async build finishes.
+        let window_id = self.id;
         runtime.spawn(async move {
             match FileTree::new(root_path, fs_manager).await {
                 Ok(mut tree) => {
@@ -1611,7 +1624,10 @@ impl crate::app::window::Window {
                     let view = FileTreeView::new(tree);
                     // Receiver may have been dropped during shutdown.
                     #[allow(clippy::let_underscore_must_use)]
-                    let _ = sender.send(AsyncMessage::FileExplorerInitialized(view));
+                    let _ = sender.send(AsyncMessage::FileExplorerInitialized {
+                        window: window_id,
+                        view,
+                    });
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize file explorer: {}", e);
@@ -1619,6 +1635,54 @@ impl crate::app::window::Window {
             }
         });
         self.set_status_message(t!("explorer.initializing").to_string());
+    }
+
+    /// Install a freshly-built file tree (from `init_file_explorer`) onto
+    /// *this* window. The editor's async dispatch routes the result back to the
+    /// requesting window and calls this — so a tree built for a backgrounded
+    /// (e.g. previewed) window can never land on whatever window happens to be
+    /// active, which previously clobbered the active window's explorer.
+    pub(crate) fn install_initialized_file_explorer(
+        &mut self,
+        mut view: FileTreeView,
+        defaults: FileExplorerViewDefaults,
+    ) {
+        let root_id = view.tree().root_id();
+        if let Some(root_path) = view.tree().get_node(root_id).map(|n| n.entry.path.clone()) {
+            crate::app::file_operations::load_gitignore_via_fs(
+                self.resources.authority.filesystem.as_ref(),
+                &mut view,
+                &root_path,
+            );
+        }
+        // Pending session-restore values win; otherwise fall back to config so
+        // the setting survives across sessions (fixes #569).
+        let show_hidden = self
+            .pending_file_explorer_show_hidden
+            .take()
+            .unwrap_or(defaults.show_hidden);
+        view.ignore_patterns_mut().set_show_hidden(show_hidden);
+        let show_gitignored = self
+            .pending_file_explorer_show_gitignored
+            .take()
+            .unwrap_or(defaults.show_gitignored);
+        view.ignore_patterns_mut()
+            .set_show_gitignored(show_gitignored);
+        view.set_compact_directories(defaults.compact_directories);
+        self.file_explorer = Some(view);
+        // Auto-expand to reveal the active file on first open (issue #1569),
+        // but only when this window is actually showing the explorer.
+        if self.file_explorer_visible {
+            self.sync_file_explorer_to_active_file();
+        }
+    }
+
+    /// Install an async expand-to-path result onto *this* window (routed
+    /// per-window for the same reason as `install_initialized_file_explorer`).
+    pub(crate) fn install_expanded_file_explorer(&mut self, mut view: FileTreeView) {
+        view.update_scroll_for_selection();
+        self.file_explorer = Some(view);
+        self.file_explorer_sync_in_progress = false;
     }
 
     /// Shift focus back to the editor pane (away from the file explorer)
@@ -1824,6 +1888,7 @@ impl crate::app::window::Window {
             .as_ref()
             .map(|r| r.handle().clone());
         let sender = self.resources.async_bridge.as_ref().map(|b| b.sender());
+        let window_id = self.id;
         if let (Some(runtime), Some(sender)) = (runtime_handle, sender) {
             // Mark sync as in progress so render knows to keep the layout
             self.file_explorer_sync_in_progress = true;
@@ -1833,7 +1898,10 @@ impl crate::app::window::Window {
                 // Receiver may have been dropped during shutdown.
                 #[allow(clippy::let_underscore_must_use)]
                 let _ = sender.send(
-                    crate::services::async_bridge::AsyncMessage::FileExplorerExpandedToPath(view),
+                    crate::services::async_bridge::AsyncMessage::FileExplorerExpandedToPath {
+                        window: window_id,
+                        view,
+                    },
                 );
             });
         } else {
