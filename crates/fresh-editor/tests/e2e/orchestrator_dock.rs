@@ -751,6 +751,21 @@ fn click_un_dive_switches_to_clicked_session() {
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
+    // Enter's dive blurs the dock through the plugin→host bridge
+    // asynchronously: the `activate` handler in `orchestrator.ts` calls
+    // `floatingPanelControl(panel, "blur")`, which only flips the host's
+    // `dock.focused` once that bridge command is applied. This is the
+    // mirror of the focus-grab race `open_dock` guards against. Without
+    // waiting for the blur to land, the first `Z` below can race in
+    // *before* the dock blurs and get routed to the still-focused dock
+    // instead of beta's `[No Name]` buffer — only the second `Z` then
+    // lands, the screen shows a lone `Z`, and the `contains("ZZ")` wait
+    // blocks to the external nextest timeout. Gate on the same
+    // screen-adjacent readiness signal (`is_dock_focused`) the dock's
+    // own helpers use (CONTRIBUTING §3: semantic waiting, not implicit
+    // keystroke-ordering assumptions).
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
     // Type a two-char sentinel into the dived-into buffer. With the
     // dock blurred and beta's `[No Name]` buffer active, the
     // keystrokes land in the buffer — proving the dive succeeded
