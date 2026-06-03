@@ -214,6 +214,7 @@ impl Editor {
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
+            session_keepalives: HashMap::new(),
             active_window: parts.active_window,
             next_window_id: parts.next_window_id,
             command_registry: parts.command_registry,

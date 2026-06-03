@@ -543,6 +543,19 @@ pub struct RemoteAgentSpec {
     /// `command_exists`. Empty when no probe ran.
     #[serde(default)]
     pub base_env: Vec<(String, String)>,
+    /// When true, attach as a **new window** (born-attached, coexisting with
+    /// existing windows) instead of the default global restart. The
+    /// Orchestrator sets this so a cloud session is a real session row rather
+    /// than retargeting the whole editor.
+    #[serde(default)]
+    pub window: bool,
+    /// Window label (used only when `window` is true). Empty falls back to the
+    /// transport's display.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional agent argv for the new window's seed terminal (window mode).
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
 }
 
 /// Transport kind for [`RemoteAgentSpec`]. Tagged + additive so new

@@ -3476,11 +3476,18 @@ impl Editor {
             return;
         };
 
+        // Window-mode opts captured before `spec` is consumed by
+        // `into_kube_target` — when `window` is set the main loop spawns a
+        // born-attached new window instead of restarting the whole editor.
+        let window_mode = spec.window;
+        let window_label = spec.label.clone();
+        let window_command = spec.command.clone();
+
         // The connect (spawn the carrier, bootstrap the agent, await
         // `ready`) is async and can take seconds, so run it on the
         // runtime and report back via the bridge instead of blocking the
         // event loop. On success the main loop installs the authority +
-        // keepalive and restarts; on failure it surfaces the error.
+        // keepalive (restart or new window); on failure it surfaces the error.
         let (target, base_env) = spec.into_kube_target();
         let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
         let env = std::sync::Arc::clone(&self.authority.env_provider);
@@ -3488,6 +3495,14 @@ impl Editor {
         // Pod-side workspace to re-root the editor at after attach (e.g.
         // `/workspace`). Captured before `target` is moved into the connect.
         let workspace = target.workspace.clone().map(std::path::PathBuf::from);
+        let mode = if window_mode {
+            crate::services::async_bridge::RemoteAttachMode::Window {
+                label: window_label.unwrap_or_else(|| label.clone()),
+                command: window_command,
+            }
+        } else {
+            crate::services::async_bridge::RemoteAttachMode::Restart
+        };
         self.set_status_message(format!("Connecting to {label}…"));
 
         runtime.spawn(async move {
@@ -3500,6 +3515,7 @@ impl Editor {
                         authority,
                         keepalive: Box::new(keepalive),
                         working_dir: workspace,
+                        mode,
                     },
                 ),
                 Err(e) => AsyncMessage::RemoteAttachFailed {

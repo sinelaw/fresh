@@ -191,6 +191,11 @@ interface PrInfo {
 
 const orchestratorSessions = new Map<number, AgentSession>();
 
+// Facet to stamp onto the next born-attached remote window when it surfaces in
+// `reconcileSessions` (via the core `window_created` hook). Set just before
+// `attachRemoteAgent({ window: true })`, consumed by the first new live window.
+let pendingRemoteFacet: AgentSession["remote"] | null = null;
+
 // Stable synthetic ids for discovered (on-disk, not-yet-opened)
 // worktrees, keyed by canonical path. Live windows own the
 // positive id space (editor `WindowId`s); discovered rows take
@@ -631,6 +636,16 @@ function reconcileSessions(): void {
     seen.add(s.id);
     const existing = orchestratorSessions.get(s.id);
     if (!existing) {
+      // A born-attached remote window (created by core after
+      // `attachRemoteAgent({ window: true })`) surfaces here for the first
+      // time. Core makes it the *active* window, so claim the pending facet
+      // only for the active id — otherwise a pre-existing untracked window
+      // processed first would wrongly grab it. Cleared once claimed.
+      const remote =
+        pendingRemoteFacet && s.id === editor.activeWindow()
+          ? pendingRemoteFacet
+          : undefined;
+      if (remote) pendingRemoteFacet = null;
       orchestratorSessions.set(s.id, {
         id: s.id,
         label: s.label,
@@ -644,6 +659,7 @@ function reconcileSessions(): void {
         state: "idle",
         lastOutputAt: null,
         createdAt: Date.now(),
+        remote,
       });
     } else {
       existing.label = s.label;
@@ -5064,6 +5080,7 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
       fail("Kubernetes: Namespace and Pod are required (or use “K8s: Connect Workspace”).");
       return;
     }
+    const agentArgv = splitAgentCmd(cmd);
     const spec: RemoteAgentSpec = {
       transport: {
         kind: "kubectl-exec",
@@ -5074,10 +5091,18 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
         workspace: form.k8sWorkspace.value.trim() || null,
       },
       base_env: [],
+      // Born-attached: a new window beside the local ones (not a global
+      // restart). Core records nothing about us — the orchestrator tracks the
+      // session via the `window_created` hook below.
+      window: true,
+      label: sessionName || `k8s:${namespace}/${pod}`,
+      command: agentArgv.length > 0 ? agentArgv : undefined,
     };
     closeForm();
-    editor.setStatus(`Orchestrator: attaching to pod ${namespace}/${pod}…`);
-    // Global attach: the editor reconnects into the pod (restart). Fire-and-forget.
+    editor.setStatus(`Orchestrator: attaching pod ${namespace}/${pod}…`);
+    // Remember the pending facet so the `window_created` hook can tag the new
+    // session row as a Kubernetes workspace.
+    pendingRemoteFacet = { kind: "kubernetes", detail: `${namespace}/${pod}`, state: "running" };
     editor.attachRemoteAgent(spec);
     return;
   }

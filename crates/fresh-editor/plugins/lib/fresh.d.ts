@@ -1557,6 +1557,17 @@ type RemoteAgentSpec = {
 	* binary-presence probes. Omit when no probe was run.
 	*/
 	base_env?: [string, string][];
+	/**
+	* When true, attach as a NEW window (born-attached, coexisting with the
+	* existing windows) instead of the default global restart that replaces the
+	* whole editor's authority. The Orchestrator sets this so a cloud session is
+	* a real session row beside local ones.
+	*/
+	window?: boolean;
+	/** Window label (window mode only). Omit to use the transport's display. */
+	label?: string;
+	/** Optional agent argv for the new window's seed terminal (window mode). */
+	command?: string[];
 };
 type RemoteIndicatorStatePayload = {
 	kind: "local";

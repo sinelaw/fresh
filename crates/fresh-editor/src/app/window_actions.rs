@@ -595,6 +595,12 @@ impl crate::app::Editor {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
         }
+        // Tear down a born-attached remote session's connection (carrier +
+        // reconnect/heartbeat + runtime) when its window closes. No-op for
+        // local windows, which never have an entry.
+        if self.session_keepalives.remove(&id).is_some() {
+            tracing::info!("close_window: dropped remote session keepalive for window {id}");
+        }
 
         self.plugin_manager
             .read()
@@ -602,5 +608,53 @@ impl crate::app::Editor {
             .run_hook("window_closed", HookArgs::WindowClosed { id: id.0 });
 
         true
+    }
+
+    /// Born-attached remote session: create a **new window** whose authority is
+    /// the already-connected remote backend (Kubernetes / SSH / …), seed its
+    /// terminal *inside* that backend, and park the connection `keepalive`
+    /// keyed by the window so it outlives editor rebuilds and is torn down on
+    /// close.
+    ///
+    /// Unlike the global `install_authority_with_keepalive` restart, existing
+    /// windows are left untouched — the remote session coexists with them, and
+    /// `set_active_window` (Gap A) retargets the active authority when the user
+    /// switches. The mechanism is simply that `create_window_with_terminal`
+    /// builds the window from `window_resources()`, which clones `self.authority`;
+    /// installing the remote authority first means the new window's filesystem,
+    /// LSP spawner, and terminal wrapper all act in the backend from birth (so
+    /// there are no stale local handles to invalidate — the caveat that gates
+    /// hot-swapping an *existing* window's authority doesn't apply here).
+    pub(crate) fn create_remote_session_window(
+        &mut self,
+        authority: crate::services::authority::Authority,
+        keepalive: Box<dyn std::any::Any + Send>,
+        root: PathBuf,
+        label: String,
+        command: Option<Vec<String>>,
+    ) -> Result<WindowId, String> {
+        let prev_label = self.authority.display_label.clone();
+        // Install the remote authority so the new window is born under it.
+        // The previous (local / other-remote) window keeps its own
+        // `resources.authority`; Gap A restores it on switch-back.
+        let saved_authority = std::mem::replace(&mut self.authority, authority);
+        match self.create_window_with_terminal(root.clone(), label, Some(root), command, None) {
+            Ok((window_id, _terminal, _buffer)) => {
+                self.session_keepalives.insert(window_id, keepalive);
+                // `create_window_with_terminal` writes the active pointer
+                // directly (bypassing `set_active_window`), so re-point
+                // quick-open at the remote filesystem + fire `authority_changed`.
+                self.adopt_active_window_authority(&prev_label);
+                Ok(window_id)
+            }
+            Err(e) => {
+                // The connect succeeded but the window couldn't be seeded
+                // (e.g. the backend has no python3 / the pod died): restore the
+                // prior authority and drop the keepalive (tears down the carrier).
+                self.authority = saved_authority;
+                drop(keepalive);
+                Err(e)
+            }
+        }
     }
 }

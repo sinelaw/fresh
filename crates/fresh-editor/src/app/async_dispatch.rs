@@ -650,14 +650,15 @@ impl Editor {
                     self.handle_plugin_lsp_response(request_id, result);
                 }
                 AsyncMessage::RemoteAttachReady(ready) => {
-                    // The background connect succeeded; install the new
-                    // authority + its keepalive and restart so the whole
-                    // editor rebuilds around the remote backend (same
-                    // destructive-transition contract as setAuthority).
+                    // The background connect succeeded. Install per `mode`:
+                    // Restart rebuilds the whole editor around the backend
+                    // (global), Window spawns a born-attached session beside
+                    // the existing ones.
                     let crate::services::async_bridge::RemoteAttachReady {
                         authority,
                         keepalive,
                         working_dir,
+                        mode,
                     } = ready;
                     // Re-root at the pod's workspace (or its home if the plugin
                     // didn't supply one) — never the stale local path. The
@@ -666,12 +667,31 @@ impl Editor {
                     let root = working_dir
                         .or_else(|| authority.filesystem.home_dir().ok())
                         .unwrap_or_else(|| std::path::PathBuf::from("/"));
-                    tracing::info!(
-                        "Remote attach connected ({}); installing authority, rooting at {}",
-                        authority.display_label,
-                        root.display()
-                    );
-                    self.install_authority_with_keepalive(authority, keepalive, root);
+                    match mode {
+                        crate::services::async_bridge::RemoteAttachMode::Restart => {
+                            tracing::info!(
+                                "Remote attach connected ({}); installing authority (restart), rooting at {}",
+                                authority.display_label,
+                                root.display()
+                            );
+                            self.install_authority_with_keepalive(authority, keepalive, root);
+                        }
+                        crate::services::async_bridge::RemoteAttachMode::Window {
+                            label,
+                            command,
+                        } => {
+                            tracing::info!(
+                                "Remote attach connected ({}); opening born-attached window at {}",
+                                authority.display_label,
+                                root.display()
+                            );
+                            if let Err(e) = self.create_remote_session_window(
+                                authority, keepalive, root, label, command,
+                            ) {
+                                self.set_status_message(format!("Attach window failed: {e}"));
+                            }
+                        }
+                    }
                 }
                 AsyncMessage::RemoteAttachFailed { error } => {
                     tracing::warn!("Remote attach failed: {}", error);

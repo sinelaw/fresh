@@ -26,10 +26,27 @@ pub enum LspSemanticTokensResponse {
     Range(Result<Option<SemanticTokensRangeResult>, String>),
 }
 
+/// How a completed remote attach is installed.
+pub enum RemoteAttachMode {
+    /// Global: replace the editor's single authority and restart the whole
+    /// editor around the remote backend (the original `setAuthority`-style
+    /// destructive transition). Every window becomes remote.
+    Restart,
+    /// Born-attached: spawn a *new window* whose authority is the remote
+    /// backend, leaving existing (local / other-remote) windows untouched.
+    /// The session coexists warm beside them; switching windows retargets the
+    /// active authority (see `set_active_window` / Gap A). `command` is the
+    /// optional agent argv for the window's seed terminal.
+    Window {
+        label: String,
+        command: Option<Vec<String>>,
+    },
+}
+
 /// A completed remote-agent attach: the assembled authority plus the
 /// keepalive that must outlive it. Carried back from the async connect
-/// task to the main loop, which installs it and restarts. Manual `Debug`
-/// because neither field is `Debug`.
+/// task to the main loop, which installs it per `mode`. Manual `Debug`
+/// because the fields are not `Debug`.
 pub struct RemoteAttachReady {
     pub authority: crate::services::authority::Authority,
     pub keepalive: Box<dyn std::any::Any + Send>,
@@ -39,6 +56,8 @@ pub struct RemoteAttachReady {
     /// look at a host path that doesn't exist in the pod. `None` falls back to
     /// the remote home directory.
     pub working_dir: Option<std::path::PathBuf>,
+    /// Restart (global) vs. born-attached new window.
+    pub mode: RemoteAttachMode,
 }
 
 impl std::fmt::Debug for RemoteAttachReady {
