@@ -805,9 +805,12 @@ pub async fn connect_ssh_authority(
         Arc::clone(&env),
         Arc::clone(&trust),
     ));
-    let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
-        RemoteLongRunningSpawner::new(reconnect_params.clone(), Arc::clone(&env), Arc::clone(&trust)),
-    );
+    let long_running_spawner: Arc<dyn LongRunningSpawner> =
+        Arc::new(RemoteLongRunningSpawner::new(
+            reconnect_params.clone(),
+            Arc::clone(&env),
+            Arc::clone(&trust),
+        ));
     let authority = Authority::ssh(
         filesystem,
         process_spawner,

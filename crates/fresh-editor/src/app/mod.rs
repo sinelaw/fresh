@@ -663,8 +663,7 @@ pub struct Editor {
     /// window and is torn down when the window is closed (`close_window`).
     /// Local windows have no entry. This is the per-window analogue of the
     /// process-level keepalive the restart-based attach parks.
-    pub(crate) session_keepalives:
-        HashMap<fresh_core::WindowId, Box<dyn std::any::Any + Send>>,
+    pub(crate) session_keepalives: HashMap<fresh_core::WindowId, Box<dyn std::any::Any + Send>>,
 
     /// Id of the currently active session. Always `WindowId(1)` for
     /// now; multi-session support arrives in a follow-up commit.

@@ -35,9 +35,9 @@ pub use protocol::{
     write_params, AgentRequest, AgentResponse,
 };
 pub use spawner::{
-    build_kube_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner, LocalProcessSpawner,
-    LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError,
-    SpawnResult, StdioChild,
+    build_kube_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner,
+    LocalProcessSpawner, LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner,
+    RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
 };
 /// Shared `kubectl exec` argv builder, used by the agent transport, the
 /// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
