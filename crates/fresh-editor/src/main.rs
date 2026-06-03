@@ -3934,7 +3934,7 @@ fn real_main() -> AnyhowResult<()> {
                 // Swap in the new session and drop the previous one,
                 // explicitly tearing the old connection down before the
                 // next iteration builds against the new backend.
-                let previous = std::mem::replace(&mut current_keepalive, Some(new_keepalive));
+                let previous = current_keepalive.replace(new_keepalive);
                 drop(previous);
             }
         }

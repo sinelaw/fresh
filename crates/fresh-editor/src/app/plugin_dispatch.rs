@@ -795,19 +795,7 @@ impl Editor {
                 recursive,
                 request_id,
             } => {
-                let result = if let Some(ref bridge) = self.async_bridge {
-                    self.file_watcher_manager.watch(bridge, &path, recursive)
-                } else {
-                    Err(
-                        "watchPath: no async bridge — file watching is unavailable in this build"
-                            .to_string(),
-                    )
-                };
-                self.last_watch_response_for_test = Some((request_id, result.clone()));
-                self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
-                    request_id,
-                    result,
-                });
+                self.handle_watch_path(path, recursive, request_id);
             }
             PluginCommand::UnwatchPath { handle } => {
                 self.file_watcher_manager.unwatch(handle);
@@ -878,17 +866,7 @@ impl Editor {
 
             // ==================== File/Navigation Commands ====================
             PluginCommand::OpenFileInBackground { path, window_id } => {
-                let route_to_inactive = match window_id {
-                    Some(id) if id != self.active_window && self.windows.contains_key(&id) => {
-                        Some(id)
-                    }
-                    _ => None,
-                };
-                if let Some(target) = route_to_inactive {
-                    self.handle_open_file_in_inactive_session(target, path);
-                } else {
-                    self.handle_open_file_in_background(path);
-                }
+                self.handle_open_file_in_background_routed(path, window_id);
             }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 return self.handle_open_file_at_location(path, line, column);
@@ -1006,28 +984,11 @@ impl Editor {
             }
 
             PluginCommand::SetEnv { snippet, dir } => {
-                // Activation runs repo-controlled code, so it's only honored in
-                // a Trusted workspace — defense in depth even though the plugin
-                // already gates on `workspaceTrustLevel()`.
-                use crate::services::workspace_trust::TrustLevel;
-                if self.authority.workspace_trust.level() == TrustLevel::Trusted {
-                    self.authority
-                        .env_provider
-                        .set(snippet, dir.map(std::path::PathBuf::from));
-                    // Re-evaluate already-running tooling under the new env.
-                    self.request_restart(self.working_dir().to_path_buf());
-                } else {
-                    self.active_window_mut().status_message =
-                        Some("Workspace not trusted — cannot activate environment".to_string());
-                }
+                self.handle_set_env(snippet, dir);
             }
 
             PluginCommand::ClearEnv => {
-                let was_active = self.authority.env_provider.is_active();
-                self.authority.env_provider.clear();
-                if was_active {
-                    self.request_restart(self.working_dir().to_path_buf());
-                }
+                self.handle_clear_env();
             }
 
             PluginCommand::SetRemoteIndicatorState { state } => {
@@ -1330,24 +1291,12 @@ impl Editor {
                 self.flush_layout();
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let split_id = self.split_manager().active_split();
                 self.active_window_mut()
                     .composite_next_hunk(split_id, buffer_id);
             }
             PluginCommand::CompositePrevHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
+                let split_id = self.split_manager().active_split();
                 self.active_window_mut()
                     .composite_prev_hunk(split_id, buffer_id);
             }
@@ -1539,6 +1488,215 @@ impl Editor {
             }
         }
         Ok(())
+    }
+
+    // ── Delegated handlers extracted from the dispatch match ─────────────
+
+    fn handle_watch_path(&mut self, path: std::path::PathBuf, recursive: bool, request_id: u64) {
+        let result = if let Some(ref bridge) = self.async_bridge {
+            self.file_watcher_manager.watch(bridge, &path, recursive)
+        } else {
+            Err(
+                "watchPath: no async bridge — file watching is unavailable in this build"
+                    .to_string(),
+            )
+        };
+        self.last_watch_response_for_test = Some((request_id, result.clone()));
+        self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
+            request_id,
+            result,
+        });
+    }
+
+    fn handle_set_env(&mut self, snippet: String, dir: Option<String>) {
+        // Activation runs repo-controlled code, so it's only honored in
+        // a Trusted workspace — defense in depth even though the plugin
+        // already gates on `workspaceTrustLevel()`.
+        use crate::services::workspace_trust::TrustLevel;
+        if self.authority.workspace_trust.level() == TrustLevel::Trusted {
+            self.authority
+                .env_provider
+                .set(snippet, dir.map(std::path::PathBuf::from));
+            // Re-evaluate already-running tooling under the new env.
+            self.request_restart(self.working_dir().to_path_buf());
+        } else {
+            self.active_window_mut().status_message =
+                Some("Workspace not trusted — cannot activate environment".to_string());
+        }
+    }
+
+    fn handle_clear_env(&mut self) {
+        let was_active = self.authority.env_provider.is_active();
+        self.authority.env_provider.clear();
+        if was_active {
+            self.request_restart(self.working_dir().to_path_buf());
+        }
+    }
+
+    fn handle_open_file_in_background_routed(
+        &mut self,
+        path: std::path::PathBuf,
+        window_id: Option<fresh_core::WindowId>,
+    ) {
+        let route_to_inactive =
+            window_id.filter(|&id| id != self.active_window && self.windows.contains_key(&id));
+        if let Some(target) = route_to_inactive {
+            self.handle_open_file_in_inactive_session(target, path);
+        } else {
+            self.handle_open_file_in_background(path);
+        }
+    }
+
+    // ── Virtual-buffer display configuration ────────────────────────────
+
+    /// Apply the three display flags (line numbers, cursor visibility,
+    /// editing lock) that every `create_virtual_buffer_*` command sets
+    /// on the newly-created buffer's state.
+    fn configure_vbuf_display(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+        }
+    }
+
+    // ── Virtual-buffer-in-split sub-paths ───────────────────────────────
+
+    /// Utility-dock fast path: a leaf with `dock_leaf`'s role already exists,
+    /// so attach the new virtual buffer there instead of spawning a new split.
+    #[allow(clippy::too_many_arguments)]
+    fn route_vbuf_to_existing_dock(
+        &mut self,
+        dock_leaf: crate::model::event::LeafId,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        panel_id: Option<&str>,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        request_id: Option<u64>,
+    ) {
+        // Capture the source split *before* create_virtual_buffer tabs the
+        // new buffer into it; we drop that phantom tab after the dock attach.
+        let source_split_before_create = self.split_manager().active_split();
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode, read_only);
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        if let Some(pid) = panel_id {
+            self.panel_ids_mut().insert(pid.to_string(), buffer_id);
+        }
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
+            return;
+        }
+        // Swap the dock leaf's active buffer to the new one and add it as a tab.
+        self.split_manager_mut().set_active_split(dock_leaf);
+        self.active_window_mut()
+            .set_pane_buffer(dock_leaf, buffer_id);
+        // Drop the phantom tab from the source split.
+        if dock_leaf != source_split_before_create {
+            if let Some(source_view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&source_split_before_create)
+            {
+                source_view_state.remove_buffer(buffer_id);
+            }
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: buffer_id.0 as u64,
+                split_id: Some(dock_leaf.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+        tracing::info!(
+            "Routed virtual buffer '{}' into existing utility dock {:?}",
+            name,
+            dock_leaf
+        );
+    }
+
+    /// Idempotent panel update: `panel_name` already maps to a live buffer,
+    /// so just refresh its content and focus the split it lives in.
+    fn update_existing_vbuf_panel(
+        &mut self,
+        existing_buffer_id: crate::model::event::BufferId,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        request_id: Option<u64>,
+        panel_name: &str,
+    ) {
+        match self.set_virtual_buffer_content(existing_buffer_id, entries) {
+            Ok(()) => tracing::info!("Updated existing panel '{}' content", panel_name),
+            Err(e) => tracing::error!("Failed to update panel content: {}", e),
+        }
+        let splits = self.split_manager().splits_for_buffer(existing_buffer_id);
+        if let Some(&split_id) = splits.first() {
+            self.split_manager_mut().set_active_split(split_id);
+            // Route through set_pane_buffer so tree + SVS stay consistent.
+            self.active_window_mut()
+                .set_pane_buffer(split_id, existing_buffer_id);
+            tracing::debug!("Focused split {:?} containing panel buffer", split_id);
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: existing_buffer_id.0 as u64,
+                split_id: splits.first().map(|s| s.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+    }
+
+    // ── Line-position shared implementation ─────────────────────────────
+
+    /// Shared implementation for `handle_get_line_start_position` and
+    /// `handle_get_line_end_position`. When `want_end` is false the byte
+    /// offset of the line's first character is returned; when true, the
+    /// byte offset of its terminating newline (or `buffer_len` for the
+    /// last line without a trailing newline).
+    fn handle_get_line_position(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        line: u32,
+        request_id: u64,
+        want_end: bool,
+    ) {
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let len = state.buffer.len();
+                let content = state.get_text_range(0, len);
+                buffer_line_byte_offset(&content, len, line as usize, want_end)
+            });
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Save a buffer to a specific file path (for :w filename)
@@ -1797,39 +1955,15 @@ impl Editor {
             .resolve_callback(callback_id, json);
     }
 
-    /// Get the byte offset of the start of a line in the active buffer
+    /// Get the byte offset of the start of a line in the active buffer.
     fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, false)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, false);
     }
 
     /// Get the byte offset of the end of a line (position of its terminating newline,
     /// or `buffer_len` for the last line without a trailing newline).
     fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, true)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, true);
     }
 
     /// Get the total number of lines in a buffer
@@ -1845,20 +1979,12 @@ impl Editor {
         {
             let buffer_len = state.buffer.len();
             let content = state.get_text_range(0, buffer_len);
-
-            // Count lines (number of newlines + 1, unless empty)
-            if content.is_empty() {
-                Some(1) // Empty buffer has 1 line
+            let newlines = content.bytes().filter(|&b| b == b'\n').count();
+            Some(if content.is_empty() {
+                1
             } else {
-                let newline_count = content.chars().filter(|&c| c == '\n').count();
-                // If file ends with newline, don't count extra line
-                let ends_with_newline = content.ends_with('\n');
-                if ends_with_newline {
-                    Some(newline_count)
-                } else {
-                    Some(newline_count + 1)
-                }
-            }
+                newlines + usize::from(!content.ends_with('\n'))
+            })
         } else {
             None
         };
@@ -2422,6 +2548,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_with_content(
         &mut self,
         name: String,
@@ -2444,37 +2571,13 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
         // TODO: show_line_numbers is duplicated between EditorState.margins and
         // BufferViewState. The renderer reads BufferViewState and overwrites
         // margins each frame via configure_for_line_numbers(), making the margin
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        let active_split = self.split_manager().active_split();
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2528,6 +2631,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_split(
         &mut self,
         name: String,
@@ -2552,178 +2656,58 @@ impl Editor {
             _ => None,
         };
 
-        // Utility-dock fast path (issue #1796 / Section 2 of the design):
-        // if a leaf with this role already exists, swap its active
-        // buffer instead of spawning a fresh split. The buffer is
-        // created normally, registered in `panel_ids`, and added as a
-        // tab in the dock leaf.
-        if let Some(target_role) = split_role {
-            if let Some(dock_leaf) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .find_leaf_by_role(target_role)
-            {
-                // Capture the source split *before* create_virtual_buffer
-                // tabs the new buffer into it; we drop that phantom tab
-                // after the dock attach so the buffer only shows in the
-                // dock.
-                let source_split_before_create = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                let buffer_id = self.active_window_mut().create_virtual_buffer(
-                    name.clone(),
-                    mode.clone(),
-                    read_only,
-                );
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
-                    .expect("active window present")
-                    .get_mut(&buffer_id)
-                {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                }
-                if let Some(pid) = &panel_id {
-                    self.panel_ids_mut().insert(pid.clone(), buffer_id);
-                }
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
-                    tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
-                    return;
-                }
-
-                // Swap the dock leaf's active buffer to the new one and
-                // add it as a tab so the user can flip between
-                // dock-resident utilities (Diagnostics ↔ Quickfix etc.).
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_active_split(dock_leaf);
-                self.active_window_mut()
-                    .set_pane_buffer(dock_leaf, buffer_id);
-
-                // Drop the phantom tab from the source split.
-                if dock_leaf != source_split_before_create {
-                    if let Some(source_view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
-                        .get_mut(&source_split_before_create)
-                    {
-                        source_view_state.remove_buffer(buffer_id);
-                    }
-                }
-
-                if let Some(req_id) = request_id {
-                    let result = fresh_core::api::VirtualBufferResult {
-                        buffer_id: buffer_id.0 as u64,
-                        split_id: Some(dock_leaf.0 .0 as u64),
-                    };
-                    self.plugin_manager.read().unwrap().resolve_callback(
-                        fresh_core::api::JsCallbackId::from(req_id),
-                        serde_json::to_string(&result).unwrap_or_default(),
-                    );
-                }
-                tracing::info!(
-                    "Routed virtual buffer '{}' into existing utility dock {:?}",
-                    name,
-                    dock_leaf
-                );
-                return;
-            }
+        // Path 1 — Utility-dock fast path (issue #1796 / Section 2 of the design):
+        // if a leaf with this role already exists, attach the new buffer there
+        // instead of spawning a fresh split.
+        if let Some(dock_leaf) = split_role.and_then(|r| self.split_manager().find_leaf_by_role(r))
+        {
+            return self.route_vbuf_to_existing_dock(
+                dock_leaf,
+                name,
+                mode,
+                read_only,
+                entries,
+                panel_id.as_deref(),
+                show_line_numbers,
+                show_cursors,
+                editing_disabled,
+                request_id,
+            );
             // No dock yet — fall through to normal split creation,
             // then tag the new leaf with the requested role at the end.
         }
 
-        // Check if this panel already exists (for idempotent operations)
-        if let Some(pid) = &panel_id {
-            if let Some(&existing_buffer_id) = self.panel_ids().get(pid) {
-                // Verify the buffer actually exists (defensive check for stale entries)
-                if self
+        // Path 2 — Idempotent panel update: if this panel_id already maps to a
+        // live buffer, refresh its content and re-focus it.
+        if let Some(pid) = panel_id.as_deref() {
+            let maybe_existing = self.panel_ids().get(pid).copied();
+            if let Some(existing_id) = maybe_existing {
+                let buffer_alive = self
                     .windows
                     .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .contains_key(&existing_buffer_id)
-                {
-                    // Panel exists, just update its content
-                    if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries) {
-                        tracing::error!("Failed to update panel content: {}", e);
-                    } else {
-                        tracing::info!("Updated existing panel '{}' content", pid);
-                    }
-
-                    // Find and focus the split that contains this buffer
-                    let splits = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .splits_for_buffer(existing_buffer_id);
-                    if let Some(&split_id) = splits.first() {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_active_split(split_id);
-                        // Route through set_pane_buffer so tree + SVS
-                        // stay consistent (issue #1620 invariant).
-                        self.active_window_mut()
-                            .set_pane_buffer(split_id, existing_buffer_id);
-                        tracing::debug!("Focused split {:?} containing panel buffer", split_id);
-                    }
-
-                    // Send response with existing buffer ID and split ID via callback resolution
-                    if let Some(req_id) = request_id {
-                        let result = fresh_core::api::VirtualBufferResult {
-                            buffer_id: existing_buffer_id.0 as u64,
-                            split_id: splits.first().map(|s| s.0 .0 as u64),
-                        };
-                        self.plugin_manager.read().unwrap().resolve_callback(
-                            fresh_core::api::JsCallbackId::from(req_id),
-                            serde_json::to_string(&result).unwrap_or_default(),
-                        );
-                    }
-                    return;
-                } else {
-                    // Buffer no longer exists, remove stale panel_id entry
-                    tracing::warn!(
-                        "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
-                        pid,
-                        existing_buffer_id
-                    );
-                    self.panel_ids_mut().remove(pid);
-                    // Fall through to create a new buffer
+                    .map(|w| w.buffers.contains_key(&existing_id))
+                    .unwrap_or(false);
+                if buffer_alive {
+                    return self.update_existing_vbuf_panel(existing_id, entries, request_id, pid);
                 }
+                // Buffer no longer exists — remove the stale entry and fall through.
+                tracing::warn!(
+                    "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
+                    pid,
+                    existing_id
+                );
+                self.panel_ids_mut().remove(pid);
             }
         }
 
+        // Path 3 — Fresh split creation.
+        //
         // Capture the source split before creating the buffer —
-        // `create_virtual_buffer` unconditionally adds the new buffer
-        // as a tab to the currently active split, which is the wrong
-        // thing for a panel that lives in its own dedicated split
-        // (it would show up as a tab in BOTH splits — see bug #3).
-        let source_split_before_create = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        // `create_virtual_buffer` unconditionally adds the new buffer as a tab
+        // to the currently active split, which is wrong for a panel that lives
+        // in its own dedicated split (it would appear in BOTH splits — bug #3).
+        let source_split_before_create = self.split_manager().active_split();
 
-        // Create the virtual buffer first
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode.clone(), read_only);
@@ -2734,155 +2718,113 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Store the panel ID mapping if provided
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid, buffer_id);
         }
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
         }
 
-        // Determine split direction
         let split_dir = match direction.as_deref() {
             Some("vertical") => crate::model::event::SplitDirection::Vertical,
             _ => crate::model::event::SplitDirection::Horizontal,
         };
 
-        // Create a split with the new buffer. When the caller asked
-        // for `role = "utility_dock"` and no dock leaf exists yet,
-        // split at the *root* so the dock spans the full width below
-        // any pre-existing side-by-side panes — splitting the active
-        // leaf would nest the dock under whichever pane was focused.
-        let created_split_id =
-            match if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_root_positioned(split_dir, buffer_id, ratio, before)
-            } else {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_active_positioned(split_dir, buffer_id, ratio, before)
-            } {
-                Ok(new_split_id) => {
-                    // The buffer now lives in its own split, so drop its
-                    // tab from the source split (see bug #3).  Only do
-                    // this when the new split actually differs from the
-                    // source split — otherwise we'd leave no split
-                    // displaying the buffer.
-                    if new_split_id != source_split_before_create {
-                        if let Some(source_view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&source_split_before_create)
-                        {
-                            source_view_state.remove_buffer(buffer_id);
-                        }
-                    }
-                    // Create independent view state for the new split with the buffer in tabs
-                    let mut view_state = SplitViewState::with_buffer(
-                        self.terminal_width,
-                        self.terminal_height,
-                        buffer_id,
-                    );
-                    view_state.apply_config_defaults(
-                        self.config.editor.line_numbers,
-                        self.config.editor.highlight_current_line,
-                        line_wrap.unwrap_or_else(|| {
-                            self.active_window().resolve_line_wrap_for_buffer(buffer_id)
-                        }),
-                        self.config.editor.wrap_indent,
-                        self.active_window()
-                            .resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
-                        self.config.editor.scroll_offset,
-                    );
-                    // Override with plugin-requested show_line_numbers
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                    self.windows
+        // When the caller requested `role = "utility_dock"` but no dock leaf
+        // existed yet (we fell through the fast path above), split at the
+        // *root* so the dock spans the full width — splitting the active leaf
+        // would nest it under whichever pane was focused.
+        let split_result = if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
+            self.split_manager_mut()
+                .split_root_positioned(split_dir, buffer_id, ratio, before)
+        } else {
+            self.split_manager_mut()
+                .split_active_positioned(split_dir, buffer_id, ratio, before)
+        };
+
+        let created_split_id = match split_result {
+            Ok(new_split_id) => {
+                // The buffer now lives in its own split — drop its phantom tab
+                // from the source split (bug #3). Only when the splits differ;
+                // otherwise we'd leave the buffer with no display.
+                if new_split_id != source_split_before_create {
+                    if let Some(src_vs) = self
+                        .windows
                         .get_mut(&self.active_window)
                         .and_then(|w| w.split_view_states_mut())
                         .expect("active window must have a populated split layout")
-                        .insert(new_split_id, view_state);
-
-                    // Focus the new split (the diagnostics panel)
-                    self.windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
-                        .expect("active window must have a populated split layout")
-                        .set_active_split(new_split_id);
-                    // NOTE: split tree was updated by split_active, active_buffer derives from it
-
-                    // If a role was requested but no dock existed (we fell
-                    // through the fast-path above), tag the freshly created
-                    // leaf so the next utility lands here. Clear any stale
-                    // role from elsewhere first to preserve the
-                    // one-leaf-per-role invariant.
-                    if let Some(target_role) = split_role {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .clear_role(target_role);
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_leaf_role(new_split_id, Some(target_role));
-                        tracing::info!(
-                            "Tagged new dock leaf {:?} with role {:?}",
-                            new_split_id,
-                            target_role
-                        );
+                        .get_mut(&source_split_before_create)
+                    {
+                        src_vs.remove_buffer(buffer_id);
                     }
+                }
 
+                let mut view_state = SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_state.apply_config_defaults(
+                    self.config.editor.line_numbers,
+                    self.config.editor.highlight_current_line,
+                    line_wrap.unwrap_or_else(|| {
+                        self.active_window().resolve_line_wrap_for_buffer(buffer_id)
+                    }),
+                    self.config.editor.wrap_indent,
+                    self.active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id),
+                    self.config.editor.rulers.clone(),
+                    self.config.editor.scroll_offset,
+                );
+                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .insert(new_split_id, view_state);
+
+                self.split_manager_mut().set_active_split(new_split_id);
+
+                // Tag the new leaf with the requested role so the next
+                // utility-dock open lands here. Clear any stale role first
+                // to maintain the one-leaf-per-role invariant.
+                if let Some(target_role) = split_role {
+                    self.split_manager_mut().clear_role(target_role);
+                    self.split_manager_mut()
+                        .set_leaf_role(new_split_id, Some(target_role));
                     tracing::info!(
-                        "Created {:?} split with virtual buffer {:?}",
-                        split_dir,
-                        buffer_id
+                        "Tagged new dock leaf {:?} with role {:?}",
+                        new_split_id,
+                        target_role
                     );
-                    Some(new_split_id)
                 }
-                Err(e) => {
-                    tracing::error!("Failed to create split: {}", e);
-                    // Fall back to just switching to the buffer
-                    self.set_active_buffer(buffer_id);
-                    None
-                }
-            };
 
-        // Send response with buffer ID and split ID via callback resolution
-        // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
+                tracing::info!(
+                    "Created {:?} split with virtual buffer {:?}",
+                    split_dir,
+                    buffer_id
+                );
+                Some(new_split_id)
+            }
+            Err(e) => {
+                tracing::error!("Failed to create split: {}", e);
+                self.set_active_buffer(buffer_id);
+                None
+            }
+        };
+
         if let Some(req_id) = request_id {
-            tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
+            tracing::trace!(
+                "CreateVirtualBufferInSplit: resolving callback for request_id={}, \
+                 buffer_id={:?}, split_id={:?}",
+                req_id,
+                buffer_id,
+                created_split_id
+            );
             let result = fresh_core::api::VirtualBufferResult {
                 buffer_id: buffer_id.0 as u64,
                 split_id: created_split_id.map(|s| s.0 .0 as u64),
@@ -2894,6 +2836,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_existing_split(
         &mut self,
         name: String,
@@ -2919,20 +2862,8 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
@@ -3180,6 +3111,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_terminal(
         &mut self,
         cwd: Option<String>,
