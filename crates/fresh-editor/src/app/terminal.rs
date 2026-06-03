@@ -1178,6 +1178,25 @@ impl Window {
         let mut history_end_byte: Option<u64> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
+                use std::io::BufWriter;
+
+                // Flush any scrollback that has scrolled off but isn't in the
+                // file yet — in particular the lines a resize spilled from the
+                // screen into history. The PTY read loop also flushes on output,
+                // but an idle terminal that was only resized has pending lines;
+                // capturing them here guarantees the scroll-back view is complete.
+                if let Ok(mut file) = self
+                    .resources
+                    .authority
+                    .filesystem
+                    .open_file_for_append(&backing_file)
+                {
+                    let mut writer = BufWriter::new(&mut *file);
+                    if let Err(e) = state.flush_new_scrollback(&mut writer) {
+                        tracing::error!("Failed to flush terminal scrollback: {}", e);
+                    }
+                }
+
                 // Record the current file size as the history end point
                 // (before appending visible screen) so we can truncate back to it
                 if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
@@ -1192,7 +1211,6 @@ impl Window {
                     .filesystem
                     .open_file_for_append(&backing_file)
                 {
-                    use std::io::BufWriter;
                     let mut writer = BufWriter::new(&mut *file);
                     if let Err(e) = state.append_visible_screen(&mut writer) {
                         tracing::error!("Failed to append visible screen to backing file: {}", e);

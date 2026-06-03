@@ -1541,7 +1541,27 @@ impl crate::app::window::Window {
 
         for (terminal_id, backing_path) in terminals_to_sync {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
-                if let Ok(state) = handle.state.lock() {
+                if let Ok(mut state) = handle.state.lock() {
+                    // Persist any scrolled-off lines not yet in the file (e.g.
+                    // lines a resize spilled into history on a terminal that was
+                    // never viewed before quitting) so a restored session keeps
+                    // the full scrollback.
+                    if let Ok(mut file) = self
+                        .resources
+                        .authority
+                        .filesystem
+                        .open_file_for_append(&backing_path)
+                    {
+                        let mut writer = BufWriter::new(&mut *file);
+                        if let Err(e) = state.flush_new_scrollback(&mut writer) {
+                            tracing::warn!(
+                                "Failed to flush terminal {:?} scrollback: {}",
+                                terminal_id,
+                                e
+                            );
+                        }
+                    }
+
                     if let Ok(mut file) = self
                         .resources
                         .authority
