@@ -442,9 +442,15 @@ impl Editor {
         &mut self,
         authority: crate::services::authority::Authority,
         keepalive: Box<dyn std::any::Any + Send>,
+        working_dir: std::path::PathBuf,
     ) {
+        // Unlike `install_authority` (which re-opens the *current* working
+        // dir), a remote-agent attach must re-root the editor at the pod-side
+        // workspace — otherwise the explorer, quick-open, and open-file all
+        // operate on the local host path, which doesn't exist in the pod.
         self.pending_keepalive = Some(keepalive);
-        self.install_authority(authority);
+        self.pending_authority = Some(authority);
+        self.request_restart(working_dir);
     }
 
     /// Restore the default local authority. Same destructive-restart

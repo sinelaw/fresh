@@ -86,9 +86,12 @@ fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow
     // A real attach would pass an `EksKeepalive`; the slot is opaque
     // `Box<dyn Any + Send>`, so any owned value exercises the wiring.
     let keepalive: Box<dyn std::any::Any + Send> = Box::new(());
-    harness
-        .editor_mut()
-        .install_authority_with_keepalive(container_authority("Container:ka"), keepalive);
+    let remote_root = std::path::PathBuf::from("/workspace");
+    harness.editor_mut().install_authority_with_keepalive(
+        container_authority("Container:ka"),
+        keepalive,
+        remote_root.clone(),
+    );
 
     // The authority is queued…
     let pending = harness.editor_mut().take_pending_authority();
@@ -101,10 +104,13 @@ fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow
         harness.editor_mut().take_pending_keepalive().is_some(),
         "keepalive queued alongside the authority"
     );
-    // …and a restart was requested (the destructive-transition contract).
-    assert!(
-        harness.editor_mut().take_restart_dir().is_some(),
-        "restart requested"
+    // …and a restart was requested that re-roots the editor at the *remote*
+    // workspace (not the local working dir) — the fix for the explorer /
+    // quick-open / open-file all pointing at a host path absent in the pod.
+    assert_eq!(
+        harness.editor_mut().take_restart_dir(),
+        Some(remote_root),
+        "restart re-roots at the remote workspace"
     );
     Ok(())
 }

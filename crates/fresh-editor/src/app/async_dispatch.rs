@@ -654,11 +654,24 @@ impl Editor {
                     // authority + its keepalive and restart so the whole
                     // editor rebuilds around the remote backend (same
                     // destructive-transition contract as setAuthority).
+                    let crate::services::async_bridge::RemoteAttachReady {
+                        authority,
+                        keepalive,
+                        working_dir,
+                    } = ready;
+                    // Re-root at the pod's workspace (or its home if the plugin
+                    // didn't supply one) — never the stale local path. The
+                    // filesystem call is safe here: `process_async_messages`
+                    // runs on the main loop, not inside a runtime.
+                    let root = working_dir
+                        .or_else(|| authority.filesystem.home_dir().ok())
+                        .unwrap_or_else(|| std::path::PathBuf::from("/"));
                     tracing::info!(
-                        "Remote attach connected ({}); installing authority",
-                        ready.authority.display_label
+                        "Remote attach connected ({}); installing authority, rooting at {}",
+                        authority.display_label,
+                        root.display()
                     );
-                    self.install_authority_with_keepalive(ready.authority, ready.keepalive);
+                    self.install_authority_with_keepalive(authority, keepalive, root);
                 }
                 AsyncMessage::RemoteAttachFailed { error } => {
                     tracing::warn!("Remote attach failed: {}", error);

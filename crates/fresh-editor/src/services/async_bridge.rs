@@ -33,6 +33,12 @@ pub enum LspSemanticTokensResponse {
 pub struct RemoteAttachReady {
     pub authority: crate::services::authority::Authority,
     pub keepalive: Box<dyn std::any::Any + Send>,
+    /// Pod-side root to re-open the editor at (the remote workspace, e.g.
+    /// `/workspace`). Without this the editor keeps the *local* working
+    /// directory after attach, so the explorer / quick-open / open-file all
+    /// look at a host path that doesn't exist in the pod. `None` falls back to
+    /// the remote home directory.
+    pub working_dir: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for RemoteAttachReady {

@@ -3485,6 +3485,12 @@ impl Editor {
         let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
         let env = std::sync::Arc::clone(&self.authority.env_provider);
         let label = target.display();
+        // Pod-side workspace to re-root the editor at after attach (e.g.
+        // `/workspace`). Captured before `target` is moved into the connect.
+        let workspace = target
+            .workspace
+            .clone()
+            .map(std::path::PathBuf::from);
         self.set_status_message(format!("Connecting to {label}…"));
 
         runtime.spawn(async move {
@@ -3496,6 +3502,7 @@ impl Editor {
                     crate::services::async_bridge::RemoteAttachReady {
                         authority,
                         keepalive: Box::new(keepalive),
+                        working_dir: workspace,
                     },
                 ),
                 Err(e) => AsyncMessage::RemoteAttachFailed {
