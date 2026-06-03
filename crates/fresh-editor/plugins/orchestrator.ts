@@ -412,6 +412,15 @@ interface OpenDialogState {
   // always searches globally regardless of scope, so typing a name
   // from another project still surfaces it.
   scope: "current" | "all";
+  // Dock-only project filter. `null` shows every project's sessions
+  // (the default); a project key restricts the dock list to that one
+  // project. Driven by the dock toolbar's project dropdown (which
+  // lists every project that has a session in the worktree/trivial-
+  // filtered set). Independent of `scope`, which governs the modal
+  // picker; the dock uses this instead.
+  projectFilter: string | null;
+  // `true` while the dock project dropdown overlay is open.
+  projectMenuOpen: boolean;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -487,6 +496,12 @@ let lastShowWorktrees = false;
 // focused on real sessions; the "Show empty/1-file sessions" checkbox
 // (Alt+I) reveals them.
 let lastHideTrivial = true;
+// Dock card density, remembered across opens. "card" (default) shows
+// the three-line rounded pill; "compact" shows one line per session.
+// Toggled by the dock toolbar's "view" button.
+let dockView: "card" | "compact" = "card";
+// Remembered dock project filter (see `OpenDialogState.projectFilter`).
+let lastDockProjectFilter: string | null = null;
 
 // Per-session content summary keyed by canonical session root, built
 // from the on-disk workspace files. The restored shell windows don't
@@ -864,6 +879,15 @@ function filterSessions(needle: string): number[] {
     });
   }
 
+  // Dock project dropdown: when a specific project is picked, hard-
+  // restrict the list to that project (search included — the dock is a
+  // per-project switcher once a project is chosen). `null` = all
+  // projects, the default.
+  if (dockMode && openDialog?.projectFilter) {
+    const want = openDialog.projectFilter;
+    allIds = allIds.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === want);
+  }
+
   const isDisc = (id: number): number =>
     orchestratorSessions.get(id)!.discovered ? 1 : 0;
 
@@ -923,6 +947,27 @@ function filterSessions(needle: string): number[] {
       a.id - b.id,
   );
   return matches.map((m) => m.id);
+}
+
+// Distinct project keys that have at least one session in the dock's
+// worktree/trivial-filtered set — the menu contents for the dock's
+// project dropdown. Deliberately ignores the active `projectFilter`
+// (the menu must offer every project, not just the selected one) and
+// any text filter. Sorted lexically for a stable menu order.
+function dockProjectOptions(): string[] {
+  const showWorktrees = openDialog?.showWorktrees ?? false;
+  const hideTrivial = openDialog?.hideTrivial ?? false;
+  const activeId = editor.activeWindow();
+  const keys = new Set<string>();
+  for (const [id, s] of orchestratorSessions) {
+    if (!showWorktrees && s.discovered) continue;
+    if (hideTrivial && !s.discovered && id !== activeId) {
+      const c = sessionContentByRoot.get(normRoot(s.root));
+      if (c && c.trivial) continue;
+    }
+    keys.add(projectKeyOf(s));
+  }
+  return Array.from(keys).sort();
 }
 
 // Header row above the session list: a single dim `NAME`, indented to
@@ -996,16 +1041,16 @@ function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
     return { left, right };
   }
   if (g.ahead && g.ahead > 0) {
-    right.push({ text: `${sep()}↑${g.ahead}`, style: { fg: "file_status_added_fg" } });
+    right.push({ text: `${sep()}↑${g.ahead}`, style: { fg: "ui.file_status_added_fg" } });
   }
   if (g.behind && g.behind > 0) {
     right.push({ text: `${sep()}↓${g.behind}`, style: { fg: "diagnostic.warning_fg" } });
   }
   if (g.added) {
-    right.push({ text: `${sep()}+${g.added}`, style: { fg: "file_status_added_fg" } });
+    right.push({ text: `${sep()}+${g.added}`, style: { fg: "ui.file_status_added_fg" } });
   }
   if (g.deleted) {
-    right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "file_status_deleted_fg" } });
+    right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "ui.file_status_deleted_fg" } });
   }
   if (right.length === 0) {
     right.push({ text: "clean", style: { fg: dim, italic: true } });
@@ -1034,13 +1079,13 @@ function prLineEntries(s: AgentSession): Entry[] {
     } else if (p.checksPending && p.checksPending > 0) {
       out.push({ text: ` •${p.checksPending}`, style: { fg: "diagnostic.warning_fg" } });
     } else if (p.checksPass && p.checksPass > 0) {
-      out.push({ text: ` ✓${p.checksPass}`, style: { fg: "file_status_added_fg" } });
+      out.push({ text: ` ✓${p.checksPass}`, style: { fg: "ui.file_status_added_fg" } });
     }
     if (p.comments && p.comments > 0) {
       out.push({ text: ` ●${p.comments}`, style: { fg: dim } });
     }
     if (p.reviewDecision === "APPROVED") {
-      out.push({ text: " approved", style: { fg: "file_status_added_fg" } });
+      out.push({ text: " approved", style: { fg: "ui.file_status_added_fg" } });
     } else if (p.reviewDecision === "CHANGES_REQUESTED") {
       out.push({ text: " chg-req", style: { fg: "diagnostic.warning_fg" } });
     }
@@ -1049,31 +1094,52 @@ function prLineEntries(s: AgentSession): Entry[] {
     }
     return out;
   }
-  // No info yet (loading-without-prior, or "none"): show the resting
-  // placeholder. We deliberately DON'T flash a transient "PR …" — a
-  // bare "PR" with no number reads as a half-loaded badge; better to
-  // hold "· no PR yet" until there's a real number to show.
-  return [{
-    text: s.discovered ? "· on-disk worktree" : "· no PR yet",
-    style: { fg: dim, italic: true },
-  }];
+  // No PR (loading-without-prior, "none", or a discovered on-disk
+  // worktree): print nothing. The card simply omits the PR line, which
+  // reads cleaner than a placeholder for the common no-PR case.
+  return [];
 }
 
 // On-disk (discovered, unopened) worktrees get a dim hollow ring in the
 // status column — distinct from the live `*` working / `✓` idle glyphs.
 const ON_DISK_GLYPH = "○";
 
-// Build one session as a rounded three-line pill (`labeledSection`
-// card), Alt-5 layout — each field carries a small icon so its slot is
-// unambiguous:
+// A flex row: left group, host-filled spacer, right group. The host
+// right-aligns the right group to the row's *actual* width (flush to
+// the edge with one column of padding), re-flowing on a dock resize —
+// no plugin-side width estimate needed.
+function flexLine(l: Entry[], r: Entry[]): WidgetSpec {
+  return row(
+    raw([styledRow(l as Parameters<typeof styledRow>[0])]),
+    flexSpacer(),
+    raw([styledRow(r as Parameters<typeof styledRow>[0])]),
+  );
+}
+
+// The leading status glyph for a session row: the on-disk ring for a
+// discovered worktree, otherwise the live working/idle state symbol.
+function stateGlyphEntry(s: AgentSession): Entry {
+  if (s.discovered) {
+    return { text: ON_DISK_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } };
+  }
+  const sym = STATE_SYMBOL[sessionState(s)];
+  return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
+}
+
+// Build one session row. Two densities, picked by `dockView`:
 //
-//   line 1: <state> [ ] NAME (bold)            ▣ project
-//   line 2: ▸ branch        <git: ↑ahead ↓behind +add −del / clean>
-//   line 3: PR #1287 ✓7/8 ●2 approved   (or "· no PR yet")
+//   card (default): a rounded `labeledSection` pill —
+//     line 1: <state> NAME (bold)              ▣ project
+//     line 2: ▸ branch        <git: ↑ahead ↓behind +add −del / clean>
+//     line 3: PR #1287 ✓7/8 ●2 approved        (omitted when no PR)
 //
-// The right-hand groups on lines 1–2 are right-aligned by the host (a
-// flex spacer), so they adapt to the card's real width — including a
-// user-dragged dock — with no plugin-side width estimate.
+//   compact: a single un-boxed line —
+//     <state> NAME                    <git summary>
+//
+// The bulk-select checkbox only appears in the modal picker (the dock
+// delegates bulk actions to it via the "manage" button), so dock rows
+// drop it. The right-hand groups are right-aligned by the host (a flex
+// spacer), so they adapt to the row's real width including a drag.
 function renderPillSpec(
   id: number,
   activeId: number,
@@ -1081,58 +1147,50 @@ function renderPillSpec(
   const s = orchestratorSessions.get(id);
   if (!s) return labeledSection({ label: "", child: styledRow([{ text: "(unknown)" }]) });
   const isActive = id === activeId;
-  const isDiscovered = !!s.discovered;
-  const isChecked = openDialog?.selectedIds.has(id) ?? false;
-  // Line 1, left: state glyph · checkbox · NAME (always bold). The name
-  // is uncapped — on a narrow card the host truncates the row's *tail*
-  // (the project tag), so the glyph + checkbox + name always survive.
-  const left: Entry[] = isDiscovered
-    ? [{ text: ON_DISK_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } }]
-    : (() => {
-        const sym = STATE_SYMBOL[sessionState(s)];
-        return [{ text: sym.glyph + " ", style: { fg: sym.fg, bold: true } }];
-      })();
-  // Multi-select checkbox — same `[x]`/`[ ]` as the classic row so
-  // Space-to-select and the bulk-action handlers keep working.
-  left.push({
-    text: isChecked ? "[x] " : "[ ] ",
-    style: isChecked
-      ? { fg: "ui.help_key_fg", bold: true }
-      : { fg: "ui.menu_disabled_fg" },
-  });
-  left.push({
+  const nameEntry: Entry = {
     text: s.label,
     style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
-  });
-  // Line 1, right: the project, icon-tagged so it never reads as a
-  // status word. (Lifecycle now lives only in the state glyph + line 3.)
+  };
   const proj = editor.pathBasename(projectKeyOf(s));
-  const right: Entry[] = [
+  const projEntries: Entry[] = [
     { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
   const git = gitLineParts(s);
 
-  // Right-alignment is the host's job: a flex spacer between the left and
-  // right groups fills the row at the card's *actual* width, so the tags
-  // stay flush-right and re-flow when the dock is resized — no
-  // plugin-side width estimate (which couldn't see a user-dragged dock
-  // width) and nothing to host-truncate mid-tag at the expected width.
-  const flexLine = (l: Entry[], r: Entry[]): WidgetSpec =>
-    row(
-      raw([styledRow(l as Parameters<typeof styledRow>[0])]),
-      flexSpacer(),
-      raw([styledRow(r as Parameters<typeof styledRow>[0])]),
-    );
+  // Compact: one un-boxed line — glyph + name on the left, the compact
+  // git summary right-aligned. Branch, project tag, and PR badge are
+  // dropped (that's the "compact" trade).
+  if (dockMode && dockView === "compact") {
+    return flexLine([stateGlyphEntry(s), nameEntry], git.right);
+  }
 
-  // Line 3 (PR badge) is left-aligned, so no flex spacer.
-  const prRow = raw([
-    styledRow(prLineEntries(s) as Parameters<typeof styledRow>[0]),
-  ]);
-  return labeledSection({
-    label: "",
-    child: col(flexLine(left, right), flexLine(git.left, git.right), prRow),
-  });
+  // Card line 1, left: state glyph · NAME. In the modal picker keep the
+  // multi-select checkbox between them (Space/click bulk-select); the
+  // dock drops it.
+  const left: Entry[] = [stateGlyphEntry(s)];
+  if (!dockMode) {
+    const isChecked = openDialog?.selectedIds.has(id) ?? false;
+    left.push({
+      text: isChecked ? "[x] " : "[ ] ",
+      style: isChecked
+        ? { fg: "ui.help_key_fg", bold: true }
+        : { fg: "ui.menu_disabled_fg" },
+    });
+  }
+  left.push(nameEntry);
+
+  const children: WidgetSpec[] = [
+    flexLine(left, projEntries),
+    flexLine(git.left, git.right),
+  ];
+  // Line 3 (PR badge) only when there's an actual PR — `prLineEntries`
+  // returns `[]` otherwise, so the card simply omits the line.
+  const prEntries = prLineEntries(s);
+  if (prEntries.length > 0) {
+    children.push(raw([styledRow(prEntries as Parameters<typeof styledRow>[0])]));
+  }
+  return labeledSection({ label: "", child: col(...children) });
 }
 
 // Preview-pane content for the currently selected session.
@@ -2316,6 +2374,8 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     showWorktrees: lastShowWorktrees,
     hideTrivial: lastHideTrivial,
     bulkInFlight: null,
+    projectFilter: asDock ? lastDockProjectFilter : null,
+    projectMenuOpen: false,
   };
   // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
   // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
@@ -2414,77 +2474,102 @@ function closeOpenDialog(): void {
 // the dock's right *is* the preview.
 // ---------------------------------------------------------------------
 
-// Single-line compact detail for the selected session, pinned just
-// above the action row. One line keeps the list-fill maths exact.
-function dockDetailLine(s: AgentSession | undefined): WidgetSpec | null {
-  if (!s || s.discovered) return null;
+// Lifecycle actions, bulk-select, and per-session confirmations now
+// live in the modal picker (reached via the dock's "Manage" button);
+// the dock itself is a lean switcher with no destructive controls.
+
+// Extract the single mnemonic letter from a keybinding label like
+// "Alt+O" / "⌥O" → "o". Returns "" when the binding isn't a single
+// trailing letter (so callers show no mnemonic rather than guessing).
+function mnemonicLetter(label: string | null): string {
+  if (!label) return "";
+  const m = label.match(/([A-Za-z])\s*$/);
+  return m ? m[1].toLowerCase() : "";
+}
+
+// The dock's top label row, styled as a menu bar (menu fg on menu bg)
+// spanning the full dock width. The accelerator that focuses the dock
+// (default Alt+O, looked up live so a rebind is honoured) supplies the
+// mnemonic: the matching letter in "Orchestrator" is underlined — but
+// only when the binding really is a single letter that appears in the
+// title, never a hardcoded "O".
+function dockTitleRow(): WidgetSpec {
+  const title = "Orchestrator";
+  const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
+  const mnem = mnemonicLetter(
+    editor.getKeybindingLabel("toggle_dock_focus", "normal"),
+  );
+  const idx = mnem ? title.toLowerCase().indexOf(mnem) : -1;
+  const segments: Entry[] = [];
+  if (idx >= 0) {
+    if (idx > 0) segments.push({ text: title.slice(0, idx), style: base });
+    segments.push({
+      text: title.slice(idx, idx + 1),
+      style: { ...base, underline: true, bold: true },
+    });
+    segments.push({ text: title.slice(idx + 1), style: base });
+  } else {
+    segments.push({ text: title, style: { ...base, bold: true } });
+  }
+  // Pad to the screen width so the menu-bar background spans the whole
+  // dock; the host clips the over-wide row to the actual dock columns.
+  const barW = Math.max(title.length, editor.getScreenSize().width || 80);
   return {
     kind: "raw",
     entries: [
-      styledRow([
-        { text: "▸ ", style: { fg: "ui.help_key_fg" } },
-        { text: s.branch || "(detached)", style: { fg: "ui.menu_disabled_fg" } },
-      ]),
+      styledRow(segments as Parameters<typeof styledRow>[0], {
+        padToChars: barW,
+        style: base,
+      }),
     ],
   };
 }
 
-// Action buttons for the selected live session — same keys as the
-// modal's preview pane so the existing widget_event handlers fire.
-function dockActionRow(s: AgentSession | undefined): WidgetSpec | null {
-  if (!s || s.discovered) return null;
-  const hasWorktree = ownsWorktree(s);
-  const isLastWindow = s.id > 0 && liveWindowCount() <= 1;
-  return row(
-    button("Stop", { key: "stop", disabled: !s.terminalId }),
-    spacer(1),
-    button("Arch", { key: "archive", disabled: !hasWorktree || isLastWindow }),
-    spacer(1),
-    button("Del", { intent: "danger", key: "delete", disabled: isLastWindow }),
-    flexSpacer(),
-  );
-}
-
-// Compact in-place confirmation for the dock (Delete is the only
-// action that confirms). Reuses `confirm-cancel` / `confirm-<action>`
-// keys so the modal's handlers run unchanged. Two lines.
-function dockConfirmRows(
-  confirm: { action: BulkAction; ids: number[] },
-): WidgetSpec[] {
-  const cap = confirm.action[0].toUpperCase() + confirm.action.slice(1);
-  const id = confirm.ids[0];
-  const label = orchestratorSessions.get(id)?.label ?? `#${id}`;
-  return [
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: `${cap} ${label}?`,
-            style: { fg: "ui.status_error_indicator_fg", bold: true },
-          },
-        ]),
-      ],
-    },
+// Floating menu for the dock's project dropdown: "All projects" plus
+// every project with a session in the worktree/trivial-filtered set.
+// Anchored just under the toolbar via `overlay`, so it paints over the
+// rows below without reflowing them. Each option is a button whose key
+// (`project-pick:<key>`, empty suffix = all) the widget_event handler
+// decodes.
+function dockProjectMenu(): WidgetSpec {
+  const cur = openDialog?.projectFilter ?? null;
+  const opts = dockProjectOptions();
+  const rows: WidgetSpec[] = [
     row(
-      button("Cancel", { key: "confirm-cancel" }),
-      spacer(1),
-      button(`${cap}`, { intent: "danger", key: `confirm-${confirm.action}` }),
+      button(cur === null ? "● All projects" : "  All projects", {
+        key: "project-pick:",
+        intent: cur === null ? "primary" : "normal",
+      }),
       flexSpacer(),
     ),
   ];
+  for (const key of opts) {
+    const sel = key === cur;
+    rows.push(
+      row(
+        button((sel ? "● " : "  ") + projectLabel(key), {
+          key: `project-pick:${key}`,
+          intent: sel ? "primary" : "normal",
+        }),
+        flexSpacer(),
+      ),
+    );
+  }
+  return overlay(labeledSection({ label: "project", child: col(...rows) }));
 }
 
-// Compact single-column spec for the dock. Reuses the same `sessions`
-// list key + filter/scope/action keys as the modal so the existing
-// `widget_event` handlers fire unchanged. The session list fills the
-// available height; the hint bar is pinned to the bottom by sizing the
-// list to consume everything above the fixed bottom block.
+// Single-column spec for the dock. Reuses the same `sessions` list key +
+// filter/toggle keys as the modal so the existing `widget_event`
+// handlers fire unchanged. Lifecycle actions (Stop/Archive/Delete) and
+// bulk-select live in the modal picker — reached from the "Manage"
+// button — so the dock is a lean switcher: a session list that fills the
+// dock down to the last line, with the keyboard hints shown only while
+// the dock holds focus.
 function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  // Cards size themselves to the host-laid-out dock width (flex
+  // Rows size themselves to the host-laid-out dock width (flex
   // right-align), so no plugin-side width estimate is needed — this is
   // what lets the tags re-flow to a user-dragged dock width.
   const itemSpecs = filtered.map((id) => renderPillSpec(id, activeId));
@@ -2492,28 +2577,21 @@ function buildDockSpec(): WidgetSpec {
   const selIdx = filtered.length === 0
     ? -1
     : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
-  const selected = selIdx >= 0 ? orchestratorSessions.get(filtered[selIdx]) : undefined;
-  const confirm = openDialog.pendingConfirm;
-  const inConfirm = confirm !== null;
-  const scope = openDialog.scope;
   const newKey = editor.getKeybindingLabel(
     "orchestrator_open_new_from_picker",
     OPEN_MODE,
   );
   const newLabel = newKey ? `+ New ${newKey}` : "+ New";
-  // Dock toggle labels stay terse — the dock is narrow, and the rebind
-  // hints live in the wider modal picker. Just the plain noun here.
   const worktreeLabel = "all worktrees";
-  // Checked = show trivial (empty / single-file) sessions; unchecked
-  // (default) hides them so the dock focuses on real work. Same
-  // `hide-trivial` widget key the modal uses, so the existing
-  // `widget_event` toggle handler fires for the dock too.
   const trivialLabel = "show empty";
+  const projWord = openDialog.projectFilter === null
+    ? "All"
+    : editor.pathBasename(openDialog.projectFilter);
 
-  // Pinned bottom block: a confirm prompt (separator + 2 rows) OR
-  // detail + actions (separator + 0–2 rows), then the hint bar. The
-  // list is sized to consume the height above so the hint stays glued
-  // to the bottom.
+  // The hints belong to the dock only while it has keyboard focus
+  // (req: hide them when the editor owns the keyboard). A blurred dock
+  // gives the row back to the list.
+  const showHints = !dockBlurred;
   const hintRow = row(
     flexSpacer(),
     hintBar([
@@ -2523,69 +2601,39 @@ function buildDockSpec(): WidgetSpec {
     ]),
     flexSpacer(),
   );
-  let bottom: WidgetSpec[];
-  let bottomRows: number;
-  if (inConfirm && confirm) {
-    bottom = [sessionsSeparator(), ...dockConfirmRows(confirm), hintRow];
-    bottomRows = 1 + 2 + 1;
-  } else {
-    const detail = dockDetailLine(selected);
-    const actions = dockActionRow(selected);
-    bottom = [];
-    bottomRows = 1; // hint
-    if (detail || actions) {
-      bottom.push(sessionsSeparator());
-      bottomRows += 1;
-    }
-    if (detail) {
-      bottom.push(detail);
-      bottomRows += 1;
-    }
-    if (actions) {
-      bottom.push(actions);
-      bottomRows += 1;
-    }
-    bottom.push(hintRow);
-  }
+  const bottom: WidgetSpec[] = showHints ? [hintRow] : [];
+  const bottomRows = showHints ? 1 : 0;
 
   // Size the list to fill the dock. The dock draws only a right border
   // (no top/bottom), so its content area is the full terminal height.
-  // Fixed top chrome is 6 rows (title, New/scope, worktrees toggle,
-  // empty/1-file toggle, filter, rule).
+  // Fixed top chrome is 6 rows: title, New/Manage, view/project,
+  // worktrees toggle, empty toggle, filter, rule = 7.
+  const TOP_CHROME = 7;
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - 6 - bottomRows);
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - TOP_CHROME - bottomRows);
   openDialog.listVisibleRows = listRows;
 
   return col(
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          { text: "ORCHESTRATOR", style: { fg: "ui.popup_border_fg", bold: true } },
-        ]),
-      ],
-    },
+    dockTitleRow(),
     row(
-      button(newLabel, {
-        intent: "primary",
-        key: inConfirm ? undefined : "new-session",
-      }),
+      button(newLabel, { intent: "primary", key: "new-session" }),
       flexSpacer(),
-      button(scope === "current" ? "this ▾" : "all ▾", {
-        key: inConfirm ? undefined : "scope-toggle",
-      }),
+      button("Manage", { key: "manage" }),
     ),
     row(
-      toggle(openDialog.showWorktrees, worktreeLabel, {
-        key: inConfirm ? undefined : "worktree-show",
-      }),
+      button(`view: ${dockView}`, { key: "view-toggle" }),
+      flexSpacer(),
+      button(`${projWord} ▾`, { key: "project-menu" }),
+    ),
+    // The project dropdown floats just under its toolbar button.
+    ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
+    row(
+      toggle(openDialog.showWorktrees, worktreeLabel, { key: "worktree-show" }),
       flexSpacer(),
     ),
     row(
-      toggle(!openDialog.hideTrivial, trivialLabel, {
-        key: inConfirm ? undefined : "hide-trivial",
-      }),
+      toggle(!openDialog.hideTrivial, trivialLabel, { key: "hide-trivial" }),
       flexSpacer(),
     ),
     text({
@@ -2594,7 +2642,7 @@ function buildDockSpec(): WidgetSpec {
       label: "Filter",
       placeholder: "/ to search",
       fullWidth: true,
-      key: inConfirm ? undefined : "filter",
+      key: "filter",
     }),
     // Host-rendered full-width rule: it spans whatever width the dock is
     // actually drawn at (incl. a user drag), so it can't drift from the
@@ -2609,8 +2657,8 @@ function buildDockSpec(): WidgetSpec {
       // Focusable in the dock (unlike the modal, where Up/Down forward
       // from the filter): the list itself is the default focus so
       // ↑↓ drive live-switch and Enter blurs to the editor.
-      focusable: !inConfirm,
-      key: inConfirm ? undefined : "sessions",
+      focusable: true,
+      key: "sessions",
     }),
     ...bottom,
   );
@@ -5272,6 +5320,9 @@ editor.on("widget_event", (e) => {
       // dock stays visible; the host stops routing keys to it.
       if (dockMode) {
         dockBlurred = true;
+        // Leaving the dock also closes the project dropdown so it
+        // doesn't linger over the blurred dock.
+        openDialog.projectMenuOpen = false;
         // Leaving the dock resets the filter so re-entering always
         // shows the full session list. A stale filter (e.g. an old
         // "/gamma") otherwise silently hides sessions on the next
@@ -5293,6 +5344,9 @@ editor.on("widget_event", (e) => {
           // every session while the box still reads "gamma".
           openPanel?.setValue("filter", "", 0);
           refreshOpenDialog();
+        } else {
+          // Re-render so the keyboard hints drop off the blurred dock.
+          openPanel?.update(buildDockSpec());
         }
       }
       return;
@@ -5307,15 +5361,18 @@ editor.on("widget_event", (e) => {
         pickerFocusKey = e.widget_key;
       }
       if (dockMode) {
+        const wasBlurred = dockBlurred;
         dockBlurred = false;
         dockFocus = e.widget_key === "filter" ? "filter" : "list";
+        // Re-render so the keyboard hints reappear now the dock holds
+        // focus again.
+        if (wasBlurred) openPanel?.update(buildDockSpec());
       }
       return;
     }
     if (e.event_type === "dock_space") {
-      // Host Space on the dock → toggle the highlighted row's
-      // multi-select checkbox.
-      if (dockMode) toggleSelectCurrent();
+      // Space bulk-select is a modal-picker feature now; the dock
+      // ignores Space (no multi-select checkboxes here).
       return;
     }
     if (e.event_type === "dock_new") {
@@ -5363,7 +5420,12 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "dock_toggle_scope") {
-      if (dockMode) toggleScope();
+      // The dock's scope control is now the project dropdown; Alt+P
+      // opens/closes it instead of flipping the old current/all scope.
+      if (dockMode) {
+        openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
+        if (openPanel) openPanel.update(buildDockSpec());
+      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
@@ -5470,8 +5532,59 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "new-session") {
+      if (dockMode) {
+        // The form is a centered modal in its own slot; keep the dock
+        // visible behind it (mirrors the Alt+N `dock_new` path).
+        dockBlurred = true;
+        openForm({ fromPicker: true });
+        return;
+      }
       closeOpenDialog();
       openForm({ fromPicker: true });
+      return;
+    }
+    // Dock "Manage" → close the dock and open the full modal picker,
+    // which carries the lifecycle actions (Stop/Archive/Delete) and
+    // bulk-select. (The dock and the modal share one panel slot, so the
+    // dock yields to the dialog rather than coexisting with it.)
+    if (e.event_type === "activate" && e.widget_key === "manage") {
+      closeOpenDialog();
+      openControlRoom();
+      return;
+    }
+    // Dock "view" button → flip card ⇄ compact density and re-render.
+    if (e.event_type === "activate" && e.widget_key === "view-toggle") {
+      dockView = dockView === "card" ? "compact" : "card";
+      if (openPanel) openPanel.update(buildDockSpec());
+      return;
+    }
+    // Dock project dropdown: the toolbar button toggles the menu open,
+    // and each option button picks a project (empty suffix = all).
+    if (e.event_type === "activate" && e.widget_key === "project-menu") {
+      openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
+      if (openPanel) openPanel.update(buildDockSpec());
+      return;
+    }
+    if (
+      e.event_type === "activate" &&
+      typeof e.widget_key === "string" &&
+      e.widget_key.startsWith("project-pick:")
+    ) {
+      const key = e.widget_key.slice("project-pick:".length);
+      openDialog.projectFilter = key === "" ? null : key;
+      lastDockProjectFilter = openDialog.projectFilter;
+      openDialog.projectMenuOpen = false;
+      // Re-filter to the chosen project and keep the active session
+      // selected when it's still in view.
+      const activeId = editor.activeWindow();
+      const next = filterSessions(openDialog.filter.value);
+      openDialog.filteredIds = next;
+      const activeIdx = next.indexOf(activeId);
+      openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+      refreshOpenDialog();
+      if (openPanel && next.length > 0) {
+        openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+      }
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "scope-toggle") {

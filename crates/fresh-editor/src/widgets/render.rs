@@ -695,11 +695,17 @@ fn collect_row(
         // `buffer_row` set to the line index.
         assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits);
     } else {
-        // Compute flex sizing.
+        // Compute flex sizing. Width is measured in display columns
+        // (`str_width`) to match `panel_width`; using the raw byte length
+        // would over-count multi-byte glyphs (▣ · ▸ ↑ − …) and under-size
+        // the flex spacer, leaving a right-aligned group floating short of
+        // the edge.
         let inline_natural: usize = row_pieces
             .iter()
             .filter_map(|p| match p {
-                RowPiece::Inline { entry, .. } => Some(entry.text.len()),
+                RowPiece::Inline { entry, .. } => {
+                    Some(crate::primitives::display_width::str_width(&entry.text))
+                }
                 _ => None,
             })
             .sum();
