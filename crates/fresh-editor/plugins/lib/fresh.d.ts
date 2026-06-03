@@ -3015,14 +3015,14 @@ interface EditorAPI {
 	* the editor spawns the carrier, bootstraps the agent and builds the
 	* session in the background — and this returns a promise that settles on
 	* the real outcome:
-	*
+	* 
 	* * resolves once the session (authority + window) is fully
 	* constructed, so a caller can keep its dialog open until there is a
 	* real session to show;
 	* * rejects with the failure reason (e.g. ssh "Could not resolve
 	* hostname") if the connect or window creation fails — in which case
 	* no window is created and the editor stays on its current authority.
-	*
+	* 
 	* The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
 	* plugins hand-build an object matching it.
 	*/
