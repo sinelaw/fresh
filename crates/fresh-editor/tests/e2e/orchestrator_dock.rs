@@ -877,10 +877,17 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
 
-    // Shift+Tab from the first field wraps straight to the "Create
-    // Session" button (and closes any path-completion popup), so we
-    // submit without fighting the forward-Tab completion. Enter submits.
-    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    // The form opens focused on the first field (Project Path). It now leads
+    // with a "Run in:" type-tab row (Local / SSH / Kubernetes / Devcontainer),
+    // so the four tab buttons sit *before* the fields in the focus order.
+    // Stepping back past the four tabs reaches the first focusable, and one
+    // more Shift+Tab wraps to the last one — the "Create Session" button —
+    // regardless of how many fields lie between. Five Shift+Tabs therefore
+    // land on Create (and close any path-completion popup along the way).
+    // Enter submits.
+    for _ in 0..5 {
+        h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    }
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
