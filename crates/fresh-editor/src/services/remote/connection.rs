@@ -193,6 +193,9 @@ impl SshConnection {
         if let Some(mut stderr) = stderr {
             tokio::spawn(async move {
                 let mut sink = tokio::io::sink();
+                // Best-effort drain; the byte count / EOF error is irrelevant
+                // since we're discarding ssh's stderr for the session.
+                #[allow(clippy::let_underscore_must_use)]
                 let _ = tokio::io::copy(&mut stderr, &mut sink).await;
             });
         }

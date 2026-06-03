@@ -192,10 +192,11 @@ fn ssh_terminal_wrapper_runs_shell_on_remote_host() {
 
     // --- The code under test: build the SSH authority's terminal wrapper. ---
     let params = ConnectionParams {
-        user: user.clone(),
+        user: Some(user.clone()),
         host: "127.0.0.1".to_string(),
         port: Some(port),
         identity_file: Some(id.clone()),
+        extra_args: Vec::new(),
     };
     let work_str = work.to_string_lossy().into_owned();
     let wrapper = TerminalWrapper::ssh(&params, Some(&work_str));

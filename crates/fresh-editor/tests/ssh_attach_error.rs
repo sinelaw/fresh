@@ -53,9 +53,12 @@ fn failed_ssh_connect_surfaces_carrier_stderr_in_the_error() {
         extra_args: Vec::new(),
     };
 
-    let err = rt
-        .block_on(SshConnection::connect(params))
-        .expect_err("fake ssh exits 255, so the connect must fail");
+    // Not `.expect_err(...)`: that needs `SshConnection: Debug` (the Ok arm)
+    // for its panic message, and the connection type doesn't implement it.
+    let err = match rt.block_on(SshConnection::connect(params)) {
+        Ok(_) => panic!("fake ssh exits 255, so the connect must fail"),
+        Err(e) => e,
+    };
 
     let msg = err.to_string();
     assert!(
