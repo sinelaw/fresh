@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Formatar buffer",
   "menu.edit.keybinding_editor": "Editor de atalhos de teclado...",
   "menu.edit.paste": "Colar",
+  "menu.edit.query_replace": "Consultar e Substituir...",
   "menu.edit.redo": "Refazer",
   "menu.edit.replace": "Substituir...",
   "menu.edit.select_all": "Selecionar tudo",

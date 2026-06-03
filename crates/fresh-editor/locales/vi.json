@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Định dạng buffer",
   "menu.edit.keybinding_editor": "Trình chỉnh sửa phím tắt...",
   "menu.edit.paste": "Dán",
+  "menu.edit.query_replace": "Thay thế tương tác...",
   "menu.edit.redo": "Làm lại",
   "menu.edit.replace": "Thay thế...",
   "menu.edit.select_all": "Chọn tất cả",

@@ -1213,6 +1213,7 @@
   "menu.edit.format_buffer": "Format Buffer",
   "menu.edit.keybinding_editor": "Keybinding Editor...",
   "menu.edit.paste": "Paste",
+  "menu.edit.query_replace": "Query Replace...",
   "menu.edit.redo": "Redo",
   "menu.edit.replace": "Replace...",
   "menu.edit.select_all": "Select All",

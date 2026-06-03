@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "จัดรูปแบบบัฟเฟอร์",
   "menu.edit.keybinding_editor": "ตัวแก้ไขคีย์ลัด...",
   "menu.edit.paste": "วาง",
+  "menu.edit.query_replace": "แทนที่แบบสอบถาม...",
   "menu.edit.redo": "ทำซ้ำ",
   "menu.edit.replace": "แทนที่...",
   "menu.edit.select_all": "เลือกทั้งหมด",

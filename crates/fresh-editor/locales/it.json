@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Formatta Buffer",
   "menu.edit.keybinding_editor": "Editor scorciatoie da tastiera...",
   "menu.edit.paste": "Incolla",
+  "menu.edit.query_replace": "Cerca e sostituisci...",
   "menu.edit.redo": "Ripristina",
   "menu.edit.replace": "Sostituisci...",
   "menu.edit.select_all": "Seleziona Tutto",

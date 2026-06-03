@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Форматувати буфер",
   "menu.edit.keybinding_editor": "Редактор прив'язок клавіш...",
   "menu.edit.paste": "Вставити",
+  "menu.edit.query_replace": "Запит заміни...",
   "menu.edit.redo": "Повторити",
   "menu.edit.replace": "Замінити...",
   "menu.edit.select_all": "Виділити все",

@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "버퍼 포맷",
   "menu.edit.keybinding_editor": "키 바인딩 편집기...",
   "menu.edit.paste": "붙여넣기",
+  "menu.edit.query_replace": "쿼리 바꾸기...",
   "menu.edit.redo": "다시 실행",
   "menu.edit.replace": "바꾸기...",
   "menu.edit.select_all": "모두 선택",

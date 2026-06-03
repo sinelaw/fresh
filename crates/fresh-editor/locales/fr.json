@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Formater le buffer",
   "menu.edit.keybinding_editor": "Éditeur de raccourcis clavier...",
   "menu.edit.paste": "Coller",
+  "menu.edit.query_replace": "Remplacement de requête...",
   "menu.edit.redo": "Rétablir",
   "menu.edit.replace": "Remplacer...",
   "menu.edit.select_all": "Tout sélectionner",

@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "バッファをフォーマット",
   "menu.edit.keybinding_editor": "キーバインドエディタ...",
   "menu.edit.paste": "貼り付け",
+  "menu.edit.query_replace": "クエリ置換...",
   "menu.edit.redo": "やり直し",
   "menu.edit.replace": "置換...",
   "menu.edit.select_all": "すべて選択",

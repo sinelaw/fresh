@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "格式化缓冲区",
   "menu.edit.keybinding_editor": "快捷键编辑器...",
   "menu.edit.paste": "粘贴",
+  "menu.edit.query_replace": "查询替换...",
   "menu.edit.redo": "重做",
   "menu.edit.replace": "替换...",
   "menu.edit.select_all": "全选",

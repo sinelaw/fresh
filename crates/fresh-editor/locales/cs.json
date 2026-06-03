@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Formátovat buffer",
   "menu.edit.keybinding_editor": "Editor klávesových zkratek...",
   "menu.edit.paste": "Vložit",
+  "menu.edit.query_replace": "Nahradit s dotazem...",
   "menu.edit.redo": "Znovu",
   "menu.edit.replace": "Nahradit...",
   "menu.edit.select_all": "Vybrat vše",

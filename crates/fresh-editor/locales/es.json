@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Formatear búfer",
   "menu.edit.keybinding_editor": "Editor de atajos de teclado...",
   "menu.edit.paste": "Pegar",
+  "menu.edit.query_replace": "Reemplazo interactivo...",
   "menu.edit.redo": "Rehacer",
   "menu.edit.replace": "Reemplazar...",
   "menu.edit.select_all": "Seleccionar todo",

@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Buffer formatieren",
   "menu.edit.keybinding_editor": "Tastenzuordnungs-Editor...",
   "menu.edit.paste": "Einfügen",
+  "menu.edit.query_replace": "Interaktives Ersetzen...",
   "menu.edit.redo": "Wiederholen",
   "menu.edit.replace": "Ersetzen...",
   "menu.edit.select_all": "Alles auswählen",

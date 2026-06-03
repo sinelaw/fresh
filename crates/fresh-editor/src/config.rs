@@ -3253,6 +3253,13 @@ impl MenuConfig {
                     },
                     MenuItem::Action {
                         label: t!("menu.edit.replace").to_string(),
+                        action: "replace".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
+                        label: t!("menu.edit.query_replace").to_string(),
                         action: "query_replace".to_string(),
                         args: HashMap::new(),
                         when: Some(context_keys::HAS_BUFFER.to_string()),

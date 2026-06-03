@@ -929,3 +929,69 @@ fn test_menu_arrow_navigation_skips_hidden_menus() {
     harness.assert_screen_not_contains("New Folder");
     harness.assert_screen_contains("Restart Server");
 }
+
+/// Regression test for #2135: the Edit menu's "Replace..." entry was mislabelled —
+/// its action was bound to `query_replace` (Ctrl+Alt+R, interactive y/n/!/q prompts)
+/// instead of basic `replace` (Ctrl+R). The fix exposes both: "Replace..." invokes
+/// the basic Replace prompt, and a new "Query Replace..." entry invokes the
+/// interactive variant.
+#[test]
+fn test_edit_menu_replace_invokes_basic_replace() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Open Edit menu and confirm both entries are present.
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Replace...");
+    harness.assert_screen_contains("Query Replace...");
+
+    // Click on the basic "Replace..." item.
+    let (col, row) = harness
+        .find_text_on_screen("Replace...")
+        .expect("Edit menu should show 'Replace...' entry");
+    harness.mouse_click(col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    // Basic Replace shows the "Replace:" search prompt (non-interactive).
+    // Query Replace would show "Query replace ... with:" instead, so this
+    // asserts the menu item is wired to the right action.
+    harness.assert_screen_contains("Replace:");
+    harness.assert_screen_not_contains("Query replace");
+}
+
+/// Regression test for #2135: the new "Query Replace..." Edit menu entry must
+/// route to the `query_replace` action (Ctrl+Alt+R, interactive prompt).
+#[test]
+fn test_edit_menu_query_replace_invokes_query_replace() {
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+    harness.type_text("hello world").unwrap();
+    harness.render().unwrap();
+
+    // Open Edit menu.
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Query Replace...");
+
+    // Click on "Query Replace..." item.
+    let (col, row) = harness
+        .find_text_on_screen("Query Replace...")
+        .expect("Edit menu should show 'Query Replace...' entry");
+    harness.mouse_click(col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    // Query Replace prompts for the search pattern with a "Query replace" label.
+    // Type the search term and press Enter to advance to the "...with:" prompt,
+    // which is unique to the interactive variant.
+    harness.type_text("hello").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Query replace 'hello' with:");
+}

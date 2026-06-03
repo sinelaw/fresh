@@ -1187,6 +1187,7 @@
   "menu.edit.format_buffer": "Форматировать буфер",
   "menu.edit.keybinding_editor": "Редактор привязок клавиш...",
   "menu.edit.paste": "Вставить",
+  "menu.edit.query_replace": "Интерактивная замена...",
   "menu.edit.redo": "Повторить",
   "menu.edit.replace": "Заменить...",
   "menu.edit.select_all": "Выделить всё",
