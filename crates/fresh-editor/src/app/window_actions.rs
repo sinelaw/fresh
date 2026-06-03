@@ -31,7 +31,15 @@ impl crate::app::Editor {
             theme_cache: std::sync::Arc::clone(&self.theme_cache),
             keybindings: std::sync::Arc::clone(&self.keybindings),
             command_registry: std::sync::Arc::clone(&self.command_registry),
-            fs_manager: std::sync::Arc::clone(&self.fs_manager),
+            // Derive the window's fs_manager from the *same* authority we hand
+            // it below, so directory listings (the file explorer) ride the
+            // window's filesystem — local or remote — instead of a stale,
+            // boot-time local one. A born-attached SSH/k8s window otherwise
+            // showed the local machine in the explorer while its terminal ran
+            // remote, because the cached fs_manager never tracked the authority.
+            fs_manager: std::sync::Arc::new(crate::services::fs::FsManager::new(
+                std::sync::Arc::clone(&self.authority.filesystem),
+            )),
             local_filesystem: std::sync::Arc::clone(&self.local_filesystem),
             buffer_id_alloc: self.buffer_id_alloc.clone(),
             authority: self.authority.clone(),

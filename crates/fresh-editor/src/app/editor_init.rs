@@ -133,7 +133,6 @@ pub(super) struct EditorParts {
     // Async / IO
     pub(super) tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
     pub(super) async_bridge: AsyncBridge,
-    pub(super) fs_manager: Arc<FsManager>,
     pub(super) authority: crate::services::authority::Authority,
     pub(super) local_filesystem: Arc<dyn FileSystem + Send + Sync>,
 
@@ -209,7 +208,6 @@ impl Editor {
             paste_pending: std::collections::HashMap::new(),
             paste_slow_path_just_armed: false,
             paste_render_suppress_until: None,
-            fs_manager: parts.fs_manager,
             authority: parts.authority,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
@@ -1245,7 +1243,6 @@ impl Editor {
             color_capability,
             tokio_runtime,
             async_bridge,
-            fs_manager,
             authority,
             local_filesystem: Arc::clone(&local_filesystem),
             windows,

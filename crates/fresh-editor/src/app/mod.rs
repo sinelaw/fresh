@@ -580,9 +580,10 @@ pub struct Editor {
     // Each window has its own preview slot.
 
     // suppress_position_history_once moved onto `Window` (Step 0f).
-    /// Filesystem manager for file explorer
-    fs_manager: Arc<FsManager>,
-
+    // The file explorer and Open File browser ride per-window fs_managers
+    // (`WindowResources::fs_manager`, derived from each window's authority), so
+    // the editor no longer holds a global one that could go stale against the
+    // active authority.
     /// Single backend slot for "where does the editor act?".
     ///
     /// Bundles filesystem, process spawner, terminal wrapper, and
