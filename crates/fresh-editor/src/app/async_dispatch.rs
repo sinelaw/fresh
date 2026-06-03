@@ -13,6 +13,31 @@ use crate::view::prompt::PromptType;
 use super::Editor;
 
 impl Editor {
+    /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
+    /// session (authority + window) is fully constructed. Resolves with `null`;
+    /// the plugin only needs the success signal to close its dialog. Lives here
+    /// (not in the plugins-gated `plugin_dispatch`) because the non-plugin
+    /// `RemoteAttach*` async handlers call it; the plugin manager is a no-op
+    /// without the `plugins` feature, so this safely does nothing then.
+    pub(crate) fn resolve_remote_attach(&self, request_id: u64) {
+        self.plugin_manager.read().unwrap().resolve_callback(
+            fresh_core::api::JsCallbackId::from(request_id),
+            "null".to_string(),
+        );
+    }
+
+    /// Reject the `attachRemoteAgent` promise behind `request_id` with `error`
+    /// — the connect failed, the spec was bad / the runtime unavailable, or
+    /// window creation failed. The plugin surfaces the reason and creates no
+    /// window.
+    pub(crate) fn reject_remote_attach(&self, request_id: u64, error: String) {
+        tracing::warn!("attachRemoteAgent rejected: {error}");
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .reject_callback(fresh_core::api::JsCallbackId::from(request_id), error);
+    }
+
     /// Process pending async messages from the async bridge
     ///
     /// This should be called each frame in the main loop to handle:

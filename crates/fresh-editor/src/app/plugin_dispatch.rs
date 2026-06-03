@@ -3526,28 +3526,6 @@ impl Editor {
         }
     }
 
-    /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
-    /// session (authority + window) is fully constructed. Resolves with
-    /// `null`; the plugin only needs the success signal to close its dialog.
-    pub(crate) fn resolve_remote_attach(&self, request_id: u64) {
-        self.plugin_manager.read().unwrap().resolve_callback(
-            fresh_core::api::JsCallbackId::from(request_id),
-            "null".to_string(),
-        );
-    }
-
-    /// Reject the `attachRemoteAgent` promise behind `request_id` with `error`
-    /// — the connect failed, or the spec was bad / the runtime unavailable, or
-    /// window creation failed. The plugin surfaces the reason and creates no
-    /// window.
-    pub(crate) fn reject_remote_attach(&self, request_id: u64, error: String) {
-        tracing::warn!("attachRemoteAgent rejected: {error}");
-        self.plugin_manager
-            .read()
-            .unwrap()
-            .reject_callback(fresh_core::api::JsCallbackId::from(request_id), error);
-    }
-
     fn handle_set_remote_indicator_state(&mut self, state: serde_json::Value) {
         // Opaque JSON at the fresh-core boundary; the concrete schema
         // (RemoteIndicatorOverride) lives in the view crate.
