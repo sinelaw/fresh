@@ -644,6 +644,43 @@ impl Editor {
         }
     }
 
+    /// Adopt the now-active window's authority into the editor-wide caches,
+    /// called by [`Self::set_active_window`] right after the active pointer
+    /// moves. The per-window `resources.authority` is already correct (each
+    /// window owns its own, re-pointed at creation / on
+    /// `set_session_authority`); this propagates it to the single editor-wide
+    /// `self.authority` the rest of the editor reads, and re-points quick-open
+    /// at the new backend's filesystem/spawner.
+    ///
+    /// `previous_label` is the active backend's label *before* the switch:
+    /// when it is unchanged (the overwhelmingly common local→local case, and
+    /// any switch between same-backend windows) we skip the
+    /// `authority_changed` hook + snapshot churn so window switching stays
+    /// cheap and the status bar doesn't flicker.
+    pub(crate) fn adopt_active_window_authority(&mut self, previous_label: &str) {
+        let new_authority = self.active_window().authority().clone();
+        let label_changed = new_authority.display_label != previous_label;
+        self.authority = new_authority;
+        // Re-point quick-open's file provider at the now-active backend (the
+        // same stale-capture fix `set_boot_authority` / `set_session_authority`
+        // apply). Cheap `Arc` clones, so it's fine to do on every switch.
+        self.quick_open_registry.set_file_backends(
+            self.authority.filesystem.clone(),
+            self.authority.process_spawner.clone(),
+        );
+        if label_changed {
+            #[cfg(feature = "plugins")]
+            {
+                self.update_plugin_state_snapshot();
+                let label = self.authority.display_label.clone();
+                self.plugin_manager.read().unwrap().run_hook(
+                    "authority_changed",
+                    crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
+                );
+            }
+        }
+    }
+
     /// Read-only access to the active authority.
     pub fn authority(&self) -> &crate::services::authority::Authority {
         &self.authority

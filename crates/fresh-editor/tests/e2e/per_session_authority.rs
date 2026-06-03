@@ -116,6 +116,60 @@ fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow
 }
 
 #[test]
+fn active_authority_follows_the_active_window_on_switch() -> anyhow::Result<()> {
+    // Gap A: `set_active_window` must re-point the editor-wide authority at
+    // the window it switches to, so a per-session remote/cloud backend
+    // actually takes effect when its window becomes active (and the local
+    // backend is restored when switching back). Without this, switching
+    // windows moved the active *pointer* but left every filesystem/spawn call
+    // site reading the previous window's authority.
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    let local = harness.editor_mut().active_window_id();
+    // Boots local — empty display label.
+    assert_eq!(harness.editor_mut().authority().display_label, "");
+
+    // A second window (at a distinct root so it doesn't collapse onto the
+    // first) carrying a container-labelled authority, set while it is *not*
+    // active: the editor-wide authority must stay local.
+    let remote_root = temp.path().join("remote");
+    std::fs::create_dir_all(&remote_root)?;
+    let remote = harness
+        .editor_mut()
+        .create_window_at(remote_root, "remote".to_string());
+    harness
+        .editor_mut()
+        .set_session_authority(remote, container_authority("Container:remote"));
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "",
+        "setting a non-active window's authority must not change the active one"
+    );
+
+    // Switching to it adopts its authority editor-wide…
+    harness.editor_mut().set_active_window(remote);
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "Container:remote",
+        "active authority follows the switched-to window"
+    );
+
+    // …and switching back restores the local authority.
+    harness.editor_mut().set_active_window(local);
+    assert_eq!(
+        harness.editor_mut().authority().display_label,
+        "",
+        "switching back to the local window restores the local authority"
+    );
+    Ok(())
+}
+
+#[test]
 fn set_session_authority_on_other_window_leaves_active_untouched() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let mut harness = EditorTestHarness::create(

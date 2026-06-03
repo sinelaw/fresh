@@ -285,6 +285,12 @@ impl crate::app::Editor {
         }
 
         let previous_id = self.active_window;
+        // Capture the outgoing backend label so we can tell, after the
+        // switch, whether the active *authority* actually changed (most
+        // window switches are between same-authority local sessions, where
+        // it doesn't). Only then do we re-point editor-wide caches + fire
+        // the `authority_changed` hook.
+        let previous_authority_label = self.authority.display_label.clone();
 
         // A plugin-defined editor mode (`editor.setEditorMode`) tied to a
         // mounted floating widget panel — the Orchestrator picker
@@ -340,6 +346,19 @@ impl crate::app::Editor {
                 s.event_logs.insert(buf, event_log);
             }
         }
+
+        // Authority follows the active window. Each `Window` owns its
+        // `resources.authority`; the editor-wide `self.authority` cache (read
+        // by the 100+ filesystem/spawn/terminal call sites) must now reflect
+        // the window we just switched to, or a per-session remote/cloud
+        // backend would silently keep acting through the previous window's
+        // authority. This is the switch-time counterpart to
+        // `set_session_authority` (which mirrors on swap of the *active*
+        // window) — see `AUTHORITY_DESIGN.md` §"Evolution: per-session
+        // authority". Cheap for the common case: same-authority local windows
+        // share `Arc`s and the label is unchanged, so the hook below is
+        // skipped.
+        self.adopt_active_window_authority(&previous_authority_label);
 
         // Refresh the plugin state snapshot so `getCwd()` (and every
         // other snapshot field) reflects the window we just switched
