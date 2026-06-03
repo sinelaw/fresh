@@ -201,6 +201,11 @@ pub trait QuickOpenProvider: Send + Sync {
 
     /// Downcast support for concrete provider access (e.g., updating cache).
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Mutable downcast support, for re-pointing concrete provider state
+    /// (e.g. swapping the `FileProvider`'s filesystem + process spawner when
+    /// the active authority changes).
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 /// Registry for quick open providers
@@ -222,6 +227,27 @@ impl QuickOpenRegistry {
     pub fn register(&mut self, provider: Box<dyn QuickOpenProvider>) {
         let prefix = provider.prefix().to_string();
         self.providers.insert(prefix, provider);
+    }
+
+    /// Re-point the file provider's backends at the active authority's
+    /// filesystem + process spawner. The `FileProvider` captures these at
+    /// construction, so an *in-place* authority swap (`set_boot_authority` /
+    /// `set_session_authority`, used by the test harness and devcontainer
+    /// attach, which simulate the restart inline) would otherwise leave
+    /// quick-open's `git ls-files` fast path running against the old backend —
+    /// listing the previous authority's files. Call this whenever the
+    /// authority changes without a full reconstruction.
+    pub fn set_file_backends(
+        &mut self,
+        filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    ) {
+        for provider in self.providers.values_mut() {
+            if let Some(fp) = provider.as_any_mut().downcast_mut::<FileProvider>() {
+                fp.set_backends(filesystem, process_spawner);
+                return;
+            }
+        }
     }
 
     /// Get the provider for a given input
@@ -283,6 +309,10 @@ mod tests {
         }
 
         fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
             self
         }
     }

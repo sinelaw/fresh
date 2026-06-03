@@ -322,6 +322,13 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
+        // Convenience constructor (tests, and any caller that only has a
+        // filesystem to inject): the editor's real authority *is* a local one
+        // backed by that filesystem. Build it here so the editor is still
+        // constructed with the authority it runs under — production callers
+        // that own a non-local authority pass it straight to
+        // `with_working_dir_opts` instead.
+        let authority = Self::local_authority_with_filesystem(filesystem);
         Self::with_working_dir_opts(
             config,
             width,
@@ -330,7 +337,7 @@ impl Editor {
             dir_context,
             plugins_enabled,
             color_capability,
-            filesystem,
+            authority,
             false,
         )
     }
@@ -351,7 +358,7 @@ impl Editor {
         dir_context: DirectoryContext,
         plugins_enabled: bool,
         color_capability: crate::view::color_support::ColorCapability,
-        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        authority: crate::services::authority::Authority,
         defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
@@ -374,7 +381,7 @@ impl Editor {
             width,
             height,
             working_dir,
-            filesystem,
+            authority,
             plugins_enabled,
             true, // enable_embedded_plugins (production: always allow embedded fallback)
             dir_context,
@@ -420,12 +427,13 @@ impl Editor {
         std::sync::Arc::get_mut(&mut grammar_registry)
             .expect("grammar registry Arc must be uniquely owned at for_test entry")
             .apply_language_config(&config.languages);
+        let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(
             config,
             width,
             height,
             working_dir,
-            filesystem,
+            authority,
             enable_plugins,
             enable_embedded_plugins,
             dir_context,
@@ -440,6 +448,27 @@ impl Editor {
         Ok(editor)
     }
 
+    /// Build a local authority whose filesystem is the supplied one.
+    ///
+    /// The bridge for callers that only have a `FileSystem` to inject (the
+    /// `new` / `with_working_dir` / `for_test` convenience constructors): a
+    /// local-backed authority *is* the real authority such an editor runs
+    /// under, so this is construction with the true authority, not a
+    /// placeholder destined to be replaced. Carries a permissive trust and an
+    /// inactive env provider — the defaults `Authority::local` uses for the
+    /// host backend.
+    fn local_authority_with_filesystem(
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+    ) -> crate::services::authority::Authority {
+        crate::services::authority::Authority {
+            filesystem,
+            ..crate::services::authority::Authority::local(
+                Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+                Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+            )
+        }
+    }
+
     /// Create a new editor with custom options
     /// This is primarily used for testing with slow or mock backends
     /// to verify editor behavior under various I/O conditions
@@ -449,7 +478,7 @@ impl Editor {
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
-        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        authority: crate::services::authority::Authority,
         enable_plugins: bool,
         #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
         enable_embedded_plugins: bool,
@@ -460,6 +489,13 @@ impl Editor {
         defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
         let mut t = InitTimer::start("Editor::with_options");
+        // The editor is constructed with the *real* authority it will run
+        // under — never a local placeholder that gets replaced later (that
+        // left a window where, e.g., quick-open's `git ls-files` ran through
+        // the local spawner while the filesystem was already remote). The
+        // filesystem is derived from it; the spawner/long-running/terminal
+        // ride along on `self.authority`.
+        let filesystem = std::sync::Arc::clone(&authority.filesystem);
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
         tracing::info!("Editor::new called with width={}, height={}", width, height);
@@ -651,22 +687,15 @@ impl Editor {
         // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Construct the boot-time authority. Per principle 6, the editor
-        // always boots with a local authority and renders immediately;
-        // SSH startup and plugins replace it via `install_authority`
-        // after their async work is done. The supplied `filesystem`
-        // overrides the local default to support tests that mock IO.
-        // Placeholder authority with a permissive trust; the server installs
-        // the real trust-carrying authority via `set_boot_authority` before
-        // anything spawns. (Trust is mandatory on every authority, so even the
-        // throwaway placeholder carries one.)
-        let authority = crate::services::authority::Authority {
-            filesystem: Arc::clone(&filesystem),
-            ..crate::services::authority::Authority::local(
-                Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
-                Arc::new(crate::services::env_provider::EnvProvider::inactive()),
-            )
-        };
+        // The authority is the *real* one this editor runs under, handed in
+        // by the caller — not a local placeholder swapped out later. Every
+        // backend-derived seam below (quick-open's file provider, the LSP
+        // spawner, each window's `resources.authority`) is wired from it at
+        // construction, so there is no window in which, e.g., quick-open's
+        // `git ls-files` runs through a local spawner while the filesystem is
+        // already remote. Runtime authority transitions still go through the
+        // destructive `install_authority` restart (principle 7), which
+        // rebuilds the editor with the next authority via this same path.
         let process_spawner = Arc::clone(&authority.process_spawner);
 
         // Initialize Quick Open registry with all providers

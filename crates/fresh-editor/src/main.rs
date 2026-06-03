@@ -3794,13 +3794,10 @@ fn real_main() -> AnyhowResult<()> {
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
 
-        // The editor constructor still takes a filesystem (tests use
-        // it to inject mocks). The authority we want is installed
-        // immediately after construction via `set_boot_authority`, so
-        // that later init — plugin loading, session restore, the
-        // first event-loop tick — sees the real backend.
-        let fs = current_authority.filesystem.clone();
-
+        // The editor is constructed with the *real* authority it runs
+        // under — local or a connected remote — so that every later step
+        // (plugin loading, session restore, the first event-loop tick) sees
+        // the correct backend from construction. No post-construction swap.
         tracing::info!("Creating editor instance...");
         let mut editor = Editor::with_working_dir_opts(
             config.clone(),
@@ -3810,17 +3807,12 @@ fn real_main() -> AnyhowResult<()> {
             dir_context.clone(),
             !args.no_plugins,
             color_capability,
-            fs,
+            current_authority.clone(),
             true, // defer_plugin_load: TUI startup; plugin loads run on the
                   // plugin thread and arrive via AsyncBridge each tick.
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
-
-        // Install the real authority before any plugin / init.ts code
-        // runs, so everything that loads below sees the correct
-        // backend from the first tick.
-        editor.set_boot_authority(current_authority.clone());
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads

@@ -818,6 +818,16 @@ pub(crate) fn build_window_lsp(
         lsp.set_runtime(runtime.handle().clone(), bridge.clone());
     }
 
+    // Wire the LSP backend from the window's authority at construction:
+    // `force_spawn` routes server processes through the long-running
+    // spawner, URIs are host↔container-translated via path translation, and
+    // trust gates spawning. Doing this here (rather than via a later
+    // `set_boot_authority`) means the manager is never left pointing at a
+    // backend that doesn't match the authority the window was built with.
+    lsp.set_long_running_spawner(resources.authority.long_running_spawner.clone());
+    lsp.set_path_translation(resources.authority.path_translation.clone());
+    lsp.set_workspace_trust(resources.authority.workspace_trust.clone());
+
     configure_lsp_servers(&mut lsp, root, &resources.config);
     lsp
 }

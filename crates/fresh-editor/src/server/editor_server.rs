@@ -563,14 +563,13 @@ impl EditorServer {
         let terminal = Terminal::new(backend)
             .map_err(|e| io::Error::other(format!("Failed to create terminal: {}", e)))?;
 
-        // The Editor constructor still takes a filesystem; the real
-        // authority is installed via `set_boot_authority` right after
-        // construction so plugins and init.ts load against the correct
-        // backend from the first tick.
-        let filesystem = self.current_authority.filesystem.clone();
+        // The editor is constructed with the real authority it runs under, so
+        // plugins and init.ts load against the correct backend from the first
+        // tick — no post-construction swap. The authority already carries the
+        // shared trust handle (every spawner holds it).
         let color_capability = ColorCapability::TrueColor; // Assume truecolor for now
 
-        let mut editor = Editor::with_working_dir(
+        let mut editor = Editor::with_working_dir_opts(
             self.config.editor_config.clone(),
             self.term_size.cols,
             self.term_size.rows,
@@ -578,13 +577,10 @@ impl EditorServer {
             self.config.dir_context.clone(),
             self.config.plugins_enabled,
             color_capability,
-            filesystem,
+            self.current_authority.clone(),
+            false,
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
-
-        // The authority already carries the shared trust handle (every
-        // spawner holds it), so adoption needs no extra wrapping.
-        editor.set_boot_authority(self.current_authority.clone());
 
         // Auto-load init.ts via the same pipeline as the non-server entry point.
         editor.load_init_script(self.config.init_enabled);

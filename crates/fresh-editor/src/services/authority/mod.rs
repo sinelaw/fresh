@@ -637,7 +637,14 @@ pub async fn connect_eks_authority(
     trust: Arc<WorkspaceTrust>,
     env: Arc<crate::services::env_provider::EnvProvider>,
 ) -> Result<(Authority, EksKeepalive), TransportError> {
-    type Built = Result<(EksConnection, tokio::task::JoinHandle<()>, tokio::runtime::Runtime), TransportError>;
+    type Built = Result<
+        (
+            EksConnection,
+            tokio::task::JoinHandle<()>,
+            tokio::runtime::Runtime,
+        ),
+        TransportError,
+    >;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
     let bootstrap_target = target.clone();

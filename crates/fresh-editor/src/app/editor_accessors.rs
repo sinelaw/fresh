@@ -512,6 +512,15 @@ impl Editor {
             lsp.set_path_translation(self.authority.path_translation.clone());
             lsp.set_workspace_trust(self.authority.workspace_trust.clone());
         }
+        // Re-point quick-open's file provider at the new backend. The provider
+        // captured the *previous* authority's filesystem + spawner; without
+        // this, quick-open's `git ls-files` keeps listing the old backend's
+        // files after an in-place authority swap (see
+        // `QuickOpenRegistry::set_file_backends`).
+        self.quick_open_registry.set_file_backends(
+            self.authority.filesystem.clone(),
+            self.authority.process_spawner.clone(),
+        );
         #[cfg(feature = "plugins")]
         {
             self.update_plugin_state_snapshot();
@@ -575,6 +584,12 @@ impl Editor {
         }
         if is_active {
             self.authority = authority;
+            // Re-point quick-open's file provider at the now-active backend
+            // (see `set_boot_authority` — same stale-capture fix).
+            self.quick_open_registry.set_file_backends(
+                self.authority.filesystem.clone(),
+                self.authority.process_spawner.clone(),
+            );
             #[cfg(feature = "plugins")]
             {
                 self.update_plugin_state_snapshot();

@@ -3487,10 +3487,7 @@ impl Editor {
         let label = target.display();
         // Pod-side workspace to re-root the editor at after attach (e.g.
         // `/workspace`). Captured before `target` is moved into the connect.
-        let workspace = target
-            .workspace
-            .clone()
-            .map(std::path::PathBuf::from);
+        let workspace = target.workspace.clone().map(std::path::PathBuf::from);
         self.set_status_message(format!("Connecting to {label}…"));
 
         runtime.spawn(async move {
