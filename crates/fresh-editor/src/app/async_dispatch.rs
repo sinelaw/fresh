@@ -659,6 +659,7 @@ impl Editor {
                         keepalive,
                         working_dir,
                         mode,
+                        request_id,
                     } = ready;
                     // Re-root at the pod's workspace (or its home if the plugin
                     // didn't supply one) — never the stale local path. The
@@ -674,6 +675,10 @@ impl Editor {
                                 authority.display_label,
                                 root.display()
                             );
+                            // Resolve before the restart tears the plugin
+                            // runtime down, so the awaiting caller observes
+                            // success rather than a vanished promise.
+                            self.resolve_remote_attach(request_id);
                             self.install_authority_with_keepalive(authority, keepalive, root);
                         }
                         crate::services::async_bridge::RemoteAttachMode::Window {
@@ -685,17 +690,22 @@ impl Editor {
                                 authority.display_label,
                                 root.display()
                             );
-                            if let Err(e) = self.create_remote_session_window(
+                            // The session is only "ready" once the window
+                            // exists. Resolve on success; on a window-creation
+                            // failure reject so the plugin keeps its dialog
+                            // open with the reason and no half-built window.
+                            match self.create_remote_session_window(
                                 authority, keepalive, root, label, command,
                             ) {
-                                self.set_status_message(format!("Attach window failed: {e}"));
+                                Ok(_) => self.resolve_remote_attach(request_id),
+                                Err(e) => self.reject_remote_attach(request_id, e),
                             }
                         }
                     }
                 }
-                AsyncMessage::RemoteAttachFailed { error } => {
+                AsyncMessage::RemoteAttachFailed { error, request_id } => {
                     tracing::warn!("Remote attach failed: {}", error);
-                    self.set_status_message(format!("Attach failed: {error}"));
+                    self.reject_remote_attach(request_id, error);
                 }
                 AsyncMessage::PluginProcessOutput {
                     process_id,

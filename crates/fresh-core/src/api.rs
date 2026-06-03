@@ -3670,6 +3670,10 @@ pub enum PluginCommand {
     AttachRemoteAgent {
         #[ts(type = "unknown")]
         payload: JsonValue,
+        /// JS callback id of the returned promise. The editor settles it once
+        /// the session is fully constructed (resolve) or the connect/window
+        /// creation fails (reject), so the plugin can await the real outcome.
+        request_id: u64,
     },
 
     /// Activate an environment: set the live env provider's recipe (an

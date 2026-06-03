@@ -3010,18 +3010,23 @@ interface EditorAPI {
 	*/
 	clearAuthority(): void;
 	/**
-	* Attach to a remote agent that needs a live connection (today a
-	* `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous:
-	* this returns immediately, the editor connects in the background,
-	* and only on success installs the authority and restarts (on
-	* failure it surfaces the error and stays put). Fire-and-forget,
-	* like `setAuthority` — any post-attach work belongs in the
-	* plugin's post-restart init.
-	* 
+	* Attach to a remote agent that needs a live connection (an SSH host or a
+	* `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous —
+	* the editor spawns the carrier, bootstraps the agent and builds the
+	* session in the background — and this returns a promise that settles on
+	* the real outcome:
+	*
+	* * resolves once the session (authority + window) is fully
+	* constructed, so a caller can keep its dialog open until there is a
+	* real session to show;
+	* * rejects with the failure reason (e.g. ssh "Could not resolve
+	* hostname") if the connect or window creation fails — in which case
+	* no window is created and the editor stays on its current authority.
+	*
 	* The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
 	* plugins hand-build an object matching it.
 	*/
-	attachRemoteAgent(payload: RemoteAgentSpec): boolean;
+	attachRemoteAgent(payload: RemoteAgentSpec): Promise<void>;
 	/**
 	* Activate an environment: set the live env recipe (`snippet` run in
 	* `dir`). Applied to every spawn, re-evaluated on demand — no restart.

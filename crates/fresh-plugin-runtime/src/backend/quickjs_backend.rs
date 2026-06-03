@@ -5770,27 +5770,35 @@ impl JsEditorApi {
         let _ = self.command_sender.send(PluginCommand::ClearAuthority);
     }
 
-    /// Attach to a remote agent that needs a live connection (today a
-    /// `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous:
-    /// this returns immediately, the editor connects in the background,
-    /// and only on success installs the authority and restarts (on
-    /// failure it surfaces the error and stays put). Fire-and-forget,
-    /// like `setAuthority` — any post-attach work belongs in the
-    /// plugin's post-restart init.
+    /// Attach to a remote agent that needs a live connection (an SSH host or a
+    /// `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous —
+    /// the editor spawns the carrier, bootstraps the agent and builds the
+    /// session in the background — and this returns a promise that settles on
+    /// the real outcome:
+    ///
+    ///   * resolves once the session (authority + window) is fully
+    ///     constructed, so a caller can keep its dialog open until there is a
+    ///     real session to show;
+    ///   * rejects with the failure reason (e.g. ssh "Could not resolve
+    ///     hostname") if the connect or window creation fails — in which case
+    ///     no window is created and the editor stays on its current authority.
     ///
     /// The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
     /// plugins hand-build an object matching it.
-    #[plugin_api(js_name = "attachRemoteAgent")]
+    #[plugin_api(async_promise, js_name = "attachRemoteAgent", ts_return = "void")]
+    #[qjs(rename = "_attachRemoteAgentStart")]
     pub fn attach_remote_agent(
         &self,
         ctx: rquickjs::Ctx<'_>,
         #[plugin_api(ts_type = "RemoteAgentSpec")] payload: rquickjs::Value<'_>,
-    ) -> bool {
+    ) -> u64 {
         let json = js_to_json(&ctx, payload);
-        let _ = self
-            .command_sender
-            .send(PluginCommand::AttachRemoteAgent { payload: json });
-        true
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::AttachRemoteAgent {
+            payload: json,
+            request_id: id,
+        });
+        id
     }
 
     /// Activate an environment: set the live env recipe (`snippet` run in
@@ -7006,6 +7014,7 @@ impl QuickJsBackend {
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");
+                editor.attachRemoteAgent = _wrapAsync("_attachRemoteAgentStart", "attachRemoteAgent");
 
                 // Pull-based streaming search. Producers (host searcher tasks)
                 // write into shared state at full speed; the consumer drains

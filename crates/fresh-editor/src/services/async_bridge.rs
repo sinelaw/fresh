@@ -58,6 +58,11 @@ pub struct RemoteAttachReady {
     pub working_dir: Option<std::path::PathBuf>,
     /// Restart (global) vs. born-attached new window.
     pub mode: RemoteAttachMode,
+    /// JS callback id of the `attachRemoteAgent` promise to settle once the
+    /// session (authority + window) is fully constructed. The main loop
+    /// resolves it on success and rejects it if window creation fails, so the
+    /// plugin's dialog only closes when there is a real session to show.
+    pub request_id: u64,
 }
 
 impl std::fmt::Debug for RemoteAttachReady {
@@ -75,9 +80,10 @@ pub enum AsyncMessage {
     /// authority + keepalive and restart.
     RemoteAttachReady(RemoteAttachReady),
 
-    /// An async `attachRemoteAgent` connect failed — surface the error;
-    /// the editor stays on its current authority.
-    RemoteAttachFailed { error: String },
+    /// An async `attachRemoteAgent` connect failed — reject the plugin's
+    /// promise with `error` (the plugin shows it and creates no window); the
+    /// editor stays on its current authority.
+    RemoteAttachFailed { error: String, request_id: u64 },
 
     /// LSP diagnostics received for a file
     LspDiagnostics {

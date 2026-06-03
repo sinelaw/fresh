@@ -4598,6 +4598,27 @@ function buildFormSpec(): WidgetSpec {
   if (form.backend === "local") {
     children.push(localBranchSection());
   }
+  // Remote backends connect asynchronously and the dialog stays open until the
+  // session is real (see `runRemoteAttach`) — show a live "connecting" line so
+  // the wait is legible rather than a frozen dialog.
+  if (form.submitting && form.backend !== "local") {
+    children.push(spacer(0));
+    children.push({
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: "Connecting… ",
+            style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
+          },
+          {
+            text: "building the remote session (this can take a few seconds).",
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          },
+        ]),
+      ],
+    });
+  }
   if (form.lastError) {
     children.push(spacer(0));
     children.push({
@@ -5123,6 +5144,46 @@ function cancelForm(): void {
 // Warm per-window remote sessions that sit *beside* local ones (rather than
 // retargeting the whole editor) are the follow-up — see Gap B in
 // docs/internal/NEW_SESSION_DIALOG_WIREFRAMES.md.
+// Submit a remote (SSH / Kubernetes) attach and keep the New-Session dialog
+// open until the session is actually real. `attachRemoteAgent` now resolves
+// only once the editor has built the authority AND the born-attached window,
+// and rejects (with the reason — e.g. ssh "Could not resolve hostname") if the
+// connect or window creation fails, creating no window. So we drive the dialog
+// off that promise: show the failure inline and stay open to retry, instead of
+// closing optimistically and leaving the user with a half-built/empty window.
+async function runRemoteAttach(
+  spec: RemoteAgentSpec,
+  facet: AgentSession["remote"],
+): Promise<void> {
+  if (!form) return;
+  form.submitting = true;
+  form.lastError = null;
+  // The `window_created` hook (fired mid-attach on success) tags the new
+  // session row with this facet; cleared on failure since no window appears.
+  pendingRemoteFacet = facet;
+  renderForm();
+  try {
+    await editor.attachRemoteAgent(spec);
+    // Authority + window are live and the hook has adopted the facet — only
+    // now is it safe to dismiss the dialog. (Guard against the user having
+    // cancelled / reopened the form while the connect was in flight.)
+    if (form && form.submitting) closeForm();
+  } catch (e) {
+    pendingRemoteFacet = null;
+    if (!form) return;
+    form.submitting = false;
+    form.lastError = remoteAttachErrorText(e);
+    renderForm();
+  }
+}
+
+// `attachRemoteAgent` rejects with an Error whose message is the host's
+// reason (ssh diagnostic, a window-creation failure, a bad spec, …).
+function remoteAttachErrorText(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return msg.trim() || "connection failed";
+}
+
 async function submitRemoteForm(backend: SessionBackend): Promise<void> {
   if (!form) return;
   const fail = (msg: string): void => {
@@ -5167,12 +5228,11 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
       label: sessionName || `k8s:${namespace}/${pod}`,
       command: agentArgv.length > 0 ? agentArgv : undefined,
     };
-    closeForm();
-    editor.setStatus(`Orchestrator: attaching pod ${namespace}/${pod}…`);
-    // Remember the pending facet so the `window_created` hook can tag the new
-    // session row as a Kubernetes workspace.
-    pendingRemoteFacet = { kind: "kubernetes", detail: `${namespace}/${pod}`, state: "running" };
-    editor.attachRemoteAgent(spec);
+    await runRemoteAttach(spec, {
+      kind: "kubernetes",
+      detail: `${namespace}/${pod}`,
+      state: "running",
+    });
     return;
   }
 
@@ -5222,10 +5282,11 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
       command: agentArgv.length > 0 ? agentArgv : undefined,
     };
     if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
-    closeForm();
-    editor.setStatus(`Orchestrator: connecting SSH ${user}@${host}…`);
-    pendingRemoteFacet = { kind: "ssh", detail: `${user}@${host}`, state: "running" };
-    editor.attachRemoteAgent(spec);
+    await runRemoteAttach(spec, {
+      kind: "ssh",
+      detail: `${user}@${host}`,
+      state: "running",
+    });
     return;
   }
 
