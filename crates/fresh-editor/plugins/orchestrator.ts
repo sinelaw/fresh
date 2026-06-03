@@ -424,6 +424,14 @@ interface OpenDialogState {
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
+// The dock panel kept alive in its own host slot (PanelSlot::Dock) while
+// the modal Open picker is floated over it (PanelSlot::Floating). When
+// non-null, `openPanel` is the picker and this is the dock underneath;
+// closing the picker hands control back to it (`restoreDockBehindPicker`)
+// rather than tearing everything down. The host renders both slots, so
+// the dock stays visible (dimmed + passive) in its left column beside
+// the picker.
+let dockPanel: FloatingWidgetPanel | null = null;
 // When the open panel is mounted as the persistent left dock rather
 // than the centered modal picker. The dock reuses the same panel +
 // `openDialog` state; these flags drive the dock-only behaviours
@@ -2336,21 +2344,25 @@ function scheduleProbeRefresh(): void {
 function openControlRoom(opts: { dock?: boolean } = {}): void {
   const asDock = opts?.dock === true;
   if (openPanel) {
-    // A panel already occupies the shared dock/dialog slot. If the dock
-    // is showing and the user asked for the modal picker (Orchestrator:
-    // Open), the dock already *is* the live session list — refocus it
-    // and say so, rather than silently doing nothing. The modal and the
-    // dock share one panel + state today, so they can't both render at
-    // once; full coexistence is the deferred P1 redesign (see
-    // docs/internal/orchestrator-dock-gaps.md). An `asDock` re-entry
-    // (Toggle Dock) never reaches here — `toggleDock` handles it first.
+    // If the dock is showing and the user asked for the modal picker
+    // (Orchestrator: Open, or the dock's "Manage" button), float the
+    // picker *over* the dock instead of replacing it: keep the dock
+    // mounted in its own host slot (PanelSlot::Dock) and build the picker
+    // as a fresh panel in the Floating slot, exactly as the New-Session
+    // form coexists with the dock. The host renders both slots, so the
+    // dock stays put in its left column — dimmed and passive — and the
+    // picker lays into `chrome_area` beside it. Closing the picker hands
+    // control back to the dock (`restoreDockBehindPicker`). An `asDock`
+    // re-entry (Toggle Dock) never reaches here — `toggleDock` handles it
+    // first; and a modal picker that is already up has nothing to do.
     if (!asDock && dockMode) {
-      restoreDockAfterForm();
-      editor.setStatus(
-        "Orchestrator: the dock already lists sessions — hide it (Toggle Dock) to open the full picker",
-      );
+      dockPanel = openPanel; // dock stays mounted behind the picker
+      openPanel = null; // fall through builds the picker as a new panel
+      dockBlurred = true; // the dock is now the inert background
+      // dockMode flips to false in the (asDock === false) branch below.
+    } else {
+      return;
     }
-    return;
   }
   reconcileSessions();
   // Summarise on-disk session content up front so the trivial filter
@@ -2456,11 +2468,42 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   void refreshDiscoveredWorktrees();
 }
 
+// When the modal Open picker was floated over a still-mounted dock,
+// dropping the picker hands keyboard control back to the dock (which
+// stayed mounted in the Dock slot the whole time) instead of tearing
+// everything down. Returns true when it restored the dock — callers
+// then stop, treating the picker as "closed to the dock". The shared
+// `openDialog` may have been filtered/reselected by the picker, so reset
+// it to the full list before the dock re-renders.
+function restoreDockBehindPicker(): boolean {
+  if (!dockPanel) return false;
+  openPanel = dockPanel;
+  dockPanel = null;
+  dockMode = true;
+  dockBlurred = false;
+  dockFocus = "list";
+  if (openDialog) {
+    openDialog.filter = { value: "", cursor: 0 };
+    const activeId = editor.activeWindow();
+    openDialog.filteredIds = filterSessions("");
+    const activeIdx = openDialog.filteredIds.indexOf(activeId);
+    openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+  }
+  editor.setEditorMode(null);
+  refreshOpenDialog();
+  editor.floatingPanelControl(openPanel.id(), "focus", 0);
+  openPanel.setFocusKey("sessions");
+  return true;
+}
+
 function closeOpenDialog(): void {
   if (openPanel) {
     openPanel.unmount();
     openPanel = null;
   }
+  // If a dock was kept behind the picker, hand control back to it rather
+  // than dropping to the bare editor.
+  if (restoreDockBehindPicker()) return;
   openDialog = null;
   dockMode = false;
   dockBlurred = false;
@@ -5547,12 +5590,12 @@ editor.on("widget_event", (e) => {
       openForm({ fromPicker: true });
       return;
     }
-    // Dock "Manage" → close the dock and open the full modal picker,
-    // which carries the lifecycle actions (Stop/Archive/Delete) and
-    // bulk-select. (The dock and the modal share one panel slot, so the
-    // dock yields to the dialog rather than coexisting with it.)
+    // Dock "Manage" → open the full modal picker (lifecycle actions
+    // Stop/Archive/Delete + bulk-select) *beside* the dock. The dock
+    // stays mounted in its own slot, dimmed and passive, and Esc on the
+    // picker hands control back to it (`openControlRoom` parks the dock
+    // in `dockPanel` when one is showing).
     if (e.event_type === "activate" && e.widget_key === "manage") {
-      closeOpenDialog();
       openControlRoom();
       return;
     }
@@ -5668,9 +5711,13 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "cancel") {
-      // Esc unmounted the panel — sync our own state.
-      openDialog = null;
+      // Esc unmounted the picker panel — sync our own state. If the
+      // picker was floated over a live dock, hand control back to the
+      // dock (still mounted in its own slot) rather than dropping to the
+      // bare editor.
       openPanel = null;
+      if (restoreDockBehindPicker()) return;
+      openDialog = null;
       editor.setEditorMode(null);
       return;
     }

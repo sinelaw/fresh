@@ -530,21 +530,31 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
     );
 }
 
-/// Invoking `Orchestrator: Open` while the dock is visible must not be a
-/// silent no-op. The dock and the modal picker share one panel + state
-/// today, so the modal can't render on top; the command refocuses the
-/// dock and surfaces a hint instead. Before the fix `openControlRoom`
-/// bailed at `if (openPanel) return` and nothing happened at all.
+/// Invoking `Orchestrator: Open` while the dock is visible opens the full
+/// modal picker *beside* the dock — not as a refusal nag, and not by
+/// tearing the dock down. The dock stays mounted in its own host slot
+/// (PanelSlot::Dock) and the picker floats in the Floating slot, clamped
+/// to `chrome_area`; the dock becomes a dimmed, passive background and
+/// Esc hands control back to it.
 #[test]
-fn open_command_gives_feedback_when_dock_is_visible() {
-    // Wide terminal so the dock (left column) still leaves the status bar
-    // room to show the full hint text.
+fn open_picker_coexists_with_dock_dimmed_and_esc_restores_it() {
+    // Wide terminal so the dock column + the picker beside it both have
+    // room (the picker lays into `chrome_area`, right of the dock).
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    // Sanity: the dock (not the modal picker) is what's up.
+    h.assert_screen_not_contains("ORCHESTRATOR :: Sessions");
+
+    // Sample a cell in the lit dock title ("Orchestrator") so we can prove
+    // it dims once the modal owns the UI.
+    let title_row = row_of(&h, "Orchestrator") as u16;
+    let title_col = h.screen_row_text(title_row).find("Orchestrator").unwrap() as u16 + 3;
+    let dock_title_fg = |h: &EditorTestHarness| h.get_cell_style(title_col, title_row).unwrap().fg;
+    let dock_fg_lit = dock_title_fg(&h);
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
     // "Orchestrator: Open" from it.
@@ -556,30 +566,34 @@ fn open_command_gives_feedback_when_dock_is_visible() {
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // With the fix the command refocuses the dock (Ctrl+P had blurred it)
-    // and surfaces a status hint. Without the fix `openControlRoom` bails
-    // at `if (openPanel) return` — nothing happens and the dock stays
-    // blurred, so this wait times out.
-    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
-
+    // The picker surfaces beside the dock (no nag) ...
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    h.assert_screen_not_contains("the dock already lists sessions");
+    // ... and the dock is NOT torn down: its "Manage" button — which only
+    // the dock renders, never the picker — is still on screen alongside
+    // the picker title.
     let screen = h.screen_to_string();
-    // The status bar carries the hint (feedback, not silence)...
     assert!(
-        screen.contains("the dock already lists sessions"),
-        "Open should surface a hint when the dock is visible.\nScreen:\n{screen}"
+        screen.contains("Manage"),
+        "the dock must stay mounted beside the picker.\nScreen:\n{screen}"
     );
-    // ...the dock is still there...
-    assert!(
-        screen.contains("Orchestrator"),
-        "the dock must stay visible.\nScreen:\n{screen}"
+    // ... and the dock is a passive, *dimmed* part of the background: its
+    // title colour darkens now that the modal owns the UI. (The host also
+    // blurs the dock and the modal swallows keys/clicks/wheel, so it is
+    // fully inaccessible while the dialog is up.)
+    assert_ne!(
+        dock_fg_lit,
+        dock_title_fg(&h),
+        "the dock must dim while the Open picker is up"
     );
-    // ...and the centered modal picker did NOT open on top of it (the
-    // dock header is "Orchestrator"; the modal title is the longer
-    // "ORCHESTRATOR :: Sessions").
-    assert!(
-        !screen.contains("ORCHESTRATOR :: Sessions"),
-        "the modal picker must not open over the dock.\nScreen:\n{screen}"
-    );
+
+    // Esc drops the picker and hands keyboard control back to the live
+    // dock — it could not regain focus if it had been unmounted.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
 }
 
 #[test]

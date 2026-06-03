@@ -1766,8 +1766,29 @@ impl Editor {
             }
         }
         if self.floating_widget_panel.is_some() {
-            let frame_area = frame.area();
-            self.render_floating_widget_panel(frame, frame_area, super::PanelSlot::Floating);
+            // A centered modal makes the *whole* UI a passive, dimmed
+            // background — the dock included. The dock was drawn above at
+            // full brightness, and the modal render below only dims
+            // `chrome_area`, so dim the dock column here too. The dock is
+            // also blurred + input-inaccessible while a modal is up (the
+            // host blurs it on mount and the modal swallows keys/clicks/
+            // wheel), so dimming it makes that passivity visible rather
+            // than leaving it looking live beside the dialog.
+            if let Some(dock) = dock_area {
+                if self.dock.is_some() {
+                    crate::view::dimming::apply_dimming(frame, dock);
+                }
+            }
+            // Render the centered modal within `chrome_area` (the region to
+            // the right of a left dock) rather than the whole frame, so it
+            // sits beside the dock and dims only the chrome instead of
+            // painting over the dock column. When no dock is up
+            // `chrome_area` is the whole frame, so this is unchanged for the
+            // common case. This is what lets the orchestrator's Open picker
+            // (and New-Session form) coexist with the dock — mirroring the
+            // settings / keybinding-editor modals, which already lay into
+            // `chrome_area`.
+            self.render_floating_widget_panel(frame, chrome_area, super::PanelSlot::Floating);
         }
     }
 
