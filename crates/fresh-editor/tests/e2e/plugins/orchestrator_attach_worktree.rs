@@ -752,7 +752,7 @@ fn open_dock(harness: &mut EditorTestHarness) {
         .unwrap();
     harness
         .wait_until(|h| {
-            h.screen_to_string().contains("ORCHESTRATOR") && h.editor().is_dock_focused()
+            h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused()
         })
         .unwrap();
 }

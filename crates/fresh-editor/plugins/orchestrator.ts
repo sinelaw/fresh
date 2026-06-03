@@ -1094,9 +1094,13 @@ function prLineEntries(s: AgentSession): Entry[] {
     }
     return out;
   }
-  // No PR (loading-without-prior, "none", or a discovered on-disk
-  // worktree): print nothing. The card simply omits the PR line, which
-  // reads cleaner than a placeholder for the common no-PR case.
+  // A discovered on-disk worktree keeps its "· on-disk worktree" tag —
+  // it's a useful "this row isn't an open session yet" indicator, not a
+  // PR placeholder. A live session with no PR prints nothing (the line
+  // is omitted), which reads cleaner than a "no PR yet" placeholder.
+  if (s.discovered) {
+    return [{ text: "· on-disk worktree", style: { fg: dim, italic: true } }];
+  }
   return [];
 }
 

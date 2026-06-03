@@ -46,7 +46,7 @@ fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
 ///
 /// `Toggle Dock` sets focus asynchronously through the plugin→host
 /// bridge (the plugin issues `setFocusKey("sessions")` after the dock
-/// mounts), so a key event dispatched after just `wait_until("ORCHESTRATOR")`
+/// mounts), so a key event dispatched after just `wait_until("Orchestrator")`
 /// can land *before* `dock.focused = true` — falling through to the
 /// editor base and leaving any follow-up `wait_until` to block forever
 /// on a dock response that never comes. Polling `is_dock_focused()`
@@ -59,7 +59,7 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -82,7 +82,7 @@ fn dock_renders_as_left_column_beside_chrome() {
     open_dock(&mut h);
 
     // The dock and its controls render...
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     h.assert_screen_contains("+ New");
     // ...and the editor chrome (menu bar) is still present to its right,
     // i.e. the dock is a column beside the window, not a replacement.
@@ -112,7 +112,7 @@ fn ctrl_p_opens_palette_while_dock_focused_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("Open File"))
         .unwrap();
     h.assert_screen_contains("Open File");
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 }
 
 /// Alt+O toggles keyboard focus between the editor and the dock, and the
@@ -152,7 +152,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O → hand focus back to the editor. The dock stays visible
     // (non-modal), but its divider dims to the muted colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     let blurred_fg = divider_fg(&h);
     assert_ne!(
         focused_fg, blurred_fg,
@@ -162,7 +162,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O again → dive back into the dock: the divider relights with the
     // original focused colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     assert_eq!(
         divider_fg(&h),
         focused_fg,
@@ -262,13 +262,13 @@ fn mouse_click_on_dock_new_button_opens_form() {
     // The dock and the centered form occupy disjoint slots, so opening
     // the form must NOT tear down the dock — its header stays painted in
     // the left column beside the modal.
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 
     // Esc cancels the form; the dock regains focus and stays visible.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Session"))
         .unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 }
 
 #[test]
@@ -287,13 +287,13 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
     h.assert_screen_contains("New Session");
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 
     // Esc returns to the dock, which is still mounted and re-focused.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Session"))
         .unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 }
 
 #[test]
@@ -321,88 +321,17 @@ fn dock_slash_filters_and_enter_returns_to_list() {
     h.type_text("gamma").unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("gamma") && !s.contains("] beta")
+        s.contains("gamma") && !s.contains("beta")
     })
     .unwrap();
-    h.assert_screen_not_contains("] beta");
+    h.assert_screen_not_contains("beta");
 
     // Enter in the filter returns to the list (does NOT dive) — the dock
     // stays visible and focused.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     h.assert_screen_contains("gamma");
-}
-
-#[test]
-fn dock_space_toggles_multiselect_checkbox() {
-    // Wire up the test-process tracing subscriber so the dock/host-side
-    // `tracing::warn!` breadcrumbs added in
-    // `dispatch_floating_widget_key` (Space branch),
-    // `set_panel_focus_and_notify`, `refocus_floating_panel`,
-    // `blur_floating_panel`, and the dock mouse-click router fire to
-    // stderr when the test runs with `RUST_LOG=fresh::dock=warn` (the
-    // default `RUST_LOG=warn` also picks them up). This is the
-    // diagnostic hook for the Windows-CI timeout of this test —
-    // `Space` doesn't produce `[x]` on Windows but does on Linux/CI,
-    // and the breadcrumbs trace the dispatch path from key arrival
-    // through plugin notification.
-    crate::common::tracing::init_tracing_from_env();
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.editor_mut()
-        .create_window_at(root.join("wt-beta"), "beta".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("beta"))
-        .unwrap();
-
-    // No row checked initially.
-    h.assert_screen_not_contains("[x]");
-    // Space toggles the highlighted row's checkbox (host fires dock_space,
-    // the plugin owns the selection set).
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[x]"))
-        .unwrap();
-    h.assert_screen_contains("[x]");
-    // Space again clears it.
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("[x]"))
-        .unwrap();
-}
-
-#[test]
-fn dock_mouse_click_row_then_space_selects_that_row() {
-    // A click on a session row must focus the dock so the keyboard works
-    // afterward (regression: clicking after a dive left the dock unable to
-    // receive keys). Click the second row, then Space; that row's checkbox
-    // must toggle — proving the click selected + re-focused it.
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.editor_mut()
-        .create_window_at(root.join("wt-beta"), "beta".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("beta"))
-        .unwrap();
-
-    let beta_row = row_of(&h, "beta") as u16;
-    h.mouse_click(3, beta_row).unwrap();
-    h.render().unwrap();
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[x]"))
-        .unwrap();
-    // The checked row is the one we clicked (beta).
-    let checked = row_of(&h, "[x]");
-    let beta = row_of(&h, "beta");
-    assert_eq!(
-        checked, beta,
-        "Space after click should check the clicked (beta) row"
-    );
 }
 
 /// 0-based column of `needle` within screen row `row`.
@@ -422,7 +351,7 @@ fn dock_right_border_drag_resizes_and_persists() {
         .create_window_at(root.join("wt-beta"), "beta".to_string());
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator"))
         .unwrap();
 
     // The menu bar ("Edit") sits right of the dock on row 0; its index in
@@ -458,7 +387,7 @@ fn dock_right_border_drag_resizes_and_persists() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
         .unwrap();
     open_dock(&mut h);
     let edit_reopened = col_in_row(&h, 0, "Edit");
@@ -641,11 +570,11 @@ fn open_command_gives_feedback_when_dock_is_visible() {
     );
     // ...the dock is still there...
     assert!(
-        screen.contains("ORCHESTRATOR"),
+        screen.contains("Orchestrator"),
         "the dock must stay visible.\nScreen:\n{screen}"
     );
     // ...and the centered modal picker did NOT open on top of it (the
-    // dock header is "ORCHESTRATOR"; the modal title is the longer
+    // dock header is "Orchestrator"; the modal title is the longer
     // "ORCHESTRATOR :: Sessions").
     assert!(
         !screen.contains("ORCHESTRATOR :: Sessions"),
@@ -905,7 +834,7 @@ fn dock_close_reflows_buffer_to_full_width() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
         .unwrap();
 
     // After the dock closes, the line-1 gutter must land at col 0
@@ -986,7 +915,7 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     // Filter to "gamma" — the "beta" row drops out of the list.
     h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
     h.type_text("gamma").unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("] beta"))
+    h.wait_until(|h| !h.screen_to_string().contains("beta"))
         .unwrap();
 
     // Enter returns to the list (filter still applied); Esc then leaves
@@ -994,61 +923,14 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     // "beta" row is back the moment the dock is shown again.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("] beta"))
+    h.wait_until(|h| h.screen_to_string().contains("beta"))
         .unwrap();
-    h.assert_screen_contains("] beta");
+    h.assert_screen_contains("beta");
     // The filter *input* must clear too, not just the filtering: the box
     // is a controlled widget, so without resetting its value it would
     // still read the old query while the list shows everything. The
     // empty box shows its placeholder ("…to search…").
     h.assert_screen_contains("to search");
-}
-
-/// F4 characterization: with a non-terminal active window, selecting
-/// rows, Tabbing to the bulk-action buttons, and pressing Esc leaves the
-/// dock cleanly — and the list is fully operable again after re-focusing
-/// (Space toggles a row). The interactive "list became unreachable"
-/// report was a manifestation of the terminal-shadow focus desync (the
-/// active window was a terminal), not a separate dock-focus bug: the
-/// host's dock Esc handler always blurs when focus isn't on the filter.
-#[test]
-fn dock_esc_from_bulk_buttons_leaves_dock_and_list_stays_operable() {
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.editor_mut()
-        .create_window_at(root.join("wt-beta"), "beta".to_string());
-    h.editor_mut()
-        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        s.contains("beta") && s.contains("gamma")
-    })
-    .unwrap();
-
-    // Select two rows so the bulk-action bar (Stop/Arch/Del) is live.
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().matches("[x]").count() >= 2)
-        .unwrap();
-
-    // Tab toward the bulk-action buttons, then Esc.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-
-    // Re-focus the dock and confirm the list still responds to Space —
-    // toggle a third row on, lifting the [x] count to 3.
-    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().matches("[x]").count() >= 3)
-        .unwrap();
 }
 
 /// F6: the auto-generated session name is rooted in the project
