@@ -1186,8 +1186,9 @@ function prLineEntries(s: AgentSession): Entry[] {
   }
   // A discovered on-disk worktree keeps its "· on-disk worktree" tag —
   // it's a useful "this row isn't an open session yet" indicator, not a
-  // PR placeholder. A live session with no PR prints nothing (the line
-  // is omitted), which reads cleaner than a "no PR yet" placeholder.
+  // PR placeholder. A live session with no PR returns nothing here; the
+  // caller renders a blank spacer line in its place (keeping the card a
+  // uniform three lines) rather than a "no PR yet" placeholder.
   if (s.discovered) {
     return [{ text: "· on-disk worktree", style: { fg: dim, italic: true } }];
   }
@@ -1225,7 +1226,7 @@ function stateGlyphEntry(s: AgentSession): Entry {
 //   card (default): a rounded `labeledSection` pill —
 //     line 1: <state> NAME (bold)              ▣ project
 //     line 2: ▸ branch        <git: ↑ahead ↓behind +add −del / clean>
-//     line 3: PR #1287 ✓7/8 ●2 approved        (omitted when no PR)
+//     line 3: PR #1287 ✓7/8 ●2 approved        (blank spacer when no PR)
 //
 //   compact: a single un-boxed line —
 //     <state> NAME                    <git summary>
@@ -1295,12 +1296,13 @@ function renderPillSpec(
     flexLine(left, projEntries),
     flexLine(git.left, git.right),
   ];
-  // Line 3 (PR badge) only when there's an actual PR — `prLineEntries`
-  // returns `[]` otherwise, so the card simply omits the line.
+  // Line 3 is the PR badge when there's an actual PR; when `prLineEntries`
+  // returns `[]` we still emit a blank spacer line so every card is a
+  // uniform three lines tall — a 2-line card next to 3-line ones looks
+  // ragged in the dock.
   const prEntries = prLineEntries(s);
-  if (prEntries.length > 0) {
-    children.push(raw([styledRow(prEntries as Parameters<typeof styledRow>[0])]));
-  }
+  const prLine: Entry[] = prEntries.length > 0 ? prEntries : [{ text: " " }];
+  children.push(raw([styledRow(prLine as Parameters<typeof styledRow>[0])]));
   return labeledSection({ label: "", child: col(...children) });
 }
 
