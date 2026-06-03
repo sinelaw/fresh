@@ -8,8 +8,8 @@ use crate::services::remote::protocol::AgentResponse;
 use crate::services::remote::AGENT_SOURCE;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, Command};
 
 /// Error type for SSH connection
 #[derive(Debug, thiserror::Error)]
@@ -93,8 +93,6 @@ impl SshConnection {
 
         // Don't check host key strictly for ease of use
         cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
-        // Allow password prompts - SSH will use the terminal for this
-        // Note: We inherit stderr so SSH can prompt for password if needed
 
         if let Some(port) = params.port {
             cmd.arg("-p").arg(port.to_string());
@@ -123,8 +121,15 @@ impl SshConnection {
 
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
-        // Inherit stderr so SSH can prompt for password on the terminal
-        cmd.stderr(Stdio::inherit());
+        // Capture ssh's stderr instead of inheriting it. The editor runs a
+        // full-screen ratatui UI on the alternate screen; an inherited stderr
+        // lets ssh scribble its diagnostics ("Could not resolve hostname …")
+        // straight over the rendered UI. ratatui has no idea those cells
+        // changed, so the garbage persists until the next full repaint — the
+        // "corrupted window" users see after a bad host. We pipe stderr and
+        // fold its message into the connection error instead (see
+        // `ssh_eof_error`), so a failed connect becomes a clean status line.
+        cmd.stderr(Stdio::piped());
         cmd.hide_window();
 
         let mut child = cmd.spawn()?;
@@ -138,7 +143,7 @@ impl SshConnection {
             .stdout
             .take()
             .ok_or_else(|| SshError::AgentStartFailed("failed to get stdout".to_string()))?;
-        // Note: stderr is inherited so SSH can prompt for password on the terminal
+        let stderr = child.stderr.take();
 
         // Send the agent code (exact byte count)
         stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
@@ -153,10 +158,21 @@ impl SshConnection {
         let mut ready_line = String::new();
         match reader.read_line(&mut ready_line).await {
             Ok(0) => {
-                return Err(ssh_eof_error(&mut child, &params).await);
+                return Err(ssh_eof_error(&mut child, &params, stderr).await);
             }
             Ok(_) => {}
             Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
+        }
+
+        // Connected. Drain ssh's stderr for the life of the connection so the
+        // occasional later diagnostic (host-key warnings, etc.) is discarded
+        // rather than filling the pipe or — if we'd inherited it — landing on
+        // the editor's screen.
+        if let Some(mut stderr) = stderr {
+            tokio::spawn(async move {
+                let mut sink = tokio::io::sink();
+                let _ = tokio::io::copy(&mut stderr, &mut sink).await;
+            });
         }
 
         let ready: AgentResponse = serde_json::from_str(&ready_line).map_err(|e| {
@@ -381,7 +397,11 @@ pub fn spawn_heartbeat_task(
 /// sending a ready message. We wait for the SSH process to exit and inspect its
 /// exit code to give the user a more actionable message than a generic
 /// "connection closed".
-async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError {
+async fn ssh_eof_error(
+    child: &mut Child,
+    params: &ConnectionParams,
+    stderr: Option<ChildStderr>,
+) -> SshError {
     // Give SSH a moment to finish so we can read its exit code.
     let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
 
@@ -425,7 +445,35 @@ async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError
         }
     };
 
-    SshError::AgentStartFailed(hint)
+    // ssh writes the actionable reason ("Could not resolve hostname",
+    // "Permission denied", "Connection refused", …) to stderr. We piped it
+    // (rather than letting it corrupt the editor's screen), so fold the most
+    // specific line into the error for the status bar.
+    match read_ssh_stderr(stderr).await {
+        Some(detail) => SshError::AgentStartFailed(format!("{hint}: {detail}")),
+        None => SshError::AgentStartFailed(hint),
+    }
+}
+
+/// Read whatever a failed ssh process wrote to stderr and return its most
+/// specific (last non-empty) line. ssh has closed stdout by the time we call
+/// this and is exiting, so the read is bounded; we still cap the wait so a
+/// wedged pipe can't hang the error path.
+async fn read_ssh_stderr(stderr: Option<ChildStderr>) -> Option<String> {
+    let mut stderr = stderr?;
+    let mut buf = String::new();
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        stderr.read_to_string(&mut buf),
+    )
+    .await;
+    buf.trim()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .map(str::to_string)
 }
 
 /// This is the lower-level function used by both `SshConnection::connect` and
@@ -490,7 +538,9 @@ async fn establish_ssh_transport(
     let mut ready_line = String::new();
     match reader.read_line(&mut ready_line).await {
         Ok(0) => {
-            return Err(ssh_eof_error(&mut child, params).await);
+            // Reconnect spawns with `stderr(Stdio::null())`, so there is no
+            // captured stderr to attach here.
+            return Err(ssh_eof_error(&mut child, params, None).await);
         }
         Ok(_) => {}
         Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),

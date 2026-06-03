@@ -265,7 +265,12 @@ impl KubeConnection {
     /// Bootstrap the agent inside the pod named by `target`.
     pub async fn connect(target: KubeTarget) -> Result<Self, TransportError> {
         let transport = KubectlExecTransport::new(target);
-        let (reader, writer, child) = bootstrap_agent(&transport, StderrMode::Inherit).await?;
+        // Capture (discard) the carrier's stderr rather than inheriting it: the
+        // editor renders a full-screen ratatui UI on the alternate screen, so
+        // an inherited stderr lets kubectl scribble diagnostics straight over
+        // the rendered UI and corrupt it (the same failure mode as the SSH
+        // path). The EOF error below already explains the likely causes.
+        let (reader, writer, child) = bootstrap_agent(&transport, StderrMode::Null).await?;
         let channel = Arc::new(AgentChannel::new(reader, writer));
         let heartbeat = crate::services::remote::spawn_heartbeat_task(
             &channel,
