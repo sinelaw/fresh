@@ -4638,11 +4638,16 @@ function openForm(options?: { fromPicker?: boolean }): void {
   // the Cancel / Create Session buttons, and the hint bar.
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 90 });
   editor.setEditorMode(NEW_SESSION_MODE);
-  // Mirror the host's focus cycle so Up/Down can route to the
-  // right field's history. Initial focus is on `project_path`
-  // (the first tabbable in `buildFormSpec`).
+  // Mirror the host's focus cycle so Up/Down can route to the right field's
+  // history. The "Run in:" type tabs sit *first* in the spec, so without an
+  // explicit focus the form would open on the Local tab button — typing would
+  // go nowhere. Land initial focus on the active backend's first input
+  // (`project_path` for Local), preserving the original "open and type"
+  // behaviour; the tabs stay reachable via Shift+Tab / ←→ / click.
   rebuildFormFocusCycle();
-  formFocusIndex = 0;
+  const firstField = firstBodyFieldKey(form.backend);
+  formPanel.setFocusKey(firstField);
+  snapFormFocusTo(firstField);
 
   // Kick off the placeholder probes (canonical repo root,
   // default branch, next session name) against the editor's
