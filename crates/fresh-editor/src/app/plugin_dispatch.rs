@@ -3476,56 +3476,111 @@ impl Editor {
             return;
         };
 
-        // Window-mode opts captured before `spec` is consumed by
-        // `into_kube_target` — when `window` is set the main loop spawns a
-        // born-attached new window instead of restarting the whole editor.
+        // Window-mode opts captured before `spec` is consumed — when `window`
+        // is set the main loop spawns a born-attached new window instead of
+        // restarting the whole editor.
         let window_mode = spec.window;
         let window_label = spec.label.clone();
         let window_command = spec.command.clone();
-
-        // The connect (spawn the carrier, bootstrap the agent, await
-        // `ready`) is async and can take seconds, so run it on the
-        // runtime and report back via the bridge instead of blocking the
-        // event loop. On success the main loop installs the authority +
-        // keepalive (restart or new window); on failure it surfaces the error.
-        let (target, base_env) = spec.into_kube_target();
         let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
         let env = std::sync::Arc::clone(&self.authority.env_provider);
-        let label = target.display();
-        // Pod-side workspace to re-root the editor at after attach (e.g.
-        // `/workspace`). Captured before `target` is moved into the connect.
-        let workspace = target.workspace.clone().map(std::path::PathBuf::from);
-        let mode = if window_mode {
-            crate::services::async_bridge::RemoteAttachMode::Window {
-                label: window_label.unwrap_or_else(|| label.clone()),
-                command: window_command,
-            }
-        } else {
-            crate::services::async_bridge::RemoteAttachMode::Restart
-        };
-        self.set_status_message(format!("Connecting to {label}…"));
 
-        runtime.spawn(async move {
-            let outcome =
-                crate::services::authority::connect_kube_authority(target, base_env, trust, env)
+        // The connect (spawn the carrier, bootstrap the agent, await `ready`)
+        // is async and can take seconds, so run it on the runtime and report
+        // back via the bridge instead of blocking the event loop. On success
+        // the main loop installs the authority + keepalive (restart or new
+        // window); on failure it surfaces the error. Both transports converge
+        // on the same `RemoteAttachReady`; only the connect future differs.
+        use crate::services::authority::RemoteTransportSpec;
+        let base_env = spec.base_env.clone();
+        let mode_for = |label: &str| {
+            if window_mode {
+                crate::services::async_bridge::RemoteAttachMode::Window {
+                    label: window_label.clone().unwrap_or_else(|| label.to_string()),
+                    command: window_command.clone(),
+                }
+            } else {
+                crate::services::async_bridge::RemoteAttachMode::Restart
+            }
+        };
+
+        match spec.transport {
+            RemoteTransportSpec::KubectlExec { .. } => {
+                let (target, base_env) = spec.into_kube_target();
+                let label = target.display();
+                // Pod-side workspace to re-root at (e.g. `/workspace`).
+                let workspace = target.workspace.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_kube_authority(
+                        target, base_env, trust, env,
+                    )
                     .await;
-            let msg = match outcome {
-                Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
-                    crate::services::async_bridge::RemoteAttachReady {
-                        authority,
-                        keepalive: Box::new(keepalive),
-                        working_dir: workspace,
-                        mode,
-                    },
-                ),
-                Err(e) => AsyncMessage::RemoteAttachFailed {
-                    error: e.to_string(),
-                },
-            };
-            // Best-effort: if the editor is gone the send fails harmlessly.
-            #[allow(clippy::let_underscore_must_use)]
-            let _ = sender.send(msg);
-        });
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
+            }
+            RemoteTransportSpec::Ssh {
+                user,
+                host,
+                port,
+                identity_file,
+                remote_path,
+            } => {
+                let _ = base_env; // SSH probes its own env on the remote host.
+                let params = crate::services::remote::ConnectionParams {
+                    user: user.clone(),
+                    host: host.clone(),
+                    port,
+                    identity_file: identity_file.map(std::path::PathBuf::from),
+                };
+                let label = match port {
+                    Some(p) => format!("ssh:{user}@{host}:{p}"),
+                    None => format!("ssh:{user}@{host}"),
+                };
+                let workspace = remote_path.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_ssh_authority(
+                        params,
+                        remote_path,
+                        trust,
+                        env,
+                    )
+                    .await;
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
+            }
+        }
     }
 
     fn handle_set_remote_indicator_state(&mut self, state: serde_json::Value) {

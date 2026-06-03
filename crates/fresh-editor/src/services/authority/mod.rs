@@ -39,9 +39,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_kube_terminal_args, build_ssh_terminal_args, spawn_kube_reconnect_task, ConnectionParams,
-    KubeConnection, KubeTarget, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
-    ProcessSpawner, RemoteFileSystem, RemoteProcessSpawner, TransportError,
+    build_kube_terminal_args, build_ssh_terminal_args, spawn_kube_reconnect_task,
+    spawn_reconnect_task, ConnectionParams, KubeConnection, KubeTarget, LocalLongRunningSpawner,
+    LocalProcessSpawner, LongRunningSpawner, ProcessSpawner, RemoteFileSystem,
+    RemoteLongRunningSpawner, RemoteProcessSpawner, SshConnection, SshError, TransportError,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -574,11 +575,26 @@ pub enum RemoteTransportSpec {
         #[serde(default)]
         workspace: Option<String>,
     },
+    /// SSH into a remote host: the same remote-agent stack as the boot-time
+    /// `fresh user@host:path` flow, exposed at runtime so the Orchestrator can
+    /// open an SSH session as a born-attached window.
+    Ssh {
+        user: String,
+        host: String,
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        identity_file: Option<String>,
+        /// Remote directory to root the session at (terminal `cd` target).
+        #[serde(default)]
+        remote_path: Option<String>,
+    },
 }
 
 impl RemoteAgentSpec {
-    /// Resolve into the connect parameters: the pod target and the
-    /// captured env to apply to LSP spawns.
+    /// Resolve a kubectl-exec spec into the pod target and the captured env.
+    /// Only valid for the `KubectlExec` transport (the caller dispatches on
+    /// `transport` first); panics otherwise.
     pub fn into_kube_target(self) -> (KubeTarget, Vec<(String, String)>) {
         match self.transport {
             RemoteTransportSpec::KubectlExec {
@@ -597,6 +613,9 @@ impl RemoteAgentSpec {
                 },
                 self.base_env,
             ),
+            RemoteTransportSpec::Ssh { .. } => {
+                unreachable!("into_kube_target called on a non-kube transport")
+            }
         }
     }
 }
@@ -696,6 +715,111 @@ pub async fn connect_kube_authority(
     Ok((
         authority,
         KubeKeepalive {
+            reconnect,
+            _connection: connection,
+            _runtime: runtime,
+        },
+    ))
+}
+
+/// Resources that must outlive an SSH [`Authority`]: the `SshConnection`
+/// (its `ssh …` child), the reconnect task, and the dedicated runtime the
+/// agent channel rides on. The runtime-owned analogue of `main.rs`'s
+/// boot-time `RemoteSession`; parked per-window by the Orchestrator's
+/// born-attached SSH sessions (and droppable on window close).
+pub struct SshKeepalive {
+    reconnect: tokio::task::JoinHandle<()>,
+    _connection: SshConnection,
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl Drop for SshKeepalive {
+    fn drop(&mut self) {
+        self.reconnect.abort();
+    }
+}
+
+/// Connect to a remote host over SSH and assemble its [`Authority`] plus the
+/// [`SshKeepalive`] that must be parked to keep it alive — the runtime-owned,
+/// reusable counterpart to `main.rs`'s boot-time `connect_remote`, mirroring
+/// [`connect_kube_authority`]. The agent channel + reconnect run on a dedicated
+/// runtime returned in the keepalive so they survive editor rebuilds.
+///
+/// `remote_dir` is the directory the integrated terminal roots at (the
+/// `ssh -t … 'cd <dir>; …'` wrapper); filesystem/process ops carry absolute
+/// paths and don't need it.
+pub async fn connect_ssh_authority(
+    params: ConnectionParams,
+    remote_dir: Option<String>,
+    trust: Arc<WorkspaceTrust>,
+    env: Arc<crate::services::env_provider::EnvProvider>,
+) -> Result<(Authority, SshKeepalive), SshError> {
+    type Built = Result<
+        (
+            SshConnection,
+            tokio::task::JoinHandle<()>,
+            tokio::runtime::Runtime,
+        ),
+        SshError,
+    >;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
+    let bootstrap_params = params.clone();
+    std::thread::Builder::new()
+        .name("ssh-connect".to_string())
+        .spawn(move || {
+            let built: Built = (|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name("ssh-agent")
+                    .enable_all()
+                    .build()
+                    .map_err(|e| SshError::AgentStartFailed(format!("runtime: {e}")))?;
+                // The channel/reconnect tasks spawned here live on `runtime`'s
+                // workers, surviving after this helper thread exits — until the
+                // `runtime` (moved into the keepalive) drops.
+                let (connection, reconnect) = runtime.block_on(async {
+                    let connection = SshConnection::connect(bootstrap_params.clone()).await?;
+                    let reconnect =
+                        spawn_reconnect_task(connection.channel(), connection.params().clone());
+                    Ok::<_, SshError>((connection, reconnect))
+                })?;
+                Ok((connection, reconnect, runtime))
+            })();
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(built);
+        })
+        .map_err(|e| SshError::AgentStartFailed(format!("connect thread: {e}")))?;
+
+    let (connection, reconnect, runtime) = rx
+        .await
+        .map_err(|_| SshError::AgentStartFailed("connect thread vanished".to_string()))??;
+
+    let channel = connection.channel();
+    let connection_string = connection.connection_string().to_string();
+    let reconnect_params = connection.params().clone();
+    let filesystem: Arc<dyn FileSystem + Send + Sync> =
+        Arc::new(RemoteFileSystem::new(channel.clone(), connection_string));
+    let process_spawner: Arc<dyn ProcessSpawner> = Arc::new(RemoteProcessSpawner::new(
+        channel.clone(),
+        Arc::clone(&env),
+        Arc::clone(&trust),
+    ));
+    let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
+        RemoteLongRunningSpawner::new(reconnect_params.clone(), Arc::clone(&env), Arc::clone(&trust)),
+    );
+    let authority = Authority::ssh(
+        filesystem,
+        process_spawner,
+        long_running_spawner,
+        &reconnect_params,
+        remote_dir.as_deref(),
+        trust,
+        env,
+    );
+    Ok((
+        authority,
+        SshKeepalive {
             reconnect,
             _connection: connection,
             _runtime: runtime,

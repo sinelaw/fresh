@@ -1549,6 +1549,14 @@ type RemoteAgentTransport = {
 	container?: string | null;
 	/** Pod-side workspace root the terminal opens in. */
 	workspace?: string | null;
+} | {
+	kind: "ssh";
+	user: string;
+	host: string;
+	port?: number | null;
+	identity_file?: string | null;
+	/** Remote directory to root the session at. */
+	remote_path?: string | null;
 };
 type RemoteAgentSpec = {
 	transport: RemoteAgentTransport;

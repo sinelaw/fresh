@@ -5108,60 +5108,55 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
   }
 
   if (backend === "ssh") {
-    let host = form.sshHost.value.trim();
-    if (host.startsWith("ssh://")) host = host.slice("ssh://".length);
-    if (!host) {
+    // Parse `user@host[:port]` (also tolerates a pasted `ssh://…`). The full
+    // remote-agent stack attaches over SSH — remote filesystem + LSP + an
+    // in-host terminal — as a born-attached window, not just a local `ssh`
+    // terminal.
+    let raw = form.sshHost.value.trim();
+    if (raw.startsWith("ssh://")) raw = raw.slice("ssh://".length);
+    if (!raw) {
       fail("SSH: Host (user@host) is required.");
       return;
     }
-    const args: string[] = ["-t"];
-    const portMatch = host.match(/^(.+):(\d+)$/);
+    let port: number | null = null;
+    const portMatch = raw.match(/^(.+):(\d+)$/);
     if (portMatch) {
-      host = portMatch[1];
-      args.push("-p", portMatch[2]);
+      raw = portMatch[1];
+      port = parseInt(portMatch[2], 10);
+    }
+    let user = "";
+    let host = raw;
+    const at = raw.indexOf("@");
+    if (at >= 0) {
+      user = raw.slice(0, at);
+      host = raw.slice(at + 1);
+    }
+    if (!user) {
+      fail("SSH: a user is required — use user@host.");
+      return;
     }
     const identity = form.sshIdentity.value.trim();
-    if (identity) args.push("-i", identity);
-    args.push(host);
-    const path = form.sshPath.value.trim();
-    const remoteShell = cmd || 'exec "$SHELL" -l';
-    const remoteCmd = path
-      ? `cd '${path.replace(/'/g, "'\\''")}' && ${remoteShell}`
-      : remoteShell;
-    args.push(remoteCmd);
-    const argv = ["ssh", ...args];
-    const label = sessionName || `ssh:${host}`;
-    const root = editor.getCwd();
+    const remotePath = form.sshPath.value.trim();
+    const agentArgv = splitAgentCmd(cmd);
+    const spec: RemoteAgentSpec = {
+      transport: {
+        kind: "ssh",
+        user,
+        host,
+        port,
+        identity_file: identity || null,
+        remote_path: remotePath || null,
+      },
+      base_env: [],
+      window: true,
+      label: sessionName || `ssh:${user}@${host}`,
+      command: agentArgv.length > 0 ? agentArgv : undefined,
+    };
     if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
     closeForm();
-    try {
-      const result = await editor.createWindowWithTerminal({
-        root,
-        label,
-        cwd: root,
-        command: argv,
-        title: `ssh:${host}`,
-      });
-      const tracked: AgentSession = {
-        id: result.windowId,
-        label,
-        root,
-        projectPath: root,
-        sharedWorktree: true,
-        terminalId: result.terminalId,
-        state: "idle",
-        lastOutputAt: null,
-        createdAt: Date.now(),
-        remote: { kind: "ssh", detail: host, state: "running" },
-      };
-      orchestratorSessions.set(result.windowId, tracked);
-      if (openPanel && dockMode) refreshOpenDialog();
-      editor.setStatus(`Orchestrator: SSH session to ${host}`);
-    } catch (e) {
-      editor.setStatus(
-        `Orchestrator: SSH session failed — ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    editor.setStatus(`Orchestrator: connecting SSH ${user}@${host}…`);
+    pendingRemoteFacet = { kind: "ssh", detail: `${user}@${host}`, state: "running" };
+    editor.attachRemoteAgent(spec);
     return;
   }
 
