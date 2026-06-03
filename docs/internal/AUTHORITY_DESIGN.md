@@ -234,7 +234,7 @@ independently.
 > Status within this doc: **design direction**, not yet shipped. The
 > sections above describe the per-`Editor`, one-alive model as it ships
 > today. This section describes where the Orchestrator session model and
-> Cloud Workspaces (`EKS_WORKSPACE_UX_DESIGN.md`) take it. It is recorded
+> Cloud Workspaces (`K8S_WORKSPACE_UX_DESIGN.md`) take it. It is recorded
 > here so the foundational principles above are read with the evolution
 > in view.
 

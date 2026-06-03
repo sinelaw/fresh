@@ -15,7 +15,7 @@
 //!
 //! This module is additive: the existing SSH path in `connection.rs` is left
 //! untouched, so SSH behaviour is unchanged. SSH can migrate onto this seam
-//! later (see `docs/internal/EKS_S3_AUTHORITY_DESIGN.md`).
+//! later (see `docs/internal/K8S_AUTHORITY_DESIGN.md`).
 
 use std::process::Stdio;
 use std::sync::Arc;

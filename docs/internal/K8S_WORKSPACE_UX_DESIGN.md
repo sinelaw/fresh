@@ -4,10 +4,10 @@ Status: design / product framing. This is the **top of the stack**. It
 defines what the cloud-editing feature *is* for a user and the journeys
 it must support. The two docs below it are implementation detail:
 
-- [`EKS_S3_AUTHORITY_DESIGN.md`](EKS_S3_AUTHORITY_DESIGN.md) — *how* the
+- [`K8S_AUTHORITY_DESIGN.md`](K8S_AUTHORITY_DESIGN.md) — *how* the
   editor attaches (SSH remote-agent stack over a `kubectl exec`
   transport). Mechanics.
-- [`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md) —
+- [`K8S_WORKSPACE_PLUGIN_DESIGN.md`](K8S_WORKSPACE_PLUGIN_DESIGN.md) —
   *how* pods come into being (the `Provider` contract; Terraform/manifest
   escape hatches; storage = EBS-live + S3-sync). Plumbing.
 
@@ -271,7 +271,7 @@ Each row is a decision; the **bold** option is my recommendation.
 | 3 | **Cold-start strategy** | Provision-on-connect (cheapest, slowest — minutes) · **Stop/resume as headline (keep volume, release compute — cheap *and* ~fast; the VDI-style model teams expect)** · Warm pool (instant, idle cost — offer via provider for teams who want it). |
 | 4 | **Primary surface** | Command palette only (discoverable-ish, no overview) · **A "Remote/Workspaces" panel as home base + palette commands + a `fresh eks://…`-style CLI form mirroring `fresh user@host:path`** · Status-bar menu only (too small for management). |
 | 5 | **How much k8s/AWS is shown** | Hide everything (magical until it breaks, then opaque) · Show the plumbing (powerful, intimidating) · **Progressive disclosure (workspace verbs up front; "Show details / logs / pod" one click away)**. |
-| 6 | **Provisioning config** | Repo `.fresh/eks.json` only · User-global only · **Layered: zero-config attach → repo config (shareable) → user-global, and reuse `devcontainer.json` where present** (don't reinvent environment definition). |
+| 6 | **Provisioning config** | Repo `.fresh/k8s.json` only · User-global only · **Layered: zero-config attach → repo config (shareable) → user-global, and reuse `devcontainer.json` where present** (don't reinvent environment definition). |
 | 7 | **Connections per window** | Multi-root in one session (breaks the modal Authority principle, huge complexity) · **One session = one workspace/authority; the Orchestrator holds many sessions and the active one is connected — switching sessions retargets the authority atomically (existing session-swap machinery)**. |
 | 8 | **Idle / cost default** | Off (simplest, surprise bills) · Conservative long timeout · **On by default, sane timeout, visible countdown, one-click "keep awake"** (protective without being patronizing). |
 | 9 | **Failure stance** | Always-ask (safe, naggy) · Auto-everything (smooth, scary for destructive ops) · **Auto-recover the transient (reconnect, re-resolve pod), always-ask the destructive (rebuild/destroy/resize)**. |
@@ -290,7 +290,7 @@ Each row is a decision; the **bold** option is my recommendation.
 - **Status bar**: compact `● acme-api · running · ~$0.40/hr · idle 12m`;
   click → panel. Color = state. Mirrors today's SSH/devcontainer status.
 - **CLI**: `fresh eks://context/namespace/workspace` (and bare `fresh`
-  picking up a repo's `.fresh/eks.json`), paralleling `fresh user@host:path`.
+  picking up a repo's `.fresh/k8s.json`), paralleling `fresh user@host:path`.
 - **Notifications/banners**: reconnecting, moved, resumed, idle-stopping
   in N min, provision failed.
 
@@ -325,7 +325,7 @@ Fresh just does it. Power path: hand Fresh your flow.
 **Consequence — Fresh ships an opinionated provisioning engine, not just
 provider plumbing.** The plugin doc's "built-in providers" become
 real, Fresh-owned default templates + lifecycle logic. See
-[`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md).
+[`K8S_WORKSPACE_PLUGIN_DESIGN.md`](K8S_WORKSPACE_PLUGIN_DESIGN.md).
 
 **Consequence — state is authoritative but can still drift.** Because
 Fresh provisions, it knows the intended state; but a user `kubectl

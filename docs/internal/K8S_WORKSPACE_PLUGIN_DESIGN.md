@@ -1,7 +1,11 @@
-# `eks-workspace` plugin — bring-your-own-cluster pod management
+# `k8s-workspace` plugin — bring-your-own-cluster pod management
+
+> **Scope:** bring-your-own *any* Kubernetes cluster (EKS/GKE/AKS/k3d/
+> minikube/kind). The `command` provider is the escape hatch for
+> Terraform/Helm/CDK. AWS examples below are illustrative, not required.
 
 Status: design. Companion to
-[`EKS_S3_AUTHORITY_DESIGN.md`](EKS_S3_AUTHORITY_DESIGN.md), which makes
+[`K8S_AUTHORITY_DESIGN.md`](K8S_AUTHORITY_DESIGN.md), which makes
 the editor able to *attach* to a pod. This doc covers the plugin that
 gives the user a clean way to **choose, bring up, attach to, and tear
 down** the pods, against **their own EKS clusters and AWS account**.
@@ -40,7 +44,7 @@ in the sandboxed TS runtime and only ever does host-side work through
 
 ## Default posture: full-manage, with an escape hatch
 
-Per [`EKS_WORKSPACE_UX_DESIGN.md`](EKS_WORKSPACE_UX_DESIGN.md) D1, the
+Per [`K8S_WORKSPACE_UX_DESIGN.md`](K8S_WORKSPACE_UX_DESIGN.md) D1, the
 default is **full-manage**: Fresh ships an opinionated, zero-config
 provisioning engine so a developer with only an AWS account + a cluster
 gets a working workspace with no setup. The built-in providers below are
@@ -103,7 +107,7 @@ A team manages "VDI-style terminal containers for developers" with
 Terraform in `~/work/dev-infra`. They configure:
 
 ```jsonc
-// .fresh/eks.json  (or user config)
+// .fresh/k8s.json  (or user config)
 {
   "defaultTarget": "vdi",
   "targets": {
@@ -214,7 +218,7 @@ Layered, lowest-effort-first:
    targets configured, fall straight to `attach-existing` against the
    current kubeconfig context (pick namespace → pick pod). Works for
    anyone who already has a dev pod running.
-2. **`.fresh/eks.json` in the repo**: shareable team targets (the
+2. **`.fresh/k8s.json` in the repo**: shareable team targets (the
    examples above). Discovered like devcontainer's `findConfig()`.
 3. **User-global config**: personal targets/overrides in the user config
    dir, for clusters not tied to one repo.
@@ -223,7 +227,7 @@ Schema sketch (full JSON-schema ships alongside, like
 `plugins/config-schema.json`):
 
 ```ts
-type EksConfig = {
+type K8sConfig = {
   defaultTarget?: string;
   targets: Record<string, {
     provider: ProviderSpec;          // attach-existing | manifest | run | command

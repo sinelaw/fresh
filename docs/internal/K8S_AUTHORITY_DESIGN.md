@@ -1,32 +1,37 @@
-# EKS authority — remote editing into a Kubernetes pod
+# Kubernetes workspace authority — remote editing into a pod (kubectl exec)
+
+> **Scope:** this is cluster- and cloud-agnostic — the transport is plain
+> `kubectl exec`, so it runs against EKS, GKE, AKS, k3d, minikube, or kind
+> with no code changes. AWS/EKS/S3 specifics below are one **reference
+> provider**, not a requirement.
 
 > **Implementation status (foundational slice landed).** The
 > `RemoteTransport` seam (`services/remote/transport.rs`) ships:
 > `KubectlExecTransport`, the shared `kubectl_exec_argv` builder,
 > `agent_bootstrap_pycode`, the generic `bootstrap_agent`, and
-> `EksConnection` — the EKS analogue of `SshConnection`, reusing the
-> transport-agnostic `AgentChannel`. Plus `build_eks_terminal_args`,
-> `TerminalWrapper::eks`, and the `Authority::eks` constructor. SSH's
+> `KubeConnection` — the EKS analogue of `SshConnection`, reusing the
+> transport-agnostic `AgentChannel`. Plus `build_kube_terminal_args`,
+> `TerminalWrapper::kube`, and the `Authority::kube` constructor. SSH's
 > `connection.rs` is untouched (SSH provably unchanged). The kubectl
-> long-running (LSP) spawner (`authority/eks_spawner.rs`,
+> long-running (LSP) spawner (`authority/kube_spawner.rs`,
 > `KubectlLongRunningSpawner`) ships too — `sh -c` wrapping for cwd/env
 > since `kubectl exec` has no `-w`/`-e`, `command_exists` via `command
 > -v` with the captured probe PATH, host-limit log-and-ignore — plus
-> `Authority::eks_from_connection` that assembles a full EKS authority
+> `Authority::kube_from_connection` that assembles a full EKS authority
 > (RemoteFileSystem + RemoteProcessSpawner over the channel + the kubectl
 > LSP spawner). The per-session activation primitive
 > (`Editor::set_session_authority`) is in. The agent heartbeat
 > (`spawn_heartbeat_task` — a periodic `info` ping, no agent.py change /
-> no protocol bump) ships and is wired into `EksConnection` so idle
+> no protocol bump) ships and is wired into `KubeConnection` so idle
 > `kubectl exec` streams survive LB/NAT idle timeouts; it self-terminates
 > via a `Weak` ref. The async **`attachRemoteAgent` plugin op** is wired
 > end to end: JS `editor.attachRemoteAgent(spec)` → `PluginCommand::
-> AttachRemoteAgent` → a runtime task runs `connect_eks_authority` →
+> AttachRemoteAgent` → a runtime task runs `connect_kube_authority` →
 > `AsyncMessage::RemoteAttachReady` → `install_authority_with_keepalive`
 > → the restart loop (standalone `main.rs` and daemon `EditorServer`)
 > adopts the authority **and its keepalive** (the same slot SSH uses), so
 > the live carrier + reconnect/heartbeat survive the rebuild. The
-> **`eks-workspace.ts`** plugin ships the Provider model (`attach-existing`
+> **`k8s-workspace.ts`** plugin ships the Provider model (`attach-existing`
 > / `manifest` / `run` / `command`-Terraform escape hatch) with env-probe,
 > RBAC-exec preflight, and connect/disconnect commands. The EKS reconnect
 > task re-runs `kubectl exec` on stream drop. Unit + e2e tested; plugin
@@ -126,14 +131,14 @@ save, auto-recovery, reconnect — is the SSH implementation, unchanged.
    the SSH path already does. The bytes after handshake are the same
    agent protocol over the same channel.
 
-2. **`Authority::eks(...)`** — a near-clone of `Authority::ssh(...)`. It
+2. **`Authority::kube(...)`** — a near-clone of `Authority::ssh(...)`. It
    takes the already-built `RemoteFileSystem` / remote spawners (over the
-   kubectl-exec channel) and sets `TerminalWrapper::eks(...)`. Like SSH,
+   kubectl-exec channel) and sets `TerminalWrapper::kube(...)`. Like SSH,
    `path_translation: None` — the editor operates directly in the pod's
    path space (the mount looks like a normal directory in the pod;
    there's nothing to translate).
 
-3. **`TerminalWrapper::eks(target, workspace)`** — the only spawn that
+3. **`TerminalWrapper::kube(target, workspace)`** — the only spawn that
    does *not* ride the agent channel, exactly as SSH's terminal uses a
    separate `ssh -t` PTY:
 
@@ -147,14 +152,14 @@ save, auto-recovery, reconnect — is the SSH implementation, unchanged.
 That's the entire Fresh-side surface. Process spawning, including LSP,
 comes for free: `RemoteProcessSpawner`/`RemoteLongRunningSpawner` send
 spawn RPCs to the agent, which launches them *inside the pod*. There is
-no separate `EksExecSpawner` and no `docker_spawner`-style argv builder —
+no separate `KubeExecSpawner` and no `docker_spawner`-style argv builder —
 the agent is already the in-pod executor.
 
 ## How attach is triggered (plugin → core)
 
 SSH connects at startup (`fresh user@host:path`). EKS attaches
 post-boot, driven by the pod-management plugin (see
-[`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md)). The
+[`K8S_WORKSPACE_PLUGIN_DESIGN.md`](K8S_WORKSPACE_PLUGIN_DESIGN.md)). The
 wrinkle: building the transport is **async** (spawn kubectl, bootstrap
 the agent, await `ready`) and produces **keepalive resources** (the
 child process, the Tokio runtime, the reconnect task). The synchronous
@@ -201,7 +206,7 @@ Fresh never sees S3. How the pod's workspace volume is provisioned is
 owned entirely by the plugin / cluster manifest, not core. The earlier
 draft of this doc proposed mounting the bucket *live* (Mountpoint for S3
 CSI) and giving the agent an in-place `direct_write` save path. **The
-deep-research review (`eks-workspace-research-prompt.md` findings)
+deep-research review (`k8s-workspace-research-prompt.md` findings)
 killed that recommendation, and it's worth being explicit about why.**
 
 ### Decision 1 (load-bearing, REVISED): EBS GP3 as the live tier; S3 as the durable tier
@@ -237,7 +242,7 @@ works — the `direct_write` flag the prior draft proposed is **deleted**
 from this design. Storage policy lives entirely in the pod manifest /
 plugin; Fresh is oblivious, exactly as intended.
 
-See [`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md)
+See [`K8S_WORKSPACE_PLUGIN_DESIGN.md`](K8S_WORKSPACE_PLUGIN_DESIGN.md)
 §"Storage" for the full alternatives table and the recommended
 EBS-live + S3-sync manifest pattern.
 

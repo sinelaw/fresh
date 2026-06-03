@@ -1,11 +1,11 @@
-# Deep-research prompt — cloud/EKS developer workspaces
+# Deep-research prompt — cloud Kubernetes developer workspaces
 
 Hand the prompt below to a research-capable LLM (web access on). It is
 written to gather the real-world best practices, common user flows, and
-pain points that should shape the `eks-workspace` plugin and the EKS
+pain points that should shape the `k8s-workspace` plugin and the EKS
 authority. Findings feed back into
-[`EKS_WORKSPACE_PLUGIN_DESIGN.md`](EKS_WORKSPACE_PLUGIN_DESIGN.md) and
-[`EKS_S3_AUTHORITY_DESIGN.md`](EKS_S3_AUTHORITY_DESIGN.md).
+[`K8S_WORKSPACE_PLUGIN_DESIGN.md`](K8S_WORKSPACE_PLUGIN_DESIGN.md) and
+[`K8S_AUTHORITY_DESIGN.md`](K8S_AUTHORITY_DESIGN.md).
 
 ---
 
