@@ -1079,7 +1079,10 @@ mod tests {
 
         let (min, max) = marker_counts(&text, n);
         // PRIMARY GOAL: never lose a scrollback line, no matter the resizes.
-        assert!(min >= 1, "lost scrollback line(s): some marker missing (min={min})");
+        assert!(
+            min >= 1,
+            "lost scrollback line(s): some marker missing (min={min})"
+        );
         // Duplication is a tolerated last resort (a grow can overlap the visible
         // tail with committed history) but must stay bounded by the screen height,
         // never unbounded growth.
@@ -1146,7 +1149,10 @@ mod tests {
                 "alt-screen round trip duplicated BASE{i:04}"
             );
         }
-        assert!(text.contains("AFTER0000#"), "post-alt-screen output dropped");
+        assert!(
+            text.contains("AFTER0000#"),
+            "post-alt-screen output dropped"
+        );
     }
 
     /// Resizing the width *while* the alternate screen is up reflows the hidden
