@@ -1,7 +1,7 @@
-use crate::config::ExplorerWidth;
-use crate::model::event::{ContainerId, LeafId, SplitDirection};
 use super::drag::TabDragState;
 use super::hover::HoverTarget;
+use crate::config::ExplorerWidth;
+use crate::model::event::{ContainerId, LeafId, SplitDirection};
 
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]

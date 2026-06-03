@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::model::event::{BufferId, LeafId, SplitDirection};
+use std::collections::HashMap;
 
 /// Unique identifier for a buffer group
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
