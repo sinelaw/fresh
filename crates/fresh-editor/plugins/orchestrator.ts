@@ -119,6 +119,17 @@ interface AgentSession {
   // to suppress the terminal's activation redraw from registering as
   // agent activity (so selecting a session doesn't flash it `working`).
   activatedAt?: number;
+  // Optional remote/cloud facet — present only for sessions whose backend is
+  // not local (ssh / kubernetes / devcontainer). Drives the extra state glyph
+  // + label in the picker/dock; absent for local sessions, which render
+  // exactly as before (the design's "backend-opaque" facet — see
+  // K8S_WORKSPACE_UX_DESIGN.md §"Orchestrator integration").
+  remote?: {
+    kind: SessionBackend;
+    // Short human identity for the row (e.g. `deploy@build-01`, `ns/pod`).
+    detail: string;
+    state: "starting" | "running" | "stopped" | "error";
+  };
 }
 
 // Local git summary + freshness bookkeeping (mirrors `PrProbe`).
@@ -206,7 +217,38 @@ function discoveredIdFor(path: string): number {
 // is rendered as a styled error row inside the form when the
 // most recent submit failed (status bar would get clobbered —
 // see MEMORY.md).
+// Where a new session runs. `local` is today's worktree/folder flow; the
+// other three sit behind the `Authority` seam (SSH remote host, a Kubernetes
+// pod via `kubectl exec`, or a devcontainer). The New Session dialog shows a
+// "Run in:" tab row so the user picks one and the body swaps to its fields.
+type SessionBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
+
+const SESSION_BACKENDS: { id: SessionBackend; label: string; key: string }[] = [
+  { id: "local", label: "Local", key: "type-local" },
+  { id: "ssh", label: "SSH", key: "type-ssh" },
+  { id: "kubernetes", label: "Kubernetes", key: "type-kubernetes" },
+  { id: "devcontainer", label: "Devcontainer", key: "type-devcontainer" },
+];
+
 interface NewSessionForm {
+  // Which backend the session runs in (the "Run in:" tab selection). Drives
+  // which field set `buildFormSpec` renders and which submit path runs.
+  backend: SessionBackend;
+  // --- SSH backend fields (rendered only when backend === "ssh") ---
+  // Host as `user@host[:port]` (also accepts a pasted `ssh://…`); remote path
+  // to root the session at; optional identity file.
+  sshHost: { value: string; cursor: number };
+  sshPath: { value: string; cursor: number };
+  sshIdentity: { value: string; cursor: number };
+  // --- Kubernetes backend fields (rendered only when backend ===
+  // "kubernetes") ---. `k8sTarget` names a target from `.fresh/k8s.json`;
+  // when empty, the explicit context/namespace/pod/workspace fields are used
+  // to attach directly (no config needed).
+  k8sTarget: { value: string; cursor: number };
+  k8sContext: { value: string; cursor: number };
+  k8sNamespace: { value: string; cursor: number };
+  k8sPod: { value: string; cursor: number };
+  k8sWorkspace: { value: string; cursor: number };
   // Project Path: the directory the session is rooted at. When
   // `createWorktree` is true (default for git paths) this is
   // the *base* repo for `git worktree add`. When false, this
@@ -793,6 +835,30 @@ const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
 // Width of the left status margin: glyph + trailing space.
 const STATUS_MARGIN_W = 2;
 
+// Remote/cloud facet glyphs — a per-backend mark prepended to a session row
+// when it has a `remote` facet (ssh / kubernetes / devcontainer). Local
+// sessions have no facet, so their rows are untouched.
+const REMOTE_GLYPH: Record<SessionBackend, string> = {
+  local: "",
+  ssh: "⇅",
+  kubernetes: "⎈",
+  devcontainer: "⬢",
+};
+
+// Theme colour for a remote facet's state.
+function remoteStateFg(state: "starting" | "running" | "stopped" | "error"): string {
+  switch (state) {
+    case "running":
+      return "diagnostic.info_fg";
+    case "starting":
+      return "diagnostic.warning_fg";
+    case "error":
+      return "ui.status_error_indicator_fg";
+    case "stopped":
+      return "ui.menu_disabled_fg";
+  }
+}
+
 // =============================================================================
 // Open dialog — widget-based session picker (Phase 1 of the
 // open-dialog redesign; see docs/internal/
@@ -1155,22 +1221,38 @@ function renderPillSpec(
     text: s.label,
     style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
   };
+  // Remote/cloud facet glyph (ssh ⇅ / kubernetes ⎈ / devcontainer ⬢), coloured
+  // by the remote state, sits just before the name. Local sessions have none,
+  // so their rows render exactly as before (the facet is backend-opaque).
+  const remoteGlyph: Entry[] = s.remote
+    ? [{
+        text: REMOTE_GLYPH[s.remote.kind] + " ",
+        style: { fg: remoteStateFg(s.remote.state), bold: true },
+      }]
+    : [];
   const proj = editor.pathBasename(projectKeyOf(s));
   const projEntries: Entry[] = [
     { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
+  // For a remote session, surface the backend target (host / ns·pod) on the right.
+  if (s.remote) {
+    projEntries.push({
+      text: "  " + s.remote.detail,
+      style: { fg: remoteStateFg(s.remote.state), italic: true },
+    });
+  }
   const git = gitLineParts(s);
 
-  // Compact: one un-boxed line — glyph + name on the left, the compact
-  // git summary right-aligned. Branch, project tag, and PR badge are
+  // Compact: one un-boxed line — glyph + (facet) + name on the left, the
+  // compact git summary right-aligned. Branch, project tag, and PR badge are
   // dropped (that's the "compact" trade).
   if (dockMode && dockView === "compact") {
-    return flexLine([stateGlyphEntry(s), nameEntry], git.right);
+    return flexLine([stateGlyphEntry(s), ...remoteGlyph, nameEntry], git.right);
   }
 
-  // Card line 1, left: state glyph · NAME. In the modal picker keep the
-  // multi-select checkbox between them (Space/click bulk-select); the
+  // Card line 1, left: state glyph · [facet] · NAME. In the modal picker keep
+  // the multi-select checkbox between them (Space/click bulk-select); the
   // dock drops it.
   const left: Entry[] = [stateGlyphEntry(s)];
   if (!dockMode) {
@@ -1182,6 +1264,7 @@ function renderPillSpec(
         : { fg: "ui.menu_disabled_fg" },
     });
   }
+  left.push(...remoteGlyph);
   left.push(nameEntry);
 
   const children: WidgetSpec[] = [
@@ -3596,12 +3679,27 @@ function rebuildFormFocusCycle(): void {
     formFocusIndex = 0;
     return;
   }
-  const worktreeEnabled = form.projectPathIsGit !== false;
-  const branchInert = !(worktreeEnabled && form.createWorktree);
-  const cycle: string[] = ["project_path"];
-  if (worktreeEnabled) cycle.push("worktree");
-  cycle.push("name", "cmd");
-  if (!branchInert) cycle.push("branch");
+  // Tab cycle starts with the "Run in:" type tabs, then the active backend's
+  // fields, then the shared Session Name / Agent Command, then the buttons.
+  const cycle: string[] = SESSION_BACKENDS.map((b) => b.key);
+  if (form.backend === "local") {
+    const worktreeEnabled = form.projectPathIsGit !== false;
+    const branchInert = !(worktreeEnabled && form.createWorktree);
+    cycle.push("project_path");
+    if (worktreeEnabled) cycle.push("worktree");
+    cycle.push("name", "cmd");
+    if (!branchInert) cycle.push("branch");
+  } else if (form.backend === "devcontainer") {
+    cycle.push("project_path", "name", "cmd");
+  } else if (form.backend === "ssh") {
+    cycle.push("ssh_host", "ssh_path", "ssh_identity", "name", "cmd");
+  } else if (form.backend === "kubernetes") {
+    cycle.push("k8s_target");
+    if (form.k8sTarget.value.trim().length === 0) {
+      cycle.push("k8s_context", "k8s_namespace", "k8s_pod", "k8s_workspace");
+    }
+    cycle.push("name", "cmd");
+  }
   cycle.push("cancel", "create");
   formFocusCycle = cycle;
   if (formFocusIndex >= cycle.length) formFocusIndex = 0;
@@ -4061,24 +4159,124 @@ const HEADER_LABEL_STYLE = { fg: "ui.menu_active_fg", bold: true } as const;
 const SUBTITLE_LABEL_STYLE = { fg: "ui.menu_disabled_fg" } as const;
 const SUBTITLE_VALUE_STYLE = { fg: "ui.help_key_fg", bold: true } as const;
 
-function buildFormSpec(): WidgetSpec {
-  if (!form) return col();
+// === New Session: session-type ("Run in:") tabs + per-backend fields =======
 
-  // Worktree-toggle enable state. The checkbox is disabled
-  // (rendered without a `key` so the host skips it in the tab
-  // cycle, and the label gets a `(disabled — non-git)` suffix)
-  // when the resolved Project Path is not inside a git working
-  // tree. `null` (probe in flight) keeps it in its last-known
-  // state — no flicker on rapid typing.
+// Switch the New Session form to a different backend tab: swap the body,
+// rebuild the Tab cycle, and land focus back on the chosen tab so repeated
+// Tab/Enter or ←/→ feels stable.
+function selectBackend(backend: SessionBackend): void {
+  if (!form || !formPanel || form.backend === backend) return;
+  form.backend = backend;
+  form.lastError = null;
+  closeCompletion();
+  renderForm();
+  const tab = SESSION_BACKENDS.find((b) => b.id === backend);
+  if (tab) {
+    formPanel.setFocusKey(tab.key);
+    snapFormFocusTo(tab.key);
+  }
+}
+
+// The first focusable input of a backend's body — where Enter on the active
+// tab dives to (skipping the other tab buttons).
+function firstBodyFieldKey(backend: SessionBackend): string {
+  switch (backend) {
+    case "local":
+    case "devcontainer":
+      return "project_path";
+    case "ssh":
+      return "ssh_host";
+    case "kubernetes":
+      return "k8s_target";
+  }
+}
+
+// "Run in:" tab row. One button per backend; the active one is `primary`. The
+// body below (`backendBodyFields`) swaps to match. The tab buttons carry keys
+// (`type-local` …) so they sit in the form's Tab cycle; ←/→ also switches.
+function backendTabsRow(): WidgetSpec {
+  const sel: SessionBackend = form ? form.backend : "local";
+  const parts: WidgetSpec[] = [
+    {
+      kind: "raw",
+      entries: [styledRow([{ text: "Run in:", style: { fg: "ui.menu_disabled_fg" } }])],
+    },
+  ];
+  for (const b of SESSION_BACKENDS) {
+    parts.push(spacer(1));
+    parts.push(button(b.label, { key: b.key, intent: b.id === sel ? "primary" : undefined }));
+  }
+  parts.push(flexSpacer());
+  parts.push({
+    kind: "raw",
+    entries: [styledRow([{ text: "←/→ switch type", style: { fg: "ui.menu_disabled_fg", italic: true } }])],
+  });
+  return row(...parts);
+}
+
+// Local backend: Project Path + worktree toggle + linked-worktree hint.
+function localBodyFields(): WidgetSpec[] {
+  if (!form) return [];
   const worktreeEnabled = form.projectPathIsGit !== false;
   const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
-  const branchInert = !effectiveCreateWorktree;
+  const fields: WidgetSpec[] = [
+    labeledSection({
+      label: "Project Path",
+      child: text({
+        value: form.projectPath.value,
+        cursorByte: form.projectPath.cursor,
+        placeholder: form.defaultProjectPath || "detecting project root…",
+        fullWidth: true,
+        key: "project_path",
+      }),
+    }),
+    worktreeEnabled
+      ? toggle(effectiveCreateWorktree, "Create a new git worktree for this session", {
+          key: "worktree",
+        })
+      : {
+          kind: "raw",
+          entries: [
+            styledRow([
+              {
+                text: "[ ] Create a new git worktree for this session",
+                style: { fg: "editor.whitespace_indicator_fg" },
+              },
+              {
+                text: "  (disabled — non-git)",
+                style: { fg: "editor.whitespace_indicator_fg", italic: true },
+              },
+            ]),
+          ],
+        },
+  ];
+  if (form.projectPathIsLinkedWorktree === true) {
+    fields.push({
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: form.createWorktree
+              ? "  ↳ existing worktree here — uncheck to attach instead of forking a new one"
+              : "  ↳ existing worktree — this session will attach to it",
+            style: { fg: "ui.help_key_fg", italic: true },
+          },
+        ]),
+      ],
+    });
+  }
+  return fields;
+}
 
-  // Branch placeholder: surface origin/main, fall back to a
-  // contextual hint when no origin is configured, and become
-  // inert when worktree creation is off.
+// Local-only Branch field — the fork point for `git worktree add`.
+function localBranchSection(): WidgetSpec {
+  const worktreeEnabled = !!form && form.projectPathIsGit !== false;
+  const effectiveCreateWorktree = !!form && worktreeEnabled && form.createWorktree;
+  const branchInert = !effectiveCreateWorktree;
   let branchPlaceholder: string;
-  if (branchInert) {
+  if (!form) {
+    branchPlaceholder = "";
+  } else if (branchInert) {
     branchPlaceholder = !worktreeEnabled
       ? "no git — N/A"
       : form.projectPathIsLinkedWorktree === true
@@ -4091,6 +4289,174 @@ function buildFormSpec(): WidgetSpec {
   } else {
     branchPlaceholder = form.defaultBranch;
   }
+  return labeledSection({
+    label: "Branch",
+    child: text({
+      value: form ? form.branch.value : "",
+      cursorByte: form ? form.branch.cursor : 0,
+      placeholder: branchPlaceholder,
+      fullWidth: true,
+      key: branchInert ? undefined : "branch",
+    }),
+  });
+}
+
+// Devcontainer backend: a Project Path that contains a `.devcontainer/`.
+function devcontainerBodyFields(): WidgetSpec[] {
+  if (!form) return [];
+  return [
+    labeledSection({
+      label: "Project Path",
+      child: text({
+        value: form.projectPath.value,
+        cursorByte: form.projectPath.cursor,
+        placeholder: form.defaultProjectPath || "path containing .devcontainer/…",
+        fullWidth: true,
+        key: "project_path",
+      }),
+    }),
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: "  ⓘ runs `devcontainer up`, then attaches (docker exec)",
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          },
+        ]),
+      ],
+    },
+  ];
+}
+
+// SSH backend: host (`user@host[:port]`), remote path, optional identity file.
+function sshBodyFields(): WidgetSpec[] {
+  if (!form) return [];
+  return [
+    labeledSection({
+      label: "Host  (user@host[:port])",
+      child: text({
+        value: form.sshHost.value,
+        cursorByte: form.sshHost.cursor,
+        placeholder: "deploy@build-01  ·  or paste ssh://host/path",
+        fullWidth: true,
+        key: "ssh_host",
+      }),
+    }),
+    labeledSection({
+      label: "Remote Path",
+      child: text({
+        value: form.sshPath.value,
+        cursorByte: form.sshPath.cursor,
+        placeholder: "/srv/project  (blank = remote home)",
+        fullWidth: true,
+        key: "ssh_path",
+      }),
+    }),
+    labeledSection({
+      label: "Identity file (optional)",
+      child: text({
+        value: form.sshIdentity.value,
+        cursorByte: form.sshIdentity.cursor,
+        placeholder: "~/.ssh/id_ed25519",
+        fullWidth: true,
+        key: "ssh_identity",
+      }),
+    }),
+  ];
+}
+
+// Kubernetes backend: a saved target, or explicit context/namespace/pod/ws.
+function k8sBodyFields(): WidgetSpec[] {
+  if (!form) return [];
+  const hasTarget = form.k8sTarget.value.trim().length > 0;
+  const fields: WidgetSpec[] = [
+    labeledSection({
+      label: "Target  (.fresh/k8s.json — optional)",
+      child: text({
+        value: form.k8sTarget.value,
+        cursorByte: form.k8sTarget.cursor,
+        placeholder: "named target, or leave blank to attach explicitly ↓",
+        fullWidth: true,
+        key: "k8s_target",
+      }),
+    }),
+  ];
+  if (!hasTarget) {
+    fields.push(
+      labeledSection({
+        label: "Context  (kubeconfig — optional)",
+        child: text({
+          value: form.k8sContext.value,
+          cursorByte: form.k8sContext.cursor,
+          placeholder: "current-context",
+          fullWidth: true,
+          key: "k8s_context",
+        }),
+      }),
+      labeledSection({
+        label: "Namespace",
+        child: text({
+          value: form.k8sNamespace.value,
+          cursorByte: form.k8sNamespace.cursor,
+          placeholder: "default",
+          fullWidth: true,
+          key: "k8s_namespace",
+        }),
+      }),
+      labeledSection({
+        label: "Pod",
+        child: text({
+          value: form.k8sPod.value,
+          cursorByte: form.k8sPod.cursor,
+          placeholder: "pod name (kubectl get pods)",
+          fullWidth: true,
+          key: "k8s_pod",
+        }),
+      }),
+      labeledSection({
+        label: "Workspace path",
+        child: text({
+          value: form.k8sWorkspace.value,
+          cursorByte: form.k8sWorkspace.cursor,
+          placeholder: "/workspace",
+          fullWidth: true,
+          key: "k8s_workspace",
+        }),
+      }),
+    );
+  }
+  fields.push({
+    kind: "raw",
+    entries: [
+      styledRow([
+        {
+          text: "  ⓘ kubectl exec into the pod — any cluster (EKS/GKE/AKS/k3d)",
+          style: { fg: "ui.menu_disabled_fg", italic: true },
+        },
+      ]),
+    ],
+  });
+  return fields;
+}
+
+// The backend-specific top fields, chosen by the active "Run in:" tab.
+function backendBodyFields(): WidgetSpec[] {
+  if (!form) return [];
+  switch (form.backend) {
+    case "local":
+      return localBodyFields();
+    case "devcontainer":
+      return devcontainerBodyFields();
+    case "ssh":
+      return sshBodyFields();
+    case "kubernetes":
+      return k8sBodyFields();
+  }
+}
+
+function buildFormSpec(): WidgetSpec {
+  if (!form) return col();
 
   const children: WidgetSpec[] = [
     // === Header: centered title (no stale `Review Synthesized`). =
@@ -4109,78 +4475,14 @@ function buildFormSpec(): WidgetSpec {
       flexSpacer(),
     ),
     spacer(0),
-    // === Project Path: the new top-of-form field. ================
-    // Placeholder surfaces the resolved canonical repo root (or
-    // editor cwd for non-git launches). Empty submit uses the
-    // placeholder verbatim, so the user can land on a sensible
-    // default just by pressing Enter through the form.
-    // The completion popup hangs off the bottom of this Text
-    // widget — host-rendered chrome, no separate widget. The
-    // plugin pushes candidates via `formPanel.setCompletions`
-    // and reacts to the `completion_accept` event when the user
-    // hits Tab; the labeledSection wrapper extends its side
-    // borders down through the popup automatically.
-    labeledSection({
-      label: "Project Path",
-      child: text({
-        value: form.projectPath.value,
-        cursorByte: form.projectPath.cursor,
-        placeholder: form.defaultProjectPath || "detecting project root…",
-        fullWidth: true,
-        key: "project_path",
-      }),
-    }),
-    // === Worktree toggle. ========================================
-    // Enabled only when the Project Path resolves to a git work
-    // tree. When disabled, render with a dim-fg `raw` row using
-    // the same `[ ] / [v]` glyph (so the user still recognises
-    // it as a checkbox) and append a `(disabled — non-git)`
-    // suffix. The raw row has no `key`, so it stays out of the
-    // Tab cycle and Space-to-toggle has nothing to land on.
-    worktreeEnabled
-      ? toggle(
-          effectiveCreateWorktree,
-          "Create a new git worktree for this session",
-          { key: "worktree" },
-        )
-      : {
-          kind: "raw",
-          entries: [
-            styledRow([
-              {
-                text: "[ ] Create a new git worktree for this session",
-                style: { fg: "editor.whitespace_indicator_fg" },
-              },
-              {
-                text: "  (disabled — non-git)",
-                style: { fg: "editor.whitespace_indicator_fg", italic: true },
-              },
-            ]),
-          ],
-        },
-    // Existing-worktree hint: when Project Path points at a linked
-    // worktree, explain what the (un)checked box now means so the
-    // attach behaviour isn't a silent surprise.
-    ...(form.projectPathIsLinkedWorktree === true
-      ? [{
-          kind: "raw" as const,
-          entries: [
-            styledRow([
-              {
-                text: form.createWorktree
-                  ? "  ↳ existing worktree here — uncheck to attach instead of forking a new one"
-                  : "  ↳ existing worktree — this session will attach to it",
-                style: { fg: "ui.help_key_fg", italic: true },
-              },
-            ]),
-          ],
-        }]
-      : []),
-    // === Form body: labeled, full-width inputs. ==================
-    // Labels are plain — the `▸` glyph used to be baked into all
-    // three strings and stayed put regardless of focus, which was
-    // misleading. The input's own focused-bg styling (set by the
-    // host based on the panel's focus_key) is the authoritative
+    // === "Run in:" session-type tabs. ============================
+    backendTabsRow(),
+    spacer(0),
+    // === Backend-specific top fields (swap with the tab). ========
+    ...backendBodyFields(),
+    // === Shared fields: Session Name + Agent Command. ============
+    // Labels are plain — the input's own focused-bg styling (set by
+    // the host based on the panel's focus_key) is the authoritative
     // focus cue.
     labeledSection({
       label: "Session Name",
@@ -4213,20 +4515,11 @@ function buildFormSpec(): WidgetSpec {
         key: "cmd",
       }),
     }),
-    labeledSection({
-      label: "Branch",
-      child: text({
-        value: form.branch.value,
-        cursorByte: form.branch.cursor,
-        placeholder: branchPlaceholder,
-        fullWidth: true,
-        // Drop the key when the branch field is inert so Tab
-        // skips it — there's no `git worktree add` to apply
-        // it to.
-        key: branchInert ? undefined : "branch",
-      }),
-    }),
   ];
+  // Branch is local-only (the fork point for `git worktree add`).
+  if (form.backend === "local") {
+    children.push(localBranchSection());
+  }
   if (form.lastError) {
     children.push(spacer(0));
     children.push({
@@ -4297,6 +4590,15 @@ function openForm(options?: { fromPicker?: boolean }): void {
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
+    backend: "local",
+    sshHost: { value: "", cursor: 0 },
+    sshPath: { value: "", cursor: 0 },
+    sshIdentity: { value: "", cursor: 0 },
+    k8sTarget: { value: "", cursor: 0 },
+    k8sContext: { value: "", cursor: 0 },
+    k8sNamespace: { value: "", cursor: 0 },
+    k8sPod: { value: "", cursor: 0 },
+    k8sWorkspace: { value: "", cursor: 0 },
     projectPath: { value: "", cursor: 0 },
     name: { value: "", cursor: 0 },
     // Empty value — `lastCmd` shows as the placeholder. If the
@@ -4722,8 +5024,134 @@ function cancelForm(): void {
   }
 }
 
+// Submit path for the non-local backends.
+//   ssh          → a new window whose agent terminal lives on the remote host
+//                  (`ssh -t … user@host`); the editor side stays local.
+//   kubernetes   → attaches the editor into the pod via `kubectl exec` (the
+//                  existing global `attachRemoteAgent`; reconnects on restart).
+//   devcontainer → routed to its dedicated command.
+// Warm per-window remote sessions that sit *beside* local ones (rather than
+// retargeting the whole editor) are the follow-up — see Gap B in
+// docs/internal/NEW_SESSION_DIALOG_WIREFRAMES.md.
+async function submitRemoteForm(backend: SessionBackend): Promise<void> {
+  if (!form) return;
+  const fail = (msg: string): void => {
+    if (!form) return;
+    form.submitting = false;
+    form.lastError = msg;
+    editor.setStatus(`Orchestrator: ${msg}`);
+    renderForm();
+  };
+  const sessionName = form.name.value.trim();
+  const cmd = form.cmd.value.trim() || form.lastCmd.trim();
+
+  if (backend === "kubernetes") {
+    const target = form.k8sTarget.value.trim();
+    const namespace = form.k8sNamespace.value.trim();
+    const pod = form.k8sPod.value.trim();
+    if (target && !pod) {
+      fail(
+        "Named .fresh/k8s.json targets — use “K8s: Connect Workspace” (full provider support). Inline attach needs an explicit Pod.",
+      );
+      return;
+    }
+    if (!namespace || !pod) {
+      fail("Kubernetes: Namespace and Pod are required (or use “K8s: Connect Workspace”).");
+      return;
+    }
+    const spec: RemoteAgentSpec = {
+      transport: {
+        kind: "kubectl-exec",
+        context: form.k8sContext.value.trim() || null,
+        namespace,
+        pod,
+        container: null,
+        workspace: form.k8sWorkspace.value.trim() || null,
+      },
+      base_env: [],
+    };
+    closeForm();
+    editor.setStatus(`Orchestrator: attaching to pod ${namespace}/${pod}…`);
+    // Global attach: the editor reconnects into the pod (restart). Fire-and-forget.
+    editor.attachRemoteAgent(spec);
+    return;
+  }
+
+  if (backend === "ssh") {
+    let host = form.sshHost.value.trim();
+    if (host.startsWith("ssh://")) host = host.slice("ssh://".length);
+    if (!host) {
+      fail("SSH: Host (user@host) is required.");
+      return;
+    }
+    const args: string[] = ["-t"];
+    const portMatch = host.match(/^(.+):(\d+)$/);
+    if (portMatch) {
+      host = portMatch[1];
+      args.push("-p", portMatch[2]);
+    }
+    const identity = form.sshIdentity.value.trim();
+    if (identity) args.push("-i", identity);
+    args.push(host);
+    const path = form.sshPath.value.trim();
+    const remoteShell = cmd || 'exec "$SHELL" -l';
+    const remoteCmd = path
+      ? `cd '${path.replace(/'/g, "'\\''")}' && ${remoteShell}`
+      : remoteShell;
+    args.push(remoteCmd);
+    const argv = ["ssh", ...args];
+    const label = sessionName || `ssh:${host}`;
+    const root = editor.getCwd();
+    if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
+    closeForm();
+    try {
+      const result = await editor.createWindowWithTerminal({
+        root,
+        label,
+        cwd: root,
+        command: argv,
+        title: `ssh:${host}`,
+      });
+      const tracked: AgentSession = {
+        id: result.windowId,
+        label,
+        root,
+        projectPath: root,
+        sharedWorktree: true,
+        terminalId: result.terminalId,
+        state: "idle",
+        lastOutputAt: null,
+        createdAt: Date.now(),
+        remote: { kind: "ssh", detail: host, state: "running" },
+      };
+      orchestratorSessions.set(result.windowId, tracked);
+      if (openPanel && dockMode) refreshOpenDialog();
+      editor.setStatus(`Orchestrator: SSH session to ${host}`);
+    } catch (e) {
+      editor.setStatus(
+        `Orchestrator: SSH session failed — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return;
+  }
+
+  // devcontainer — no runtime plugin-to-plugin attach yet; point at the
+  // dedicated command (the devcontainer plugin owns `devcontainer up` + the
+  // docker-exec authority).
+  fail(
+    "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer sessions are coming next.)",
+  );
+}
+
 async function submitForm(): Promise<void> {
   if (!form || form.submitting) return;
+  // Remote/cloud backends take their own submit path (they attach through the
+  // Authority seam instead of forking a local worktree). Local stays the
+  // original flow below.
+  if (form.backend !== "local") {
+    await submitRemoteForm(form.backend);
+    return;
+  }
   form.submitting = true;
   form.lastError = null;
   renderForm();
@@ -5078,8 +5506,24 @@ registerHandler(
 registerHandler("orchestrator_form_key_delete", () => dispatchFormKey("Delete"));
 registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
 registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
-registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
-registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
+// When a "Run in:" type tab is focused, ←/→ moves between tabs (switching the
+// backend) rather than a text cursor. Returns true if it consumed the key.
+function switchTabIfFocused(delta: 1 | -1): boolean {
+  if (!form) return false;
+  const idx = SESSION_BACKENDS.findIndex((b) => b.key === formFocusedKey());
+  if (idx < 0) return false;
+  const next = (idx + delta + SESSION_BACKENDS.length) % SESSION_BACKENDS.length;
+  selectBackend(SESSION_BACKENDS[next].id);
+  return true;
+}
+registerHandler("orchestrator_form_key_left", () => {
+  if (switchTabIfFocused(-1)) return;
+  dispatchFormKey("Left");
+});
+registerHandler("orchestrator_form_key_right", () => {
+  if (switchTabIfFocused(1)) return;
+  dispatchFormKey("Right");
+});
 registerHandler("orchestrator_form_key_up", () => {
   // Popup-open: dispatch straight through so the host moves
   // the popup-selection cursor.
@@ -5233,6 +5677,22 @@ editor.on("widget_event", (e) => {
         ? form.cmd
         : field === "branch"
         ? form.branch
+        : field === "ssh_host"
+        ? form.sshHost
+        : field === "ssh_path"
+        ? form.sshPath
+        : field === "ssh_identity"
+        ? form.sshIdentity
+        : field === "k8s_target"
+        ? form.k8sTarget
+        : field === "k8s_context"
+        ? form.k8sContext
+        : field === "k8s_namespace"
+        ? form.k8sNamespace
+        : field === "k8s_pod"
+        ? form.k8sPod
+        : field === "k8s_workspace"
+        ? form.k8sWorkspace
         : null;
       if (slot) {
         slot.value = value;
@@ -5255,6 +5715,13 @@ editor.on("widget_event", (e) => {
         // Any other field's change implicitly closes the
         // dropdown (the user moved on).
         closeCompletion();
+        // The Kubernetes "Target" field toggles whether the explicit
+        // context/namespace/pod/workspace inputs are shown, so a change
+        // here re-lays-out the body and the Tab cycle.
+        if (field === "k8s_target") {
+          rebuildFormFocusCycle();
+          renderForm();
+        }
       }
       return;
     }
@@ -5290,6 +5757,22 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
+      // "Run in:" type tabs. Enter/click on a *different* tab switches the
+      // backend; on the *already-active* tab it means "move on" — advance
+      // focus into the body (otherwise Enter would dead-end on the tab).
+      const tab = SESSION_BACKENDS.find((b) => b.key === e.widget_key);
+      if (tab) {
+        if (form.backend !== tab.id) {
+          selectBackend(tab.id);
+        } else if (formPanel) {
+          // Already on this tab — Enter means "dive into the fields": jump
+          // past the other tab buttons straight to this backend's first input.
+          const firstField = firstBodyFieldKey(form.backend);
+          formPanel.setFocusKey(firstField);
+          snapFormFocusTo(firstField);
+        }
+        return;
+      }
       if (e.widget_key === "create") {
         void submitForm();
       } else if (e.widget_key === "cancel") {
