@@ -243,12 +243,17 @@ const REMOTE_AGENT_SPEC_DECL: &str = r#"type RemoteAgentTransport = {
   workspace?: string | null;
 } | {
   kind: "ssh";
-  user: string;
+  /** Login user. Optional — omit for `host` / `ssh://host`, letting ssh pick
+  * the user from its own config or the current local user. */
+  user?: string | null;
   host: string;
   port?: number | null;
   identity_file?: string | null;
   /** Remote directory to root the session at. */
   remote_path?: string | null;
+  /** Extra `ssh` arguments (e.g. `-J jump`, `-o ProxyCommand=…`) applied to
+  * every ssh invocation for this session. */
+  extra_args?: string[];
 };
 
 type RemoteAgentSpec = {

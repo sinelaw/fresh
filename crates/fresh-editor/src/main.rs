@@ -1360,10 +1360,11 @@ fn connect_remote(
         .context("Failed to create Tokio runtime for remote connection")?;
 
     let connection_params = remote::ConnectionParams {
-        user: remote.user.clone(),
+        user: Some(remote.user.clone()),
         host: remote.host.clone(),
         port: remote.port,
         identity_file: None,
+        extra_args: Vec::new(),
     };
 
     match remote.port {

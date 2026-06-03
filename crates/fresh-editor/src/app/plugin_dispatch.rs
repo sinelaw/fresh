@@ -3477,17 +3477,21 @@ impl Editor {
                 port,
                 identity_file,
                 remote_path,
+                extra_args,
             } => {
                 let _ = base_env; // SSH probes its own env on the remote host.
                 let params = crate::services::remote::ConnectionParams {
-                    user: user.clone(),
+                    user: user.clone().filter(|u| !u.is_empty()),
                     host: host.clone(),
                     port,
                     identity_file: identity_file.map(std::path::PathBuf::from),
+                    extra_args,
                 };
+                // Label: `user@host` when a user was given, else bare `host`.
+                let target = params.ssh_target();
                 let label = match port {
-                    Some(p) => format!("ssh:{user}@{host}:{p}"),
-                    None => format!("ssh:{user}@{host}"),
+                    Some(p) => format!("ssh:{target}:{p}"),
+                    None => format!("ssh:{target}"),
                 };
                 let workspace = remote_path.clone().map(std::path::PathBuf::from);
                 let mode = mode_for(&label);

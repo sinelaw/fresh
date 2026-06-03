@@ -579,7 +579,10 @@ pub enum RemoteTransportSpec {
     /// `fresh user@host:path` flow, exposed at runtime so the Orchestrator can
     /// open an SSH session as a born-attached window.
     Ssh {
-        user: String,
+        /// Login user. Optional — omit for `host` / `ssh://host`, letting ssh
+        /// resolve the user from its own config or the current local user.
+        #[serde(default)]
+        user: Option<String>,
         host: String,
         #[serde(default)]
         port: Option<u16>,
@@ -588,6 +591,10 @@ pub enum RemoteTransportSpec {
         /// Remote directory to root the session at (terminal `cd` target).
         #[serde(default)]
         remote_path: Option<String>,
+        /// Extra `ssh` arguments (e.g. `-J jump`, `-o ProxyCommand=…`) applied
+        /// to every ssh invocation for this session.
+        #[serde(default)]
+        extra_args: Vec<String>,
     },
 }
 

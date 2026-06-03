@@ -858,7 +858,8 @@ fn build_ssh_args(
         a.push("-i".to_string());
         a.push(identity.to_string_lossy().into_owned());
     }
-    a.push(format!("{}@{}", params.user, params.host));
+    a.extend(params.extra_args.iter().cloned());
+    a.push(params.ssh_target());
     a.push(remote_cmd.to_string());
     a
 }
@@ -894,7 +895,8 @@ pub fn build_ssh_terminal_args(
         a.push("-i".to_string());
         a.push(identity.to_string_lossy().into_owned());
     }
-    a.push(format!("{}@{}", params.user, params.host));
+    a.extend(params.extra_args.iter().cloned());
+    a.push(params.ssh_target());
 
     // Land in the workspace (when known), then hand control to the user's
     // login shell. `remote_dir` is whatever path the URL pointed at, which
@@ -1266,10 +1268,11 @@ mod tests {
     #[test]
     fn build_ssh_args_full() {
         let params = crate::services::remote::ConnectionParams {
-            user: "u".into(),
+            user: Some("u".into()),
             host: "h".into(),
             port: Some(2222),
             identity_file: Some(std::path::PathBuf::from("/k")),
+            extra_args: Vec::new(),
         };
         let a = build_ssh_args(&params, "echo hi");
         let expected: Vec<String> = [
@@ -1291,12 +1294,40 @@ mod tests {
     }
 
     #[test]
+    fn build_ssh_args_omits_user_and_threads_extra_args() {
+        // No user → bare host target; extra args land verbatim before it.
+        let params = crate::services::remote::ConnectionParams {
+            user: None,
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: vec!["-J".into(), "jump".into()],
+        };
+        let a = build_ssh_args(&params, "echo hi");
+        let expected: Vec<String> = [
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-J",
+            "jump",
+            "h",
+            "echo hi",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+    }
+
+    #[test]
     fn build_ssh_terminal_args_forces_tty_and_login_shell() {
         let params = crate::services::remote::ConnectionParams {
-            user: "u".into(),
+            user: Some("u".into()),
             host: "h".into(),
             port: Some(2222),
             identity_file: Some(std::path::PathBuf::from("/k")),
+            extra_args: Vec::new(),
         };
         let a = build_ssh_terminal_args(&params, Some("/proj dir"));
         let expected: Vec<String> = [
@@ -1321,10 +1352,11 @@ mod tests {
     #[test]
     fn build_ssh_terminal_args_without_dir_skips_cd() {
         let params = crate::services::remote::ConnectionParams {
-            user: "u".into(),
+            user: Some("u".into()),
             host: "h".into(),
             port: None,
             identity_file: None,
+            extra_args: Vec::new(),
         };
         let a = build_ssh_terminal_args(&params, None);
         assert_eq!(

@@ -241,11 +241,13 @@ interface NewSessionForm {
   // which field set `buildFormSpec` renders and which submit path runs.
   backend: SessionBackend;
   // --- SSH backend fields (rendered only when backend === "ssh") ---
-  // Host as `user@host[:port]` (also accepts a pasted `ssh://…`); remote path
-  // to root the session at; optional identity file.
+  // Host as `host`, `user@host[:port]`, or a pasted `ssh://…` (user optional);
+  // remote path to root the session at; optional identity file; and free-form
+  // extra ssh arguments (e.g. `-J jump`, `-o ProxyCommand=…`).
   sshHost: { value: string; cursor: number };
   sshPath: { value: string; cursor: number };
   sshIdentity: { value: string; cursor: number };
+  sshOptions: { value: string; cursor: number };
   // --- Kubernetes backend fields (rendered only when backend ===
   // "kubernetes") ---. `k8sTarget` names a target from `.fresh/k8s.json`;
   // when empty, the explicit context/namespace/pod/workspace fields are used
@@ -306,14 +308,6 @@ interface NewSessionForm {
   // placeholder as `HEAD  (no origin configured)` so the user
   // knows why.
   defaultBranchIsHeadFallback: boolean;
-  // Previously-submitted Agent Command (persisted across editor
-  // sessions via `orchestrator.last_cmd`). Rendered as the cmd
-  // field's *placeholder*, and used as the actual command when
-  // the user leaves the field blank — submitting "" with a
-  // visible placeholder of "python3" was confusing because the
-  // host ignored the hint and spawned a bare shell. Now the
-  // placeholder is the command if the value is empty.
-  lastCmd: string;
   // True when this form was opened from the picker (Alt+N or
   // the "+ New Session" button). On cancel (Esc / Cancel
   // button) we re-open the picker so the user lands back where
@@ -3770,7 +3764,7 @@ function rebuildFormFocusCycle(): void {
   } else if (form.backend === "devcontainer") {
     cycle.push("project_path", "name", "cmd");
   } else if (form.backend === "ssh") {
-    cycle.push("ssh_host", "ssh_path", "ssh_identity", "name", "cmd");
+    cycle.push("ssh_host", "ssh_path", "ssh_identity", "ssh_options", "name", "cmd");
   } else if (form.backend === "kubernetes") {
     cycle.push("k8s_target");
     if (form.k8sTarget.value.trim().length === 0) {
@@ -4407,16 +4401,17 @@ function devcontainerBodyFields(): WidgetSpec[] {
   ];
 }
 
-// SSH backend: host (`user@host[:port]`), remote path, optional identity file.
+// SSH backend: host (`[user@]host[:port]`), remote path, optional identity
+// file, and free-form extra ssh arguments.
 function sshBodyFields(): WidgetSpec[] {
   if (!form) return [];
   return [
     labeledSection({
-      label: "Host  (user@host[:port])",
+      label: "Host  ([user@]host[:port])",
       child: text({
         value: form.sshHost.value,
         cursorByte: form.sshHost.cursor,
-        placeholder: "deploy@build-01  ·  or paste ssh://host/path",
+        placeholder: "build-01  ·  deploy@build-01:22  ·  or paste ssh://host/path",
         fullWidth: true,
         key: "ssh_host",
       }),
@@ -4439,6 +4434,16 @@ function sshBodyFields(): WidgetSpec[] {
         placeholder: "~/.ssh/id_ed25519",
         fullWidth: true,
         key: "ssh_identity",
+      }),
+    }),
+    labeledSection({
+      label: "SSH options (optional)",
+      child: text({
+        value: form.sshOptions.value,
+        cursorByte: form.sshOptions.cursor,
+        placeholder: "-J jump-host  ·  -o ProxyCommand=…  (passed to every ssh call)",
+        fullWidth: true,
+        key: "ssh_options",
       }),
     }),
   ];
@@ -4581,14 +4586,12 @@ function buildFormSpec(): WidgetSpec {
       child: text({
         value: form.cmd.value,
         cursorByte: form.cmd.cursor,
-        // Empty submission spawns a bare terminal — the host
-        // picks the shell with the same logic it uses for any
-        // other embedded terminal, so the plugin doesn't have
-        // to second-guess `$SHELL` resolution. If the user
-        // submitted a non-empty cmd in the previous run we
-        // surface it here as a hint (placeholder only — see
-        // `NewSessionForm.lastCmd`).
-        placeholder: form.lastCmd || "terminal",
+        // Clearing the field falls back to the backend default: a bare local
+        // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
+        // spawn the remote login shell. The placeholder names that default.
+        placeholder: form.backend === "ssh"
+          ? "remote login shell  (clear to reset)"
+          : "terminal",
         fullWidth: true,
         key: "cmd",
       }),
@@ -4696,6 +4699,7 @@ function openForm(options?: { fromPicker?: boolean }): void {
     sshHost: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
     sshIdentity: { value: "", cursor: 0 },
+    sshOptions: { value: "", cursor: 0 },
     k8sTarget: { value: "", cursor: 0 },
     k8sContext: { value: "", cursor: 0 },
     k8sNamespace: { value: "", cursor: 0 },
@@ -4703,12 +4707,12 @@ function openForm(options?: { fromPicker?: boolean }): void {
     k8sWorkspace: { value: "", cursor: 0 },
     projectPath: { value: "", cursor: 0 },
     name: { value: "", cursor: 0 },
-    // Empty value — `lastCmd` shows as the placeholder. If the
-    // user submits an empty cmd, the placeholder is used as the
-    // actual command (see `submitForm`). This makes the
-    // placeholder a genuine "press Enter to re-use this" hint
-    // rather than a visual lie.
-    cmd: { value: "", cursor: 0 },
+    // Prefill the last-used command as *actual* editable text (not a
+    // placeholder), so the field value is the single source of truth: keep it,
+    // edit it, or clear it to fall back to the backend default (a bare local
+    // terminal, or — for SSH — the remote login shell). No hidden
+    // "empty means reuse lastCmd" fallback at submit time.
+    cmd: { value: lastCmd, cursor: lastCmd.length },
     branch: { value: "", cursor: 0 },
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
@@ -4723,7 +4727,6 @@ function openForm(options?: { fromPicker?: boolean }): void {
     defaultSessionName: "",
     defaultBranch: "",
     defaultBranchIsHeadFallback: false,
-    lastCmd,
     fromPicker: !!options?.fromPicker,
     probeToken: 0,
     historyCursor: { project_path: -1, name: -1, cmd: -1, branch: -1 },
@@ -5194,7 +5197,9 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
     renderForm();
   };
   const sessionName = form.name.value.trim();
-  const cmd = form.cmd.value.trim() || form.lastCmd.trim();
+  // The field value is authoritative: empty means "use the backend default"
+  // (a bare remote/login shell), not "silently reuse the last command".
+  const cmd = form.cmd.value.trim();
 
   if (backend === "kubernetes") {
     const target = form.k8sTarget.value.trim();
@@ -5237,54 +5242,51 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
   }
 
   if (backend === "ssh") {
-    // Parse `user@host[:port]` (also tolerates a pasted `ssh://…`). The full
-    // remote-agent stack attaches over SSH — remote filesystem + LSP + an
-    // in-host terminal — as a born-attached window, not just a local `ssh`
-    // terminal.
-    let raw = form.sshHost.value.trim();
-    if (raw.startsWith("ssh://")) raw = raw.slice("ssh://".length);
-    if (!raw) {
-      fail("SSH: Host (user@host) is required.");
-      return;
-    }
-    let port: number | null = null;
+    // Parse `[user@]host[:port]` (also tolerates a pasted `ssh://…`). The user
+    // is optional — a bare `host` lets ssh resolve the user from its own
+    // config / the current user. The full remote-agent stack attaches over SSH
+    // (remote filesystem + LSP + an in-host terminal) as a born-attached
+    // window, not just a local `ssh` terminal.
+    const raw = form.sshHost.value.trim().replace(/^ssh:\/\//, "");
+    // Split an optional `:port` suffix, then an optional `user@` prefix —
+    // computed up front so there are no half-parsed intermediate values.
     const portMatch = raw.match(/^(.+):(\d+)$/);
-    if (portMatch) {
-      raw = portMatch[1];
-      port = parseInt(portMatch[2], 10);
-    }
-    let user = "";
-    let host = raw;
-    const at = raw.indexOf("@");
-    if (at >= 0) {
-      user = raw.slice(0, at);
-      host = raw.slice(at + 1);
-    }
-    if (!user) {
-      fail("SSH: a user is required — use user@host.");
+    const port = portMatch ? parseInt(portMatch[2], 10) : null;
+    const hostPart = portMatch ? portMatch[1] : raw;
+    const at = hostPart.indexOf("@");
+    const user = at > 0 ? hostPart.slice(0, at) : undefined;
+    const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
+    if (!host) {
+      fail("SSH: a host is required (host, user@host, or ssh://host).");
       return;
     }
     const identity = form.sshIdentity.value.trim();
     const remotePath = form.sshPath.value.trim();
+    // Free-form extra ssh args, whitespace-split (e.g. `-J jump -o Foo=bar`).
+    const extraArgs = form.sshOptions.value.trim()
+      ? form.sshOptions.value.trim().split(/\s+/)
+      : [];
     const agentArgv = splitAgentCmd(cmd);
+    const target = user ? `${user}@${host}` : host;
     const spec: RemoteAgentSpec = {
       transport: {
         kind: "ssh",
-        user,
+        ...(user ? { user } : {}),
         host,
         port,
         identity_file: identity || null,
         remote_path: remotePath || null,
+        ...(extraArgs.length > 0 ? { extra_args: extraArgs } : {}),
       },
       base_env: [],
       window: true,
-      label: sessionName || `ssh:${user}@${host}`,
+      label: sessionName || `ssh:${target}`,
       command: agentArgv.length > 0 ? agentArgv : undefined,
     };
     if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
     await runRemoteAttach(spec, {
       kind: "ssh",
-      detail: `${user}@${host}`,
+      detail: target,
       state: "running",
     });
     return;
@@ -5311,12 +5313,10 @@ async function submitForm(): Promise<void> {
   form.lastError = null;
   renderForm();
 
-  // Honour the placeholder: when the user leaves Agent Command
-  // blank, fall back to `lastCmd` (the placeholder text). The
-  // placeholder is rendered as a hint — if the user accepts it by
-  // pressing Enter on an empty field, the dialog should actually
-  // run that command rather than silently spawning a bare shell.
-  const cmd = form.cmd.value.trim() || form.lastCmd.trim();
+  // The Agent Command field is prefilled with the last-used command as actual
+  // text (see `openForm`), so its value is authoritative: a cleared field means
+  // "spawn a bare terminal", not "silently reuse the last command".
+  const cmd = form.cmd.value.trim();
   const branchInput = form.branch.value.trim();
 
   // Project Path: typed value wins; otherwise the resolved
@@ -5838,6 +5838,8 @@ editor.on("widget_event", (e) => {
         ? form.sshPath
         : field === "ssh_identity"
         ? form.sshIdentity
+        : field === "ssh_options"
+        ? form.sshOptions
         : field === "k8s_target"
         ? form.k8sTarget
         : field === "k8s_context"

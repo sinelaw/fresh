@@ -33,15 +33,24 @@ pub enum SshError {
 /// SSH connection parameters
 #[derive(Debug, Clone)]
 pub struct ConnectionParams {
-    pub user: String,
+    /// SSH login user. `None` lets ssh pick the user (its config / the current
+    /// local user), so `host` and `ssh://host` work without a `user@`.
+    pub user: Option<String>,
     pub host: String,
     pub port: Option<u16>,
     pub identity_file: Option<PathBuf>,
+    /// Extra `ssh` arguments inserted verbatim before the target on every ssh
+    /// invocation (agent connect, reconnect, interactive terminal, LSP/probe
+    /// spawns), so options like `-J jump` or `-o ProxyCommand=…` apply end to
+    /// end rather than only to the initial connect.
+    pub extra_args: Vec<String>,
 }
 
 impl ConnectionParams {
-    /// Parse a connection string like "user@host" or "user@host:port"
+    /// Parse a connection string like `host`, `user@host`, or `user@host:port`
+    /// (a leading `ssh://` is tolerated). The user is optional.
     pub fn parse(s: &str) -> Option<Self> {
+        let s = s.strip_prefix("ssh://").unwrap_or(s);
         let (user_host, port) = if let Some((uh, p)) = s.rsplit_once(':') {
             if let Ok(port) = p.parse::<u16>() {
                 (uh, Some(port))
@@ -52,26 +61,38 @@ impl ConnectionParams {
             (s, None)
         };
 
-        let (user, host) = user_host.split_once('@')?;
-        if user.is_empty() || host.is_empty() {
+        let (user, host) = match user_host.split_once('@') {
+            Some((u, h)) => (Some(u.to_string()), h),
+            None => (None, user_host),
+        };
+        if host.is_empty() || user.as_deref() == Some("") {
             return None;
         }
 
         Some(Self {
-            user: user.to_string(),
+            user,
             host: host.to_string(),
             port,
             identity_file: None,
+            extra_args: Vec::new(),
         })
+    }
+
+    /// The ssh target argument: `user@host` when a user is set, else bare
+    /// `host` (ssh then resolves the user itself).
+    pub fn ssh_target(&self) -> String {
+        match &self.user {
+            Some(user) if !user.is_empty() => format!("{user}@{}", self.host),
+            _ => self.host.clone(),
+        }
     }
 }
 
 impl std::fmt::Display for ConnectionParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(port) = self.port {
-            write!(f, "{}@{}:{}", self.user, self.host, port)
-        } else {
-            write!(f, "{}@{}", self.user, self.host)
+        match self.port {
+            Some(port) => write!(f, "{}:{}", self.ssh_target(), port),
+            None => write!(f, "{}", self.ssh_target()),
         }
     }
 }
@@ -102,7 +123,8 @@ impl SshConnection {
             cmd.arg("-i").arg(identity);
         }
 
-        cmd.arg(format!("{}@{}", params.user, params.host));
+        cmd.args(&params.extra_args);
+        cmd.arg(params.ssh_target());
 
         // Bootstrap the agent using Python itself to read the exact byte count.
         // This avoids requiring bash or other shell utilities on the remote.
@@ -503,7 +525,8 @@ async fn establish_ssh_transport(
         cmd.arg("-i").arg(identity);
     }
 
-    cmd.arg(format!("{}@{}", params.user, params.host));
+    cmd.args(&params.extra_args);
+    cmd.arg(params.ssh_target());
 
     let agent_len = AGENT_SOURCE.len();
     let bootstrap = format!(
@@ -726,16 +749,27 @@ mod tests {
     #[test]
     fn test_parse_connection_params() {
         let params = ConnectionParams::parse("user@host").unwrap();
-        assert_eq!(params.user, "user");
+        assert_eq!(params.user.as_deref(), Some("user"));
         assert_eq!(params.host, "host");
         assert_eq!(params.port, None);
 
         let params = ConnectionParams::parse("user@host:22").unwrap();
-        assert_eq!(params.user, "user");
+        assert_eq!(params.user.as_deref(), Some("user"));
         assert_eq!(params.host, "host");
         assert_eq!(params.port, Some(22));
 
-        assert!(ConnectionParams::parse("hostonly").is_none());
+        // User is optional: bare host and ssh:// both parse, user = None.
+        let params = ConnectionParams::parse("hostonly").unwrap();
+        assert_eq!(params.user, None);
+        assert_eq!(params.host, "hostonly");
+        assert_eq!(params.ssh_target(), "hostonly");
+
+        let params = ConnectionParams::parse("ssh://example.com:2222").unwrap();
+        assert_eq!(params.user, None);
+        assert_eq!(params.host, "example.com");
+        assert_eq!(params.port, Some(2222));
+
+        // Empty user / empty host are still rejected.
         assert!(ConnectionParams::parse("@host").is_none());
         assert!(ConnectionParams::parse("user@").is_none());
     }
@@ -769,19 +803,32 @@ mod tests {
     #[test]
     fn test_connection_string() {
         let params = ConnectionParams {
-            user: "alice".to_string(),
+            user: Some("alice".to_string()),
             host: "example.com".to_string(),
             port: None,
             identity_file: None,
+            extra_args: Vec::new(),
         };
         assert_eq!(params.to_string(), "alice@example.com");
 
         let params = ConnectionParams {
-            user: "bob".to_string(),
+            user: Some("bob".to_string()),
             host: "server.local".to_string(),
             port: Some(2222),
             identity_file: None,
+            extra_args: Vec::new(),
         };
         assert_eq!(params.to_string(), "bob@server.local:2222");
+
+        // No user: the target (and display) is the bare host.
+        let params = ConnectionParams {
+            user: None,
+            host: "server.local".to_string(),
+            port: Some(2222),
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        assert_eq!(params.to_string(), "server.local:2222");
+        assert_eq!(params.ssh_target(), "server.local");
     }
 }
