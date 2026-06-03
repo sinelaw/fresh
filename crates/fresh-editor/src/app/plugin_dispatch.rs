@@ -4058,6 +4058,7 @@ impl Editor {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
+            fullscreen: false,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -4248,6 +4249,15 @@ impl Editor {
             }
             "focus" => {
                 fwp.focused = true;
+                false
+            }
+            // Render a centered panel over the whole frame (covering the
+            // dimmed dock) instead of beside the dock in `chrome_area`.
+            // `arg != 0` enables it. No chrome-geometry change (the dock
+            // and editor layout are untouched — only where the modal
+            // paints), so no relayout; the next frame reads the flag.
+            "fullscreen" => {
+                fwp.fullscreen = arg != 0.0;
                 false
             }
             other => {

@@ -5624,7 +5624,9 @@ impl JsEditorApi {
 
     /// Control a mounted floating panel's placement / focus without
     /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
-    /// "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+    /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
+    /// centered panel cover the whole frame over the dock). See
+    /// `PluginCommand::FloatingPanelControl`.
     #[qjs(rename = "floatingPanelControl")]
     pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
         self.command_sender

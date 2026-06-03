@@ -3825,6 +3825,9 @@ pub enum PluginCommand {
     /// - "focus"  — route keys to the panel (modal-ish capture).
     /// - "blur"   — stop routing keys to the panel; it stays rendered
     ///   so focus returns to the editor while the dock remains visible.
+    /// - "fullscreen" — a centered panel renders over the *entire* frame
+    ///   (covering the dimmed dock) when `arg != 0`, instead of laying
+    ///   into the chrome area beside the dock. No-op when no dock is up.
     FloatingPanelControl { panel_id: u64, op: String, arg: f64 },
 }
 

@@ -28,6 +28,7 @@ import {
   list,
   raw,
   row,
+  wrappingRow,
   overlay,
   spacer,
   styledRow,
@@ -1638,10 +1639,14 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   const stopDisabled = s.discovered || !s.terminalId;
   const archiveDisabled = false;
   const deleteDisabled = false;
-  const buttonRow = row(
+  // wrappingRow so the preview-pane actions reflow onto extra lines on a
+  // narrow pane instead of the right-most ones (Stop / Archive / Delete)
+  // being clipped off-screen. The wrap path ignores flex spacers, so a
+  // fixed `spacer(4)` separates the primary "Visit" from the rest while
+  // still wrapping cleanly.
+  const buttonRow = wrappingRow(
     button("Visit", { intent: "primary", key: "visit" }),
-    spacer(2),
-    flexSpacer(),
+    spacer(4),
     button(detailsToggleLabel, { key: "toggle-details" }),
     spacer(2),
     button("Stop", { key: "stop", disabled: stopDisabled }),
@@ -1784,8 +1789,11 @@ function buildConfirmPane(
     child: col(
       { kind: "raw", entries },
       spacer(0),
-      row(
-        flexSpacer(),
+      // wrappingRow so the Cancel / Confirm pair reflows instead of the
+      // Confirm button being clipped on a narrow confirmation pane. The
+      // leading flex spacer is dropped (the wrap path ignores flex and
+      // trims a blank that would lead a line), so the pair left-packs.
+      wrappingRow(
         button("Cancel", { key: "confirm-cancel" }),
         spacer(2),
         button(`Confirm ${cap}`, { intent: "danger", key: `confirm-${action}` }),
@@ -1824,7 +1832,13 @@ function buildBulkPane(): WidgetSpec {
         },
         flexSpacer(),
       )
-    : row(
+    : // wrappingRow (not row): on a narrow pane the action buttons
+      // reflow onto extra lines instead of the right-most ones being
+      // clipped off-screen. The wrap path ignores flex spacers, so a
+      // fixed `spacer(4)` (rather than `flexSpacer()`) keeps a visible
+      // gap between the destructive actions and the non-destructive
+      // "Clear" while still wrapping cleanly.
+      wrappingRow(
         button(`Stop (${stopN})`, { key: "bulk-stop", disabled: stopN === 0 }),
         spacer(2),
         button(`Archive (${archiveN})`, {
@@ -1837,7 +1851,7 @@ function buildBulkPane(): WidgetSpec {
           key: "bulk-delete",
           disabled: deleteN === 0,
         }),
-        flexSpacer(),
+        spacer(4),
         button("Clear", { key: "bulk-clear" }),
       );
 
@@ -2531,6 +2545,11 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     // a real session list + preview pane, unlike the new-session
     // form which stays compact.
     openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+    // The control room is a global orchestrator feature: render it over
+    // the full screen (covering its own dimmed dock) rather than cramped
+    // into the chrome area beside the dock. A no-op when no dock is up
+    // (the chrome area already is the whole frame then).
+    editor.floatingPanelControl(openPanel.id(), "fullscreen", 1);
   }
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
@@ -4596,9 +4615,12 @@ function buildFormSpec(): WidgetSpec {
   }
   children.push(
     spacer(0),
-    // === Button row: bottom-right aligned. =======================
-    row(
-      flexSpacer(),
+    // === Button row. =============================================
+    // wrappingRow so Cancel / Create Session reflow onto a second line
+    // on a narrow form instead of "Create Session" being clipped off the
+    // right edge. The wrap path ignores the leading flex spacer (and
+    // trims a blank that would lead a line), so the pair left-packs.
+    wrappingRow(
       button("Cancel", { intent: "danger", key: "cancel" }),
       spacer(2),
       button("Create Session", { intent: "primary", key: "create" }),
@@ -4696,6 +4718,10 @@ function openForm(options?: { fromPicker?: boolean }): void {
   // it left the dialog 12 rows tall, clipping the Branch input,
   // the Cancel / Create Session buttons, and the hint bar.
   formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 90 });
+  // The New-Session form is a global orchestrator feature too: center it
+  // over the full screen (covering its own dimmed dock) rather than in the
+  // chrome area beside the dock. A no-op when no dock is up.
+  editor.floatingPanelControl(formPanel.id(), "fullscreen", 1);
   editor.setEditorMode(NEW_SESSION_MODE);
   // Mirror the host's focus cycle so Up/Down can route to the right field's
   // history. The "Run in:" type tabs sit *first* in the spec, so without an

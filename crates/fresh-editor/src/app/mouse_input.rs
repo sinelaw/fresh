@@ -46,7 +46,8 @@ impl Editor {
             LayerKind::Settings
             | LayerKind::KeybindingEditor
             | LayerKind::CalibrationWizard
-            | LayerKind::WorkspaceTrust => Some(l.kind),
+            | LayerKind::WorkspaceTrust
+            | LayerKind::FloatingModal => Some(l.kind),
             _ => None,
         })?;
         Some(match capturing_kind {
@@ -57,8 +58,56 @@ impl Editor {
             // here matches the previous explicit `return Ok(false)`.
             LayerKind::CalibrationWizard => Ok(false),
             LayerKind::WorkspaceTrust => self.handle_workspace_trust_mouse(mouse_event),
+            // The centered widget modal (orchestrator control room /
+            // New-Session form) captures the whole mouse channel here —
+            // before the terminal-forward and the editor's buffer paths —
+            // so a click/double-click/scroll over the dialog never leaks to
+            // an alternate-screen terminal or the buffer it covers. Clicks
+            // route to the panel's own hit-test (focusing the clicked
+            // widget); everything else is swallowed.
+            LayerKind::FloatingModal => self.handle_floating_modal_mouse(mouse_event),
             _ => unreachable!("find_map only returns capturing kinds"),
         })
+    }
+
+    /// Mouse handler for the centered widget modal (`floating_widget_panel`).
+    /// The dialog is fully modal: presses hit-test the panel (focusing the
+    /// clicked widget / placing the text cursor), wheel scrolls it, and a
+    /// drag drives only its scrollbar. Every other event — and every press
+    /// that lands outside the panel box — is swallowed, so nothing reaches
+    /// the buffer, terminal, or dock beneath. Always returns
+    /// `Ok(true)` (a render is cheap and the modal just consumed an event).
+    fn handle_floating_modal_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let (col, row) = (mouse_event.column, mouse_event.row);
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Single / double / triple clicks all map to one panel
+                // hit-test — never the buffer's word/line select beneath.
+                self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Only a scrollbar drag is meaningful; other drags are
+                // swallowed rather than starting a buffer text-selection.
+                self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.release_widget_scrollbar();
+            }
+            MouseEventKind::ScrollUp => {
+                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, -3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, 3);
+            }
+            // Right-click, horizontal scroll, motion, other-button releases:
+            // swallowed — the modal eats them all.
+            _ => {}
+        }
+        Ok(true)
     }
 
     /// Handle a mouse event.

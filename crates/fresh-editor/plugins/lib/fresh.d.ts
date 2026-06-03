@@ -2970,7 +2970,9 @@ interface EditorAPI {
 	/**
 	* Control a mounted floating panel's placement / focus without
 	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
+	* centered panel cover the whole frame over the dock). See
+	* `PluginCommand::FloatingPanelControl`.
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**

@@ -1766,17 +1766,31 @@ impl Editor {
             }
         }
         if self.floating_widget_panel.is_some() {
+            // A `fullscreen` modal paints over the whole frame, covering the
+            // dock; otherwise it lays into `chrome_area` beside the dock.
+            // The orchestrator's global modals (control room, New-Session
+            // form) opt into fullscreen so they're not cramped into the
+            // narrow region right of their own dock.
+            let fullscreen = self
+                .floating_widget_panel
+                .as_ref()
+                .map(|f| f.fullscreen)
+                .unwrap_or(false);
             // A centered modal makes the *whole* UI a passive, dimmed
             // background — the dock included. The dock was drawn above at
-            // full brightness, and the modal render below only dims
-            // `chrome_area`, so dim the dock column here too. The dock is
-            // also blurred + input-inaccessible while a modal is up (the
-            // host blurs it on mount and the modal swallows keys/clicks/
-            // wheel), so dimming it makes that passivity visible rather
-            // than leaving it looking live beside the dialog.
-            if let Some(dock) = dock_area {
-                if self.dock.is_some() {
-                    crate::view::dimming::apply_dimming(frame, dock);
+            // full brightness. A beside-dock modal only dims `chrome_area`,
+            // so dim the dock column explicitly here; a fullscreen modal
+            // dims the whole frame itself (its own `apply_dimming_excluding`
+            // runs over the full area below), so skip the redundant pass.
+            // Either way the dock is blurred + input-inaccessible while a
+            // modal is up (the host blurs it on mount and the modal swallows
+            // keys/clicks/wheel), so dimming it makes that passivity visible
+            // rather than leaving it looking live beside the dialog.
+            if !fullscreen {
+                if let Some(dock) = dock_area {
+                    if self.dock.is_some() {
+                        crate::view::dimming::apply_dimming(frame, dock);
+                    }
                 }
             }
             // Render the centered modal within `chrome_area` (the region to
@@ -1784,11 +1798,12 @@ impl Editor {
             // sits beside the dock and dims only the chrome instead of
             // painting over the dock column. When no dock is up
             // `chrome_area` is the whole frame, so this is unchanged for the
-            // common case. This is what lets the orchestrator's Open picker
-            // (and New-Session form) coexist with the dock — mirroring the
-            // settings / keybinding-editor modals, which already lay into
-            // `chrome_area`.
-            self.render_floating_widget_panel(frame, chrome_area, super::PanelSlot::Floating);
+            // common case. This is what lets a plugin's Open picker coexist
+            // with the dock — mirroring the settings / keybinding-editor
+            // modals, which already lay into `chrome_area`. A `fullscreen`
+            // panel instead gets the whole frame (`size`).
+            let modal_area = if fullscreen { size } else { chrome_area };
+            self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
         }
     }
 
@@ -2063,7 +2078,13 @@ impl Editor {
 
         if is_quick_open {
             let hints_area = ratatui::layout::Rect {
-                x: 0,
+                // Align with the prompt / suggestions box, which sit in the
+                // chrome area to the right of a left dock (`prompt_area.x`).
+                // Hardcoding `x: 0` here drew the hints starting at the very
+                // left edge — under the dock column — so the bar was
+                // partially obscured by the dock and visibly misaligned with
+                // the suggestions box stacked directly above it.
+                x: prompt_area.x,
                 y: prompt_area.y.saturating_sub(hints_height),
                 width,
                 height: hints_height,

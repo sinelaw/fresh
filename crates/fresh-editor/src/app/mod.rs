@@ -1130,6 +1130,14 @@ pub(crate) struct FloatingWidgetState {
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
+    /// When true, a `Centered` panel renders over the *entire* frame
+    /// (covering the dimmed left dock) instead of being confined to the
+    /// chrome area beside the dock. Set via `FloatingPanelControl{op:
+    /// "fullscreen"}`. Lets the orchestrator's global modals (the control
+    /// room, the New-Session form) take the full screen over their own
+    /// dock, while other plugins' floating panels keep the default
+    /// coexist-beside-the-dock layout. Ignored for `LeftDock`.
+    pub fullscreen: bool,
 }
 
 /// A list scrollbar's screen rect + scroll state, captured at draw
@@ -1645,6 +1653,7 @@ mod tests {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
+            fullscreen: false,
         }
     }
 

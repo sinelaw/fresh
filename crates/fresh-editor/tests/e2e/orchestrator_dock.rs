@@ -574,30 +574,27 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
 }
 
 /// Invoking `Orchestrator: Open` while the dock is visible opens the full
-/// modal picker *beside* the dock — not as a refusal nag, and not by
-/// tearing the dock down. The dock stays mounted in its own host slot
-/// (PanelSlot::Dock) and the picker floats in the Floating slot, clamped
-/// to `chrome_area`; the dock becomes a dimmed, passive background and
-/// Esc hands control back to it.
+/// modal control room *fullscreen over* the dock — not as a refusal nag,
+/// and not by tearing the dock down. The control room is a global
+/// orchestrator feature, so it opts into fullscreen placement (covering
+/// its own dimmed dock) rather than being cramped beside it. The dock
+/// stays mounted in its own host slot (PanelSlot::Dock); Esc drops the
+/// modal and hands control back to it.
 #[test]
-fn open_picker_coexists_with_dock_dimmed_and_esc_restores_it() {
-    // Wide terminal so the dock column + the picker beside it both have
-    // room (the picker lays into `chrome_area`, right of the dock).
+fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
+    // Wide terminal so the 90%-width fullscreen modal clearly covers the
+    // dock's "Manage" button (which sits in the dock's right half).
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // Sanity: the dock (not the modal picker) is what's up.
+    // Sanity: the dock (not the modal picker) is what's up, and the dock's
+    // "Manage" button — which only the dock renders, never the picker — is
+    // on screen.
     h.assert_screen_not_contains("ORCHESTRATOR :: Sessions");
-
-    // Sample a cell in the lit dock title ("Orchestrator") so we can prove
-    // it dims once the modal owns the UI.
-    let title_row = row_of(&h, "Orchestrator") as u16;
-    let title_col = h.screen_row_text(title_row).find("Orchestrator").unwrap() as u16 + 3;
-    let dock_title_fg = |h: &EditorTestHarness| h.get_cell_style(title_col, title_row).unwrap().fg;
-    let dock_fg_lit = dock_title_fg(&h);
+    h.assert_screen_contains("Manage");
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
     // "Orchestrator: Open" from it.
@@ -609,34 +606,235 @@ fn open_picker_coexists_with_dock_dimmed_and_esc_restores_it() {
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // The picker surfaces beside the dock (no nag) ...
+    // The control room surfaces (no nag) ...
     h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
         .unwrap();
     h.assert_screen_not_contains("the dock already lists sessions");
-    // ... and the dock is NOT torn down: its "Manage" button — which only
-    // the dock renders, never the picker — is still on screen alongside
-    // the picker title.
+    // ... fullscreen *over* the dock: the modal's title renders well within
+    // the dock's left column (its left border lands at ~col 10 of the full
+    // frame, not past the ~40-col dock). A beside-dock modal would lay into
+    // `chrome_area`, pushing the title past the dock's right edge. Count
+    // chars (not bytes) up to the title — the modal's `│` border before it
+    // is multi-byte, so a byte offset would overstate the column.
     let screen = h.screen_to_string();
+    let title_line = screen
+        .lines()
+        .find(|l| l.contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    let byte_idx = title_line.find("ORCHESTRATOR :: Sessions").unwrap();
+    let title_col = title_line[..byte_idx].chars().count();
     assert!(
-        screen.contains("Manage"),
-        "the dock must stay mounted beside the picker.\nScreen:\n{screen}"
-    );
-    // ... and the dock is a passive, *dimmed* part of the background: its
-    // title colour darkens now that the modal owns the UI. (The host also
-    // blurs the dock and the modal swallows keys/clicks/wheel, so it is
-    // fully inaccessible while the dialog is up.)
-    assert_ne!(
-        dock_fg_lit,
-        dock_title_fg(&h),
-        "the dock must dim while the Open picker is up"
+        title_col < 38,
+        "the control room must render fullscreen *over* the dock — its title \
+         is at col {title_col}, expected within the dock's left region (the \
+         modal would start past col ~40 if confined beside the dock).\n\
+         Screen:\n{}",
+        h.screen_to_string()
     );
 
-    // Esc drops the picker and hands keyboard control back to the live
-    // dock — it could not regain focus if it had been unmounted.
+    // Esc drops the modal and hands keyboard control back to the live
+    // dock — it could not regain focus if it had been unmounted — and the
+    // dock's "Manage" button is still there.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
         .unwrap();
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    h.assert_screen_contains("Manage");
+}
+
+/// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
+/// with the suggestions popup above it — both sit in the chrome area to the
+/// right of the dock. The hint row used to hardcode `x: 0`, drawing the bar
+/// starting at the very left edge (under the dock column), so it was
+/// partially obscured by the dock and visibly offset from the suggestions
+/// box. The fix anchors the hint at the prompt's `x` (= the box's left
+/// column), so "file" lands exactly `left_margin` (2) cols past the box's
+/// left border.
+#[test]
+fn quick_open_hint_aligns_with_suggestions_not_under_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Ctrl+P blurs the dock and opens the command palette; the dock stays
+    // visible in its left column beside the prompt + suggestions.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    // Wait for both the Quick Open hint and the suggestions box to paint.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains(">command") && s.contains('┌')
+    })
+    .unwrap();
+
+    // Char-column (not byte offset — the box borders are multi-byte) of the
+    // hint's first word and of the suggestions popup's top-left corner.
+    let screen = h.screen_to_string();
+    let hint_line = screen.lines().find(|l| l.contains(">command")).unwrap();
+    let hint_byte = hint_line.find("file").unwrap();
+    let hint_col = hint_line[..hint_byte].chars().count();
+    let box_line = screen.lines().find(|l| l.contains('┌')).unwrap();
+    let box_byte = box_line.find('┌').unwrap();
+    let box_col = box_line[..box_byte].chars().count();
+
+    // The box left border sits at the prompt's `x` (right of the dock); the
+    // hint text begins `left_margin` (2) cols into that same region. If the
+    // hint were still drawn at `x: 0`, "file" would land at col 2 — far left
+    // of the dock-offset box — and this would fail.
+    assert_eq!(
+        hint_col,
+        box_col + 2,
+        "Quick Open hint must align with the suggestions box (left_margin=2 \
+         past its left border at col {box_col}), not be drawn under the dock.\n\
+         Screen:\n{screen}"
+    );
+}
+
+/// On a narrow preview pane the control room's action buttons must wrap onto
+/// additional lines rather than the right-most ones being clipped off the
+/// edge. With a plain (non-wrapping) row the merged button line is truncated
+/// to the pane width, so "Delete" (the last button) vanishes; `wrappingRow`
+/// reflows it onto a later line, keeping every action reachable.
+#[test]
+fn control_room_preview_buttons_wrap_on_narrow_pane() {
+    // Narrow terminal so the preview pane (≈half the modal) can't fit all
+    // five action buttons on one line.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(80, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Open the control room (no dock needed). A session is selected on
+    // mount, so its preview pane — with the action buttons — renders.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+
+    // Every action stays on screen — the right-most "Delete" would be
+    // clipped off a non-wrapping row at this width.
+    h.wait_until(|h| h.screen_to_string().contains("Delete"))
+        .unwrap();
+    h.assert_screen_contains("Archive");
+
+    // And they actually wrapped: "Visit" (first button) and "Delete" (last)
+    // land on different rows.
+    let visit_row = row_of(&h, "Visit");
+    let delete_row = row_of(&h, "Delete");
+    assert_ne!(
+        visit_row,
+        delete_row,
+        "preview action buttons must wrap onto separate rows on a narrow \
+         pane (Visit at row {visit_row}, Delete at {delete_row}).\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The New-Session form's Cancel / Create Session buttons must wrap onto
+/// separate lines on a narrow form rather than "Create Session" being
+/// clipped off the right edge (a plain row truncates the merged button line
+/// to the form width). `wrappingRow` reflows the pair instead.
+#[test]
+fn new_session_form_buttons_wrap_on_narrow_form() {
+    // Narrow terminal so the 60%-width form can't fit both buttons on one
+    // line.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(50, 30, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Open the New-Session form via the palette.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: New Session").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // Both buttons stay on screen — "Create Session" would be clipped off a
+    // non-wrapping row at this width — and they land on different rows.
+    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+        .unwrap();
+    let cancel_row = row_of(&h, "Cancel");
+    let create_row = row_of(&h, "Create Session");
+    assert_ne!(
+        cancel_row,
+        create_row,
+        "New-Session form buttons must wrap onto separate rows on a narrow \
+         form (Cancel at row {cancel_row}, Create Session at {create_row}).\n\
+         Screen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The New-Session form is a fully modal dialog: it must swallow every
+/// mouse event, even a double-click landing over the editor buffer it sits
+/// in front of. Single clicks were already routed to the panel, but
+/// double/triple-clicks (and the alternate-screen terminal forward) ran
+/// *before* that guard, so a double-click leaked to the buffer underneath
+/// and selected a word there. Observed via typing after the dialog closes:
+/// a leaked word-select would be replaced by the typed text.
+#[test]
+fn new_session_form_swallows_doubleclick_no_buffer_leak() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    // Selectable text in the editor buffer underneath, cursor left at end.
+    h.type_text("hello world").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("hello world"))
+        .unwrap();
+
+    // Open the New-Session form (a fully modal centered dialog).
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: New Session").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // "hello world" stays visible above the vertically-centered form. Find
+    // "world" there and double-click it (two clicks at one spot; the test
+    // clock doesn't advance, so they register as a double-click). This point
+    // is over the editor, outside the modal box — the dialog must eat it.
+    let screen = h.screen_to_string();
+    let (wrow, wline) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("hello world"))
+        .unwrap();
+    let wcol = wline.find("world").unwrap(); // ASCII row: byte == column
+    h.mouse_click(wcol as u16, wrow as u16).unwrap();
+    h.mouse_click(wcol as u16, wrow as u16).unwrap();
+
+    // Close the dialog and type. If the double-click had leaked it would
+    // have selected "world", and the keystroke would replace it ("hello Z").
+    // Full modal capture leaves the buffer untouched, so the insert lands at
+    // the cursor (end): "hello worldZ".
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.type_text("Z").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("hello worldZ"))
+        .unwrap();
 }
 
 #[test]
