@@ -1981,6 +1981,16 @@ impl Window {
             .expect("active buffer must be present in window")
     }
 
+    /// Mutable handle to a specific buffer's editor state, if it is loaded in this window.
+    pub fn buffer_state_mut(&mut self, id: BufferId) -> Option<&mut crate::state::EditorState> {
+        self.buffers.get_mut(&id)
+    }
+
+    /// Read-only handle to a specific buffer's editor state, if it is loaded in this window.
+    pub fn buffer_state(&self, id: BufferId) -> Option<&crate::state::EditorState> {
+        self.buffers.get(&id)
+    }
+
     /// Read-only cursor set for the active buffer in the active split.
     /// Group panels return their own cursors, not the outer split's
     /// stale ones.
