@@ -427,6 +427,24 @@ impl Editor {
         // Create key event for dispatch methods
         let key_event = crossterm::event::KeyEvent::new(code, modifiers);
 
+        // Diagnostic for the "dock visible, buffer won't accept keys" wedge
+        // (#2234, item 4): while the dock is mounted, record its host-side focus
+        // plus the active window's key context for *every* key, before any
+        // routing. If a repro shows `dock_focused=true` for keys the user aimed
+        // at the buffer, the dock is swallowing them (line ~492) — a
+        // host-focus / plugin-`dockBlurred` desync; if `dock_focused=false`,
+        // the keys reached the window and the issue is in key-context routing.
+        if let Some(focused) = self.dock.as_ref().map(|d| d.focused) {
+            tracing::debug!(
+                target: "fresh::dock",
+                ?code,
+                dock_focused = focused,
+                key_context = ?self.active_window().key_context,
+                active_window = ?self.active_window_id(),
+                "handle_key: dock mounted (routing diagnostic)"
+            );
+        }
+
         // Event debug dialog intercepts ALL key events before any other processing.
         // This must be checked here (not just in main.rs/gui) so it works in
         // client/server mode where handle_key is called directly.
