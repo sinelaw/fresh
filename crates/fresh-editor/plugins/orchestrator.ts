@@ -5556,6 +5556,17 @@ async function attachToWorktree(opts: {
       createdAt: Date.now(),
       branch: opts.branch,
     });
+    // The new window is now the active session. When this was triggered from
+    // the dock (Enter on a discovered worktree), the dock is still focused, so
+    // its keys would be swallowed and the new session's terminal couldn't
+    // receive input — mirror the dock's live-session Enter path and blur it so
+    // the new window gets the keyboard. (No-op for the modal picker, which has
+    // already closed openPanel before calling this.)
+    if (dockMode && openPanel) {
+      dockBlurred = true;
+      editor.floatingPanelControl(openPanel.id(), "blur", 0);
+      editor.setEditorMode(null);
+    }
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to attach session — ${
