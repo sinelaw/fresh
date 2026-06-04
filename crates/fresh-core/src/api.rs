@@ -44,7 +44,7 @@
 //!   they control different things (runtime serialization vs compile-time codegen)
 
 use crate::command::{Command, Suggestion};
-use crate::file_explorer::FileExplorerDecoration;
+use crate::file_explorer::{FileExplorerDecoration, FileExplorerSlotEntry};
 use crate::hooks::{HookCallback, HookRegistry};
 use crate::menu::{Menu, MenuItem};
 use crate::overlay::{OverlayHandle, OverlayNamespace};
@@ -2710,6 +2710,24 @@ pub enum PluginCommand {
 
     /// Clear file explorer decorations for a namespace
     ClearFileExplorerDecorations {
+        /// Namespace to clear (e.g., "git-status")
+        namespace: String,
+    },
+
+    /// Set file explorer slot overrides for a namespace.
+    ///
+    /// This is additive: any slot field omitted by the plugin falls back to
+    /// the editor's default compatibility providers, so existing behaviour is
+    /// preserved until a plugin explicitly overrides it.
+    SetFileExplorerSlots {
+        /// Namespace for grouping (e.g., "git-status")
+        namespace: String,
+        /// Slot overrides to apply
+        slots: Vec<FileExplorerSlotEntry>,
+    },
+
+    /// Clear file explorer slot overrides for a namespace
+    ClearFileExplorerSlots {
         /// Namespace to clear (e.g., "git-status")
         namespace: String,
     },

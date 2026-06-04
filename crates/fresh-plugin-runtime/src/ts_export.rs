@@ -28,7 +28,10 @@ use fresh_core::api::{
     VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
-use fresh_core::file_explorer::FileExplorerDecoration;
+use fresh_core::file_explorer::{
+    FileExplorerDecoration, FileExplorerLeadingSlot, FileExplorerSlotEntry, FileExplorerTooltip,
+    FileExplorerTrailingSlot,
+};
 use fresh_core::text_property::InlineOverlay;
 
 /// Get the TypeScript declaration for a type by name
@@ -106,6 +109,10 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "TsLspMenuItem" | "LspMenuItem" => Some(fresh_core::api::LspMenuItem::decl(&cfg)),
         "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
+        "FileExplorerSlotEntry" => Some(FileExplorerSlotEntry::decl(&cfg)),
+        "FileExplorerLeadingSlot" => Some(FileExplorerLeadingSlot::decl(&cfg)),
+        "FileExplorerTrailingSlot" => Some(FileExplorerTrailingSlot::decl(&cfg)),
+        "FileExplorerTooltip" => Some(FileExplorerTooltip::decl(&cfg)),
 
         // Virtual buffer option types
         "TextPropertyEntry" | "JsTextPropertyEntry" => Some(JsTextPropertyEntry::decl(&cfg)),
@@ -318,6 +325,10 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ActionPopupOptions",              // Used by showActionPopup
     "TsLspMenuItem",                   // Used by setLspMenuContributions
     "FileExplorerDecoration",          // Used by setFileExplorerDecorations
+    "FileExplorerSlotEntry",           // Used by setFileExplorerSlots
+    "FileExplorerLeadingSlot",         // Used by FileExplorerSlotEntry
+    "FileExplorerTrailingSlot",        // Used by FileExplorerSlotEntry
+    "FileExplorerTooltip",             // Used by FileExplorerTrailingSlot
     "FormatterPackConfig",             // Used by LanguagePackConfig.formatter
     "ProcessLimitsPackConfig",         // Used by LspServerPackConfig.process_limits
     "TerminalResult",                  // Used by createTerminal return type
@@ -1348,6 +1359,8 @@ mod tests {
             "setLayoutHints",
             "setFileExplorerDecorations",
             "clearFileExplorerDecorations",
+            "setFileExplorerSlots",
+            "clearFileExplorerSlots",
             "addVirtualText",
             "removeVirtualText",
             "removeVirtualTextsByPrefix",

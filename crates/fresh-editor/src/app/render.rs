@@ -259,6 +259,7 @@ impl Editor {
                 &self.active_window().mouse_state.hover_target,
                 Some(HoverTarget::FileExplorerCloseButton)
             );
+            let slot_resolver = self.file_explorer_slot_resolver();
             // Take one &mut on the active window; the explorer + buffers
             // come from disjoint sub-fields so they can coexist.
             let __win = self
@@ -291,15 +292,20 @@ impl Editor {
                     explorer,
                     frame,
                     explorer_area,
+                    slot_resolver,
                     is_focused,
                     &files_with_unsaved_changes,
                     &__win.file_explorer_decoration_cache,
+                    &__win.file_explorer_git_status_cache,
+                    &__win.file_explorer_slot_override_cache,
                     &keybindings,
                     key_context_clone,
                     &*self.theme.read().unwrap(),
                     close_button_hovered,
                     remote_connection.as_deref(),
                     cut_paths,
+                    self.config.file_explorer.show_file_icons,
+                    self.config.file_explorer.color_git_status_names,
                     &self.config.file_explorer.tree_indicator_collapsed,
                     &self.config.file_explorer.tree_indicator_expanded,
                 );

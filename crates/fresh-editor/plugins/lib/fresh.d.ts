@@ -603,6 +603,78 @@ type FileExplorerDecoration = {
 	*/
 	priority: number;
 };
+type FileExplorerTooltip = {
+	/**
+	* Tooltip title shown in the popup border.
+	*/
+	title: string;
+	/**
+	* Body lines shown inside the popup.
+	*/
+	lines: Array<string>;
+};
+type FileExplorerLeadingSlot = {
+	/**
+	* Text shown in the leading slot (for example, an icon glyph).
+	*/
+	text: string;
+	/**
+	* Foreground colour for the leading slot.
+	*/
+	color: OverlayColorSpec;
+	/**
+	* Minimum display width reserved for the leading slot.
+	*/
+	minWidth?: number;
+};
+type FileExplorerTrailingSlot = {
+	/**
+	* Text shown in the trailing slot (for example, a badge glyph).
+	*/
+	text: string;
+	/**
+	* Foreground colour for the trailing slot.
+	*/
+	color: OverlayColorSpec;
+	/**
+	* Optional tooltip shown when hovering the trailing slot.
+	*/
+	tooltip?: FileExplorerTooltip | null;
+};
+type FileExplorerSlotEntry = {
+	/**
+	* File or directory path to override.
+	*/
+	path: string;
+	/**
+	* Optional leading-slot override.
+	*/
+	leading?: FileExplorerLeadingSlot | null;
+	/**
+	* Explicitly suppress the compatibility leading slot for this path.
+	*/
+	suppressLeading?: boolean;
+	/**
+	* Optional trailing-slot override.
+	*/
+	trailing?: FileExplorerTrailingSlot | null;
+	/**
+	* Explicitly suppress the compatibility trailing slot for this path.
+	*/
+	suppressTrailing?: boolean;
+	/**
+	* Optional filename colour override.
+	*/
+	nameColor?: OverlayColorSpec | null;
+	/**
+	* Explicitly suppress compatibility filename colouring for this path.
+	*/
+	suppressNameColor?: boolean;
+	/**
+	* Priority for display when multiple overrides exist (higher wins).
+	*/
+	priority?: number;
+};
 type FormatterPackConfig = {
 	/**
 	* Command to run (e.g., "prettier", "rustfmt")
@@ -2494,6 +2566,15 @@ interface EditorAPI {
 	* Clear file explorer decorations for a namespace
 	*/
 	clearFileExplorerDecorations(namespace: string): boolean;
+	/**
+	* Set file explorer slot overrides for a namespace. Any omitted fields
+	* fall back to the editor's default file-explorer providers.
+	*/
+	setFileExplorerSlots(namespace: string, slots: FileExplorerSlotEntry[]): boolean;
+	/**
+	* Clear file explorer slot overrides for a namespace
+	*/
+	clearFileExplorerSlots(namespace: string): boolean;
 	/**
 	* Add virtual text (inline text that doesn't exist in the buffer)
 	*/

@@ -171,6 +171,9 @@ impl Editor {
 
         // Fire AfterFileSave hook for plugins
         if let Some(ref p) = path {
+            self.active_window_mut().invalidate_file_explorer_status(
+                crate::app::file_explorer::FileExplorerGitStatusRefreshReason::FileSaved,
+            );
             self.plugin_manager.read().unwrap().run_hook(
                 "after_file_save",
                 crate::services::plugins::hooks::HookArgs::AfterFileSave {
@@ -802,10 +805,6 @@ impl Editor {
                     self.active_window_mut()
                         .dir_mod_times
                         .insert(path, current_mtime);
-                    self.plugin_manager.read().unwrap().run_hook(
-                        "focus_gained",
-                        crate::services::plugins::hooks::HookArgs::FocusGained {},
-                    );
                     true
                 } else {
                     false
@@ -819,6 +818,12 @@ impl Editor {
 
         if dirs_to_refresh.is_empty() && !git_index_changed {
             return false;
+        }
+
+        if git_index_changed {
+            self.active_window_mut().invalidate_file_explorer_status(
+                crate::app::file_explorer::FileExplorerGitStatusRefreshReason::GitIndexChanged,
+            );
         }
 
         // Refresh each changed directory and (re)load its .gitignore. A new

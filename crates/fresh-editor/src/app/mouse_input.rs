@@ -1106,16 +1106,11 @@ impl Editor {
             }
 
             // Check if hovering over a status indicator in the file explorer content area
-            // Status indicators are in the rightmost 2 characters of each row (before border)
             let content_start_y = explorer_area.y + 1; // +1 for title bar
             let content_end_y = explorer_area.y + explorer_area.height.saturating_sub(1); // -1 for bottom border
-            let status_indicator_x = explorer_area.x + explorer_area.width.saturating_sub(3); // 2 chars + 1 border
+            let content_width = explorer_area.width.saturating_sub(3) as usize;
 
-            if row >= content_start_y
-                && row < content_end_y
-                && col >= status_indicator_x
-                && col < explorer_area.x + explorer_area.width.saturating_sub(1)
-            {
+            if row >= content_start_y && row < content_end_y {
                 // Determine which item is at this row
                 if let Some(explorer) = self.file_explorer().as_ref() {
                     let relative_row = row.saturating_sub(content_start_y) as usize;
@@ -1124,11 +1119,69 @@ impl Editor {
                     let display_nodes = explorer.get_display_nodes();
 
                     if item_index < display_nodes.len() {
-                        let (node_id, _indent) = display_nodes[item_index];
+                        let (node_id, indent) = display_nodes[item_index];
                         if let Some(node) = explorer.tree().get_node(node_id) {
-                            return Some(HoverTarget::FileExplorerStatusIndicator(
-                                node.entry.path.clone(),
-                            ));
+                            let theme = self.theme.read().unwrap();
+                            let neutral_fg = if node
+                                .entry
+                                .metadata
+                                .as_ref()
+                                .map(|m| m.is_hidden)
+                                .unwrap_or(false)
+                            {
+                                theme.line_number_fg
+                            } else if node.entry.is_symlink() {
+                                theme.syntax_type
+                            } else if node.is_dir() {
+                                theme.syntax_keyword
+                            } else {
+                                theme.editor_fg
+                            };
+                            let slot_resolver = self.file_explorer_slot_resolver();
+                            let slot_context = crate::view::file_tree::ExplorerSlotContext {
+                                path: &node.entry.path,
+                                is_dir: node.is_dir(),
+                                has_unsaved: self.file_explorer_node_has_unsaved_changes(
+                                    &node.entry.path,
+                                    node.is_dir(),
+                                ),
+                                is_symlink: node.entry.is_symlink(),
+                                is_hidden: node
+                                    .entry
+                                    .metadata
+                                    .as_ref()
+                                    .map(|m| m.is_hidden)
+                                    .unwrap_or(false),
+                                decorations: &self.active_window().file_explorer_decoration_cache,
+                                git_statuses: &self.active_window().file_explorer_git_status_cache,
+                                slot_overrides: &self
+                                    .active_window()
+                                    .file_explorer_slot_override_cache,
+                                theme: &theme,
+                                show_file_icons: self.config.file_explorer.show_file_icons,
+                                color_git_status_names: self
+                                    .config
+                                    .file_explorer
+                                    .color_git_status_names,
+                                neutral_fg,
+                            };
+                            let slot_resolution = slot_resolver.resolve(&slot_context);
+                            if let Some((slot_start, slot_end)) = crate::view::ui::file_explorer::FileExplorerRenderer::trailing_slot_screen_bounds(
+                                explorer,
+                                node_id,
+                                indent,
+                                content_width,
+                                &slot_resolution,
+                                &self.config.file_explorer.tree_indicator_collapsed,
+                                &self.config.file_explorer.tree_indicator_expanded,
+                                explorer_area,
+                            ) {
+                                if col >= slot_start && col < slot_end {
+                                    return Some(HoverTarget::FileExplorerStatusIndicator(
+                                        node.entry.path.clone(),
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -3595,118 +3648,79 @@ impl Editor {
         use ratatui::style::Style;
 
         let is_directory = path.is_dir();
+        let has_unsaved_changes = self.file_explorer_node_has_unsaved_changes(&path, is_directory);
 
-        // Get the decoration for this file to determine the status
-        let decoration = self
-            .active_window()
-            .file_explorer_decoration_cache
-            .direct_for_path(&path)
-            .cloned();
-
-        // For directories, also check bubbled decoration
-        let bubbled_decoration = if is_directory && decoration.is_none() {
-            self.active_window()
-                .file_explorer_decoration_cache
-                .bubbled_for_path(&path)
-                .cloned()
+        let node_metadata = self
+            .file_explorer()
+            .and_then(|explorer| explorer.tree().get_node_by_path(&path))
+            .and_then(|node| node.entry.metadata.as_ref());
+        let is_hidden = node_metadata.map(|m| m.is_hidden).unwrap_or(false);
+        let is_symlink = path.is_symlink();
+        let theme = self.theme.read().unwrap();
+        let neutral_fg = if is_hidden {
+            theme.line_number_fg
+        } else if is_symlink {
+            theme.syntax_type
+        } else if is_directory {
+            theme.syntax_keyword
         } else {
-            None
+            theme.editor_fg
         };
-
-        // Check if file/folder has unsaved changes in editor
-        let has_unsaved_changes = if is_directory {
-            // Check if any buffer under this directory has unsaved changes
-            self.windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .iter()
-                .any(|(buffer_id, state)| {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
-                        {
-                            if let Some(file_path) = metadata.file_path() {
-                                return file_path.starts_with(&path);
-                            }
-                        }
-                    }
-                    false
-                })
-        } else {
-            self.windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .iter()
-                .any(|(buffer_id, state)| {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
-                        {
-                            return metadata.file_path() == Some(&path);
-                        }
-                    }
-                    false
-                })
+        let slot_resolver = self.file_explorer_slot_resolver();
+        let slot_context = crate::view::file_tree::ExplorerSlotContext {
+            path: &path,
+            is_dir: is_directory,
+            has_unsaved: has_unsaved_changes,
+            is_symlink,
+            is_hidden,
+            decorations: &self.active_window().file_explorer_decoration_cache,
+            git_statuses: &self.active_window().file_explorer_git_status_cache,
+            slot_overrides: &self.active_window().file_explorer_slot_override_cache,
+            theme: &theme,
+            show_file_icons: self.config.file_explorer.show_file_icons,
+            color_git_status_names: self.config.file_explorer.color_git_status_names,
+            neutral_fg,
         };
+        let slot_resolution = slot_resolver.resolve(&slot_context);
 
         // Build tooltip content
-        let mut lines: Vec<String> = Vec::new();
-
-        if let Some(decoration) = &decoration {
-            let symbol = &decoration.symbol;
-            let explanation = match symbol.as_str() {
-                "U" => "Untracked - File is not tracked by git",
-                "M" => "Modified - File has unstaged changes",
-                "A" => "Added - File is staged for commit",
-                "D" => "Deleted - File is staged for deletion",
-                "R" => "Renamed - File has been renamed",
-                "C" => "Copied - File has been copied",
-                "!" => "Conflicted - File has merge conflicts",
-                "●" => "Has changes - Contains modified files",
-                _ => "Unknown status",
-            };
-            lines.push(format!("{} - {}", symbol, explanation));
-        } else if bubbled_decoration.is_some() {
-            lines.push("● - Contains modified files".to_string());
-        } else if has_unsaved_changes {
-            if is_directory {
-                lines.push("● - Contains unsaved changes".to_string());
-            } else {
-                lines.push("● - Unsaved changes in editor".to_string());
-            }
-        } else {
+        let Some(summary) = slot_resolution.trailing.and_then(|slot| slot.tooltip) else {
             return; // No status to show
-        }
+        };
+        let mut lines = summary.lines;
+        let has_custom_trailing_override = self
+            .active_window()
+            .file_explorer_slot_override_cache
+            .has_trailing_override_for_path(&path);
 
-        // For directories, show list of modified files
-        if is_directory {
-            // get_modified_files_in_directory returns None if no files, so no need to check is_empty()
-            if let Some(modified_files) = self.get_modified_files_in_directory(&path) {
-                lines.push(String::new()); // Empty line separator
-                lines.push("Modified files:".to_string());
-                // Resolve symlinks for proper prefix stripping
-                let resolved_path = path.canonicalize().unwrap_or_else(|_| path.clone());
-                const MAX_FILES: usize = 8;
-                for (i, file) in modified_files.iter().take(MAX_FILES).enumerate() {
-                    // Show relative path from the directory
-                    let display_name = file
-                        .strip_prefix(&resolved_path)
-                        .unwrap_or(file)
-                        .to_string_lossy()
-                        .to_string();
-                    lines.push(format!("  {}", display_name));
-                    if i == MAX_FILES - 1 && modified_files.len() > MAX_FILES {
-                        lines.push(format!(
-                            "  ... and {} more",
-                            modified_files.len() - MAX_FILES
-                        ));
-                        break;
+        if !has_custom_trailing_override {
+            // Compatibility tooltips enrich native git/status content with
+            // directory child summaries and file diff stats. Explicit slot
+            // overrides own their hover content end-to-end.
+            if is_directory {
+                if let Some(modified_files) = self.get_modified_files_in_directory(&path) {
+                    lines.push(String::new()); // Empty line separator
+                    lines.push("Modified files:".to_string());
+                    const MAX_FILES: usize = 8;
+                    for (i, file) in modified_files.iter().take(MAX_FILES).enumerate() {
+                        // Show relative path from the directory
+                        let display_name = file
+                            .strip_prefix(&path)
+                            .unwrap_or(file)
+                            .to_string_lossy()
+                            .to_string();
+                        lines.push(format!("  {}", display_name));
+                        if i == MAX_FILES - 1 && modified_files.len() > MAX_FILES {
+                            lines.push(format!(
+                                "  ... and {} more",
+                                modified_files.len() - MAX_FILES
+                            ));
+                            break;
+                        }
                     }
                 }
-            }
-        } else {
-            // For files, try to get git diff stats
-            if let Some(stats) = self.get_git_diff_stats(&path) {
+            } else if let Some(stats) = self.get_git_diff_stats(&path) {
+                // For files, try to get git diff stats
                 lines.push(String::new()); // Empty line separator
                 lines.push(stats);
             }
@@ -3718,7 +3732,7 @@ impl Editor {
 
         // Create popup
         let mut popup = Popup::text(lines, &*self.theme.read().unwrap());
-        popup.title = Some("Git Status".to_string());
+        popup.title = Some(summary.title);
         popup.transient = true;
         popup.position = PopupPosition::Fixed { x: col, y: row + 1 };
         popup.width = 50;
@@ -3736,6 +3750,46 @@ impl Editor {
             .get_mut(&__buffer_id)
         {
             state.popups.show(popup);
+        }
+    }
+
+    fn file_explorer_node_has_unsaved_changes(
+        &self,
+        path: &std::path::Path,
+        is_directory: bool,
+    ) -> bool {
+        if is_directory {
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .iter()
+                .any(|(buffer_id, state)| {
+                    if state.buffer.is_modified() {
+                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
+                        {
+                            if let Some(file_path) = metadata.file_path() {
+                                return file_path.starts_with(path);
+                            }
+                        }
+                    }
+                    false
+                })
+        } else {
+            self.windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .expect("active window present")
+                .iter()
+                .any(|(buffer_id, state)| {
+                    if state.buffer.is_modified() {
+                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
+                        {
+                            return metadata.file_path().map(|p| p.as_path()) == Some(path);
+                        }
+                    }
+                    false
+                })
         }
     }
 
@@ -3832,53 +3886,12 @@ impl Editor {
         &self,
         dir_path: &std::path::Path,
     ) -> Option<Vec<std::path::PathBuf>> {
-        use crate::services::process_hidden::HideWindow;
-        use std::process::Command;
+        let modified_files = self
+            .active_window()
+            .file_explorer_git_status_cache
+            .direct_paths_under(dir_path);
 
-        // Resolve symlinks to get the actual directory path
-        let resolved_path = dir_path
-            .canonicalize()
-            .unwrap_or_else(|_| dir_path.to_path_buf());
-
-        // Run git status --porcelain to get list of modified files
-        let output = Command::new("git")
-            .args(["status", "--porcelain", "--"])
-            .arg(&resolved_path)
-            .current_dir(self.working_dir())
-            .hide_window()
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let modified_files: Vec<std::path::PathBuf> = stdout
-            .lines()
-            .filter_map(|line| {
-                // Git porcelain format: XY filename
-                // where XY is the status (M, A, D, ??, etc.)
-                if line.len() > 3 {
-                    let file_part = &line[3..];
-                    // Handle renamed files (old -> new format)
-                    let file_name = if file_part.contains(" -> ") {
-                        file_part.split(" -> ").last().unwrap_or(file_part)
-                    } else {
-                        file_part
-                    };
-                    Some(self.working_dir().join(file_name))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if modified_files.is_empty() {
-            None
-        } else {
-            Some(modified_files)
-        }
+        (!modified_files.is_empty()).then_some(modified_files)
     }
 
     /// Hit-test a click against the floating widget panel. Clicks

@@ -4819,6 +4819,10 @@ impl Editor {
                 AsyncMessage::FileExplorerExpandedToPath(view) => {
                     self.handle_file_explorer_expanded_to_path(view);
                 }
+                AsyncMessage::FileExplorerGitStatusUpdated {
+                    window_id: _window_id,
+                    cache: _cache,
+                } => {}
                 AsyncMessage::Plugin(plugin_msg) => {
                     use fresh_core::api::{JsCallbackId, PluginAsyncMessage};
                     match plugin_msg {
@@ -5797,6 +5801,12 @@ impl Editor {
             }
             PluginCommand::ClearFileExplorerDecorations { namespace } => {
                 self.handle_clear_file_explorer_decorations(&namespace);
+            }
+            PluginCommand::SetFileExplorerSlots { namespace, slots } => {
+                self.handle_set_file_explorer_slots(namespace, slots);
+            }
+            PluginCommand::ClearFileExplorerSlots { namespace } => {
+                self.handle_clear_file_explorer_slots(&namespace);
             }
 
             // ==================== Status/Prompt Commands ====================

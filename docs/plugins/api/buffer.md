@@ -589,7 +589,9 @@ clearLineIndicators(buffer_id: number, namespace: string): boolean
 
 #### `setFileExplorerDecorations`
 
-Set file explorer decorations for a namespace
+Set file explorer decorations for a namespace. Namespaces are isolated per
+plugin at runtime, so different plugins may safely reuse the same namespace
+label without clearing each other's explorer state.
 
 ```typescript
 setFileExplorerDecorations(namespace: string, decorations: FileExplorerDecoration[]): boolean
@@ -608,6 +610,39 @@ Clear file explorer decorations for a namespace
 
 ```typescript
 clearFileExplorerDecorations(namespace: string): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `namespace` | `string` | Namespace to clear (e.g., "git-status") |
+
+#### `setFileExplorerSlots`
+
+Set file explorer slot overrides for a namespace. This is additive: any slot
+field a plugin leaves unset falls back to the editor's default compatibility
+providers, so current behaviour is preserved until explicitly overridden. Use
+`suppressLeading`, `suppressTrailing`, or `suppressNameColor` when you want to
+clear a default compatibility field instead of replacing it with a new value.
+
+```typescript
+setFileExplorerSlots(namespace: string, slots: FileExplorerSlotEntry[]): boolean
+```
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `namespace` | `string` | Namespace for grouping (e.g., "git-status") |
+| `slots` | `FileExplorerSlotEntry[]` | Slot override entries |
+
+#### `clearFileExplorerSlots`
+
+Clear file explorer slot overrides for a namespace
+
+```typescript
+clearFileExplorerSlots(namespace: string): boolean
 ```
 
 **Parameters:**

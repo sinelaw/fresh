@@ -28,6 +28,7 @@ const PRIORITY = {
 };
 
 let refreshInFlight = false;
+let refreshPending = false;
 
 function statusToDecoration(status: string, staged: boolean) {
   switch (status) {
@@ -101,6 +102,7 @@ function parseStatusOutput(output: string, repoRoot: string) {
 
 async function refreshGitExplorerDecorations() {
   if (refreshInFlight) {
+    refreshPending = true;
     return;
   }
   refreshInFlight = true;
@@ -143,6 +145,10 @@ async function refreshGitExplorerDecorations() {
     throw err;
   } finally {
     refreshInFlight = false;
+    if (refreshPending) {
+      refreshPending = false;
+      void refreshGitExplorerDecorations();
+    }
   }
 }
 

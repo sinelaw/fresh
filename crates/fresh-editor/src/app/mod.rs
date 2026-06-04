@@ -195,7 +195,7 @@ use crate::input::quick_open::{
 use crate::model::cursor::Cursors;
 use crate::model::event::{Event, EventLog, LeafId, SplitDirection};
 use crate::model::filesystem::FileSystem;
-use crate::services::async_bridge::{AsyncBridge, AsyncMessage};
+use crate::services::async_bridge::AsyncBridge;
 use crate::services::fs::FsManager;
 use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};

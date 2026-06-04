@@ -812,11 +812,15 @@ fn test_enter_toggles_directory() {
 
     let screen_before_expand = harness.screen_to_string();
     println!("Before expand:\n{}", screen_before_expand);
+    let testdir_line_before = screen_before_expand
+        .lines()
+        .find(|line| line.contains("testdir"))
+        .unwrap_or("");
 
     // Should be on testdir now - verify it's collapsed
     assert!(
-        screen_before_expand.contains("> testdir") || screen_before_expand.contains(">  testdir"),
-        "testdir should initially be collapsed"
+        testdir_line_before.contains('>') && testdir_line_before.contains("testdir"),
+        "testdir should initially be collapsed.\nLine: {testdir_line_before:?}\nScreen:\n{screen_before_expand}"
     );
 
     // Press Enter to expand testdir
@@ -827,6 +831,10 @@ fn test_enter_toggles_directory() {
 
     let screen_after_expand = harness.screen_to_string();
     println!("After expand:\n{}", screen_after_expand);
+    let testdir_line_after = screen_after_expand
+        .lines()
+        .find(|line| line.contains("testdir"))
+        .unwrap_or("");
 
     // After expansion, should see the files inside testdir (file1.txt, file2.txt)
     assert!(
@@ -836,8 +844,8 @@ fn test_enter_toggles_directory() {
 
     // Verify testdir is now expanded
     assert!(
-        screen_after_expand.contains("▼ testdir") || screen_after_expand.contains("▼  testdir"),
-        "testdir should show expanded indicator (▼)"
+        testdir_line_after.contains('▼') && testdir_line_after.contains("testdir"),
+        "testdir should show expanded indicator (▼).\nLine: {testdir_line_after:?}\nScreen:\n{screen_after_expand}"
     );
 
     // Press Enter again to collapse testdir
@@ -852,13 +860,16 @@ fn test_enter_toggles_directory() {
     let screen_after_collapse = harness.screen_to_string();
 
     println!("Screen after collapse:\n{}", screen_after_collapse);
+    let testdir_line_after_collapse = screen_after_collapse
+        .lines()
+        .find(|line| line.contains("testdir"))
+        .unwrap_or("");
 
     // After collapsing, directory tree structure should return to original state
     // We check that testdir shows collapsed indicator (>)
     assert!(
-        screen_after_collapse.contains("> testdir") || screen_after_collapse.contains(">  testdir"),
-        "testdir should be collapsed after pressing Enter again. Screen:\n{}",
-        screen_after_collapse
+        testdir_line_after_collapse.contains('>') && testdir_line_after_collapse.contains("testdir"),
+        "testdir should be collapsed after pressing Enter again.\nLine: {testdir_line_after_collapse:?}\nScreen:\n{screen_after_collapse}"
     );
 
     // Verify files inside testdir are no longer visible
@@ -3557,6 +3568,19 @@ fn test_file_explorer_duplicate_file_creates_copy_sibling() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
+    // Disable the native explorer git-status refresh path so this regression
+    // proves the plugin hook path itself still works. The existing screen state
+    // stays blank because `alpha.txt` is clean; after duplicate, any `U` badge
+    // that appears must come from `git_explorer` reacting to
+    // `after_file_explorer_change`.
+    {
+        let window = harness.editor_mut().active_window_mut();
+        window.file_explorer_git_status_cache =
+            fresh::view::file_tree::FileExplorerGitStatusCache::default();
+        window.file_explorer_git_status_refresh_in_progress = true;
+        window.file_explorer_git_status_refresh_pending = false;
+    }
+
     harness.editor_mut().file_explorer_duplicate();
     harness
         .wait_until(|h| h.editor().working_dir().join("alpha copy.txt").exists())
@@ -3830,6 +3854,95 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
         .unwrap();
 }
 
+#[test]
+fn test_file_explorer_git_status_async_update_stays_with_origin_window() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let root_a = harness.project_dir().unwrap();
+    fs::write(root_a.join("alpha.txt"), "alpha").unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    let base_window = harness.editor().active_window_id();
+
+    let root_b = tempfile::tempdir().unwrap();
+    fs::write(root_b.path().join("beta.txt"), "beta").unwrap();
+
+    let win_b = harness
+        .editor_mut()
+        .create_window_at(root_b.path().to_path_buf(), "beta".into());
+    harness.editor_mut().set_active_window(win_b);
+    harness.editor_mut().toggle_file_explorer();
+
+    let cache_b = fresh::view::file_tree::FileExplorerGitStatusCache::rebuild(
+        vec![(
+            root_b.path().join("beta.txt"),
+            fresh::view::file_tree::FileExplorerGitStatus {
+                kind: fresh::view::file_tree::GitStatusKind::Untracked,
+            },
+        )],
+        root_b.path(),
+        &std::collections::HashMap::new(),
+    );
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .file_explorer_git_status_cache = cache_b;
+
+    let cache_a = fresh::view::file_tree::FileExplorerGitStatusCache::rebuild(
+        vec![(
+            root_a.join("alpha.txt"),
+            fresh::view::file_tree::FileExplorerGitStatus {
+                kind: fresh::view::file_tree::GitStatusKind::Modified,
+            },
+        )],
+        &root_a,
+        &std::collections::HashMap::new(),
+    );
+
+    harness
+        .editor()
+        .session(base_window)
+        .expect("base window should still exist")
+        .bridge
+        .sender()
+        .send(
+            fresh::services::async_bridge::AsyncMessage::FileExplorerGitStatusUpdated {
+                window_id: base_window,
+                cache: cache_a,
+            },
+        )
+        .unwrap();
+
+    let _ = harness.editor_mut().process_async_messages();
+
+    let base_cache = &harness
+        .editor()
+        .session(base_window)
+        .expect("base window should still exist")
+        .file_explorer_git_status_cache;
+    assert_eq!(
+        base_cache
+            .direct_for_path(&root_a.join("alpha.txt"))
+            .map(|status| status.kind),
+        Some(fresh::view::file_tree::GitStatusKind::Modified)
+    );
+
+    let active_cache = &harness
+        .editor()
+        .session(win_b)
+        .expect("second window should still exist")
+        .file_explorer_git_status_cache;
+    assert_eq!(
+        active_cache
+            .direct_for_path(&root_b.path().join("beta.txt"))
+            .map(|status| status.kind),
+        Some(fresh::view::file_tree::GitStatusKind::Untracked)
+    );
+    assert_eq!(
+        active_cache.direct_for_path(&root_a.join("alpha.txt")),
+        None
+    );
+}
+
 /// Test that with `file_explorer.follow_active_buffer = true`, switching tabs
 /// re-syncs the file explorer to the newly active buffer's path — visibly
 /// expanding the directory containing that file.
@@ -3952,8 +4065,8 @@ fn test_file_explorer_custom_tree_indicators() {
         .find(|l| l.contains("subdir"))
         .unwrap_or_else(|| panic!("subdir not found in:\n{screen}"));
     assert!(
-        subdir_line.contains("+ subdir"),
-        "expected '+ subdir' on the row for the collapsed directory.\n\
+        subdir_line.contains('+') && subdir_line.contains("subdir"),
+        "expected '+' on the row for the collapsed directory.\n\
          Got line: {subdir_line:?}\nFull screen:\n{screen}"
     );
     // Default expanded glyph "▼" must not appear when overridden.

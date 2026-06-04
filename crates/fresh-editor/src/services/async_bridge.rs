@@ -273,6 +273,12 @@ pub enum AsyncMessage {
         view: FileTreeView,
     },
 
+    /// File explorer git status cache refreshed in the background.
+    FileExplorerGitStatusUpdated {
+        window_id: fresh_core::WindowId,
+        cache: crate::view::file_tree::FileExplorerGitStatusCache,
+    },
+
     /// Plugin-related async messages
     Plugin(fresh_core::api::PluginAsyncMessage),
 

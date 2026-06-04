@@ -3761,6 +3761,7 @@ impl JsEditorApi {
         decorations: Vec<rquickjs::Object<'js>>,
     ) -> rquickjs::Result<bool> {
         use fresh_core::file_explorer::FileExplorerDecoration;
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
 
         let decorations: Vec<FileExplorerDecoration> = decorations
             .into_iter()
@@ -3810,12 +3811,12 @@ impl JsEditorApi {
             .entry(self.plugin_name.clone())
             .or_default()
             .file_explorer_namespaces
-            .push(namespace.clone());
+            .push(scoped_namespace.clone());
 
         Ok(self
             .command_sender
             .send(PluginCommand::SetFileExplorerDecorations {
-                namespace,
+                namespace: scoped_namespace,
                 decorations,
             })
             .is_ok())
@@ -3823,8 +3824,52 @@ impl JsEditorApi {
 
     /// Clear file explorer decorations for a namespace
     pub fn clear_file_explorer_decorations(&self, namespace: String) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
         self.command_sender
-            .send(PluginCommand::ClearFileExplorerDecorations { namespace })
+            .send(PluginCommand::ClearFileExplorerDecorations {
+                namespace: scoped_namespace,
+            })
+            .is_ok()
+    }
+
+    /// Set file explorer slot overrides for a namespace
+    pub fn set_file_explorer_slots<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        namespace: String,
+        slots: Vec<rquickjs::Object<'js>>,
+    ) -> rquickjs::Result<bool> {
+        use fresh_core::file_explorer::FileExplorerSlotEntry;
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+
+        let slots: Vec<FileExplorerSlotEntry> = slots
+            .into_iter()
+            .map(|obj| <FileExplorerSlotEntry as rquickjs::FromJs>::from_js(&ctx, obj.into()))
+            .collect::<rquickjs::Result<Vec<_>>>()?;
+
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .file_explorer_namespaces
+            .push(scoped_namespace.clone());
+
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SetFileExplorerSlots {
+                namespace: scoped_namespace,
+                slots,
+            })
+            .is_ok())
+    }
+
+    /// Clear file explorer slot overrides for a namespace
+    pub fn clear_file_explorer_slots(&self, namespace: String) -> bool {
+        let scoped_namespace = format!("{}::{}", self.plugin_name, namespace);
+        self.command_sender
+            .send(PluginCommand::ClearFileExplorerSlots {
+                namespace: scoped_namespace,
+            })
             .is_ok()
     }
 
@@ -7332,6 +7377,11 @@ impl QuickJsBackend {
                     let _ = self
                         .command_sender
                         .send(PluginCommand::ClearFileExplorerDecorations {
+                            namespace: ns.clone(),
+                        });
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearFileExplorerSlots {
                             namespace: ns.clone(),
                         });
                 }

@@ -763,7 +763,7 @@ impl FileTreeView {
         }
     }
 
-    /// Collect symlink mappings from expanded symlink directories.
+    /// Collect symlink mappings from visible symlink directories.
     ///
     /// Returns a HashMap where keys are symlink paths and values are their canonical targets.
     /// This is used to create decoration aliases so files under symlinked directories
@@ -773,8 +773,9 @@ impl FileTreeView {
 
         for node_id in self.filtered_visible_nodes() {
             if let Some(node) = self.tree.get_node(node_id) {
-                // Only process expanded symlink directories
-                if node.entry.is_symlink() && node.is_dir() && node.is_expanded() {
+                // Visible symlink directories need aliases even while collapsed so
+                // bubbled git/decorations can light the row before first expansion.
+                if node.entry.is_symlink() && node.is_dir() {
                     // Canonicalize the symlink to get the target
                     if let Ok(canonical) = node.entry.path.canonicalize() {
                         if canonical != node.entry.path {
@@ -1488,6 +1489,31 @@ mod tests {
         let c_id = id_for(&view, "chain/a/b/c");
         view.set_selected(Some(chain_id));
         assert_eq!(view.get_selected(), Some(c_id));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_collect_symlink_mappings_includes_collapsed_visible_symlink_dirs() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let real_dir = root.join("real");
+        std_fs::create_dir_all(real_dir.join("nested")).unwrap();
+        std_fs::write(real_dir.join("nested/file.txt"), "hello").unwrap();
+        let link_dir = root.join("link");
+        symlink(&real_dir, &link_dir).unwrap();
+
+        let backend = Arc::new(StdFileSystem);
+        let manager = Arc::new(FsManager::new(backend));
+        let mut tree = FileTree::new(root.to_path_buf(), manager).await.unwrap();
+        let root_id = tree.root_id();
+        tree.expand_node(root_id).await.unwrap();
+        let view = FileTreeView::new(tree);
+
+        let mappings = view.collect_symlink_mappings();
+        let canonical_real_dir = real_dir.canonicalize().unwrap();
+        assert_eq!(mappings.get(&link_dir), Some(&canonical_real_dir));
     }
 
     #[tokio::test]

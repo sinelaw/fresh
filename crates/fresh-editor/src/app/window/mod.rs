@@ -443,6 +443,27 @@ pub struct Window {
     /// `file_explorer_decorations` changes.
     pub file_explorer_decoration_cache: crate::view::file_tree::FileExplorerDecorationCache,
 
+    /// Slot overrides supplied by plugins for the file explorer keyed by
+    /// namespace. These are additive overrides: unspecified fields continue to
+    /// fall back to compatibility providers.
+    pub file_explorer_slot_overrides:
+        HashMap<String, Vec<fresh_core::file_explorer::FileExplorerSlotEntry>>,
+
+    /// Compiled slot-override lookup cache invalidated when
+    /// `file_explorer_slot_overrides` changes.
+    pub file_explorer_slot_override_cache: crate::view::file_tree::FileExplorerSlotOverrideCache,
+
+    /// Core git-status cache used for explorer filename styling and
+    /// fallback status badges when no plugin decoration is present.
+    pub file_explorer_git_status_cache: crate::view::file_tree::FileExplorerGitStatusCache,
+
+    /// Whether an async explorer git-status refresh is currently running.
+    pub file_explorer_git_status_refresh_in_progress: bool,
+
+    /// Whether another git-status refresh should run immediately after the
+    /// current in-flight refresh completes.
+    pub file_explorer_git_status_refresh_pending: bool,
+
     /// Hover-popup correlation state (which buffer / cursor a hover
     /// request was issued from). Per-window because hover requests
     /// route through the active window's LSP.
@@ -1766,6 +1787,13 @@ impl Window {
             file_explorer_decorations: HashMap::new(),
             file_explorer_decoration_cache:
                 crate::view::file_tree::FileExplorerDecorationCache::default(),
+            file_explorer_slot_overrides: HashMap::new(),
+            file_explorer_slot_override_cache:
+                crate::view::file_tree::FileExplorerSlotOverrideCache::default(),
+            file_explorer_git_status_cache:
+                crate::view::file_tree::FileExplorerGitStatusCache::default(),
+            file_explorer_git_status_refresh_in_progress: false,
+            file_explorer_git_status_refresh_pending: false,
             hover: crate::app::hover::HoverState::default(),
             search_state: None,
             search_namespace: crate::view::overlay::OverlayNamespace::from_string(

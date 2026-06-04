@@ -612,6 +612,14 @@ impl Editor {
                 self.active_window_mut()
                     .handle_clear_file_explorer_decorations(&namespace);
             }
+            PluginCommand::SetFileExplorerSlots { namespace, slots } => {
+                self.active_window_mut()
+                    .handle_set_file_explorer_slots(namespace, slots);
+            }
+            PluginCommand::ClearFileExplorerSlots { namespace } => {
+                self.active_window_mut()
+                    .handle_clear_file_explorer_slots(&namespace);
+            }
 
             // ==================== Status/Prompt Commands ====================
             PluginCommand::SetStatus { message } => {

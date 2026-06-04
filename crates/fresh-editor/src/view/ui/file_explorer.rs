@@ -1,6 +1,9 @@
 use crate::input::fuzzy::FuzzyMatch;
 use crate::primitives::display_width::str_width;
-use crate::view::file_tree::{FileExplorerDecorationCache, FileTreeView, NodeId};
+use crate::view::file_tree::{
+    ExplorerSlotContext, ExplorerSlotResolution, ExplorerSlotResolver, FileExplorerDecorationCache,
+    FileExplorerGitStatusCache, FileExplorerSlotOverrideCache, FileTreeView, NodeId,
+};
 use crate::view::theme::Theme;
 use ratatui::{
     layout::Rect,
@@ -35,15 +38,20 @@ impl FileExplorerRenderer {
         view: &mut FileTreeView,
         frame: &mut Frame,
         area: Rect,
+        slot_resolver: ExplorerSlotResolver<'static>,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
+        git_statuses: &FileExplorerGitStatusCache,
+        slot_overrides: &FileExplorerSlotOverrideCache,
         keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
         current_context: crate::input::keybindings::KeyContext,
         theme: &Theme,
         close_button_hovered: bool,
         remote_connection: Option<&str>,
         cut_paths: &[PathBuf],
+        show_file_icons: bool,
+        color_git_status_names: bool,
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
     ) {
@@ -88,6 +96,7 @@ impl FileExplorerRenderer {
                 };
                 Self::render_node(
                     view,
+                    slot_resolver,
                     node_id,
                     indent,
                     is_selected,
@@ -95,10 +104,14 @@ impl FileExplorerRenderer {
                     is_focused,
                     files_with_unsaved_changes,
                     decorations,
+                    git_statuses,
+                    slot_overrides,
                     theme,
                     content_width,
                     fuzzy_match.as_ref(),
                     cut_paths,
+                    show_file_icons,
+                    color_git_status_names,
                     tree_indicator_collapsed,
                     tree_indicator_expanded,
                 )
@@ -226,6 +239,7 @@ impl FileExplorerRenderer {
     #[allow(clippy::too_many_arguments)]
     fn render_node(
         view: &FileTreeView,
+        slot_resolver: ExplorerSlotResolver<'static>,
         node_id: NodeId,
         indent: usize,
         is_selected: bool,
@@ -233,18 +247,71 @@ impl FileExplorerRenderer {
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
+        git_statuses: &FileExplorerGitStatusCache,
+        slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
         cut_paths: &[PathBuf],
+        show_file_icons: bool,
+        color_git_status_names: bool,
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
     ) -> ListItem<'static> {
+        let line = Self::build_node_line(
+            view,
+            slot_resolver,
+            node_id,
+            indent,
+            is_selected,
+            is_multi_selected,
+            is_focused,
+            files_with_unsaved_changes,
+            decorations,
+            git_statuses,
+            slot_overrides,
+            theme,
+            content_width,
+            fuzzy_match,
+            cut_paths,
+            show_file_icons,
+            color_git_status_names,
+            tree_indicator_collapsed,
+            tree_indicator_expanded,
+        );
+        let row_bg = if (is_selected || is_multi_selected) && is_focused {
+            theme.selection_bg
+        } else {
+            theme.editor_bg
+        };
+        ListItem::new(line).style(Style::default().bg(row_bg))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_node_line(
+        view: &FileTreeView,
+        slot_resolver: ExplorerSlotResolver<'static>,
+        node_id: NodeId,
+        indent: usize,
+        is_selected: bool,
+        is_multi_selected: bool,
+        is_focused: bool,
+        files_with_unsaved_changes: &HashSet<PathBuf>,
+        decorations: &FileExplorerDecorationCache,
+        git_statuses: &FileExplorerGitStatusCache,
+        slot_overrides: &FileExplorerSlotOverrideCache,
+        theme: &Theme,
+        content_width: usize,
+        fuzzy_match: Option<&FuzzyMatch>,
+        cut_paths: &[PathBuf],
+        show_file_icons: bool,
+        color_git_status_names: bool,
+        tree_indicator_collapsed: &str,
+        tree_indicator_expanded: &str,
+    ) -> Line<'static> {
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
-        // Build the line with indentation and tree structure
         let mut spans = Vec::new();
-
         // Names of any ancestor directories that compact-mode folded into
         // this row. Outermost-first; each gets prefixed before the anchor
         // name and joined by `/`.
@@ -254,29 +321,91 @@ impl FileExplorerRenderer {
             .filter_map(|id| view.tree().get_node(id).map(|n| n.entry.name.clone()))
             .collect();
 
-        // Width reserved for the indicator column. Computed from the
-        // configured collapsed/expanded indicators (plus a trailing space)
-        // so files and dirs line up regardless of glyph width. The
-        // built-in loading ("⟳ ") and error ("! ") states are 2 cols
-        // wide and so is the default; we still take the max so a wider
-        // user glyph doesn't truncate them.
+        // Width reserved for the tree-indicator column. We size it from the
+        // configured collapsed/expanded glyphs (plus a trailing space) so file
+        // and directory names stay aligned even when the user picks wider
+        // custom indicators.
         let collapsed_w = str_width(tree_indicator_collapsed);
         let expanded_w = str_width(tree_indicator_expanded);
         let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
 
-        // Calculate the left side width for padding calculation
-        let indent_width = indent * 2;
-        // Chain prefix contributes each name plus a "/" separator.
+        let has_unsaved = if node.is_dir() {
+            Self::folder_has_modified_files(&node.entry.path, files_with_unsaved_changes)
+        } else {
+            files_with_unsaved_changes.contains(&node.entry.path)
+        };
+
+        let is_pending_cut = cut_paths.iter().any(|cp| cp == &node.entry.path);
+        let neutral_fg = if node
+            .entry
+            .metadata
+            .as_ref()
+            .map(|m| m.is_hidden)
+            .unwrap_or(false)
+        {
+            theme.line_number_fg
+        } else if node.entry.is_symlink() {
+            theme.syntax_type
+        } else if node.is_dir() {
+            theme.syntax_keyword
+        } else {
+            theme.editor_fg
+        };
+        let slot_context = ExplorerSlotContext {
+            path: &node.entry.path,
+            is_dir: node.is_dir(),
+            has_unsaved,
+            is_symlink: node.entry.is_symlink(),
+            is_hidden: node
+                .entry
+                .metadata
+                .as_ref()
+                .map(|m| m.is_hidden)
+                .unwrap_or(false),
+            decorations,
+            git_statuses,
+            slot_overrides,
+            theme,
+            show_file_icons,
+            color_git_status_names,
+            neutral_fg,
+        };
+        let slot_resolution = slot_resolver.resolve(&slot_context);
+        let leading_slot_width = slot_resolution
+            .leading
+            .as_ref()
+            .map(|slot| slot.width() + 1)
+            .unwrap_or(0);
+
+        let base_fg = if is_pending_cut {
+            theme.line_number_fg
+        } else if let Some(name_color_hint) = slot_resolution.name_color_hint {
+            name_color_hint
+        } else if (is_selected || is_multi_selected) && is_focused {
+            theme.editor_fg
+        } else {
+            neutral_fg
+        };
+
         let chain_prefix_width: usize = chain_prefix_names.iter().map(|s| str_width(s) + 1).sum();
         let name_width = str_width(&node.entry.name);
-        let left_side_width = indent_width + indicator_width + chain_prefix_width + name_width;
 
-        // Indentation
+        let indent_width = indent * 2;
+        let left_side_width =
+            indent_width + indicator_width + leading_slot_width + chain_prefix_width + name_width;
+        let trailing_slot_width = slot_resolution
+            .trailing
+            .as_ref()
+            .map(|slot| slot.width())
+            .unwrap_or(0);
+        let error_text = if node.is_error() { " [Error]" } else { "" };
+        let error_width = str_width(error_text);
+        let total_right_width = trailing_slot_width + error_width;
+
         if indent > 0 {
             spans.push(Span::raw("  ".repeat(indent)));
         }
 
-        // Tree expansion indicator (only for directories)
         if node.is_dir() {
             let (indicator, glyph_width) = if node.is_expanded() {
                 (format!("{} ", tree_indicator_expanded), expanded_w + 1)
@@ -296,38 +425,17 @@ impl FileExplorerRenderer {
                 spans.push(Span::raw(" ".repeat(pad)));
             }
         } else {
-            // For files, pad to align with directory names
             spans.push(Span::raw(" ".repeat(indicator_width)));
         }
 
-        // Name styling using theme colors
-        let is_pending_cut = cut_paths.iter().any(|cp| cp == &node.entry.path);
+        if let Some(slot) = slot_resolution.leading {
+            let slot_width = slot.width();
+            let slot_text_width = str_width(&slot.text);
+            spans.push(Span::styled(slot.text, Style::default().fg(slot.fg)));
+            let slot_padding = slot_width.saturating_sub(slot_text_width) + 1;
+            spans.push(Span::raw(" ".repeat(slot_padding)));
+        }
 
-        let base_fg = if is_pending_cut {
-            theme.line_number_fg
-        } else if (is_selected || is_multi_selected) && is_focused {
-            theme.editor_fg
-        } else if node
-            .entry
-            .metadata
-            .as_ref()
-            .map(|m| m.is_hidden)
-            .unwrap_or(false)
-        {
-            theme.line_number_fg
-        } else if node.entry.is_symlink() {
-            // Symlinks use a distinct color (type color, typically cyan)
-            theme.syntax_type
-        } else if node.is_dir() {
-            theme.syntax_keyword
-        } else {
-            theme.editor_fg
-        };
-
-        // Compact-directory chain prefix: render the folded ancestor names,
-        // each followed by "/", before the anchor name. Use a dimmed
-        // separator so the chain reads as breadcrumbs rather than a flat
-        // path.
         let chain_segment_style = Style::default().fg(theme.syntax_keyword);
         let chain_separator_style = Style::default().fg(theme.line_number_fg);
         for name in &chain_prefix_names {
@@ -335,7 +443,6 @@ impl FileExplorerRenderer {
             spans.push(Span::styled("/", chain_separator_style));
         }
 
-        // Render name with match highlighting
         if let Some(fm) = fuzzy_match {
             Self::render_name_with_highlights(
                 &node.entry.name,
@@ -351,61 +458,18 @@ impl FileExplorerRenderer {
             ));
         }
 
-        // Determine the right-side indicator (status symbol)
-        // Priority: unsaved changes > direct decoration > bubbled decoration (for dirs)
-        let has_unsaved = if node.is_dir() {
-            Self::folder_has_modified_files(&node.entry.path, files_with_unsaved_changes)
-        } else {
-            files_with_unsaved_changes.contains(&node.entry.path)
-        };
-
-        let direct_decoration = decorations.direct_for_path(&node.entry.path);
-        let bubbled_decoration = if node.is_dir() {
-            decorations
-                .bubbled_for_path(&node.entry.path)
-                .filter(|_| direct_decoration.is_none())
-        } else {
-            None
-        };
-
-        let right_indicator: Option<(String, Color)> = if has_unsaved {
-            Some(("●".to_string(), theme.diagnostic_warning_fg))
-        } else if let Some(decoration) = direct_decoration {
-            let symbol = Self::decoration_symbol(&decoration.symbol);
-            Some((symbol, Self::decoration_color(decoration, theme)))
-        } else {
-            bubbled_decoration
-                .map(|decoration| ("●".to_string(), Self::decoration_color(decoration, theme)))
-        };
-
-        // Calculate right-side content width
-        let right_indicator_width = right_indicator
-            .as_ref()
-            .map(|(s, _)| str_width(s))
-            .unwrap_or(0);
-
-        // Error indicator
-        let error_text = if node.is_error() { " [Error]" } else { "" };
-        let error_width = str_width(error_text);
-
-        let total_right_width = right_indicator_width + error_width;
-
-        // Calculate padding for right-alignment
         let min_gap = 1;
         let padding = if left_side_width + min_gap + total_right_width < content_width {
             content_width - left_side_width - total_right_width
         } else {
             min_gap
         };
-
         spans.push(Span::raw(" ".repeat(padding)));
 
-        // Add right-aligned status indicator
-        if let Some((symbol, color)) = right_indicator {
-            spans.push(Span::styled(symbol, Style::default().fg(color)));
+        if let Some(slot) = slot_resolution.trailing {
+            spans.push(Span::styled(slot.text, Style::default().fg(slot.fg)));
         }
 
-        // Error indicator
         if node.is_error() {
             spans.push(Span::styled(
                 error_text,
@@ -413,32 +477,56 @@ impl FileExplorerRenderer {
             ));
         }
 
-        let row_bg = if (is_selected || is_multi_selected) && is_focused {
-            theme.selection_bg
+        Line::from(spans)
+    }
+
+    pub(crate) fn trailing_slot_screen_bounds(
+        view: &FileTreeView,
+        node_id: NodeId,
+        indent: usize,
+        content_width: usize,
+        slot_resolution: &ExplorerSlotResolution,
+        tree_indicator_collapsed: &str,
+        tree_indicator_expanded: &str,
+        explorer_area: Rect,
+    ) -> Option<(u16, u16)> {
+        let trailing_slot = slot_resolution.trailing.as_ref()?;
+        let node = view.tree().get_node(node_id).expect("Node should exist");
+
+        let chain_prefix_names: Vec<String> = view
+            .compact_chain_for_anchor(node_id)
+            .into_iter()
+            .filter_map(|id| view.tree().get_node(id).map(|n| n.entry.name.clone()))
+            .collect();
+        let collapsed_w = str_width(tree_indicator_collapsed);
+        let expanded_w = str_width(tree_indicator_expanded);
+        let indicator_width = collapsed_w.max(expanded_w).max(1) + 1;
+        let leading_slot_width = slot_resolution
+            .leading
+            .as_ref()
+            .map(|slot| slot.width() + 1)
+            .unwrap_or(0);
+        let chain_prefix_width: usize = chain_prefix_names.iter().map(|s| str_width(s) + 1).sum();
+        let name_width = str_width(&node.entry.name);
+        let left_side_width =
+            indent * 2 + indicator_width + leading_slot_width + chain_prefix_width + name_width;
+        let trailing_slot_width = trailing_slot.width();
+        let error_width = if node.is_error() {
+            str_width(" [Error]")
         } else {
-            theme.editor_bg
+            0
         };
-        ListItem::new(Line::from(spans)).style(Style::default().bg(row_bg))
-    }
-
-    fn decoration_symbol(symbol: &str) -> String {
-        symbol
-            .chars()
-            .next()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string())
-    }
-
-    fn decoration_color(
-        decoration: &crate::view::file_tree::FileExplorerDecoration,
-        theme: &Theme,
-    ) -> Color {
-        match &decoration.color {
-            fresh_core::api::OverlayColorSpec::Rgb(r, g, b) => Color::Rgb(*r, *g, *b),
-            fresh_core::api::OverlayColorSpec::ThemeKey(key) => {
-                theme.resolve_theme_key(key).unwrap_or(theme.editor_fg)
-            }
-        }
+        let total_right_width = trailing_slot_width + error_width;
+        let min_gap = 1;
+        let padding = if left_side_width + min_gap + total_right_width < content_width {
+            content_width - left_side_width - total_right_width
+        } else {
+            min_gap
+        };
+        let content_start_x = explorer_area.x + 2;
+        let slot_start = content_start_x + (left_side_width + padding) as u16;
+        let slot_end = slot_start + trailing_slot_width as u16;
+        Some((slot_start, slot_end))
     }
 
     /// Render a file/directory name with matched characters highlighted
@@ -496,5 +584,434 @@ impl FileExplorerRenderer {
             };
             spans.push(Span::styled(current_span, style));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::filesystem::StdFileSystem;
+    use crate::services::fs::FsManager;
+    use crate::view::file_tree::{
+        FileExplorerGitStatus, FileExplorerGitStatusCache, GitStatusKind,
+    };
+    use std::collections::{HashMap, HashSet};
+    use std::fs as std_fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    async fn create_renderer_view() -> (TempDir, FileTreeView) {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        std_fs::create_dir(root.join("src")).unwrap();
+        std_fs::write(root.join("README.md"), "hello").unwrap();
+        std_fs::write(root.join("src/schema.ts"), "export const value = 1;\n").unwrap();
+
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let mut tree = crate::view::file_tree::FileTree::new(root.to_path_buf(), manager)
+            .await
+            .unwrap();
+        let root_id = tree.root_id();
+        tree.expand_node(root_id).await.unwrap();
+        let src_id = tree
+            .get_node(root_id)
+            .unwrap()
+            .children
+            .iter()
+            .copied()
+            .find(|id| tree.get_node(*id).unwrap().entry.name == "src")
+            .unwrap();
+        tree.expand_node(src_id).await.unwrap();
+
+        (temp_dir, FileTreeView::new(tree))
+    }
+
+    fn spans_text(line: &Line<'static>) -> Vec<String> {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref().to_string())
+            .collect()
+    }
+
+    fn status_cache(
+        root: &std::path::Path,
+        entries: Vec<(PathBuf, GitStatusKind)>,
+    ) -> FileExplorerGitStatusCache {
+        FileExplorerGitStatusCache::rebuild(
+            entries
+                .into_iter()
+                .map(|(path, kind)| (path, FileExplorerGitStatus { kind })),
+            root,
+            &HashMap::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn git_status_name_colors_map_to_theme_tokens() {
+        let theme = Theme::load_builtin("dark").unwrap();
+
+        assert_eq!(
+            crate::view::file_tree::decorations::compatibility_git_status_name_color(
+                FileExplorerGitStatus {
+                    kind: GitStatusKind::Modified,
+                },
+                &theme
+            ),
+            theme.file_status_modified_fg
+        );
+        assert_eq!(
+            crate::view::file_tree::decorations::compatibility_git_status_name_color(
+                FileExplorerGitStatus {
+                    kind: GitStatusKind::Untracked,
+                },
+                &theme
+            ),
+            theme.file_status_untracked_fg
+        );
+        assert_eq!(
+            crate::view::file_tree::decorations::compatibility_git_status_name_color(
+                FileExplorerGitStatus {
+                    kind: GitStatusKind::Renamed,
+                },
+                &theme
+            ),
+            theme.file_status_renamed_fg
+        );
+    }
+
+    #[tokio::test]
+    async fn renderer_line_includes_icon_and_status_colored_name() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let git_statuses = status_cache(
+            view.tree().root_path(),
+            vec![(schema_path.clone(), GitStatusKind::Modified)],
+        );
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::compatibility_slot_providers().resolver(),
+            schema_id,
+            2,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &FileExplorerDecorationCache::default(),
+            &git_statuses,
+            &FileExplorerSlotOverrideCache::default(),
+            &theme,
+            80,
+            None,
+            &[],
+            true,
+            true,
+            ">",
+            "▼",
+        );
+
+        let texts = spans_text(&line);
+        assert!(texts.iter().any(|text| text == "TS"));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "schema.ts"
+                && span.style.fg == Some(theme.file_status_modified_fg)
+        }));
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "M"
+            && span.style.fg == Some(theme.file_status_modified_fg)));
+    }
+
+    #[tokio::test]
+    async fn directories_render_with_folder_icon_and_bubbled_status() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let src_path = view.tree().root_path().join("src");
+        let schema_path = src_path.join("schema.ts");
+        let src_id = view.tree().get_node_by_path(&src_path).unwrap().id;
+        let git_statuses = status_cache(
+            view.tree().root_path(),
+            vec![(schema_path, GitStatusKind::Renamed)],
+        );
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::compatibility_slot_providers().resolver(),
+            src_id,
+            1,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &FileExplorerDecorationCache::default(),
+            &git_statuses,
+            &FileExplorerSlotOverrideCache::default(),
+            &theme,
+            80,
+            None,
+            &[],
+            true,
+            true,
+            ">",
+            "▼",
+        );
+
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "▣"));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "src" && span.style.fg == Some(theme.file_status_renamed_fg)
+        }));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "●" && span.style.fg == Some(theme.file_status_renamed_fg)
+        }));
+    }
+
+    #[tokio::test]
+    async fn renderer_line_blanks_leading_slot_when_icons_disabled() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::compatibility_slot_providers().resolver(),
+            schema_id,
+            2,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &FileExplorerDecorationCache::default(),
+            &FileExplorerGitStatusCache::default(),
+            &FileExplorerSlotOverrideCache::default(),
+            &theme,
+            80,
+            None,
+            &[],
+            false,
+            true,
+            ">",
+            "▼",
+        );
+
+        let texts = spans_text(&line);
+        assert!(!texts.iter().any(|text| text == "TS"));
+    }
+
+    #[tokio::test]
+    async fn renderer_line_keeps_git_name_color_when_plugin_badge_wins_trailing_slot() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let git_statuses = status_cache(
+            view.tree().root_path(),
+            vec![(schema_path.clone(), GitStatusKind::Modified)],
+        );
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![crate::view::file_tree::FileExplorerDecoration {
+                path: schema_path,
+                symbol: "P".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_added_fg".into(),
+                ),
+                priority: 99,
+            }],
+            view.tree().root_path(),
+            &HashMap::new(),
+        );
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::compatibility_slot_providers().resolver(),
+            schema_id,
+            2,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &decorations,
+            &git_statuses,
+            &FileExplorerSlotOverrideCache::default(),
+            &theme,
+            80,
+            None,
+            &[],
+            true,
+            true,
+            ">",
+            "▼",
+        );
+
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "schema.ts"
+                && span.style.fg == Some(theme.file_status_modified_fg)
+        }));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "P" && span.style.fg == Some(theme.file_status_added_fg)
+        }));
+    }
+
+    #[tokio::test]
+    async fn trailing_slot_bounds_track_rendered_right_edge_geometry() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let git_statuses = status_cache(
+            view.tree().root_path(),
+            vec![(schema_path.clone(), GitStatusKind::Modified)],
+        );
+        let slot_context = ExplorerSlotContext {
+            path: &schema_path,
+            is_dir: false,
+            has_unsaved: false,
+            is_symlink: false,
+            is_hidden: false,
+            decorations: &FileExplorerDecorationCache::default(),
+            git_statuses: &git_statuses,
+            slot_overrides: &FileExplorerSlotOverrideCache::default(),
+            theme: &theme,
+            show_file_icons: true,
+            color_git_status_names: true,
+            neutral_fg: theme.editor_fg,
+        };
+        let slot_resolution = crate::view::file_tree::compatibility_slot_providers()
+            .resolver()
+            .resolve(&slot_context);
+        let area = Rect::new(0, 0, 40, 10);
+        let content_width = area.width.saturating_sub(3) as usize;
+
+        let bounds = FileExplorerRenderer::trailing_slot_screen_bounds(
+            &view,
+            schema_id,
+            2,
+            content_width,
+            &slot_resolution,
+            ">",
+            "▼",
+            area,
+        )
+        .expect("modified file should render a trailing slot");
+
+        assert_eq!(bounds.1, area.x + area.width.saturating_sub(1));
+        assert_eq!(bounds.1 - bounds.0, 1);
+    }
+
+    #[tokio::test]
+    async fn default_slot_providers_allow_explicit_slot_and_name_color_overrides() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let slot_overrides = FileExplorerSlotOverrideCache::rebuild(
+            vec![fresh_core::file_explorer::FileExplorerSlotEntry {
+                path: schema_path.clone(),
+                leading: Some(fresh_core::file_explorer::FileExplorerLeadingSlot {
+                    text: "PL".to_string(),
+                    color: fresh_core::api::OverlayColorSpec::ThemeKey("syntax.string".into()),
+                    min_width: 2,
+                }),
+                trailing: Some(fresh_core::file_explorer::FileExplorerTrailingSlot {
+                    text: "X".to_string(),
+                    color: fresh_core::api::OverlayColorSpec::ThemeKey("syntax.type".into()),
+                    tooltip: Some(fresh_core::file_explorer::FileExplorerTooltip {
+                        title: "Plugin".to_string(),
+                        lines: vec!["Overridden".to_string()],
+                    }),
+                }),
+                name_color: Some(fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_added_fg".into(),
+                )),
+                priority: 50,
+            }],
+            view.tree().root_path(),
+            &HashMap::new(),
+        );
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::default_slot_providers().resolver(),
+            schema_id,
+            2,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &FileExplorerDecorationCache::default(),
+            &FileExplorerGitStatusCache::default(),
+            &slot_overrides,
+            &theme,
+            80,
+            None,
+            &[],
+            true,
+            true,
+            ">",
+            "▼",
+        );
+
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "PL"));
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "X"));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "schema.ts"
+                && span.style.fg == Some(theme.file_status_added_fg)
+        }));
+    }
+
+    #[tokio::test]
+    async fn default_slot_providers_fall_back_when_only_name_color_is_overridden() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let git_statuses = status_cache(
+            view.tree().root_path(),
+            vec![(schema_path.clone(), GitStatusKind::Modified)],
+        );
+        let slot_overrides = FileExplorerSlotOverrideCache::rebuild(
+            vec![fresh_core::file_explorer::FileExplorerSlotEntry {
+                path: schema_path,
+                leading: None,
+                trailing: None,
+                name_color: Some(fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "syntax.string".into(),
+                )),
+                priority: 50,
+            }],
+            view.tree().root_path(),
+            &HashMap::new(),
+        );
+
+        let line = FileExplorerRenderer::build_node_line(
+            &view,
+            crate::view::file_tree::default_slot_providers().resolver(),
+            schema_id,
+            2,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            &FileExplorerDecorationCache::default(),
+            &git_statuses,
+            &slot_overrides,
+            &theme,
+            80,
+            None,
+            &[],
+            true,
+            true,
+            ">",
+            "▼",
+        );
+
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "schema.ts" && span.style.fg == Some(theme.syntax_string)
+        }));
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "M" && span.style.fg == Some(theme.file_status_modified_fg)
+        }));
     }
 }

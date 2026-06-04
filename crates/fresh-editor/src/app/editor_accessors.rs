@@ -717,6 +717,18 @@ impl Editor {
             .expect("active_window id must be a member of sessions")
     }
 
+    pub(crate) fn file_explorer_slot_providers(
+        &self,
+    ) -> crate::view::file_tree::ExplorerSlotProviders {
+        crate::view::file_tree::default_slot_providers()
+    }
+
+    pub(crate) fn file_explorer_slot_resolver(
+        &self,
+    ) -> crate::view::file_tree::ExplorerSlotResolver<'static> {
+        self.file_explorer_slot_providers().resolver()
+    }
+
     /// The active session's id.
     pub fn active_session_id(&self) -> fresh_core::WindowId {
         self.active_window
