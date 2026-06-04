@@ -67,9 +67,15 @@ fn failed_ssh_connect_surfaces_carrier_stderr_in_the_error() {
     );
     // The whole point of the fix: the carrier's own stderr is captured and
     // folded into the error (so it reaches the dialog/status), rather than
-    // being inherited onto the screen.
+    // being inherited onto the screen. We match on the carrier's "ssh: "
+    // diagnostic prefix rather than a literal phrase: on Unix the fake shim
+    // emits "ssh: simulated connect failure", but on Windows the `#!/bin/sh`
+    // shim isn't an executable so the real `ssh.exe` runs and emits
+    // "ssh: Could not resolve hostname fake-host". Either way the lowercase
+    // "ssh: " prefix comes only from the captured stderr — the generic
+    // exit-code hint never contains it.
     assert!(
-        msg.contains("simulated connect failure"),
+        msg.contains("ssh: "),
         "the failed connect must surface the carrier's stderr in the error; got: {msg}"
     );
 }
