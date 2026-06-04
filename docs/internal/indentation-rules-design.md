@@ -299,14 +299,23 @@ demanding parity with tree-sitter would wrongly forbid the better behavior.
 
 ## Rollout
 
-1. Land `indent_rules.rs` + the family table + tests; wire it as tier 2.5
-   (above the generic heuristic, below tree-sitter). No behavior change for
-   grammar-backed languages yet, but syntect-only languages immediately
-   improve.
-2. Flip the dispatch so rules run *before* tree-sitter for the indent-only
-   family; verify parity via the CI guard.
-3. Move the indent-only grammars (Go, C, C++, C#, Java, PHP, Ruby, Lua, Bash,
-   HTML, CSS, Pascal) out of the default `all-languages` feature into an
-   opt-in `tree-sitter-extra` feature. Default binary drops ~15–18 MB; keep
-   TypeScript/Templ (highlighting) and whatever still wants AST indentation.
-4. Document the `[languages.<id>.indent]` config and the pack format.
+1. **Done.** Landed `indent_rules.rs` + the family table + tests; wired it
+   into the no-tree-sitter paths so syntect-only languages (Kotlin, Swift,
+   Dart, …) gained language-aware indentation immediately.
+2. **Done.** Flipped the dispatch so the rules tier runs *before* tree-sitter
+   (scope-masked, keyed by syntax name); tree-sitter is consulted only for
+   grammar-only languages the rules tier doesn't recognise (Templ). Parity
+   verified by the `indent_rules::parity` guard.
+3. **Done.** Reduced the bundled grammars to the must-keep set —
+   JavaScript, TypeScript, JSON(C), Templ, Go — via the
+   `fresh-languages/bundled-languages` feature (the editor `tree-sitter`
+   feature now points at it). The other 14 grammars moved behind the opt-in
+   `tree-sitter-all` editor feature (`fresh-languages/all-languages`).
+   Default release binary: **43.9 MB → 25.8 MB (−18.1 MB)**. All grammar
+   access is centralized behind `Language::ts_language()`, so fresh-editor is
+   grammar-agnostic and a `None` cleanly routes to the rules/syntect
+   fallbacks. The full-corpus parity guard still passes under
+   `--features tree-sitter-all`, confirming the dropped languages' rules
+   match what tree-sitter produced.
+4. **TODO.** Wire the `[languages.<id>.indent]` config + language-pack
+   override path so users can add/tune rules without a rebuild.
