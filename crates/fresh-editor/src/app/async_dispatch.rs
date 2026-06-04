@@ -38,17 +38,33 @@ impl Editor {
             .reject_callback(fresh_core::api::JsCallbackId::from(request_id), error);
     }
 
-    /// Mark every in-flight `attachRemoteAgent` connect as cancelled and reject
-    /// its awaiting promise now. The background connect can't be interrupted
-    /// mid-handshake, so its eventual `RemoteAttachReady`/`RemoteAttachFailed`
-    /// is dropped on arrival (see `remote_attach_was_cancelled`) — the carrier
-    /// is torn down then and no window is built. This is the host side of the
-    /// New-Session dialog's Cancel.
+    /// Mark every in-flight `attachRemoteAgent` connect as cancelled, signal the
+    /// background connect thread to tear down its in-flight carrier (killing the
+    /// ssh/kubectl child), and reject the awaiting promise now. If a connect
+    /// races past cancellation its eventual `RemoteAttachReady`/`Failed` is
+    /// dropped on arrival (see `remote_attach_was_cancelled`) — so no window is
+    /// ever built. This is the host side of the New-Session dialog's Cancel.
     pub(crate) fn cancel_remote_attaches(&mut self) {
         let inflight: Vec<u64> = self.remote_attach_inflight.drain().collect();
+        let any = !inflight.is_empty();
         for id in inflight {
             self.remote_attach_cancelled.insert(id);
+            // Signal the background connect thread to abort. Its `select!` drops
+            // the in-flight connect future, which drops the ssh child (spawned
+            // kill-on-drop), so even a host that never completes the handshake
+            // leaves no orphaned process. A connect that already finished (its
+            // result still queued) ignores the signal; the late result is
+            // discarded by `remote_attach_was_cancelled`.
+            if let Some(cancel) = self.remote_attach_cancels.remove(&id) {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = cancel.send(());
+            }
             self.reject_remote_attach(id, "cancelled".to_string());
+        }
+        // Clear the lingering "Connecting to …" status the connect set, so the
+        // status line doesn't keep claiming a connection is in progress.
+        if any {
+            self.set_status_message("Connection cancelled".to_string());
         }
     }
 
@@ -58,6 +74,7 @@ impl Editor {
     /// clears the in-flight entry).
     pub(crate) fn remote_attach_was_cancelled(&mut self, request_id: u64) -> bool {
         self.remote_attach_inflight.remove(&request_id);
+        self.remote_attach_cancels.remove(&request_id);
         self.remote_attach_cancelled.remove(&request_id)
     }
 

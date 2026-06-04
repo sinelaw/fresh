@@ -675,6 +675,14 @@ pub struct Editor {
     /// dropped instead of installed — so no window is created and the carrier
     /// is torn down — and a failure is ignored.
     pub(crate) remote_attach_cancelled: std::collections::HashSet<u64>,
+    /// Cancellation senders for the background connect threads, keyed by
+    /// request id. The connect runs on a detached thread (so the carrier's
+    /// runtime outlives it); signalling here makes that thread's `select!` drop
+    /// the in-flight connect future, which drops the ssh child (spawned
+    /// kill-on-drop) — so even a hung handshake leaves no orphaned process. The
+    /// thread then finishes and its result is discarded. Cleared on settle.
+    pub(crate) remote_attach_cancels:
+        std::collections::HashMap<u64, tokio::sync::oneshot::Sender<()>>,
 
     /// Id of the currently active session. Always `WindowId(1)` for
     /// now; multi-session support arrives in a follow-up commit.

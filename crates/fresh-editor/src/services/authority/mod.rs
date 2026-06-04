@@ -675,6 +675,7 @@ pub async fn connect_kube_authority(
     base_env: Vec<(String, String)>,
     trust: Arc<WorkspaceTrust>,
     env: Arc<crate::services::env_provider::EnvProvider>,
+    cancel: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(Authority, KubeKeepalive), TransportError> {
     type Built = Result<
         (
@@ -702,7 +703,21 @@ pub async fn connect_kube_authority(
                 // running after `block_on` returns and after this helper thread
                 // exits — until the `runtime` (moved into the keepalive) drops.
                 let (connection, reconnect) = runtime.block_on(async {
-                    let connection = KubeConnection::connect(bootstrap_target.clone()).await?;
+                    // Race the connect against the cancel signal so a slow/hung
+                    // kubectl bootstrap can be aborted; dropping the connect
+                    // future drops the in-flight child. No signal → await it.
+                    let connection = match cancel {
+                        Some(cancel) => tokio::select! {
+                            biased;
+                            _ = cancel => {
+                                return Err(TransportError::AgentStartFailed(
+                                    "cancelled".to_string(),
+                                ));
+                            }
+                            res = KubeConnection::connect(bootstrap_target.clone()) => res?,
+                        },
+                        None => KubeConnection::connect(bootstrap_target.clone()).await?,
+                    };
                     let reconnect =
                         spawn_kube_reconnect_task(&connection.channel(), bootstrap_target.clone());
                     Ok::<_, TransportError>((connection, reconnect))
@@ -760,6 +775,7 @@ pub async fn connect_ssh_authority(
     remote_dir: Option<String>,
     trust: Arc<WorkspaceTrust>,
     env: Arc<crate::services::env_provider::EnvProvider>,
+    cancel: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<(Authority, SshKeepalive), SshError> {
     type Built = Result<
         (
@@ -786,7 +802,20 @@ pub async fn connect_ssh_authority(
                 // workers, surviving after this helper thread exits — until the
                 // `runtime` (moved into the keepalive) drops.
                 let (connection, reconnect) = runtime.block_on(async {
-                    let connection = SshConnection::connect(bootstrap_params.clone()).await?;
+                    // Race the connect against the cancel signal. On cancel the
+                    // connect future is dropped, which drops the in-flight ssh
+                    // child (spawned kill-on-drop) so a hung handshake leaves no
+                    // orphaned process. No cancel signal → just await connect.
+                    let connection = match cancel {
+                        Some(cancel) => tokio::select! {
+                            biased;
+                            _ = cancel => {
+                                return Err(SshError::AgentStartFailed("cancelled".to_string()));
+                            }
+                            res = SshConnection::connect(bootstrap_params.clone()) => res?,
+                        },
+                        None => SshConnection::connect(bootstrap_params.clone()).await?,
+                    };
                     let reconnect =
                         spawn_reconnect_task(connection.channel(), connection.params().clone());
                     Ok::<_, SshError>((connection, reconnect))

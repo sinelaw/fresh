@@ -3416,8 +3416,12 @@ impl Editor {
         };
 
         // Track this connect as in-flight so a plugin can cancel it (the
-        // New-Session dialog's Cancel) before it resolves.
+        // New-Session dialog's Cancel) before it resolves. The cancel sender is
+        // handed to the connect via its `select!`; signalling it tears down the
+        // in-flight carrier child.
         self.remote_attach_inflight.insert(request_id);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        self.remote_attach_cancels.insert(request_id, cancel_tx);
 
         // Window-mode opts captured before `spec` is consumed — when `window`
         // is set the main loop spawns a born-attached new window instead of
@@ -3457,7 +3461,11 @@ impl Editor {
                 self.set_status_message(format!("Connecting to {label}…"));
                 runtime.spawn(async move {
                     let outcome = crate::services::authority::connect_kube_authority(
-                        target, base_env, trust, env,
+                        target,
+                        base_env,
+                        trust,
+                        env,
+                        Some(cancel_rx),
                     )
                     .await;
                     let msg = match outcome {
@@ -3510,6 +3518,7 @@ impl Editor {
                         remote_path,
                         trust,
                         env,
+                        Some(cancel_rx),
                     )
                     .await;
                     let msg = match outcome {

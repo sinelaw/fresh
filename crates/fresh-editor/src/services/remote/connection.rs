@@ -152,6 +152,13 @@ impl SshConnection {
         // fold its message into the connection error instead (see
         // `ssh_eof_error`), so a failed connect becomes a clean status line.
         cmd.stderr(Stdio::piped());
+        // Kill the ssh process if this connect future is dropped before it
+        // finishes (e.g. the New-Session dialog's Cancel aborts the connect
+        // task while the handshake is still hanging). Without this a hung
+        // connect would orphan the ssh child until it timed out on its own.
+        // For an established carrier `SshConnection`'s Drop also kills it; this
+        // covers the window before the connection object exists.
+        cmd.kill_on_drop(true);
         cmd.hide_window();
 
         let mut child = cmd.spawn()?;

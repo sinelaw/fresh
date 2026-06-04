@@ -132,6 +132,7 @@ fn agent_channel_survives_dropping_the_attach_runtime() {
             vec![],
             Arc::new(WorkspaceTrust::permissive()),
             Arc::new(EnvProvider::inactive()),
+            None,
         ))
         .expect("connect over fake kubectl");
 
@@ -200,6 +201,7 @@ fn attach_spec_payload_parses_and_connects_through_fake_kubectl() {
             base_env,
             Arc::new(WorkspaceTrust::permissive()),
             Arc::new(EnvProvider::inactive()),
+            None,
         ))
         .expect("connect from parsed attach spec");
 
@@ -235,6 +237,7 @@ fn kube_authority_spawns_one_shot_and_lsp_through_fake_kubectl() {
             vec![("E2E_BASE".to_string(), "base".to_string())],
             std::sync::Arc::clone(&trust),
             std::sync::Arc::clone(&env),
+            None,
         ))
         .expect("connect_kube_authority over fake kubectl");
 
