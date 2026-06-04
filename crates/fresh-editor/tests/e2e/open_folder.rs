@@ -949,6 +949,14 @@ fn test_switch_project_double_click_parent_navigates_up() {
         .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
     harness.type_text("switch project").unwrap();
+    // Wait for the palette to finish filtering and render the "Switch Project"
+    // command (title-cased, so it can't match the lowercase input echo) before
+    // confirming. Pressing Enter before the async filter settles would commit a
+    // stale/empty selection, so the folder browser would never open and the
+    // wait below would run to nextest's external timeout.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Switch Project"))
+        .expect("Command palette should list the Switch Project command");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
