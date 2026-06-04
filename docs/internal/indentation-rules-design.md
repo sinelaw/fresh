@@ -286,8 +286,16 @@ Correctness is enforced by table-driven golden tests, run with the
 - **Round-trip property test**: on balanced generated code, Enter-then-type-
   closer returns to the opener's indent.
 
-A CI guard asserts the rules-tier and tree-sitter-tier outputs agree across
-the corpus, so dropping a grammar can never silently regress indentation.
+A CI guard (`indent_rules::parity`, gated on the `tree-sitter` feature) asserts
+the rules-tier and tree-sitter-tier outputs agree, so dropping a grammar can
+never silently regress indentation. **Scope matters:** the guard only covers
+languages where tree-sitter is an authoritative oracle — curly-brace families
+and Python (also the largest grammars). Keyword-delimited families
+(Ruby/Lua/Bash/Pascal) are *excluded* from the parity guard and pinned by
+golden unit tests instead, because on incomplete mid-edit input tree-sitter
+cannot form a block node and the current editor already falls back to
+copy-the-line indent — so the rules tier is a strict improvement there, and
+demanding parity with tree-sitter would wrongly forbid the better behavior.
 
 ## Rollout
 

@@ -57,6 +57,12 @@ pub enum Family {
     Python,
     /// Ruby — `def…end`, `do…end`, midblock `else`/`when`/`rescue`.
     RubyLike,
+    /// Lua — `function…end`, `if…then…end`, `for…do…end`, `repeat…until`.
+    LuaLike,
+    /// Bash — `if…then…fi`, `for/while…do…done`, `case…esac`, `{ }`.
+    BashLike,
+    /// Pascal — `begin…end`, `case…of…end`, `repeat…until`.
+    PascalLike,
 }
 
 /// String form of a rule set (what a family or user config provides).
@@ -204,6 +210,8 @@ pub fn rules_for_syntax_name(name: &str) -> Option<&'static IndentRules> {
         "c#" => "csharp",
         n if n.contains("typescript") => "typescript",
         n if n.contains("javascript") => "javascript",
+        // syntect ships bash as "Bourne Again Shell (bash)".
+        n if n.contains("bash") || n.contains("shell") => "bash",
         other => other,
     };
     rules_for_id(id)
@@ -218,6 +226,9 @@ fn family_for_id(id: &str) -> Option<Family> {
         | "dart" | "scala" | "json" | "jsonc" | "css" | "scss" | "less" => Family::CurlyBrace,
         "python" => Family::Python,
         "ruby" => Family::RubyLike,
+        "lua" => Family::LuaLike,
+        "bash" | "sh" | "shell" | "shellscript" => Family::BashLike,
+        "pascal" => Family::PascalLike,
         _ => return None,
     };
     Some(f)
@@ -229,6 +240,9 @@ static FAMILY_RULES: Lazy<HashMap<Family, IndentRules>> = Lazy::new(|| {
     m.insert(Family::CurlyBrace, IndentRules::compile(&CURLY_BRACE));
     m.insert(Family::Python, IndentRules::compile(&PYTHON));
     m.insert(Family::RubyLike, IndentRules::compile(&RUBY_LIKE));
+    m.insert(Family::LuaLike, IndentRules::compile(&LUA_LIKE));
+    m.insert(Family::BashLike, IndentRules::compile(&BASH_LIKE));
+    m.insert(Family::PascalLike, IndentRules::compile(&PASCAL_LIKE));
     m
 });
 
@@ -263,6 +277,33 @@ const RUBY_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     // Suppress increase for one-liners like `def f; end` / `if x then y end`.
+    self_close: Some(r"\bend\b"),
+};
+
+const LUA_LIKE: IndentRulesDef = IndentRulesDef {
+    increase: Some(
+        r"(^\s*((local\s+)?function|if|elseif|else|for|while|repeat)\b)|(\b(do|then)\s*$)",
+    ),
+    decrease: Some(r"^\s*(end|else|elseif|until)\b"),
+    indent_next_line: None,
+    dedent_next_line: None,
+    self_close: Some(r"\bend\b"),
+};
+
+const BASH_LIKE: IndentRulesDef = IndentRulesDef {
+    // `then`/`do` line ends, `case … in`, or an opening `{`/`(`.
+    increase: Some(r"(\b(then|do)\s*$)|(^\s*case\b.*\bin\s*$)|([\{\(]\s*$)"),
+    decrease: Some(r"^\s*(fi|done|esac|else|elif|\}|\))"),
+    indent_next_line: None,
+    dedent_next_line: None,
+    self_close: None,
+};
+
+const PASCAL_LIKE: IndentRulesDef = IndentRulesDef {
+    increase: Some(r"(^\s*(begin|case|record|try|repeat|asm)\b)|(\b(begin|of)\s*$)"),
+    decrease: Some(r"^\s*(end|until|except|finally)\b"),
+    indent_next_line: None,
+    dedent_next_line: None,
     self_close: Some(r"\bend\b"),
 };
 
@@ -540,6 +581,48 @@ mod tests {
         assert_eq!(indent("ruby", content, 2), 2);
     }
 
+    // ---- LuaLike ----------------------------------------------------------
+
+    #[test]
+    fn lua_indents_after_block_openers() {
+        assert_eq!(indent("lua", "function f()\n", 4), 4);
+        assert_eq!(indent("lua", "if x then\n", 4), 4);
+        assert_eq!(indent("lua", "for i = 1, n do\n", 4), 4);
+    }
+
+    #[test]
+    fn lua_one_liner_with_end_does_not_indent() {
+        assert_eq!(indent("lua", "function f() end\n", 4), 0);
+    }
+
+    // ---- BashLike ---------------------------------------------------------
+
+    #[test]
+    fn bash_indents_after_then_do_case() {
+        assert_eq!(indent("bash", "if true; then\n", 4), 4);
+        assert_eq!(indent("bash", "for x in a b; do\n", 4), 4);
+        assert_eq!(indent("bash", "case $x in\n", 4), 4);
+    }
+
+    #[test]
+    fn bash_resolves_from_syntect_name() {
+        // syntect names bash "Bourne Again Shell (bash)".
+        assert!(rules_for_syntax_name("Bourne Again Shell (bash)").is_some());
+    }
+
+    // ---- PascalLike -------------------------------------------------------
+
+    #[test]
+    fn pascal_indents_after_begin() {
+        assert_eq!(indent("pascal", "begin\n", 4), 4);
+        assert_eq!(indent("pascal", "if x then begin\n", 4), 4);
+    }
+
+    #[test]
+    fn pascal_one_liner_with_end_does_not_indent() {
+        assert_eq!(indent("pascal", "begin end;\n", 4), 0);
+    }
+
     // ---- registry ---------------------------------------------------------
 
     #[test]
@@ -553,5 +636,90 @@ mod tests {
         assert!(rules_for_id("rust").unwrap().increase.is_some());
         assert!(rules_for_id("python").unwrap().dedent_next_line.is_some());
         assert!(rules_for_id("ruby").unwrap().self_close.is_some());
+    }
+}
+
+/// Parity guard: wherever the tree-sitter indenter is *authoritative*, the
+/// regex rules tier must produce the same indent. This is the safety net for
+/// moving "indent-only" languages off their tree-sitter grammars (design doc,
+/// phase 2): if a rule ever diverges from the AST result on the corpus, this
+/// fails before a grammar can be dropped.
+///
+/// Scope — curly-brace languages and Python only. These are the largest
+/// grammars (C# ~29 MB, C++/TS ~17 MB of generated source) and tree-sitter
+/// parses their block structure reliably even mid-edit, so it is a sound
+/// oracle. **Keyword-delimited families (Ruby/Lua/Bash/Pascal) are
+/// deliberately excluded**: on incomplete input — the normal "typed `def foo`
+/// and pressed Enter" case — tree-sitter cannot form a block node and the
+/// current editor already falls back to copy-the-line indent, so the rules
+/// tier (which indents correctly) is a strict *improvement*, not a regression.
+/// Those families are pinned by the golden unit tests above instead.
+///
+/// Cursor convention mirrors the real press-Enter moment: the buffer ends
+/// exactly where Enter is pressed (no trailing newline). Cases use clean code
+/// (no strings/comments holding stray delimiters), so the rules tier runs with
+/// masking disabled and the comparison is apples-to-apples. Cases where
+/// tree-sitter declines to decide (`None`) are skipped.
+#[cfg(all(test, feature = "tree-sitter"))]
+mod parity {
+    use super::*;
+    use crate::model::filesystem::NoopFileSystem;
+    use crate::primitives::indent::IndentCalculator;
+    use fresh_languages::Language;
+    use std::sync::Arc;
+
+    fn buf(content: &str) -> Buffer {
+        let fs = Arc::new(NoopFileSystem);
+        let mut b = Buffer::empty(fs);
+        b.insert(0, content);
+        b
+    }
+
+    #[test]
+    fn rules_match_tree_sitter_on_corpus() {
+        // (tree-sitter Language, rules id, code). Indent is taken at end-of-buffer,
+        // which is the cursor position when Enter is pressed.
+        let cases: &[(Language, &str, &str)] = &[
+            // Curly-brace: openers, a continuation line, a closed statement.
+            (Language::Rust, "rust", "fn main() {"),
+            (Language::Rust, "rust", "fn main() {\n    let x = 1;"),
+            (Language::Rust, "rust", "let x = 1;"),
+            (Language::Go, "go", "func main() {"),
+            (Language::Java, "java", "class A {"),
+            (Language::Cpp, "cpp", "int main() {"),
+            (Language::C, "c", "int main() {"),
+            // Python: colon opener body continuation, flow-exit dedent.
+            (Language::Python, "python", "def foo():\n\tx = 1"),
+            (Language::Python, "python", "def foo():\n\treturn 42"),
+        ];
+
+        let tab = 4;
+        let mut mismatches = Vec::new();
+        let mut compared = 0;
+        for (lang, id, code) in cases {
+            let ts = {
+                let mut calc = IndentCalculator::new();
+                calc.calculate_indent(&buf(code), code.len(), lang, tab)
+            };
+            let Some(ts) = ts else { continue }; // tree-sitter declined; skip
+            compared += 1;
+            let rules = rules_for_id(id)
+                .unwrap_or_else(|| panic!("no rules for {id}"))
+                .calculate_indent(&buf(code), code.len(), tab, |_| true);
+            if ts != rules {
+                mismatches.push(format!("  {id}: code={code:?} tree-sitter={ts} rules={rules}"));
+            }
+        }
+
+        assert!(
+            mismatches.is_empty(),
+            "rules tier diverged from tree-sitter on {}/{} compared cases:\n{}",
+            mismatches.len(),
+            compared,
+            mismatches.join("\n")
+        );
+        // Guard against the corpus silently going all-skips (e.g. an API change
+        // making tree-sitter always return None) which would make this vacuous.
+        assert!(compared >= 6, "too few comparable cases ({compared}); guard is vacuous");
     }
 }
