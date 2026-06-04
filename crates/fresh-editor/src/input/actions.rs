@@ -483,15 +483,45 @@ pub fn get_auto_close_char(ch: char, auto_close: bool, language: &str) -> Option
     }
 }
 
+/// Is the byte at `pos` code (not inside a comment or string)?
+///
+/// Sourced from the syntax highlighter's render cache — no extra parse — so the
+/// indentation rules can ignore braces/keywords inside comments and strings.
+/// Returns `true` (treat as code) when no scope info is cached for `pos`.
+fn byte_is_code(state: &EditorState, pos: usize) -> bool {
+    !matches!(
+        state.highlighter.category_at_position(pos),
+        Some(
+            crate::primitives::highlighter::HighlightCategory::Comment
+                | crate::primitives::highlighter::HighlightCategory::String
+        )
+    )
+}
+
+/// Try the per-language regex indentation rules (VS Code style) for a buffer
+/// that has no tree-sitter grammar, keyed by the syntect syntax name. Returns
+/// `None` when no rules exist for the language so the caller can fall back.
+fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
+    let rules =
+        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;
+    Some(rules.calculate_indent(&state.buffer, position, tab_size, |b| byte_is_code(state, b)))
+}
+
+/// Closing-delimiter variant of [`rules_indent`].
+fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize) -> Option<usize> {
+    let rules =
+        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;
+    rules.calculate_dedent_for_delimiter(&state.buffer, position, ch, tab_size, |b| {
+        byte_is_code(state, b)
+    })
+}
+
 /// Calculate the correct indent for a closing delimiter.
 ///
-/// Uses tree-sitter when available, otherwise falls back to pattern-based
-/// delimiter matching which works for any C-style language (braces, brackets, parens).
-///
-/// TODO: Consider adding Sublime Text-style regex indent rules (`increaseIndentPattern`/
-/// `decreaseIndentPattern` per language) as a middle tier between tree-sitter and pattern
-/// matching. This would handle language-specific constructs (e.g., Python's `:`, Ruby's
-/// `end`) without requiring a full tree-sitter grammar for each language.
+/// Tiering: tree-sitter (when a grammar is loaded) → per-language regex rules
+/// ([`crate::primitives::indent_rules`], keyed by syntax name) → the generic
+/// C-style bracket scanner. The middle tier gives syntect-only languages
+/// (Kotlin, Swift, Dart, …) language-aware dedent without a grammar.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
     insert_position: usize,
@@ -505,16 +535,18 @@ fn calculate_closing_delimiter_indent(
             .calculate_dedent_for_delimiter(&state.buffer, insert_position, ch, language, tab_size)
             .unwrap_or(0)
     } else {
-        // No tree-sitter language available — use pattern-based fallback.
-        // This handles all C-style languages (Dart, Kotlin, Swift, etc.) by
-        // scanning backwards for the matching unmatched opening delimiter.
-        PatternIndentCalculator::calculate_dedent_for_delimiter(
-            &state.buffer,
-            insert_position,
-            ch,
-            tab_size,
-        )
-        .unwrap_or(0)
+        // No tree-sitter grammar: prefer per-language regex rules, then the
+        // language-agnostic bracket scanner (Dart, Kotlin, Swift, etc.).
+        rules_dedent(state, insert_position, ch, tab_size)
+            .or_else(|| {
+                PatternIndentCalculator::calculate_dedent_for_delimiter(
+                    &state.buffer,
+                    insert_position,
+                    ch,
+                    tab_size,
+                )
+            })
+            .unwrap_or(0)
     }
 }
 
@@ -1033,13 +1065,17 @@ fn handle_insert_newline(
                     language,
                     tab_size,
                 ),
-                // Fallback for files without syntax highlighting (e.g., .txt)
+                // No tree-sitter grammar: try per-language regex rules (keyed
+                // by syntect syntax name, e.g. Kotlin/Swift/Dart), then the
+                // language-agnostic heuristic for everything else (.txt, …).
                 None => Some(
-                    crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
-                        &state.buffer,
-                        indent_position,
-                        tab_size,
-                    ),
+                    rules_indent(state, indent_position, tab_size).unwrap_or_else(|| {
+                        crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
+                            &state.buffer,
+                            indent_position,
+                            tab_size,
+                        )
+                    }),
                 ),
             };
             if let Some(indent_width) = indent_width_opt {
