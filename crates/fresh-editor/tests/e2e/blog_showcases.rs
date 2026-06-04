@@ -3123,10 +3123,29 @@ mod ssh_session_showcase_support {
         std::fs::create_dir_all(root).unwrap();
         let work = root.join("work");
         std::fs::create_dir_all(&work).unwrap();
-        // A couple of files so the remote file explorer / terminal land in a
-        // workspace that looks alive rather than empty.
-        std::fs::write(work.join("README.md"), "# demo-box\n\nRemote workspace.\n").unwrap();
+        // A small workspace so the remote file finder / explorer land somewhere
+        // alive — including a syntax-highlightable source file to open over SSH.
+        std::fs::write(
+            work.join("README.md"),
+            "# demo-box\n\nRemote workspace served over SSH.\n",
+        )
+        .unwrap();
         std::fs::write(work.join("deploy.sh"), "#!/bin/sh\necho deploying…\n").unwrap();
+        std::fs::write(
+            work.join("app.py"),
+            "\"\"\"demo-box deployment service.\"\"\"\n\
+             import os\n\
+             \n\
+             \n\
+             def deploy(target: str) -> bool:\n\
+             \x20   print(f\"deploying to {target}…\")\n\
+             \x20   return os.path.exists(target)\n\
+             \n\
+             \n\
+             if __name__ == \"__main__\":\n\
+             \x20   deploy(\"/srv/www\")\n",
+        )
+        .unwrap();
 
         let hostkey = root.join("hostkey");
         let id = root.join("id");
@@ -3234,10 +3253,31 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
         return;
     };
 
-    // --- Workspace + orchestrator plugin for the local editor. --------------
+    // --- Local workspace (the launch session) + orchestrator plugin. --------
+    // A small Rust project so the local session has a real file open — the one
+    // we switch back to from the dock at the end.
     fresh::i18n::set_locale("en");
-    let workspace = demo_root.join("local-workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
+    let workspace = demo_root.join("local-app");
+    std::fs::create_dir_all(workspace.join("src")).unwrap();
+    std::fs::write(
+        workspace.join("src/main.rs"),
+        "// local-app — runs on this machine.\n\
+         use std::collections::HashMap;\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut env: HashMap<&str, &str> = HashMap::new();\n\
+         \x20   env.insert(\"region\", \"local\");\n\
+         \x20   for (k, v) in &env {\n\
+         \x20       println!(\"{k} = {v}\");\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = \"local-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
     let plugins_dir = workspace.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin_lib(&plugins_dir);
@@ -3253,16 +3293,21 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
             .any(|c| c.get_localized_name() == "Orchestrator: New Session")
     })
     .unwrap();
+    // Open the local file so the launch session has content to show.
+    h.open_file(&workspace.join("src/main.rs")).unwrap();
 
     let mut s = BlogShowcase::new(
         "fresh-0.3.10/ssh-session",
         "New SSH Session",
         "Start a remote SSH session from the Orchestrator's New Session dialog: \
-         pick the SSH backend, point it at a host, and Fresh attaches its \
-         filesystem, terminal, and LSP over the connection.",
+         pick the SSH backend and point it at a host. Fresh attaches its \
+         filesystem, terminal, and LSP over the connection, so you can open \
+         remote files in buffers — then hop back to a local session through \
+         the dock.",
     );
 
-    hold(&mut h, &mut s, 4, 130);
+    // Open on the local session: a local Rust file, "Local" in the status bar.
+    hold(&mut h, &mut s, 5, 160);
 
     // --- Open the New Session dialog via the command palette. ---------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -3293,75 +3338,74 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
     h.mouse_click(ssh_col, ssh_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Remote Path"))
         .unwrap();
-    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 220);
-    hold(&mut h, &mut s, 3, 150);
+    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 180);
+    hold(&mut h, &mut s, 2, 110);
 
     // Enter on the already-active SSH tab dives into the first field (Host).
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 160);
+    snap(&mut h, &mut s, Some("Enter"), 130);
 
     // --- Host: the fake hostname + the throwaway sshd's port. ---------------
     let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);
     for ch in host_value.chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 70);
+        snap(&mut h, &mut s, Some(&ch.to_string()), 38);
     }
-    hold(&mut h, &mut s, 3, 150);
+    hold(&mut h, &mut s, 2, 110);
 
-    // --- Remote Path: where the session is rooted on the remote. ------------
+    // --- The remaining fields fill in quickly (they're the "plumbing"; the
+    //     host is the star). Each lands its whole value in one go. -----------
+    // Remote Path: where the session is rooted on the remote.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 150);
+    snap(&mut h, &mut s, Some("Tab"), 90);
     h.type_text(&server.work.to_string_lossy()).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 200);
-    hold(&mut h, &mut s, 2, 150);
+    snap(&mut h, &mut s, None, 120);
 
-    // --- Identity file: the keypair authorized on the demo sshd. ------------
+    // Identity file: the keypair authorized on the demo sshd.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 150);
+    snap(&mut h, &mut s, Some("Tab"), 90);
     h.type_text(&server.identity.to_string_lossy()).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 200);
-    hold(&mut h, &mut s, 2, 150);
+    snap(&mut h, &mut s, None, 120);
 
-    // --- SSH options: a throwaway known_hosts so the demo leaves no trace
-    //     in the user's ~/.ssh (and to show the free-form options field). ---
+    // SSH options: a throwaway known_hosts so the demo leaves no trace in the
+    // user's ~/.ssh (and to show the free-form options field).
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 150);
+    snap(&mut h, &mut s, Some("Tab"), 90);
     h.type_text(&format!(
         "-o UserKnownHostsFile={}",
         server.known_hosts.to_string_lossy()
     ))
     .unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 220);
-    hold(&mut h, &mut s, 2, 150);
+    snap(&mut h, &mut s, None, 120);
 
-    // --- Session name. ------------------------------------------------------
+    // Session name.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 150);
+    snap(&mut h, &mut s, Some("Tab"), 90);
     h.type_text("deploy-box").unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 220);
-    hold(&mut h, &mut s, 3, 150);
+    snap(&mut h, &mut s, None, 150);
+    hold(&mut h, &mut s, 2, 120);
 
     // --- Submit: click "Create Session". ------------------------------------
     let (create_col, create_row) = h
         .find_text_on_screen("Create Session")
         .expect("the form should offer a 'Create Session' button");
-    snap_mouse(&mut h, &mut s, None, (create_col, create_row), 200);
+    snap_mouse(&mut h, &mut s, None, (create_col, create_row), 160);
     h.mouse_click(create_col, create_row).unwrap();
     h.render().unwrap();
-    // The disabled "Connecting…" view goes up while ssh handshakes + the
-    // Python agent boots on the remote.
-    snap_mouse(&mut h, &mut s, Some("Click"), (create_col, create_row), 260);
-    hold(&mut h, &mut s, 4, 150);
+    // The disabled "Connecting…" view flashes up while ssh handshakes + the
+    // Python agent boots on the remote — kept brief so the connect feels snappy.
+    snap_mouse(&mut h, &mut s, Some("Click"), (create_col, create_row), 150);
+    hold(&mut h, &mut s, 2, 110);
 
     // --- Wait for the attach to resolve. On success the form panel is
     //     unmounted (its header disappears) and the born-attached remote
@@ -3379,34 +3423,69 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
         "SSH attach failed — the New Session dialog surfaced an error.\nScreen:\n{screen}",
     );
 
-    // The born-attached remote window is now live, with an integrated
-    // terminal running the remote login shell. Wait for the remote prompt to
-    // paint so the GIF opens on a settled session.
+    // The born-attached remote window is now live, with an integrated terminal
+    // running the remote login shell. Wait for the remote prompt to paint so
+    // the GIF opens on a settled session.
     h.wait_until(|h| {
         h.screen_to_string()
             .contains(&server.work.to_string_lossy().into_owned())
     })
     .unwrap();
-    hold(&mut h, &mut s, 6, 200);
+    hold(&mut h, &mut s, 3, 160);
 
-    // --- Prove the session is genuinely remote by driving the live shell:
-    //     list the remote workspace, then read a file. Both run on the far
-    //     side of the SSH connection (here, loopback). -----------------------
-    for cmd in ["ls", "cat README.md"] {
-        h.type_text(cmd).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        h.tick_and_render().unwrap();
-        snap(&mut h, &mut s, Some(cmd), 220);
-        hold(&mut h, &mut s, 2, 150);
-
-        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        h.tick_and_render().unwrap();
-        snap(&mut h, &mut s, Some("Enter"), 250);
-        hold(&mut h, &mut s, 5, 200);
+    // --- Open a remote file in a buffer. Quick Open (Ctrl+P → Backspace to
+    //     drop the `>` command prefix) fuzzy-finds files through the SSH
+    //     window's authority, so typing `app` surfaces the remote `app.py`. --
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 200);
+    h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Bksp"), 150);
+    for ch in "app".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 90);
     }
+    // The remote file finder lists `app.py` (served over SSH).
+    h.wait_until(|h| h.screen_to_string().contains("app.py"))
+        .unwrap();
+    hold(&mut h, &mut s, 2, 150);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Wait for the remote file's contents to render in the buffer.
+    h.wait_until(|h| h.screen_to_string().contains("deployment service"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 280);
+    hold(&mut h, &mut s, 7, 200);
 
+    // --- Show the persistent Orchestrator dock: the left column lists every
+    //     session — the local launch session and the remote `deploy-box`. ----
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Toggle Dock"), 220);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The dock mounts and takes keyboard focus (polling avoids the focus race).
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("deploy-box") && s.contains("local-app") && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 260);
     hold(&mut h, &mut s, 6, 200);
+
+    // --- Switch to the local session: ↑ moves the dock selection off the
+    //     active remote session onto the local one, live-swapping the editor
+    //     back to the local Rust file. --------------------------------------
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("runs on this machine"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("↑"), 280);
+    hold(&mut h, &mut s, 10, 200);
 
     s.finalize().unwrap();
 
