@@ -274,38 +274,7 @@ impl Editor {
 
                 // Stop dragging and clear drag state
                 self.release_widget_scrollbar();
-                self.active_window_mut().mouse_state.dragging_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_row = None;
-                self.active_window_mut().mouse_state.drag_start_top_byte = None;
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_horizontal_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_hcol = None;
-                self.active_window_mut().mouse_state.drag_start_left_column = None;
-                self.active_window_mut().mouse_state.dragging_separator = None;
-                self.active_window_mut().mouse_state.drag_start_position = None;
-                self.active_window_mut().mouse_state.drag_start_ratio = None;
-                self.active_window_mut().mouse_state.dragging_file_explorer = false;
-                self.active_window_mut()
-                    .mouse_state
-                    .drag_start_explorer_width = None;
-                // Clear text selection drag state (selection remains in cursor)
-                self.active_window_mut().mouse_state.dragging_text_selection = false;
-                self.active_window_mut().mouse_state.drag_selection_split = None;
-                self.active_window_mut().mouse_state.drag_selection_anchor = None;
-                self.active_window_mut().mouse_state.drag_selection_by_words = false;
-                self.active_window_mut().mouse_state.drag_selection_word_end = None;
-                // Clear popup scrollbar drag state
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_popup_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_popup_scroll = None;
-                // Clear prompt scrollbar drag state (issue #1796)
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_prompt_scrollbar = false;
-                // Clear popup text selection drag state (selection remains in popup)
-                self.active_window_mut().mouse_state.selecting_in_popup = None;
+                self.clear_active_window_drag_state();
 
                 // If we finished dragging a split separator, the split
                 // ratios changed: reflow through the single layout funnel.
@@ -960,6 +929,14 @@ impl Editor {
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        self.hover_target_in_floating_overlays(col, row)
+            .or_else(|| self.hover_target_in_chrome(col, row))
+    }
+
+    /// Hit-test floating overlay layers: context menus, command palette,
+    /// popup lists, and the file-browser dialog. These always render on
+    /// top of the chrome and must be checked first.
+    fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
                 self.active_chrome().last_frame_width,
@@ -1037,6 +1014,13 @@ impl Editor {
             }
         }
 
+        None
+    }
+
+    /// Hit-test the permanent chrome: menu bar, file explorer panel,
+    /// split separators, tabs, scrollbars, status bar, and search
+    /// options. Called only after floating overlays have been ruled out.
+    fn hover_target_in_chrome(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check menu bar (row 0, only when visible)
         // Check menu bar using cached layout from previous render
         if self.active_window().menu_bar_visible {
@@ -1220,7 +1204,6 @@ impl Editor {
             }
         }
 
-        // No hover target
         None
     }
 
@@ -3949,6 +3932,33 @@ impl Editor {
                 },
             );
         }
+    }
+
+    /// Clear all in-progress drag state on the active window's mouse state.
+    /// The active text/popup selection is intentionally preserved — only the
+    /// drag bookkeeping fields are reset.
+    fn clear_active_window_drag_state(&mut self) {
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.dragging_scrollbar = None;
+        ms.drag_start_row = None;
+        ms.drag_start_top_byte = None;
+        ms.dragging_horizontal_scrollbar = None;
+        ms.drag_start_hcol = None;
+        ms.drag_start_left_column = None;
+        ms.dragging_separator = None;
+        ms.drag_start_position = None;
+        ms.drag_start_ratio = None;
+        ms.dragging_file_explorer = false;
+        ms.drag_start_explorer_width = None;
+        ms.dragging_text_selection = false;
+        ms.drag_selection_split = None;
+        ms.drag_selection_anchor = None;
+        ms.drag_selection_by_words = false;
+        ms.drag_selection_word_end = None;
+        ms.dragging_popup_scrollbar = None;
+        ms.drag_start_popup_scroll = None;
+        ms.dragging_prompt_scrollbar = false;
+        ms.selecting_in_popup = None;
     }
 }
 
