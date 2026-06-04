@@ -307,7 +307,14 @@ impl Editor {
             Ev::Paste(text) => {
                 // Terminal-initiated bracketed paste — no async read
                 // needed, the terminal already harvested the clipboard.
-                self.paste_text(text);
+                // When a floating modal / dock owns the keyboard the
+                // paste belongs to its focused text field, not the
+                // buffer underneath; route there first (and let a modal
+                // with no text field focused swallow it) before falling
+                // back to the buffer/prompt paste path.
+                if !self.paste_bracketed_into_focused_panel(&text) {
+                    self.paste_text(text);
+                }
                 Ok(true)
             }
             Ev::FocusGained => {

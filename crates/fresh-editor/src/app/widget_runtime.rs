@@ -1649,16 +1649,31 @@ impl Editor {
         buffer_id: crate::model::event::BufferId,
     ) -> Option<u64> {
         for panel_id in self.widget_registry.panels_for_buffer(buffer_id) {
-            let panel = self.widget_registry.get(panel_id)?;
-            if panel.focus_key.is_empty() {
-                continue;
-            }
-            let widget = crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key);
-            if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
+            if self.panel_focused_widget_is_text(panel_id) {
                 return Some(panel_id);
             }
         }
         None
+    }
+
+    /// True when `panel_id`'s currently-focused widget is a `Text`
+    /// field (so it can accept clipboard insertion). `false` when the
+    /// panel is gone, has no focus, or focus rests on a non-text
+    /// widget (`Button` / `List` / `Toggle` / …). This is the shared
+    /// predicate behind both the buffer-mounted paste routing
+    /// (`focused_text_widget_panel_for_buffer`) and the floating-panel
+    /// bracketed-paste routing (`paste_bracketed_into_focused_panel`).
+    pub(super) fn panel_focused_widget_is_text(&self, panel_id: u64) -> bool {
+        let Some(panel) = self.widget_registry.get(panel_id) else {
+            return false;
+        };
+        if panel.focus_key.is_empty() {
+            return false;
+        }
+        matches!(
+            crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key),
+            Some(fresh_core::api::WidgetSpec::Text { .. })
+        )
     }
 
     /// Read the currently-selected text from the focused `Text`

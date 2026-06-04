@@ -1114,6 +1114,52 @@ impl Editor {
         }
     }
 
+    /// Route a terminal-initiated bracketed paste to a focused
+    /// floating panel (Orchestrator picker / New-Session form / plugin
+    /// overlay) or focused dock when one owns the keyboard.
+    ///
+    /// Bracketed paste arrives as a single `Event::Paste` rather than
+    /// per-key events, so — unlike typed characters and `Ctrl+V` — it
+    /// never passes through `dispatch_floating_widget_key`. Without this
+    /// routing it falls straight through to `paste_text`, which targets
+    /// the buffer underneath the modal (the user-reported bug: pasting
+    /// into the New-Session dialog dumped the text into the obscured
+    /// file instead of the focused field).
+    ///
+    /// Returns `true` when a panel owns the keyboard (the paste was
+    /// either inserted into its focused `Text` widget, or deliberately
+    /// swallowed because focus isn't on a text field — a modal with no
+    /// text input focused must ignore the paste, not leak it into the
+    /// hidden buffer). Returns `false` when no panel owns the keyboard,
+    /// so the caller falls back to the normal `paste_text` path.
+    pub(crate) fn paste_bracketed_into_focused_panel(&mut self, text: &str) -> bool {
+        // Mirror the keyboard-dispatch precedence in `handle_key`: a
+        // focused centered modal wins over a focused dock.
+        let slot = if self
+            .floating_widget_panel
+            .as_ref()
+            .is_some_and(|f| f.focused)
+        {
+            super::PanelSlot::Floating
+        } else if self.dock.as_ref().is_some_and(|d| d.focused) {
+            super::PanelSlot::Dock
+        } else {
+            return false;
+        };
+        let Some(panel_id) = self.panel(slot).map(|f| f.panel_id) else {
+            return false;
+        };
+        if self.panel_focused_widget_is_text(panel_id) {
+            // Single-line `TextEdit` strips embedded newlines; multi-line
+            // stores plain `\n`. Normalise CRLF / CR → LF first, matching
+            // the `Action::Paste` widget-routing path.
+            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+            self.handle_widget_insert_str(panel_id, &normalized);
+            self.set_status_message(t!("clipboard.pasted").to_string());
+        }
+        true
+    }
+
     /// Paste text directly into the editor
     ///
     /// Handles:

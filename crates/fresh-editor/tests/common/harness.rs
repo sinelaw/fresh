@@ -1385,6 +1385,20 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Deliver a terminal-initiated bracketed paste, exactly as the
+    /// event loop does for `crossterm::event::Event::Paste` — the
+    /// single-`Event::Paste` path the terminal uses (distinct from the
+    /// per-key `type_text` path and from `Ctrl+V`). Routes through the
+    /// editor's real `handle_input_event` so floating-panel / dock
+    /// paste routing is exercised.
+    pub fn send_paste(&mut self, text: &str) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(crossterm::event::Event::Paste(text.to_string()))?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
     /// Force a render cycle and capture output
     pub fn render(&mut self) -> anyhow::Result<()> {
         self.terminal.draw(|frame| {
