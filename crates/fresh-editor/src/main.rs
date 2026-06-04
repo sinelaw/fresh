@@ -4168,12 +4168,57 @@ fn run_event_loop(
         terminal_modes,
         |timeout| {
             if event_poll(timeout)? {
-                Ok(Some(event_read()?))
+                Ok(safe_event_read()?)
             } else {
                 Ok(None)
             }
         },
     )
+}
+
+/// Read one terminal event, guarding against a panic inside crossterm's input
+/// parser.
+///
+/// A malformed or zero-coordinate SGR mouse sequence can trip an
+/// `attempt to subtract with overflow` inside crossterm's parse path. That
+/// panic would otherwise unwind straight through the event loop and abort the
+/// whole editor over a single bad byte sequence. We catch it and report "no
+/// event" so the loop carries on.
+///
+/// crossterm only clears its internal byte buffer when a parse returns `Err`,
+/// not when it *panics*, so the offending bytes can remain and panic again on
+/// the next read. To avoid spinning forever on a wedged parser we count
+/// consecutive recovered panics and, past a small threshold, surface an error
+/// so the caller shuts the loop down cleanly instead of busy-looping. Any
+/// successful read resets the counter.
+fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const MAX_CONSECUTIVE_PARSE_PANICS: u32 = 8;
+    static CONSECUTIVE_PANICS: AtomicU32 = AtomicU32::new(0);
+
+    match catch_unwind(AssertUnwindSafe(event_read)) {
+        Ok(res) => {
+            CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+            res.map(Some)
+        }
+        Err(_) => {
+            let n = CONSECUTIVE_PANICS.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!(
+                "crossterm event parser panicked on malformed input \
+                 (consecutive: {n}); dropping the event"
+            );
+            if n >= MAX_CONSECUTIVE_PARSE_PANICS {
+                CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+                Err(std::io::Error::other(
+                    "crossterm input parser repeatedly panicked; aborting read loop",
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 fn run_event_loop_common<F>(
@@ -4372,7 +4417,7 @@ fn poll_with_gpm(
     // If no GPM client, just use crossterm polling
     let Some(gpm) = gpm_client else {
         return if event_poll(timeout)? {
-            Ok(Some(event_read()?))
+            Ok(safe_event_read()?)
         } else {
             Ok(None)
         };
@@ -4442,7 +4487,9 @@ fn poll_with_gpm(
     if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         // Use crossterm's read since it handles escape sequence parsing
         if event_poll(Duration::ZERO)? {
-            return Ok(Some(event_read()?));
+            if let Some(ev) = safe_event_read()? {
+                return Ok(Some(ev));
+            }
         }
     }
 
@@ -4463,7 +4510,9 @@ fn coalesce_mouse_moves(
 
     let mut latest = event;
     while event_poll(Duration::ZERO)? {
-        let next = event_read()?;
+        let Some(next) = safe_event_read()? else {
+            continue;
+        };
         if matches!(&next, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
             latest = next; // Newer move, skip the old one
         } else {
