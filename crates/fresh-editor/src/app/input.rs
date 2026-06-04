@@ -1133,38 +1133,51 @@ impl Editor {
                 self.toggle_auto_revert();
             }
             Action::FormatBuffer => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 if let Err(e) = self.format_buffer() {
                     self.set_status_message(
                         t!("error.format_failed", error = e.to_string()).to_string(),
                     );
                 }
             }
-            Action::TrimTrailingWhitespace => match self.trim_trailing_whitespace() {
-                Ok(true) => {
-                    self.set_status_message(t!("whitespace.trimmed").to_string());
+            Action::TrimTrailingWhitespace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
                 }
-                Ok(false) => {
-                    self.set_status_message(t!("whitespace.no_trailing").to_string());
+                match self.trim_trailing_whitespace() {
+                    Ok(true) => {
+                        self.set_status_message(t!("whitespace.trimmed").to_string());
+                    }
+                    Ok(false) => {
+                        self.set_status_message(t!("whitespace.no_trailing").to_string());
+                    }
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("error.trim_whitespace_failed", error = e).to_string(),
+                        );
+                    }
                 }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("error.trim_whitespace_failed", error = e).to_string(),
-                    );
+            }
+            Action::EnsureFinalNewline => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
                 }
-            },
-            Action::EnsureFinalNewline => match self.ensure_final_newline() {
-                Ok(true) => {
-                    self.set_status_message(t!("whitespace.newline_added").to_string());
+                match self.ensure_final_newline() {
+                    Ok(true) => {
+                        self.set_status_message(t!("whitespace.newline_added").to_string());
+                    }
+                    Ok(false) => {
+                        self.set_status_message(t!("whitespace.already_has_newline").to_string());
+                    }
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("error.ensure_newline_failed", error = e).to_string(),
+                        );
+                    }
                 }
-                Ok(false) => {
-                    self.set_status_message(t!("whitespace.already_has_newline").to_string());
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("error.ensure_newline_failed", error = e).to_string(),
-                    );
-                }
-            },
+            }
             Action::Copy => {
                 // Editor-level popups take precedence over everything, including the file explorer.
                 let popup = self
@@ -1618,6 +1631,9 @@ impl Editor {
                 self.request_completion();
             }
             Action::DabbrevExpand => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 self.dabbrev_expand();
             }
             Action::LspGotoDefinition => {
@@ -1696,6 +1712,9 @@ impl Editor {
                 }
             }
             Action::Replace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Use same flow as query-replace, just with confirm_each defaulting to false
                 self.start_search_prompt(
                     t!("file.replace_prompt").to_string(),
@@ -1704,6 +1723,9 @@ impl Editor {
                 );
             }
             Action::QueryReplace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Enable confirm mode by default for query-replace
                 self.active_window_mut().search_confirm_each = true;
                 self.start_search_prompt(
@@ -2412,6 +2434,9 @@ impl Editor {
                 self.start_shell_command_prompt(false);
             }
             Action::ShellCommandReplace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Run shell command on buffer/selection, replace content
                 self.start_shell_command_prompt(true);
             }

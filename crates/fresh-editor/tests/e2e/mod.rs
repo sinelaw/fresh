@@ -177,6 +177,7 @@ pub mod preview_lsp_popup_focus;
 pub mod preview_tabs;
 pub mod prompt;
 pub mod prompt_editing;
+pub mod read_only_enforcement;
 pub mod recovery;
 pub mod remote_auto_reconnect_terminal;
 pub mod remote_fs_test;
