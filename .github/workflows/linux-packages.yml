@@ -507,6 +507,7 @@ jobs:
             devscripts \
             fakeroot \
             lintian \
+            rsync \
             xz-utils
 
       - uses: actions/checkout@v6
