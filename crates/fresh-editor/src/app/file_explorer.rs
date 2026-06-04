@@ -2,6 +2,7 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use super::*;
+use crate::services::async_bridge::AsyncMessage;
 use crate::view::file_tree::FileExplorerGitStatusCache;
 use crate::view::file_tree::TreeNode;
 use std::path::{Path, PathBuf};
