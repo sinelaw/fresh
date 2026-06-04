@@ -3909,7 +3909,14 @@ impl Editor {
                     hit.widget_key.clone(),
                     hit.widget_kind,
                 ),
-                None => return,
+                None => {
+                    tracing::debug!(
+                        target: "fresh::dock",
+                        ?slot, col, row, brow, bcol,
+                        "handle_floating_widget_click: hit_test found no widget"
+                    );
+                    return;
+                }
             };
         if !hit_key.is_empty() {
             let tabbable = self
@@ -3917,10 +3924,25 @@ impl Editor {
                 .get(panel_id)
                 .map(|p| p.tabbable.iter().any(|k| k == &hit_key))
                 .unwrap_or(false);
+            tracing::debug!(
+                target: "fresh::dock",
+                hit_key = %hit_key,
+                hit_kind,
+                hit_event = %hit_event,
+                tabbable,
+                "handle_floating_widget_click: hit"
+            );
             if tabbable {
                 self.set_panel_focus_and_notify(panel_id, hit_key.clone());
             }
             self.rerender_widget_panel(panel_id);
+        } else {
+            tracing::debug!(
+                target: "fresh::dock",
+                hit_kind,
+                hit_event = %hit_event,
+                "handle_floating_widget_click: hit with empty key (not focusable)"
+            );
         }
         let handled_specially = if hit_kind == "tree" && hit_event == "expand" {
             if let Some(item_key) = hit_payload.get("key").and_then(|v| v.as_str()) {

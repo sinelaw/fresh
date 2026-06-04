@@ -4545,8 +4545,87 @@ function backendBodyFields(): WidgetSpec[] {
   }
 }
 
+// While a submit is in flight the dialog is *disabled*: the editable fields and
+// the backend tabs are replaced with a read-only summary and only Cancel stays
+// actionable (Create is shown disabled). It holds until the attach resolves —
+// success closes the dialog, failure flips `submitting` back off and re-renders
+// the editable form with the error. Applies to every backend (a fresh `openForm`
+// always starts with `submitting = false`, so the next open is reset).
+function buildConnectingView(): WidgetSpec {
+  if (!form) return col();
+  const roRow = (label: string, value: string): WidgetSpec => ({
+    kind: "raw",
+    entries: [
+      styledRow([
+        { text: `${label}: `, style: { fg: "ui.menu_disabled_fg", bold: true } },
+        { text: value || "—", style: { fg: "ui.menu_disabled_fg" } },
+      ]),
+    ],
+  });
+  const rows: WidgetSpec[] = [];
+  if (form.backend === "ssh") {
+    rows.push(roRow("Run in", "SSH"));
+    rows.push(roRow("Host", form.sshHost.value.trim()));
+    if (form.sshPath.value.trim()) rows.push(roRow("Remote path", form.sshPath.value.trim()));
+  } else if (form.backend === "kubernetes") {
+    rows.push(roRow("Run in", "Kubernetes"));
+    const ns = form.k8sNamespace.value.trim();
+    const pod = form.k8sPod.value.trim();
+    rows.push(roRow("Pod", form.k8sTarget.value.trim() || `${ns}/${pod}`));
+  } else {
+    rows.push(roRow("Run in", form.backend === "devcontainer" ? "Devcontainer" : "Local"));
+    rows.push(roRow("Project", form.projectPath.value.trim() || form.defaultProjectPath));
+  }
+  const name = form.name.value.trim();
+  if (name) rows.push(roRow("Session", name));
+
+  const remote = form.backend === "ssh" || form.backend === "kubernetes";
+  return col(
+    row(
+      flexSpacer(),
+      {
+        kind: "raw",
+        entries: [
+          styledRow([
+            { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
+            { text: " :: ", style: HEADER_SEP_STYLE },
+            { text: "New Session", style: HEADER_LABEL_STYLE },
+          ]),
+        ],
+      },
+      flexSpacer(),
+    ),
+    spacer(0),
+    ...rows,
+    spacer(0),
+    {
+      kind: "raw",
+      entries: [
+        styledRow([
+          {
+            text: remote ? "Connecting… " : "Creating session… ",
+            style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
+          },
+          {
+            text: "press Cancel to abort.",
+            style: { fg: "ui.menu_disabled_fg", italic: true },
+          },
+        ]),
+      ],
+    },
+    spacer(0),
+    wrappingRow(
+      button("Cancel", { intent: "danger", key: "cancel" }),
+      spacer(2),
+      button("Create Session", { intent: "primary", key: "create", disabled: true }),
+    ),
+  );
+}
+
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
+  // Disabled/connecting state: read-only summary + Cancel-only (item 3).
+  if (form.submitting) return buildConnectingView();
 
   const children: WidgetSpec[] = [
     // === Header: centered title (no stale `Review Synthesized`). =
@@ -4609,26 +4688,9 @@ function buildFormSpec(): WidgetSpec {
     children.push(localBranchSection());
   }
   // Remote backends connect asynchronously and the dialog stays open until the
-  // session is real (see `runRemoteAttach`) — show a live "connecting" line so
-  // the wait is legible rather than a frozen dialog.
-  if (form.submitting && form.backend !== "local") {
-    children.push(spacer(0));
-    children.push({
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: "Connecting… ",
-            style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
-          },
-          {
-            text: "building the remote session (this can take a few seconds).",
-            style: { fg: "ui.menu_disabled_fg", italic: true },
-          },
-        ]),
-      ],
-    });
-  }
+  // session is real (see `runRemoteAttach`). The in-flight "connecting" state
+  // is rendered by `buildConnectingView` (the early return above), so nothing
+  // is needed here for it.
   if (form.lastError) {
     children.push(spacer(0));
     children.push({
@@ -5172,6 +5234,9 @@ async function runRemoteAttach(
   // session row with this facet; cleared on failure since no window appears.
   pendingRemoteFacet = facet;
   renderForm();
+  // The disabled/connecting view exposes only Cancel — land focus there so
+  // Enter/Esc act on it.
+  formPanel?.setFocusKey("cancel");
   try {
     await editor.attachRemoteAgent(spec);
     // Authority + window are live and the hook has adopted the facet — only
@@ -5319,6 +5384,8 @@ async function submitForm(): Promise<void> {
   form.submitting = true;
   form.lastError = null;
   renderForm();
+  // Disabled/connecting view exposes only Cancel — focus it.
+  formPanel?.setFocusKey("cancel");
 
   // The Agent Command field is prefilled with the last-used command as actual
   // text (see `openForm`), so its value is authoritative: a cleared field means
