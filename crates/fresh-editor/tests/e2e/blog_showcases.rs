@@ -2977,3 +2977,439 @@ fn blog_showcase_fresh_0_2_26_review_diff() {
 
     s.finalize().unwrap();
 }
+
+// =========================================================================
+// Blog Post: Orchestrator — New SSH Session (0.3.10)
+// =========================================================================
+//
+// Showcases the SSH backend of the Orchestrator's "New Session" dialog
+// against a *real* connection: a throwaway, non-root `sshd` on
+// `127.0.0.1`, reached through a fake hostname (`demo-box`) that resolves
+// via `/etc/hosts`. The dialog points the SSH backend at `demo-box:<port>`
+// and Fresh attaches the full remote-agent stack (filesystem + terminal +
+// LSP) over the connection — the same path a user gets typing a host into
+// the form.
+//
+// The connection is genuine: ssh bootstraps the Python agent on the remote
+// (here, loopback) exactly as in production, so the "Connecting…" → live
+// session transition in the GIF is real, not staged.
+//
+// Linux-only and self-skipping: it needs `ssh`/`sshd`/`ssh-keygen` and a
+// `demo-box → 127.0.0.1` resolution. When OpenSSH is missing, or the fake
+// host can't be made to resolve (no write access to `/etc/hosts` and no
+// pre-existing entry), the test prints why and returns — a no-op rather
+// than a failure, matching the other environment-gated showcases.
+#[cfg(all(target_os = "linux", feature = "plugins"))]
+mod ssh_session_showcase_support {
+    use std::net::{TcpListener, TcpStream};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// The fake hostname the GIF connects to. Resolves to loopback via
+    /// `/etc/hosts` so the demo reads like a real remote box.
+    pub const DEMO_HOST: &str = "demo-box";
+
+    /// Resolve a program by searching `PATH`, then a few well-known absolute
+    /// fallbacks (`sshd` usually lives in `/usr/sbin`, often absent from a
+    /// test process's `PATH`).
+    pub fn resolve(name: &str, fallbacks: &[&str]) -> Option<PathBuf> {
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                let cand = dir.join(name);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+        fallbacks
+            .iter()
+            .map(PathBuf::from)
+            .find(|cand| cand.is_file())
+    }
+
+    fn keygen(keygen_bin: &Path, path: &Path) {
+        let status = Command::new(keygen_bin)
+            .args(["-t", "ed25519", "-q", "-N", ""])
+            .arg("-f")
+            .arg(path)
+            .status()
+            .expect("run ssh-keygen");
+        assert!(status.success(), "ssh-keygen failed for {path:?}");
+    }
+
+    fn set_mode(path: &Path, mode: u32) {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A free localhost TCP port. Bound briefly to discover the number, then
+    /// released for `sshd` to claim.
+    fn free_port() -> u16 {
+        TcpListener::bind("127.0.0.1:0")
+            .expect("bind ephemeral port")
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn wait_for_listen(port: u16, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    /// Kill the child `sshd` when the test ends (pass or panic).
+    pub struct KillOnDrop(pub Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// Ensure `demo-box` resolves to `127.0.0.1`. Returns true when the name
+    /// resolves (either it already did, or we appended it to `/etc/hosts`).
+    /// Never mutates an existing mapping; only appends when the name is
+    /// entirely absent and `/etc/hosts` is writable.
+    pub fn ensure_demo_host_resolves() -> bool {
+        if TcpStream::connect((DEMO_HOST, 9)).is_ok() {
+            return true; // resolves (connection refused still means it resolved)
+        }
+        // `connect` failing could be resolution OR a refused port; the only
+        // failure that matters here is name resolution. Probe that directly by
+        // checking whether the entry is already in /etc/hosts, and add it if
+        // not. Use a getent-style read of the file rather than libc so the
+        // check matches what we (might) write.
+        let hosts = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+        let already = hosts
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .any(|l| l.split_whitespace().skip(1).any(|h| h == DEMO_HOST));
+        if already {
+            return true;
+        }
+        // Not present — append if we can.
+        use std::io::Write;
+        match std::fs::OpenOptions::new().append(true).open("/etc/hosts") {
+            Ok(mut f) => {
+                let _ = writeln!(f, "127.0.0.1 {DEMO_HOST}");
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// A running throwaway sshd plus the bits a client needs to reach it.
+    pub struct DemoSshd {
+        pub port: u16,
+        pub identity: PathBuf,
+        pub known_hosts: PathBuf,
+        pub work: PathBuf,
+        _guard: KillOnDrop,
+        _root: PathBuf,
+    }
+
+    /// Spin up a non-root `sshd` on `127.0.0.1` rooted under `root`, with a
+    /// fresh ed25519 keypair authorized for the current user. Returns `None`
+    /// if the daemon never came up.
+    pub fn spawn_demo_sshd(sshd: &Path, ssh_keygen: &Path, root: &Path) -> Option<DemoSshd> {
+        let _ = std::fs::remove_dir_all(root);
+        std::fs::create_dir_all(root).unwrap();
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // A couple of files so the remote file explorer / terminal land in a
+        // workspace that looks alive rather than empty.
+        std::fs::write(work.join("README.md"), "# demo-box\n\nRemote workspace.\n").unwrap();
+        std::fs::write(work.join("deploy.sh"), "#!/bin/sh\necho deploying…\n").unwrap();
+
+        let hostkey = root.join("hostkey");
+        let id = root.join("id");
+        let authorized = root.join("authorized_keys");
+        let config = root.join("sshd_config");
+        let known_hosts = root.join("known_hosts");
+        std::fs::write(&known_hosts, "").unwrap();
+
+        keygen(ssh_keygen, &hostkey);
+        keygen(ssh_keygen, &id);
+        std::fs::copy(root.join("id.pub"), &authorized).unwrap();
+        set_mode(&authorized, 0o600);
+
+        let port = free_port();
+        std::fs::write(
+            &config,
+            format!(
+                "Port {port}\n\
+                 ListenAddress 127.0.0.1\n\
+                 HostKey {hostkey}\n\
+                 PidFile {pid}\n\
+                 AuthorizedKeysFile {authorized}\n\
+                 StrictModes no\n\
+                 UsePAM no\n\
+                 PasswordAuthentication no\n\
+                 PubkeyAuthentication yes\n",
+                hostkey = hostkey.display(),
+                pid = root.join("sshd.pid").display(),
+                authorized = authorized.display(),
+            ),
+        )
+        .unwrap();
+
+        let log = root.join("sshd.log");
+        let logf = std::fs::File::create(&log).unwrap();
+        let child = Command::new(sshd)
+            .arg("-D") // foreground
+            .arg("-e") // log to stderr
+            .arg("-f")
+            .arg(&config)
+            .stdout(Stdio::from(logf.try_clone().unwrap()))
+            .stderr(Stdio::from(logf))
+            .spawn()
+            .ok()?;
+        let guard = KillOnDrop(child);
+
+        if !wait_for_listen(port, Duration::from_secs(10)) {
+            eprintln!(
+                "demo sshd never listened on {port}.\nsshd log:\n{}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+            return None;
+        }
+
+        Some(DemoSshd {
+            port,
+            identity: id,
+            known_hosts,
+            work,
+            _guard: guard,
+            _root: root.to_path_buf(),
+        })
+    }
+}
+
+/// Orchestrator: New SSH Session — open the New Session dialog, pick the
+/// SSH backend, point it at `demo-box:<port>` (a fake hostname resolving to
+/// a local user-space sshd via `/etc/hosts`), and watch Fresh attach the
+/// remote session for real.
+#[cfg(all(target_os = "linux", feature = "plugins"))]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_3_10_ssh_session() {
+    use ssh_session_showcase_support as sup;
+
+    // --- Environment gates: skip (not fail) when prerequisites are absent. --
+    let (Some(sshd), Some(ssh_keygen)) = (
+        sup::resolve(
+            "sshd",
+            &["/usr/sbin/sshd", "/sbin/sshd", "/usr/local/sbin/sshd"],
+        ),
+        sup::resolve("ssh-keygen", &[]),
+    ) else {
+        eprintln!("Skipping SSH-session showcase: sshd/ssh-keygen not installed");
+        return;
+    };
+    if sup::resolve("ssh", &[]).is_none() {
+        eprintln!("Skipping SSH-session showcase: ssh client not installed");
+        return;
+    }
+    if !sup::ensure_demo_host_resolves() {
+        eprintln!(
+            "Skipping SSH-session showcase: '{}' does not resolve and /etc/hosts \
+             is not writable. Add `127.0.0.1 {}` to /etc/hosts to enable.",
+            sup::DEMO_HOST,
+            sup::DEMO_HOST,
+        );
+        return;
+    }
+
+    // --- Bring up the throwaway remote (loopback) sshd. ---------------------
+    let demo_root = std::path::PathBuf::from("/tmp/fresh-ssh-showcase");
+    let Some(server) = sup::spawn_demo_sshd(&sshd, &ssh_keygen, &demo_root) else {
+        eprintln!("Skipping SSH-session showcase: demo sshd failed to start");
+        return;
+    };
+
+    // --- Workspace + orchestrator plugin for the local editor. --------------
+    fresh::i18n::set_locale("en");
+    let workspace = demo_root.join("local-workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let plugins_dir = workspace.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    let mut h = EditorTestHarness::with_working_dir(120, 34, workspace.clone()).unwrap();
+    h.tick_and_render().unwrap();
+    // Wait for the orchestrator to register its command.
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Orchestrator: New Session")
+    })
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.3.10/ssh-session",
+        "New SSH Session",
+        "Start a remote SSH session from the Orchestrator's New Session dialog: \
+         pick the SSH backend, point it at a host, and Fresh attaches its \
+         filesystem, terminal, and LSP over the connection.",
+    );
+
+    hold(&mut h, &mut s, 4, 130);
+
+    // --- Open the New Session dialog via the command palette. ---------------
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 160);
+
+    for ch in "New Session".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 55);
+    }
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    hold(&mut h, &mut s, 2, 120);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 220);
+    hold(&mut h, &mut s, 4, 150);
+
+    // --- Switch to the SSH backend by clicking the "Run in: … SSH" tab. -----
+    let (ssh_col, ssh_row) = h
+        .find_text_on_screen("SSH")
+        .expect("the 'Run in:' tab row should offer an SSH backend");
+    snap_mouse(&mut h, &mut s, None, (ssh_col, ssh_row), 200);
+    h.mouse_click(ssh_col, ssh_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Remote Path"))
+        .unwrap();
+    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 220);
+    hold(&mut h, &mut s, 3, 150);
+
+    // Enter on the already-active SSH tab dives into the first field (Host).
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 160);
+
+    // --- Host: the fake hostname + the throwaway sshd's port. ---------------
+    let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);
+    for ch in host_value.chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 70);
+    }
+    hold(&mut h, &mut s, 3, 150);
+
+    // --- Remote Path: where the session is rooted on the remote. ------------
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 150);
+    h.type_text(&server.work.to_string_lossy()).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 200);
+    hold(&mut h, &mut s, 2, 150);
+
+    // --- Identity file: the keypair authorized on the demo sshd. ------------
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 150);
+    h.type_text(&server.identity.to_string_lossy()).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 200);
+    hold(&mut h, &mut s, 2, 150);
+
+    // --- SSH options: a throwaway known_hosts so the demo leaves no trace
+    //     in the user's ~/.ssh (and to show the free-form options field). ---
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 150);
+    h.type_text(&format!(
+        "-o UserKnownHostsFile={}",
+        server.known_hosts.to_string_lossy()
+    ))
+    .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 220);
+    hold(&mut h, &mut s, 2, 150);
+
+    // --- Session name. ------------------------------------------------------
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 150);
+    h.type_text("deploy-box").unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 220);
+    hold(&mut h, &mut s, 3, 150);
+
+    // --- Submit: click "Create Session". ------------------------------------
+    let (create_col, create_row) = h
+        .find_text_on_screen("Create Session")
+        .expect("the form should offer a 'Create Session' button");
+    snap_mouse(&mut h, &mut s, None, (create_col, create_row), 200);
+    h.mouse_click(create_col, create_row).unwrap();
+    h.render().unwrap();
+    // The disabled "Connecting…" view goes up while ssh handshakes + the
+    // Python agent boots on the remote.
+    snap_mouse(&mut h, &mut s, Some("Click"), (create_col, create_row), 260);
+    hold(&mut h, &mut s, 4, 150);
+
+    // --- Wait for the attach to resolve. On success the form panel is
+    //     unmounted (its header disappears) and the born-attached remote
+    //     window takes over; on failure the form stays up with an inline
+    //     Error. Keying on the header (not the "Connecting…" glyph) keeps the
+    //     wait robust. -------------------------------------------------------
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        !screen.contains("ORCHESTRATOR :: New Session") || screen.contains("Error:")
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("Error:"),
+        "SSH attach failed — the New Session dialog surfaced an error.\nScreen:\n{screen}",
+    );
+
+    // The born-attached remote window is now live, with an integrated
+    // terminal running the remote login shell. Wait for the remote prompt to
+    // paint so the GIF opens on a settled session.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains(&server.work.to_string_lossy().into_owned())
+    })
+    .unwrap();
+    hold(&mut h, &mut s, 6, 200);
+
+    // --- Prove the session is genuinely remote by driving the live shell:
+    //     list the remote workspace, then read a file. Both run on the far
+    //     side of the SSH connection (here, loopback). -----------------------
+    for cmd in ["ls", "cat README.md"] {
+        h.type_text(cmd).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        h.tick_and_render().unwrap();
+        snap(&mut h, &mut s, Some(cmd), 220);
+        hold(&mut h, &mut s, 2, 150);
+
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        h.tick_and_render().unwrap();
+        snap(&mut h, &mut s, Some("Enter"), 250);
+        hold(&mut h, &mut s, 5, 200);
+    }
+
+    hold(&mut h, &mut s, 6, 200);
+
+    s.finalize().unwrap();
+
+    // Keep the server alive until all frames are captured.
+    drop(server);
+}
