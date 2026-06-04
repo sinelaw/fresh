@@ -209,6 +209,16 @@ impl crate::app::Editor {
             }
         };
 
+        // The switch has now committed (the spawn succeeded and the active
+        // pointer stays on the new window). This path wrote `active_window`
+        // directly above, bypassing `set_active_window` — so mirror its
+        // guard here, or a panel-scoped mode set on the window we switched
+        // away from (e.g. the New-Session form's `orchestrator-new-form`,
+        // still mounted during a born-attached SSH/K8s attach) is left
+        // stranded and silently swallows all of that window's buffer input.
+        // See #2237 / #2234 item 4.
+        self.clear_panel_scoped_mode_on_switch_away(previous_id);
+
         // Register the leader pid with the new window's
         // process_groups so window-level signal operations reach
         // the spawned group. Mirrors `create_plugin_terminal`'s
@@ -270,6 +280,40 @@ impl crate::app::Editor {
         Ok((id, terminal_id, buffer_id))
     }
 
+    /// Clear a floating-panel-scoped editor mode on the window we are
+    /// switching *away* from.
+    ///
+    /// A plugin-defined editor mode (`editor.setEditorMode`) tied to a mounted
+    /// floating widget panel — the Orchestrator picker (`orchestrator-open`) or
+    /// new-session form (`orchestrator-new-form`) — is transient UI state that
+    /// belongs to the *panel*, not to the window it was opened over.
+    /// `setEditorMode` writes to whatever window is active when the plugin
+    /// calls it, so a plugin that switches the active window while its panel is
+    /// still mounted (the orchestrator "dive": `setActiveWindow(target)` first,
+    /// then `closeOpenDialog()` / `closeForm()` which runs
+    /// `setEditorMode(null)`) lands the clear on the *incoming* window and
+    /// leaves the *outgoing* one stuck in the panel's mode. That stuck mode
+    /// stays masked while the window sits in terminal mode, then silently
+    /// swallows every printable key the moment the user leaves terminal mode
+    /// (e.g. opens a file via quick-open) — the buffer ignores all keyboard
+    /// input until the user switches sessions.
+    ///
+    /// Both window-switch paths must call this before moving the active
+    /// pointer: the ordinary `set_active_window` dive *and* the born-attached
+    /// remote session creation (`create_window_with_terminal`), which writes
+    /// the active pointer directly and so never reaches `set_active_window`'s
+    /// own guard. See #2237 / #2234 item 4.
+    ///
+    /// vi-mode and other persistent per-window modes are unaffected: they never
+    /// have a floating panel mounted during a window switch.
+    fn clear_panel_scoped_mode_on_switch_away(&mut self, previous_id: WindowId) {
+        if self.floating_widget_panel.is_some() {
+            if let Some(win) = self.windows.get_mut(&previous_id) {
+                win.editor_mode = None;
+            }
+        }
+    }
+
     /// Switch the active window to `id`.
     ///
     /// Pointer write: every per-window field
@@ -300,31 +344,10 @@ impl crate::app::Editor {
         // the `authority_changed` hook.
         let previous_authority_label = self.authority.display_label.clone();
 
-        // A plugin-defined editor mode (`editor.setEditorMode`) tied to a
-        // mounted floating widget panel — the Orchestrator picker
-        // (`orchestrator-open`) or new-session form (`orchestrator-new-form`)
-        // — is transient UI state that belongs to the *panel*, not to the
-        // window it was opened over. `setEditorMode` writes to whatever
-        // window is active when the plugin calls it, so a plugin that
-        // switches the active window while its panel is still mounted
-        // (the orchestrator "dive": `setActiveWindow(target)` first, then
-        // `closeOpenDialog()` which runs `setEditorMode(null)`) lands the
-        // clear on the *incoming* window and leaves the *outgoing* one
-        // stuck in the panel's mode. That stuck mode stays masked while the
-        // window sits in terminal mode, then silently swallows every
-        // printable key the moment the user leaves terminal mode (e.g.
-        // opens a file via quick-open) — the buffer ignores all keyboard
-        // input until the user switches sessions back and forth (which
-        // re-dives into the window and finally clears it). Clear any
-        // panel-scoped mode on the outgoing window here so it can never
-        // outlive the switch. vi-mode and other persistent per-window modes
-        // are unaffected: they never have a floating panel mounted during a
-        // window switch.
-        if self.floating_widget_panel.is_some() {
-            if let Some(win) = self.windows.get_mut(&previous_id) {
-                win.editor_mode = None;
-            }
-        }
+        // Clear any panel-scoped editor mode on the window we're leaving so
+        // it can never outlive the switch (see
+        // `clear_panel_scoped_mode_on_switch_away`).
+        self.clear_panel_scoped_mode_on_switch_away(previous_id);
 
         // Lazy materialization: if this window's saved workspace hasn't
         // been restored yet, restore it now (before seeding) so the

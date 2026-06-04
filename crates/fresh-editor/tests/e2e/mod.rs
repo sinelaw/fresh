@@ -23,6 +23,8 @@ pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+#[cfg(feature = "plugins")]
+pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
 pub mod document_model;
 pub mod emacs_actions;
