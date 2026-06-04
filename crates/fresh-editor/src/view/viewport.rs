@@ -1789,32 +1789,11 @@ impl Viewport {
         )
         .entered();
 
-        // When `top_view_line_offset > 0` the true top of the viewport is
-        // some number of view lines into the wrapped line that starts at
-        // `top_byte`. This routine has only a byte-oriented view of the
-        // buffer, so its visibility math measures from `top_byte`, which
-        // sits above the actual visible top. For a cursor that is below
-        // `top_byte`, that undercounts the effective viewport and can
-        // declare a cursor that is visually at the bottom of the screen
-        // "outside the viewport", triggering a spurious scroll. Let the
-        // view-line-aware `ensure_visible_in_layout` make the scroll
-        // decision in that case — otherwise the viewport drifts one row
-        // per arrow key press in heavily wrapped buffers (issue #1574).
-        //
-        // If the cursor is *above* `top_byte`, the byte-oriented math is
-        // still correct (scroll up to bring the earlier line into view),
-        // so we only skip when the cursor is below the current top.
-        //
-        // BUT: only defer when the cursor is plausibly inside (or just past)
-        // the visible area. If the cursor is far below `top_byte` — say more
-        // than two viewport heights of source lines away — the byte-math
-        // undercount cannot account for the disagreement, and
-        // `ensure_visible_in_layout` won't help either because its
-        // `view_lines` slice only covers the rendered window. Falling
-        // through here lets us perform a real scroll so cursor jumps
-        // (programmatic scroll, plugin cursor-set, restored-state with stale
-        // cursor) end up on screen instead of stranding the cursor far below
-        // a frozen viewport (#1689 follow-up).
+        // When `top_view_line_offset > 0` the byte-oriented visibility math
+        // undercounts because it measures from `top_byte` rather than the
+        // actual visible top. Defer to `ensure_visible_in_layout` unless the
+        // cursor is so far below that the layout-aware path can't reach it
+        // either (issue #1574 / #1689 follow-up).
         if self.top_view_line_offset > 0 && cursor.position >= self.top_byte {
             let top_line = buffer.get_line_number(self.top_byte);
             let cursor_line = buffer.get_line_number(cursor.position);
@@ -1822,19 +1801,12 @@ impl Viewport {
             if cursor_line < top_line.saturating_add(viewport_height.saturating_mul(2)) {
                 return;
             }
-            // Cursor is far below — fall through and let the byte-oriented
-            // scroll path bring the viewport down.
         }
 
-        // Check if we should skip sync due to session restore
-        // This prevents the restored scroll position from being overwritten
         if self.should_skip_resize_sync() {
             tracing::trace!("ensure_visible: SKIPPING due to skip_resize_sync");
             return;
         }
-
-        // Check if we should skip ensure_visible due to scroll action
-        // This prevents scroll actions (Ctrl+Up/Down) from being immediately undone
         if self.should_skip_ensure_visible() {
             tracing::trace!("ensure_visible: SKIPPING due to skip_ensure_visible flag");
             return;
@@ -1844,9 +1816,7 @@ impl Viewport {
             self.skip_ensure_visible
         );
 
-        // For large files with lazy loading, ensure data around cursor is loaded
         let viewport_lines = self.visible_line_count().max(1);
-
         tracing::trace!(
             "ensure_visible: cursor={}, top_byte={}, viewport_lines={}, line_wrap={}",
             cursor.position,
@@ -1855,199 +1825,30 @@ impl Viewport {
             self.line_wrap_enabled
         );
 
-        // CRITICAL: Load data around cursor position explicitly before using iterators
-        // Load enough data to cover viewport above and below cursor
-        let estimated_viewport_bytes = viewport_lines * 200;
-        let load_start = cursor.position.saturating_sub(estimated_viewport_bytes * 2);
-        // Cap load_length to not go past EOF
-        let buffer_len = buffer.len();
-        let remaining_bytes = buffer_len.saturating_sub(load_start);
-        let load_length = (estimated_viewport_bytes * 3).min(remaining_bytes);
+        self.load_data_around_cursor(buffer, cursor.position, viewport_lines);
 
-        // Force-load the data by actually requesting it (not just prepare_viewport)
-        {
-            let _span =
-                tracing::trace_span!("ensure_visible_load", load_start, load_length,).entered();
-            if let Err(e) = buffer.get_text_range_mut(load_start, load_length) {
-                tracing::warn!(
-                    "Failed to load data around cursor at {}: {}",
-                    cursor.position,
-                    e
-                );
-            }
-        }
-
-        // Find the start of the line containing the cursor using iterator
-        let cursor_iter = buffer.line_iterator(cursor.position, 80);
-        let cursor_line_start = cursor_iter.current_position();
-
-        // Check if cursor is visible by counting VISUAL ROWS between top_byte and cursor
-        // When line wrapping is enabled, we need to count wrapped rows, not logical lines!
-        // Apply scroll_offset to keep cursor away from edges
+        let cursor_line_start = buffer.line_iterator(cursor.position, 80).current_position();
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
-        // Track whether cursor needs scrolling and in which direction:
-        // true = cursor is near/above the top edge, false = near/below the bottom edge
-        let mut cursor_near_top = false;
-
-        let cursor_is_visible = if cursor_line_start < self.top_byte {
-            // Cursor is above viewport
-            cursor_near_top = true;
-            false
+        let (cursor_is_visible, cursor_near_top) = if cursor_line_start < self.top_byte {
+            (false, true)
         } else if self.line_wrap_enabled {
-            // With line wrapping: count VISUAL ROWS (wrapped segments), not logical lines
-            let gutter_width = self.gutter_width(buffer);
-            let wrap_config = WrapConfig::new(
-                self.effective_width() as usize,
-                gutter_width,
-                true,
-                self.wrap_indent,
-            );
-
-            let mut iter = buffer.line_iterator(self.top_byte, 80);
-            let mut visual_rows = 0;
-
-            // Iterate through logical lines, but count their wrapped rows
-            loop {
-                let current_pos = iter.current_position();
-
-                // If we reached the cursor's line, check if the cursor is within visible rows
-                if current_pos >= cursor_line_start {
-                    // The cursor's line starts within or after the viewport
-                    if current_pos == cursor_line_start {
-                        // We need to check if the cursor's SPECIFIC POSITION within the wrapped line is visible
-                        // Get the line content
-                        let line_content = if let Some((_, content)) = iter.next_line() {
-                            content.trim_end_matches(['\n', '\r']).to_string()
-                        } else {
-                            // At EOF after trailing newline - empty line
-                            String::new()
-                        };
-
-                        // Wrap the line via the renderer's word-boundary
-                        // wrap so row counts and cursor positioning agree
-                        // with what's actually drawn.  (See
-                        // docs/internal/line-wrap-cache-plan.md — the
-                        // whole branch is about eliminating the
-                        // `wrap_line` / `apply_wrapping_transform` drift.)
-                        let effective_width = wrap_config
-                            .first_line_width
-                            .saturating_add(wrap_config.gutter_width)
-                            .max(2);
-                        let layout = crate::view::line_wrap_cache::layout_for_plain_text(
-                            &line_content,
-                            effective_width,
-                            wrap_config.gutter_width,
-                            wrap_config.hanging_indent,
-                            4,
-                        );
-                        let segments_count = layout.len().max(1); // empty line = 1 row
-
-                        // Find which ViewLine the cursor is in.
-                        let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-                        let (cursor_segment_idx, _) =
-                            crate::view::line_wrap_cache::char_position_in_layout(
-                                &layout,
-                                cursor_column,
-                            );
-
-                        // Add the rows for this line up to and including the cursor's segment.
-                        // Empty lines have cursor_segment_idx = 0 → 1 row.
-                        visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
-
-                        // Check if cursor's row is within viewport with scroll offset applied.
-                        // visual_rows is 1-based (includes cursor's own row), so use `>`
-                        // to match the 0-based `lines_from_top >= effective_offset` in non-wrapped mode.
-                        // Both give a margin of exactly `effective_offset` rows from the top edge.
-                        let vis = visual_rows > effective_offset
-                            && visual_rows <= viewport_lines.saturating_sub(effective_offset);
-                        if !vis && visual_rows <= effective_offset {
-                            cursor_near_top = true;
-                        }
-                        break vis;
-                    } else {
-                        // We passed the cursor's line without finding it - shouldn't happen
-                        break false;
-                    }
-                }
-
-                // Skip entire hidden fold region at once
-                if let Some((_start, end)) =
-                    Self::containing_hidden_range(hidden_ranges, current_pos)
-                {
-                    while iter.current_position() < end
-                        && iter.current_position() < cursor_line_start
-                    {
-                        if iter.next_line().is_none() {
-                            break;
-                        }
-                    }
-                    continue;
-                }
-
-                // Get the next line
-                if let Some((_line_start, line_content)) = iter.next_line() {
-                    // Count visual rows via the renderer's word-boundary wrap.
-                    let line_text = line_content.trim_end_matches('\n');
-                    let effective_width = wrap_config
-                        .first_line_width
-                        .saturating_add(wrap_config.gutter_width)
-                        .max(2);
-                    let layout = crate::view::line_wrap_cache::layout_for_plain_text(
-                        line_text,
-                        effective_width,
-                        wrap_config.gutter_width,
-                        wrap_config.hanging_indent,
-                        4,
-                    );
-                    visual_rows += layout.len();
-
-                    // If we've exceeded the viewport, cursor is not visible
-                    if visual_rows >= viewport_lines {
-                        break false;
-                    }
-                } else {
-                    // Reached end of buffer
-                    break false;
-                }
-            }
-        } else {
-            // Without line wrapping: count visible (non-hidden) logical lines
-            let mut iter = buffer.line_iterator(self.top_byte, 80);
-            let mut lines_from_top = 0;
-
-            while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
-                let pos = iter.current_position();
-                // Skip entire hidden fold region at once
-                if let Some((_start, end)) = Self::containing_hidden_range(hidden_ranges, pos) {
-                    while iter.current_position() < end
-                        && iter.current_position() < cursor_line_start
-                    {
-                        if iter.next_line().is_none() {
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                if iter.next_line().is_none() {
-                    break;
-                }
-                lines_from_top += 1;
-            }
-
-            // Apply scroll offset: cursor should be between offset and (viewport_lines - offset)
-            if lines_from_top < effective_offset {
-                cursor_near_top = true;
-            }
-            let visible = lines_from_top >= effective_offset
-                && lines_from_top < viewport_lines.saturating_sub(effective_offset);
-            tracing::trace!(
-                "ensure_visible (no wrap): lines_from_top={}, effective_offset={}, visible={}",
-                lines_from_top,
+            self.check_wrapped_visibility(
+                buffer,
+                cursor,
+                cursor_line_start,
+                viewport_lines,
                 effective_offset,
-                visible
-            );
-            visible
+                hidden_ranges,
+            )
+        } else {
+            self.check_nowrap_visibility(
+                buffer,
+                cursor_line_start,
+                viewport_lines,
+                effective_offset,
+                hidden_ranges,
+            )
         };
 
         tracing::trace!(
@@ -2056,232 +1857,351 @@ impl Viewport {
             cursor_is_visible
         );
 
-        // If cursor is not visible, scroll minimally to bring it within the margin.
-        // Instead of centering, we place the cursor just inside the scroll margin:
-        // - If cursor is below viewport: place cursor at (viewport - margin) from top
-        // - If cursor is above viewport: place cursor at margin from top
         if !cursor_is_visible {
             let _span =
                 tracing::trace_span!("ensure_visible_scroll", cursor_near_top, cursor_line_start,)
                     .entered();
-            // We want cursor at (viewport_lines - 1 - effective_offset) rows from new top
-            // when scrolling down, or at effective_offset rows from new top when scrolling up.
-
             if self.line_wrap_enabled {
-                // When wrapping is enabled, count visual rows (wrapped segments) not logical lines.
-                // The wrapped backward scan starts visual_rows_counted at 1+ (cursor's line),
-                // so the target must be 1 more than for the non-wrapped case.
+                // The wrapped backward scan starts visual_rows_counted at 1+
+                // (cursor's own row), so the target is 1 more than the no-wrap case.
                 //
-                // TODO: this backward walk recomputes per-line layouts via
-                // `layout_for_plain_text`, bypassing both `LineWrapCache` and
-                // the `VisualRowIndex` tier-2 cache.  Migrating it requires
-                // threading `&mut EditorState` (or splitting borrows) through
-                // `ensure_visible` + 6 call sites — left as a follow-up since
-                // folds force a fallback path here regardless and the
-                // dominant scrollbar-drag bottleneck is already fixed by the
-                // tier-2 migration of `scrollbar_math` and `scrollbar.rs`.
-                let target_visual_rows = if cursor_near_top {
-                    effective_offset + 1
-                } else {
-                    viewport_lines.saturating_sub(effective_offset)
-                };
-
-                let gutter_width = self.gutter_width(buffer);
-                let wrap_config = WrapConfig::new(
-                    self.effective_width() as usize,
-                    gutter_width,
-                    true,
-                    self.wrap_indent,
+                // TODO: this backward walk calls `layout_for_plain_text` directly,
+                // bypassing both `LineWrapCache` and the `VisualRowIndex` tier-2
+                // cache. Migrating requires threading `&mut EditorState` through
+                // `ensure_visible` and its 6 call sites; left as a follow-up since
+                // folds force a fallback path here anyway.
+                self.scroll_to_cursor_wrapped(
+                    buffer,
+                    cursor,
+                    cursor_line_start,
+                    effective_offset,
+                    cursor_near_top,
+                    hidden_ranges,
                 );
-
-                let mut iter = buffer.line_iterator(cursor_line_start, 80);
-                let mut visual_rows_counted = 0;
-                // Track the cursor's own wrap-segment index in its containing
-                // logical line. If the cursor's line already contains enough
-                // wrap segments to satisfy the scroll margin, we don't need to
-                // walk backward at all — we can just shift `top_view_line_offset`
-                // within the same line so the cursor lands at exactly
-                // `effective_offset` rows from the viewport top. Without this,
-                // stepping Up onto the last row of a long wrapped paragraph
-                // would scroll `top_byte` all the way back to that paragraph's
-                // logical line start and set `top_view_line_offset = 0`,
-                // teleporting the cursor many rows down on screen (issue
-                // #1574, Up-arrow jumpy variant at step 16).
-                let mut cursor_segment_idx_in_line: usize = 0;
-
-                // First, count how many rows the cursor's line takes up to the cursor position.
-                if let Some((_line_start, line_content)) = iter.next_line() {
-                    let line_text = if line_content.ends_with('\n') {
-                        &line_content[..line_content.len() - 1]
-                    } else {
-                        &line_content
-                    };
-                    let effective_width = wrap_config
-                        .first_line_width
-                        .saturating_add(wrap_config.gutter_width)
-                        .max(2);
-                    let layout = crate::view::line_wrap_cache::layout_for_plain_text(
-                        line_text,
-                        effective_width,
-                        wrap_config.gutter_width,
-                        wrap_config.hanging_indent,
-                        4,
-                    );
-                    let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-                    let (cursor_segment_idx, _) =
-                        crate::view::line_wrap_cache::char_position_in_layout(
-                            &layout,
-                            cursor_column,
-                        );
-                    cursor_segment_idx_in_line = cursor_segment_idx;
-                    visual_rows_counted += cursor_segment_idx + 1;
-                } else {
-                    // At EOF after trailing newline - cursor is on empty line, needs 1 row
-                    visual_rows_counted += 1;
-                }
-
-                // Fast path: cursor's own line already has enough wrap
-                // segments above the cursor to fill the scroll margin.
-                // Stay on this line and use top_view_line_offset to place
-                // the cursor at the right row.
-                if cursor_near_top && visual_rows_counted >= target_visual_rows {
-                    self.set_top_byte_with_limit(buffer, &[], &[], cursor_line_start);
-                    self.top_view_line_offset =
-                        cursor_segment_idx_in_line.saturating_sub(effective_offset);
-                    self.scrolled_up_in_wrap = true;
-                    return;
-                }
-
-                // Now move backwards counting visual rows until we reach target.
-                iter = buffer.line_iterator(cursor_line_start, 80);
-                // When scrolling UP (cursor above viewport) in wrap mode and
-                // the backward walk overshoots the target, set
-                // `top_view_line_offset` to the wrap-segment offset within
-                // the landing line so the cursor lands at exactly
-                // `effective_offset` rows from the new viewport top.
-                // Without this the cursor can "teleport" many rows deeper
-                // than intended when the preceding logical line is a long
-                // wrapped paragraph (issue #1574, Up-arrow jumpy variant at
-                // step 16 of the width-sweep).  This fix is gated to the
-                // scroll-up direction — the scroll-DOWN path relies on the
-                // original "land at line start" behavior (setting
-                // `top_view_line_offset = 0`) to match the existing
-                // Down-arrow scrolling invariants.
-                let mut top_offset_in_landing_line: usize = 0;
-                while visual_rows_counted < target_visual_rows {
-                    if iter.prev().is_none() {
-                        break; // Hit beginning of buffer
-                    }
-                    // Skip hidden fold regions backward (handles adjacent folds).
-                    while let Some((start, _end)) =
-                        Self::containing_hidden_range(hidden_ranges, iter.current_position())
-                    {
-                        while iter.current_position() >= start {
-                            if iter.prev().is_none() {
-                                break;
-                            }
-                        }
-                    }
-                    // Read the visible line's content to count wrapped rows,
-                    // then rewind so the next prev() moves to the line before.
-                    if let Some((_ls, line_content)) = iter.next_line() {
-                        let line_text = if line_content.ends_with('\n') {
-                            &line_content[..line_content.len() - 1]
-                        } else {
-                            &line_content
-                        };
-                        let effective_width = wrap_config
-                            .first_line_width
-                            .saturating_add(wrap_config.gutter_width)
-                            .max(2);
-                        let layout = crate::view::line_wrap_cache::layout_for_plain_text(
-                            line_text,
-                            effective_width,
-                            wrap_config.gutter_width,
-                            wrap_config.hanging_indent,
-                            4,
-                        );
-                        let added = layout.len().max(1);
-                        let new_total = visual_rows_counted + added;
-                        if cursor_near_top && new_total >= target_visual_rows {
-                            let rows_from_this_line =
-                                target_visual_rows.saturating_sub(visual_rows_counted);
-                            top_offset_in_landing_line = added.saturating_sub(rows_from_this_line);
-                            iter.prev();
-                            break;
-                        }
-                        visual_rows_counted = new_total;
-                        iter.prev();
-                    }
-                }
-
-                let new_top_byte = iter.current_position();
-                // ensure_visible is called from cursor-driven flows that don't
-                // surface soft-break markers here; the limit calc falls back
-                // to width-only wrap_line counting.
-                self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
-                self.top_view_line_offset = top_offset_in_landing_line;
-                if cursor_near_top {
-                    self.scrolled_up_in_wrap = true;
-                }
             } else {
-                // Non-wrapped mode: count only visible lines when scanning backward
                 let target_rows_from_top = if cursor_near_top {
                     effective_offset
                 } else {
                     viewport_lines.saturating_sub(effective_offset + 1)
                 };
-
-                let mut iter = buffer.line_iterator(cursor_line_start, 80);
-                let mut visible_counted = 0;
-
-                while visible_counted < target_rows_from_top {
-                    if iter.prev().is_none() {
-                        break; // Hit beginning of buffer
-                    }
-                    // Skip entire hidden fold region backward, then
-                    // handle adjacent/nested folds with a loop.
-                    while let Some((start, _end)) =
-                        Self::containing_hidden_range(hidden_ranges, iter.current_position())
-                    {
-                        while iter.current_position() >= start {
-                            if iter.prev().is_none() {
-                                break;
-                            }
-                        }
-                    }
-                    // After any skips we're on a visible line — count it.
-                    visible_counted += 1;
-                }
-
-                let new_top_byte = iter.current_position();
-                // ensure_visible is called from cursor-driven flows that don't
-                // surface soft-break markers here; the limit calc falls back
-                // to width-only wrap_line counting.
-                self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
-                self.top_view_line_offset = 0;
+                self.scroll_to_cursor_nowrap(
+                    buffer,
+                    cursor_line_start,
+                    target_rows_from_top,
+                    hidden_ranges,
+                );
             }
         }
 
-        // Horizontal scrolling - skip if line wrapping is enabled
-        // When wrapping is enabled, all columns are always visible via wrapping
+        // Horizontal scrolling (disabled when wrapping — all columns visible via wrap).
         if !self.line_wrap_enabled {
             let cursor_column = cursor.position.saturating_sub(cursor_line_start);
-
-            // Get the line content to know its length (for limiting horizontal scroll)
             let mut line_iter = buffer.line_iterator(cursor_line_start, 80);
-            let line_length = if let Some((_start, content)) = line_iter.next_line() {
-                // Line length without the newline character
+            let line_length = if let Some((_, content)) = line_iter.next_line() {
                 content.trim_end_matches('\n').len()
             } else {
                 0
             };
-
             self.ensure_column_visible(cursor_column, line_length, buffer);
         } else {
-            // With line wrapping enabled, reset any horizontal scroll
             self.left_column = 0;
         }
+    }
+
+    /// Force-load bytes around `cursor_pos` so that line iterators won't hit
+    /// unloaded segments in large lazy-loaded files.
+    fn load_data_around_cursor(
+        &mut self,
+        buffer: &mut Buffer,
+        cursor_pos: usize,
+        viewport_lines: usize,
+    ) {
+        let estimated_viewport_bytes = viewport_lines * 200;
+        let load_start = cursor_pos.saturating_sub(estimated_viewport_bytes * 2);
+        let remaining_bytes = buffer.len().saturating_sub(load_start);
+        let load_length = (estimated_viewport_bytes * 3).min(remaining_bytes);
+        let _span = tracing::trace_span!("ensure_visible_load", load_start, load_length).entered();
+        if let Err(e) = buffer.get_text_range_mut(load_start, load_length) {
+            tracing::warn!("Failed to load data around cursor at {}: {}", cursor_pos, e);
+        }
+    }
+
+    /// Build the `WrapConfig` used by visibility and scroll helpers.
+    fn make_wrap_config(&self, buffer: &mut Buffer) -> WrapConfig {
+        let gutter_width = self.gutter_width(buffer);
+        WrapConfig::new(
+            self.effective_width() as usize,
+            gutter_width,
+            true,
+            self.wrap_indent,
+        )
+    }
+
+    /// Compute the line-wrap layout for `line_text` using `wrap_config`.
+    fn compute_line_layout(
+        line_text: &str,
+        wrap_config: &WrapConfig,
+    ) -> Vec<crate::view::ui::view_pipeline::ViewLine> {
+        let effective_width = wrap_config
+            .first_line_width
+            .saturating_add(wrap_config.gutter_width)
+            .max(2);
+        crate::view::line_wrap_cache::layout_for_plain_text(
+            line_text,
+            effective_width,
+            wrap_config.gutter_width,
+            wrap_config.hanging_indent,
+            4,
+        )
+    }
+
+    /// Return `(is_visible, cursor_near_top)` for wrap mode.
+    ///
+    /// Counts visual rows from `top_byte` toward the cursor; a cursor at the
+    /// edge of the scroll margin is considered not visible so that the margin
+    /// invariant is maintained.
+    fn check_wrapped_visibility(
+        &self,
+        buffer: &mut Buffer,
+        cursor: &Cursor,
+        cursor_line_start: usize,
+        viewport_lines: usize,
+        effective_offset: usize,
+        hidden_ranges: &[(usize, usize)],
+    ) -> (bool, bool) {
+        let wrap_config = {
+            let gutter_width = self.gutter_width(buffer);
+            WrapConfig::new(
+                self.effective_width() as usize,
+                gutter_width,
+                true,
+                self.wrap_indent,
+            )
+        };
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut visual_rows: usize = 0;
+        let mut cursor_near_top = false;
+
+        loop {
+            let current_pos = iter.current_position();
+
+            if current_pos >= cursor_line_start {
+                if current_pos != cursor_line_start {
+                    // Overshot — shouldn't happen in practice.
+                    return (false, false);
+                }
+                let line_content = iter
+                    .next_line()
+                    .map(|(_, c)| c.trim_end_matches(['\n', '\r']).to_string())
+                    .unwrap_or_default();
+                let layout = Self::compute_line_layout(&line_content, &wrap_config);
+                let segments_count = layout.len().max(1);
+                let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+                let (cursor_segment_idx, _) =
+                    crate::view::line_wrap_cache::char_position_in_layout(&layout, cursor_column);
+                visual_rows += cursor_segment_idx.min(segments_count - 1) + 1;
+
+                // visual_rows is 1-based here; > effective_offset gives the same
+                // margin as lines_from_top >= effective_offset in no-wrap mode.
+                let vis = visual_rows > effective_offset
+                    && visual_rows <= viewport_lines.saturating_sub(effective_offset);
+                if !vis && visual_rows <= effective_offset {
+                    cursor_near_top = true;
+                }
+                return (vis, cursor_near_top);
+            }
+
+            // Skip a complete hidden fold region at once.
+            if let Some((_, end)) = Self::containing_hidden_range(hidden_ranges, current_pos) {
+                while iter.current_position() < end && iter.current_position() < cursor_line_start {
+                    if iter.next_line().is_none() {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            if let Some((_, line_content)) = iter.next_line() {
+                let layout =
+                    Self::compute_line_layout(line_content.trim_end_matches('\n'), &wrap_config);
+                visual_rows += layout.len();
+                if visual_rows >= viewport_lines {
+                    return (false, false);
+                }
+            } else {
+                return (false, false);
+            }
+        }
+    }
+
+    /// Return `(is_visible, cursor_near_top)` for no-wrap mode.
+    fn check_nowrap_visibility(
+        &self,
+        buffer: &mut Buffer,
+        cursor_line_start: usize,
+        viewport_lines: usize,
+        effective_offset: usize,
+        hidden_ranges: &[(usize, usize)],
+    ) -> (bool, bool) {
+        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut lines_from_top: usize = 0;
+
+        while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
+            let pos = iter.current_position();
+            if let Some((_, end)) = Self::containing_hidden_range(hidden_ranges, pos) {
+                while iter.current_position() < end && iter.current_position() < cursor_line_start {
+                    if iter.next_line().is_none() {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if iter.next_line().is_none() {
+                break;
+            }
+            lines_from_top += 1;
+        }
+
+        let cursor_near_top = lines_from_top < effective_offset;
+        let visible = lines_from_top >= effective_offset
+            && lines_from_top < viewport_lines.saturating_sub(effective_offset);
+        tracing::trace!(
+            "ensure_visible (no wrap): lines_from_top={}, effective_offset={}, visible={}",
+            lines_from_top,
+            effective_offset,
+            visible
+        );
+        (visible, cursor_near_top)
+    }
+
+    /// Scroll `top_byte` / `top_view_line_offset` so the cursor lands inside
+    /// the scroll margin (wrap mode). `effective_offset` is the margin depth.
+    fn scroll_to_cursor_wrapped(
+        &mut self,
+        buffer: &mut Buffer,
+        cursor: &Cursor,
+        cursor_line_start: usize,
+        effective_offset: usize,
+        cursor_near_top: bool,
+        hidden_ranges: &[(usize, usize)],
+    ) {
+        let viewport_lines = self.visible_line_count().max(1);
+        let target_visual_rows = if cursor_near_top {
+            effective_offset + 1
+        } else {
+            viewport_lines.saturating_sub(effective_offset)
+        };
+        let wrap_config = self.make_wrap_config(buffer);
+        let mut iter = buffer.line_iterator(cursor_line_start, 80);
+        let mut visual_rows_counted: usize = 0;
+        let mut cursor_segment_idx_in_line: usize = 0;
+
+        // Count rows from the cursor's own line up to the cursor position.
+        if let Some((_, line_content)) = iter.next_line() {
+            let line_text = line_content.trim_end_matches('\n');
+            let layout = Self::compute_line_layout(line_text, &wrap_config);
+            let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+            let (cursor_segment_idx, _) =
+                crate::view::line_wrap_cache::char_position_in_layout(&layout, cursor_column);
+            cursor_segment_idx_in_line = cursor_segment_idx;
+            visual_rows_counted += cursor_segment_idx + 1;
+        } else {
+            // EOF after trailing newline — empty logical line needs 1 row.
+            visual_rows_counted += 1;
+        }
+
+        // Fast path: the cursor's own line has enough wrap segments above the
+        // cursor to satisfy the scroll margin. Stay on this line and adjust
+        // `top_view_line_offset` instead of walking further back. Without
+        // this, Up-arrow onto the last row of a long wrapped paragraph would
+        // teleport the cursor many rows down (issue #1574, step 16).
+        if cursor_near_top && visual_rows_counted >= target_visual_rows {
+            self.set_top_byte_with_limit(buffer, &[], &[], cursor_line_start);
+            self.top_view_line_offset = cursor_segment_idx_in_line.saturating_sub(effective_offset);
+            self.scrolled_up_in_wrap = true;
+            return;
+        }
+
+        // Walk backward counting visual rows until we accumulate target_visual_rows.
+        // When scrolling UP and the walk overshoots, set `top_view_line_offset`
+        // within the landing line so the cursor ends up at exactly
+        // `effective_offset` rows from the new top (issue #1574, step 16).
+        // This is intentionally not done for scroll-DOWN — that path relies on
+        // landing at line start (`top_view_line_offset = 0`).
+        iter = buffer.line_iterator(cursor_line_start, 80);
+        let mut top_offset_in_landing_line: usize = 0;
+
+        while visual_rows_counted < target_visual_rows {
+            if iter.prev().is_none() {
+                break;
+            }
+            // Skip hidden fold regions backward.
+            while let Some((start, _)) =
+                Self::containing_hidden_range(hidden_ranges, iter.current_position())
+            {
+                while iter.current_position() >= start {
+                    if iter.prev().is_none() {
+                        break;
+                    }
+                }
+            }
+            if let Some((_, line_content)) = iter.next_line() {
+                let line_text = line_content.trim_end_matches('\n');
+                let layout = Self::compute_line_layout(line_text, &wrap_config);
+                let added = layout.len().max(1);
+                let new_total = visual_rows_counted + added;
+                if cursor_near_top && new_total >= target_visual_rows {
+                    let rows_from_this_line =
+                        target_visual_rows.saturating_sub(visual_rows_counted);
+                    top_offset_in_landing_line = added.saturating_sub(rows_from_this_line);
+                    iter.prev();
+                    break;
+                }
+                visual_rows_counted = new_total;
+                iter.prev();
+            }
+        }
+
+        let new_top_byte = iter.current_position();
+        self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
+        self.top_view_line_offset = top_offset_in_landing_line;
+        if cursor_near_top {
+            self.scrolled_up_in_wrap = true;
+        }
+    }
+
+    /// Scroll `top_byte` so the cursor lands at `target_rows_from_top` logical
+    /// lines from the new viewport top (no-wrap mode).
+    fn scroll_to_cursor_nowrap(
+        &mut self,
+        buffer: &mut Buffer,
+        cursor_line_start: usize,
+        target_rows_from_top: usize,
+        hidden_ranges: &[(usize, usize)],
+    ) {
+        let mut iter = buffer.line_iterator(cursor_line_start, 80);
+        let mut visible_counted: usize = 0;
+
+        while visible_counted < target_rows_from_top {
+            if iter.prev().is_none() {
+                break;
+            }
+            // Skip hidden fold regions backward.
+            while let Some((start, _)) =
+                Self::containing_hidden_range(hidden_ranges, iter.current_position())
+            {
+                while iter.current_position() >= start {
+                    if iter.prev().is_none() {
+                        break;
+                    }
+                }
+            }
+            visible_counted += 1;
+        }
+
+        let new_top_byte = iter.current_position();
+        self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
+        self.top_view_line_offset = 0;
     }
 
     /// Ensure a line is visible with scroll offset applied
