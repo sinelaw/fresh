@@ -697,13 +697,15 @@ impl Editor {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
         // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
-        // tab context menu) to avoid hover tooltips overlapping other popups.
+        // tab context menu, or the status-bar LSP status popup) to avoid hover
+        // tooltips overlapping other popups.
         if self.active_window_mut().theme_info_popup.is_some()
             || self.active_window_mut().tab_context_menu.is_some()
             || self
                 .active_window_mut()
                 .file_explorer_context_menu
                 .is_some()
+            || self.is_lsp_status_popup_open()
         {
             if self
                 .active_window_mut()

@@ -900,6 +900,14 @@ impl Editor {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
         };
+
+        // A hover request may have been in flight when the user opened the
+        // status-bar LSP status popup. Don't show the hover card on top of it.
+        if self.is_lsp_status_popup_open() {
+            tracing::debug!("Suppressing hover response: LSP status popup is open");
+            self.active_window_mut().hover.set_symbol_range(None);
+            return;
+        }
         let hover_lsp_position = Some(position);
 
         // Gather any diagnostics whose range overlaps the hover position so

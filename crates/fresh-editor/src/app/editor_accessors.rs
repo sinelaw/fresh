@@ -1194,9 +1194,29 @@ impl Editor {
     /// This implements debounced hover - we wait for the configured delay before
     /// sending the request to avoid spamming the LSP server on every mouse move.
     /// Returns true if a hover request was triggered.
+    /// True when the LSP status popup (the one opened by clicking the "LSP"
+    /// indicator in the status bar) is the top popup.
+    ///
+    /// Hover popups share the active state's popup stack with it, but the LSP
+    /// status popup is non-transient, so the hover dismiss-transients pass
+    /// leaves it in place and a hover would stack on top of it. Callers use
+    /// this to suppress hover while it is open.
+    pub(crate) fn is_lsp_status_popup_open(&self) -> bool {
+        self.active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, crate::view::popup::PopupResolver::LspStatus))
+    }
+
     pub fn check_mouse_hover_timer(&mut self) -> bool {
         // Check if mouse hover is enabled
         if !self.config.editor.mouse_hover_enabled {
+            return false;
+        }
+
+        // Suppress hover while the LSP status popup is open so the hover card
+        // doesn't stack on top of it.
+        if self.is_lsp_status_popup_open() {
             return false;
         }
 
