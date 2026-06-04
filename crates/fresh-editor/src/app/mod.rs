@@ -666,6 +666,16 @@ pub struct Editor {
     /// process-level keepalive the restart-based attach parks.
     pub(crate) session_keepalives: HashMap<fresh_core::WindowId, Box<dyn std::any::Any + Send>>,
 
+    /// Request ids of `attachRemoteAgent` connects currently in flight (added
+    /// when the connect is spawned, removed when it settles). Lets a plugin
+    /// cancel a pending connect (the New-Session dialog's Cancel).
+    pub(crate) remote_attach_inflight: std::collections::HashSet<u64>,
+    /// Request ids of in-flight attaches the plugin asked to cancel. When the
+    /// connect later resolves, the result (authority + carrier keepalive) is
+    /// dropped instead of installed — so no window is created and the carrier
+    /// is torn down — and a failure is ignored.
+    pub(crate) remote_attach_cancelled: std::collections::HashSet<u64>,
+
     /// Id of the currently active session. Always `WindowId(1)` for
     /// now; multi-session support arrives in a follow-up commit.
     pub(crate) active_window: fresh_core::WindowId,

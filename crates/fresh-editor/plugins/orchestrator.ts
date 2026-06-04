@@ -5200,6 +5200,14 @@ function restoreDockAfterForm(): boolean {
 // just hand focus back to it instead.
 function cancelForm(): void {
   const wasFromPicker = !!form?.fromPicker;
+  // Cancelling while a remote connect is in flight: tell the host to abort it.
+  // The pending `attachRemoteAgent` promise rejects with "cancelled" (its catch
+  // is a no-op once `form` is null below) and the connect's late result is
+  // discarded host-side, so no window is ever built.
+  if (form?.submitting) {
+    pendingRemoteFacet = null;
+    editor.cancelRemoteAgent();
+  }
   closeForm();
   if (restoreDockAfterForm()) return;
   if (wasFromPicker) {
@@ -6027,6 +6035,12 @@ editor.on("widget_event", (e) => {
       // mirror our own state and (if reached from the picker)
       // bounce back to the picker so Esc is "back", not "out".
       const wasFromPicker = !!form?.fromPicker;
+      // Esc while connecting aborts the in-flight remote attach, same as the
+      // Cancel button: reject the promise and discard the late result host-side.
+      if (form?.submitting) {
+        pendingRemoteFacet = null;
+        editor.cancelRemoteAgent();
+      }
       form = null;
       formPanel = null;
       editor.setEditorMode(null);

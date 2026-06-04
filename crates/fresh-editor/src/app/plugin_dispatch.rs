@@ -981,6 +981,10 @@ impl Editor {
                 self.handle_attach_remote_agent(payload, request_id);
             }
 
+            PluginCommand::CancelRemoteAttach => {
+                self.cancel_remote_attaches();
+            }
+
             PluginCommand::ClearAuthority => {
                 tracing::info!("Plugin cleared authority; restoring local");
                 self.clear_authority();
@@ -3410,6 +3414,10 @@ impl Editor {
             self.reject_remote_attach(request_id, "async runtime not available".to_string());
             return;
         };
+
+        // Track this connect as in-flight so a plugin can cancel it (the
+        // New-Session dialog's Cancel) before it resolves.
+        self.remote_attach_inflight.insert(request_id);
 
         // Window-mode opts captured before `spec` is consumed — when `window`
         // is set the main loop spawns a born-attached new window instead of

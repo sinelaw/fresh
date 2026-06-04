@@ -3676,6 +3676,12 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Cancel every in-flight `attachRemoteAgent` connect. The New-Session
+    /// dialog's Cancel: the awaiting promise is rejected immediately and the
+    /// (uninterruptible) background connect's eventual result is discarded so
+    /// no window is ever built. A no-op when nothing is in flight.
+    CancelRemoteAttach,
+
     /// Activate an environment: set the live env provider's recipe (an
     /// activation shell `snippet` run in `dir`). Re-evaluated on demand on the
     /// active backend and applied to every spawn — no authority rebuild. Only

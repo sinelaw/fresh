@@ -5801,6 +5801,15 @@ impl JsEditorApi {
         id
     }
 
+    /// Cancel any in-flight `attachRemoteAgent` connect — the New-Session
+    /// dialog's Cancel. The pending promise rejects with "cancelled" and the
+    /// background connect's late result is discarded, so no window is built.
+    /// A no-op when nothing is connecting.
+    #[plugin_api(js_name = "cancelRemoteAgent")]
+    pub fn cancel_remote_agent(&self) {
+        let _ = self.command_sender.send(PluginCommand::CancelRemoteAttach);
+    }
+
     /// Activate an environment: set the live env recipe (`snippet` run in
     /// `dir`). Applied to every spawn, re-evaluated on demand — no restart.
     /// Honored only when the workspace is Trusted.

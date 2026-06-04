@@ -38,6 +38,29 @@ impl Editor {
             .reject_callback(fresh_core::api::JsCallbackId::from(request_id), error);
     }
 
+    /// Mark every in-flight `attachRemoteAgent` connect as cancelled and reject
+    /// its awaiting promise now. The background connect can't be interrupted
+    /// mid-handshake, so its eventual `RemoteAttachReady`/`RemoteAttachFailed`
+    /// is dropped on arrival (see `remote_attach_was_cancelled`) — the carrier
+    /// is torn down then and no window is built. This is the host side of the
+    /// New-Session dialog's Cancel.
+    pub(crate) fn cancel_remote_attaches(&mut self) {
+        let inflight: Vec<u64> = self.remote_attach_inflight.drain().collect();
+        for id in inflight {
+            self.remote_attach_cancelled.insert(id);
+            self.reject_remote_attach(id, "cancelled".to_string());
+        }
+    }
+
+    /// Consume the in-flight/cancelled tracking for `request_id` as a late
+    /// result arrives. Returns `true` if the connect was cancelled (the result
+    /// should be discarded), `false` for a normal completion (which still
+    /// clears the in-flight entry).
+    pub(crate) fn remote_attach_was_cancelled(&mut self, request_id: u64) -> bool {
+        self.remote_attach_inflight.remove(&request_id);
+        self.remote_attach_cancelled.remove(&request_id)
+    }
+
     /// Process pending async messages from the async bridge
     ///
     /// This should be called each frame in the main loop to handle:
@@ -686,6 +709,21 @@ impl Editor {
                         mode,
                         request_id,
                     } = ready;
+                    // If the plugin cancelled this connect while it was
+                    // in flight (the New-Session dialog's Cancel), the result
+                    // arrives too late to matter: drop the authority and its
+                    // keepalive here so the carrier is torn down and no window
+                    // is ever built. The reject was already delivered at cancel
+                    // time, so there's nothing left to resolve.
+                    if self.remote_attach_was_cancelled(request_id) {
+                        tracing::info!(
+                            "Remote attach for request {} arrived after cancellation; discarding",
+                            request_id
+                        );
+                        drop(keepalive);
+                        drop(authority);
+                        continue;
+                    }
                     // Re-root at the pod's workspace (or its home if the plugin
                     // didn't supply one) — never the stale local path. The
                     // filesystem call is safe here: `process_async_messages`
@@ -729,6 +767,15 @@ impl Editor {
                     }
                 }
                 AsyncMessage::RemoteAttachFailed { error, request_id } => {
+                    // A cancelled connect was already rejected at cancel time;
+                    // swallow the late failure rather than rejecting twice.
+                    if self.remote_attach_was_cancelled(request_id) {
+                        tracing::info!(
+                            "Remote attach for request {} failed after cancellation; discarding",
+                            request_id
+                        );
+                        continue;
+                    }
                     tracing::warn!("Remote attach failed: {}", error);
                     self.reject_remote_attach(request_id, error);
                 }
