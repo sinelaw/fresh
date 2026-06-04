@@ -5,41 +5,15 @@ pub use tree_sitter;
 pub use tree_sitter_highlight;
 pub use tree_sitter_highlight::HighlightConfiguration;
 
-// Re-export language crates (gated by features)
-#[cfg(feature = "tree-sitter-bash")]
-pub use tree_sitter_bash;
-#[cfg(feature = "tree-sitter-c")]
-pub use tree_sitter_c;
-#[cfg(feature = "tree-sitter-c-sharp")]
-pub use tree_sitter_c_sharp;
-#[cfg(feature = "tree-sitter-cpp")]
-pub use tree_sitter_cpp;
-#[cfg(feature = "tree-sitter-css")]
-pub use tree_sitter_css;
+// Re-export the bundled language grammar crates (gated by features). Only the
+// languages that must use tree-sitter because syntect ships no highlighting
+// for them are bundled; the rest were removed (see Cargo.toml).
 #[cfg(feature = "tree-sitter-go")]
 pub use tree_sitter_go;
-#[cfg(feature = "tree-sitter-html")]
-pub use tree_sitter_html;
-#[cfg(feature = "tree-sitter-java")]
-pub use tree_sitter_java;
 #[cfg(feature = "tree-sitter-javascript")]
 pub use tree_sitter_javascript;
 #[cfg(feature = "tree-sitter-json")]
 pub use tree_sitter_json;
-#[cfg(feature = "tree-sitter-lua")]
-pub use tree_sitter_lua;
-#[cfg(feature = "tree-sitter-odin")]
-pub use tree_sitter_odin;
-#[cfg(feature = "tree-sitter-pascal")]
-pub use tree_sitter_pascal;
-#[cfg(feature = "tree-sitter-php")]
-pub use tree_sitter_php;
-#[cfg(feature = "tree-sitter-python")]
-pub use tree_sitter_python;
-#[cfg(feature = "tree-sitter-ruby")]
-pub use tree_sitter_ruby;
-#[cfg(feature = "tree-sitter-rust")]
-pub use tree_sitter_rust;
 #[cfg(feature = "tree-sitter-templ")]
 pub use tree_sitter_templ;
 #[cfg(feature = "tree-sitter-typescript")]
@@ -229,40 +203,6 @@ impl Language {
     /// Get tree-sitter highlight configuration for this language
     pub fn highlight_config(&self) -> Result<HighlightConfiguration, String> {
         match self {
-            Self::Rust => {
-                #[cfg(feature = "tree-sitter-rust")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_rust::LANGUAGE.into(),
-                        "rust",
-                        tree_sitter_rust::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Rust highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-rust"))]
-                Err("Rust language support not enabled".to_string())
-            }
-            Self::Python => {
-                #[cfg(feature = "tree-sitter-python")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_python::LANGUAGE.into(),
-                        "python",
-                        tree_sitter_python::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Python highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-python"))]
-                Err("Python language support not enabled".to_string())
-            }
             Self::JavaScript => {
                 #[cfg(feature = "tree-sitter-javascript")]
                 {
@@ -304,74 +244,6 @@ impl Language {
                     feature = "tree-sitter-javascript"
                 )))]
                 Err("TypeScript language support not enabled".to_string())
-            }
-            Self::HTML => {
-                #[cfg(feature = "tree-sitter-html")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_html::LANGUAGE.into(),
-                        "html",
-                        tree_sitter_html::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create HTML highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-html"))]
-                Err("HTML language support not enabled".to_string())
-            }
-            Self::CSS => {
-                #[cfg(feature = "tree-sitter-css")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_css::LANGUAGE.into(),
-                        "css",
-                        tree_sitter_css::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create CSS highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-css"))]
-                Err("CSS language support not enabled".to_string())
-            }
-            Self::C => {
-                #[cfg(feature = "tree-sitter-c")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_c::LANGUAGE.into(),
-                        "c",
-                        tree_sitter_c::HIGHLIGHT_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create C highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-c"))]
-                Err("C language support not enabled".to_string())
-            }
-            Self::Cpp => {
-                #[cfg(feature = "tree-sitter-cpp")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_cpp::LANGUAGE.into(),
-                        "cpp",
-                        tree_sitter_cpp::HIGHLIGHT_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create C++ highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-cpp"))]
-                Err("C++ language support not enabled".to_string())
             }
             Self::Go => {
                 #[cfg(feature = "tree-sitter-go")]
@@ -428,142 +300,6 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-json"))]
                 Err("JSONC language support not enabled".to_string())
             }
-            Self::Java => {
-                #[cfg(feature = "tree-sitter-java")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_java::LANGUAGE.into(),
-                        "java",
-                        tree_sitter_java::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Java highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-java"))]
-                Err("Java language support not enabled".to_string())
-            }
-            Self::CSharp => {
-                #[cfg(feature = "tree-sitter-c-sharp")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_c_sharp::LANGUAGE.into(),
-                        "c_sharp",
-                        "",
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create C# highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-c-sharp"))]
-                Err("C# language support not enabled".to_string())
-            }
-            Self::Php => {
-                #[cfg(feature = "tree-sitter-php")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_php::LANGUAGE_PHP.into(),
-                        "php",
-                        tree_sitter_php::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create PHP highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-php"))]
-                Err("PHP language support not enabled".to_string())
-            }
-            Self::Ruby => {
-                #[cfg(feature = "tree-sitter-ruby")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_ruby::LANGUAGE.into(),
-                        "ruby",
-                        tree_sitter_ruby::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Ruby highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-ruby"))]
-                Err("Ruby language support not enabled".to_string())
-            }
-            Self::Bash => {
-                #[cfg(feature = "tree-sitter-bash")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_bash::LANGUAGE.into(),
-                        "bash",
-                        tree_sitter_bash::HIGHLIGHT_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Bash highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-bash"))]
-                Err("Bash language support not enabled".to_string())
-            }
-            Self::Lua => {
-                #[cfg(feature = "tree-sitter-lua")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_lua::LANGUAGE.into(),
-                        "lua",
-                        tree_sitter_lua::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Lua highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-lua"))]
-                Err("Lua language support not enabled".to_string())
-            }
-            Self::Pascal => {
-                #[cfg(feature = "tree-sitter-pascal")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_pascal::LANGUAGE.into(),
-                        "pascal",
-                        "",
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Pascal highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-pascal"))]
-                Err("Pascal language support not enabled".to_string())
-            }
-            Self::Odin => {
-                #[cfg(feature = "tree-sitter-odin")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_odin::LANGUAGE.into(),
-                        "odin",
-                        "",
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Odin highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-odin"))]
-                Err("Odin language support not enabled".to_string())
-            }
             Self::Templ => {
                 // The templ grammar extends Go (see vrischmann/tree-sitter-templ),
                 // so combining Go's highlights query with the templ-specific one
@@ -590,6 +326,9 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-templ"))]
                 Err("Templ language support not enabled".to_string())
             }
+            // Every other language is highlighted by syntect; no tree-sitter
+            // grammar is bundled for it (see Cargo.toml and `ts_language`).
+            _ => Err("no bundled tree-sitter grammar for this language".to_string()),
         }
     }
 
@@ -614,26 +353,6 @@ impl Language {
     /// re-enables its grammar.
     pub fn ts_language(&self) -> Option<tree_sitter::Language> {
         match self {
-            Self::Rust => {
-                #[cfg(feature = "tree-sitter-rust")]
-                {
-                    Some(tree_sitter_rust::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-rust"))]
-                {
-                    None
-                }
-            }
-            Self::Python => {
-                #[cfg(feature = "tree-sitter-python")]
-                {
-                    Some(tree_sitter_python::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-python"))]
-                {
-                    None
-                }
-            }
             Self::JavaScript => {
                 #[cfg(feature = "tree-sitter-javascript")]
                 {
@@ -650,46 +369,6 @@ impl Language {
                     Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
                 }
                 #[cfg(not(feature = "tree-sitter-typescript"))]
-                {
-                    None
-                }
-            }
-            Self::HTML => {
-                #[cfg(feature = "tree-sitter-html")]
-                {
-                    Some(tree_sitter_html::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-html"))]
-                {
-                    None
-                }
-            }
-            Self::CSS => {
-                #[cfg(feature = "tree-sitter-css")]
-                {
-                    Some(tree_sitter_css::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-css"))]
-                {
-                    None
-                }
-            }
-            Self::C => {
-                #[cfg(feature = "tree-sitter-c")]
-                {
-                    Some(tree_sitter_c::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-c"))]
-                {
-                    None
-                }
-            }
-            Self::Cpp => {
-                #[cfg(feature = "tree-sitter-cpp")]
-                {
-                    Some(tree_sitter_cpp::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-cpp"))]
                 {
                     None
                 }
@@ -714,86 +393,6 @@ impl Language {
                     None
                 }
             }
-            Self::Java => {
-                #[cfg(feature = "tree-sitter-java")]
-                {
-                    Some(tree_sitter_java::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-java"))]
-                {
-                    None
-                }
-            }
-            Self::CSharp => {
-                #[cfg(feature = "tree-sitter-c-sharp")]
-                {
-                    Some(tree_sitter_c_sharp::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-c-sharp"))]
-                {
-                    None
-                }
-            }
-            Self::Php => {
-                #[cfg(feature = "tree-sitter-php")]
-                {
-                    Some(tree_sitter_php::LANGUAGE_PHP.into())
-                }
-                #[cfg(not(feature = "tree-sitter-php"))]
-                {
-                    None
-                }
-            }
-            Self::Ruby => {
-                #[cfg(feature = "tree-sitter-ruby")]
-                {
-                    Some(tree_sitter_ruby::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-ruby"))]
-                {
-                    None
-                }
-            }
-            Self::Bash => {
-                #[cfg(feature = "tree-sitter-bash")]
-                {
-                    Some(tree_sitter_bash::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-bash"))]
-                {
-                    None
-                }
-            }
-            Self::Lua => {
-                #[cfg(feature = "tree-sitter-lua")]
-                {
-                    Some(tree_sitter_lua::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-lua"))]
-                {
-                    None
-                }
-            }
-            Self::Pascal => {
-                #[cfg(feature = "tree-sitter-pascal")]
-                {
-                    Some(tree_sitter_pascal::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-pascal"))]
-                {
-                    None
-                }
-            }
-            Self::Odin => {
-                #[cfg(feature = "tree-sitter-odin")]
-                {
-                    Some(tree_sitter_odin::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-odin"))]
-                {
-                    None
-                }
-            }
             Self::Templ => {
                 #[cfg(feature = "tree-sitter-templ")]
                 {
@@ -804,6 +403,9 @@ impl Language {
                     None
                 }
             }
+            // Every other language is highlighted by syntect and indented by
+            // the regex rules tier; no tree-sitter grammar is bundled for it.
+            _ => None,
         }
     }
 }

@@ -55,9 +55,6 @@ plugins = [
 # not linked. When this feature is disabled entirely, all tree-sitter code is
 # dropped and indentation is pattern/rules-based. Requires `runtime`.
 tree-sitter = ["fresh-languages/bundled-languages"]
-# Opt-in: bundle every tree-sitter grammar (restores AST indent / tree-sitter
-# highlighting / scope-aware references for the full language set, ~20 MB larger).
-tree-sitter-all = ["tree-sitter", "fresh-languages/all-languages"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)

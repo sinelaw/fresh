@@ -680,30 +680,18 @@ mod parity {
         // (tree-sitter Language, rules id, code). Indent is taken at end-of-buffer,
         // which is the cursor position when Enter is pressed.
         //
-        // Only languages whose grammar is actually compiled in can be compared.
-        // The default build bundles just the must-keep grammars, so the always-on
-        // corpus is the bundled curly-brace languages (Go/TS/JS). Building with
-        // `--features tree-sitter-all` restores every grammar and extends the
-        // corpus to the dropped languages, re-verifying the full rules set.
-        let mut cases: Vec<(Language, &str, &str)> = vec![
+        // Only languages whose grammar is bundled can be compared against the
+        // tree-sitter oracle (the other grammars were removed entirely). The
+        // bundled curly-brace languages — Go, TypeScript, JavaScript — exercise
+        // the CurlyBrace family, which is the one shared by the removed
+        // languages too, so this still guards the dropped languages' behavior.
+        let cases: &[(Language, &str, &str)] = &[
             (Language::TypeScript, "typescript", "function f() {"),
             (Language::TypeScript, "typescript", "class A {"),
             (Language::TypeScript, "typescript", "let x = 1;"),
             (Language::Go, "go", "func main() {"),
             (Language::JavaScript, "javascript", "function f() {"),
         ];
-        #[cfg(feature = "tree-sitter-all")]
-        cases.extend_from_slice(&[
-            (Language::Rust, "rust", "fn main() {"),
-            (Language::Rust, "rust", "fn main() {\n    let x = 1;"),
-            (Language::Rust, "rust", "let x = 1;"),
-            (Language::Cpp, "cpp", "int main() {"),
-            (Language::C, "c", "int main() {"),
-            (Language::Java, "java", "class A {"),
-            (Language::Python, "python", "def foo():\n\tx = 1"),
-            (Language::Python, "python", "def foo():\n\treturn 42"),
-        ]);
-        let cases = &cases[..];
 
         let tab = 4;
         let mut mismatches = Vec::new();
