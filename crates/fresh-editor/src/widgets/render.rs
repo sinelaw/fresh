@@ -1686,7 +1686,20 @@ fn render_widget_text(
                 byte_in_row: byte_in_row as u32,
             });
         }
-        for mut e in rendered.entries {
+        for (row_idx, mut e) in rendered.entries.into_iter().enumerate() {
+            // Clicking any rendered row of the text area focuses the field
+            // (see the single-line branch / #2234 item 1).
+            if let Some(k) = key.filter(|k| !k.is_empty()) {
+                out.hits.push(HitArea {
+                    widget_key: k.to_string(),
+                    widget_kind: "text",
+                    buffer_row: row_idx as u32,
+                    byte_start: 0,
+                    byte_end: e.text.len(),
+                    payload: json!({}),
+                    event_type: "focus",
+                });
+            }
             ensure_trailing_newline(&mut e);
             out.entries.push(e);
         }
@@ -1710,6 +1723,22 @@ fn render_widget_text(
             });
         }
         let mut entry = rendered.entry;
+        // A click anywhere on the input line focuses the field so a mouse user
+        // can type. Text widgets previously emitted no hit area, so clicks fell
+        // through and the field stayed unfocused (#2234 item 1). Focusing is
+        // driven by the tabbable path in `handle_floating_widget_click`; the
+        // `focus` event keeps the plugin's focus mirror in step.
+        if let Some(k) = key.filter(|k| !k.is_empty()) {
+            out.hits.push(HitArea {
+                widget_key: k.to_string(),
+                widget_kind: "text",
+                buffer_row: 0,
+                byte_start: 0,
+                byte_end: entry.text.len(),
+                payload: json!({}),
+                event_type: "focus",
+            });
+        }
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
     }
