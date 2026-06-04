@@ -544,7 +544,7 @@ impl Editor {
             .map(|s| s.to_string())
             .unwrap_or_default();
         if old_key == new_key {
-            tracing::warn!(
+            tracing::debug!(
                 target: "fresh::dock",
                 panel_id,
                 key = %new_key,
@@ -552,7 +552,7 @@ impl Editor {
             );
             return;
         }
-        tracing::warn!(
+        tracing::debug!(
             target: "fresh::dock",
             panel_id,
             old = %old_key,
@@ -1940,7 +1940,7 @@ impl Editor {
             .get(panel_id)
             .map(|p| p.focus_key.clone())
             .unwrap_or_default();
-        tracing::warn!(
+        tracing::debug!(
             target: "fresh::dock",
             panel_id,
             ?slot,
@@ -1978,7 +1978,7 @@ impl Editor {
         if let Some(f) = self.panel_mut(slot) {
             f.focused = false;
         }
-        tracing::warn!(
+        tracing::debug!(
             target: "fresh::dock",
             panel_id,
             ?slot,

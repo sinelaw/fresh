@@ -2461,7 +2461,7 @@ impl Editor {
         let panel_id = match self.panel(slot) {
             Some(fwp) => fwp.panel_id,
             None => {
-                tracing::warn!(
+                tracing::debug!(
                     target: "fresh::dock",
                     ?slot,
                     ?code,
@@ -2470,7 +2470,7 @@ impl Editor {
                 return false;
             }
         };
-        tracing::warn!(
+        tracing::debug!(
             target: "fresh::dock",
             panel_id,
             ?slot,
@@ -2604,7 +2604,7 @@ impl Editor {
                         .read()
                         .unwrap()
                         .has_hook_handlers("widget_event");
-                    tracing::warn!(
+                    tracing::debug!(
                         target: "fresh::dock",
                         panel_id,
                         has_handler,
