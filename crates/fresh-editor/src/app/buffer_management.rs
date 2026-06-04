@@ -41,7 +41,9 @@ impl crate::app::window::Window {
     pub(crate) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
         match self.buffers.get(&buffer_id) {
             Some(state) => buffer_config_resolve::wrap_column(&state.language, self.config()),
-            None => self.config().editor.wrap_column,
+            // `0` means "no fixed wrap column" (wrap at the viewport edge), same
+            // as the resolver above.
+            None => self.config().editor.wrap_column.filter(|&col| col != 0),
         }
     }
 

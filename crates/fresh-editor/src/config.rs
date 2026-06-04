@@ -801,6 +801,7 @@ pub struct EditorConfig {
 
     /// Column at which to wrap lines when line wrapping is enabled.
     /// If not specified (`null`), lines wrap at the viewport edge (default behavior).
+    /// A value of `0` is treated the same as `null` (no fixed wrap column).
     /// Example: `80` wraps at column 80. The actual wrap column is clamped to the
     /// viewport width (lines can't wrap beyond the visible area).
     #[serde(default)]
@@ -2149,6 +2150,7 @@ pub struct LanguageConfig {
 
     /// Column at which to wrap lines for this language.
     /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
+    /// A value of `0` means no fixed wrap column (wrap at the viewport edge).
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
@@ -2355,6 +2357,12 @@ impl BufferConfig {
             if let Some(ref wc) = lang_config.word_characters {
                 config.word_characters = wc.clone();
             }
+        }
+
+        // A wrap column of `0` (global or language-level) means "no fixed wrap
+        // column" — wrap at the viewport edge, same as `null`.
+        if config.wrap_column == Some(0) {
+            config.wrap_column = None;
         }
 
         config
@@ -7271,6 +7279,34 @@ mod tests {
         // No language should use global wrap_column
         let no_lang_config = BufferConfig::resolve(&config, None);
         assert_eq!(no_lang_config.wrap_column, Some(120));
+    }
+
+    #[test]
+    fn test_buffer_config_wrap_column_zero_is_unset() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(0);
+
+        // Language that explicitly sets 0 — should normalize to None, not wrap at 0.
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                wrap_column: Some(0),
+                ..Default::default()
+            },
+        );
+
+        // Global 0 -> None
+        assert_eq!(
+            BufferConfig::resolve(&config, Some("rust")).wrap_column,
+            None
+        );
+        assert_eq!(BufferConfig::resolve(&config, None).wrap_column, None);
+        // Language-level 0 -> None
+        assert_eq!(
+            BufferConfig::resolve(&config, Some("markdown")).wrap_column,
+            None
+        );
     }
 
     #[test]
