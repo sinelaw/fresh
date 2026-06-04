@@ -255,9 +255,11 @@ jobs:
 
       - name: Install .rpm package
         run: |
-          # Fedora/Rocky minimal images default to tsflags=nodocs in dnf.conf,
-          # which skips man pages. Override with an empty tsflags so docs install
-          # and the man-page verification below reflects a real install.
+          # Fedora/Rocky minimal images ship neither the `file` utility (used by
+          # the ELF check below) nor, by default, man pages — dnf.conf sets
+          # tsflags=nodocs. Install `file` and override tsflags so docs install
+          # and the verification below reflects a real install.
+          dnf install -y file
           dnf install -y --setopt=tsflags='' packages/*.rpm
 
       - name: Verify installation
