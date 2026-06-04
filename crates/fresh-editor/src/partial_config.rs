@@ -1231,7 +1231,7 @@ impl PartialConfig {
             result
         };
 
-        crate::config::Config {
+        let mut config = crate::config::Config {
             version: self.version.unwrap_or(defaults.version),
             theme: self.theme.unwrap_or_else(|| defaults.theme.clone()),
             locale: crate::config::LocaleName::from(
@@ -1280,7 +1280,11 @@ impl PartialConfig {
                 .packages
                 .map(|e| e.resolve(&defaults.packages))
                 .unwrap_or_else(|| defaults.packages.clone()),
-        }
+        };
+        // Treat `0` as "not set" for numeric settings where a literal zero is
+        // meaningless (wrap_column, page_width, tab_size).
+        config.normalize_zero_sentinels();
+        config
     }
 }
 

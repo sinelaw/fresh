@@ -810,7 +810,7 @@ pub struct EditorConfig {
 
     /// Width of the page in page view mode (in columns).
     /// Controls the content width when page view is active, with centering margins.
-    /// Defaults to 80. Set to `null` to use the full viewport width.
+    /// Defaults to 80. Set to `null` (or `0`) to use the full viewport width.
     #[serde(default = "default_page_width")]
     #[schemars(extend("x-section" = "Display"))]
     pub page_width: Option<usize>,
@@ -993,6 +993,7 @@ pub struct EditorConfig {
     pub use_tabs: bool,
 
     /// Number of spaces per tab character
+    /// A value of `0` is treated as unset and falls back to the default (4).
     #[serde(default = "default_tab_size")]
     #[schemars(extend("x-section" = "Editing"))]
     pub tab_size: usize,
@@ -2150,7 +2151,7 @@ pub struct LanguageConfig {
 
     /// Column at which to wrap lines for this language.
     /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
-    /// A value of `0` means no fixed wrap column (wrap at the viewport edge).
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
@@ -2164,6 +2165,7 @@ pub struct LanguageConfig {
     /// Width of the page in page view mode (in columns).
     /// Controls the content width when page view is active, with centering margins.
     /// If not specified (`null`), falls back to the global `editor.page_width` setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub page_width: Option<usize>,
 
@@ -2175,6 +2177,7 @@ pub struct LanguageConfig {
 
     /// Tab size (number of spaces per tab) for this language.
     /// If not specified, falls back to the global editor.tab_size setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub tab_size: Option<usize>,
 
@@ -2357,12 +2360,6 @@ impl BufferConfig {
             if let Some(ref wc) = lang_config.word_characters {
                 config.word_characters = wc.clone();
             }
-        }
-
-        // A wrap column of `0` (global or language-level) means "no fixed wrap
-        // column" — wrap at the viewport edge, same as `null`.
-        if config.wrap_column == Some(0) {
-            config.wrap_column = None;
         }
 
         config
@@ -3309,6 +3306,42 @@ impl MenuConfig {
 impl Config {
     /// The config filename used throughout the application
     pub(crate) const FILENAME: &'static str = "config.json";
+
+    /// Normalize "0 means not set" sentinels left over from user config.
+    ///
+    /// For these numeric settings a `0` is treated as "not set" rather than a
+    /// literal zero (which would otherwise produce nonsense — e.g. a wrap
+    /// column of 0 wraps every character, a tab size of 0 divides by zero):
+    /// - At the **global** (`editor`) level, `0` falls back to the built-in
+    ///   default behavior: `wrap_column`/`page_width` become `None` (viewport
+    ///   edge / full viewport width) and `tab_size` becomes the default (4).
+    /// - At the **language** level, `0` clears the override to `None` so it
+    ///   inherits the global value, exactly as if the key were omitted.
+    ///
+    /// Called once when the layered config is resolved, so every downstream
+    /// `lang.or(global)` / `lang.unwrap_or(global)` resolver sees clean values.
+    pub(crate) fn normalize_zero_sentinels(&mut self) {
+        if self.editor.wrap_column == Some(0) {
+            self.editor.wrap_column = None;
+        }
+        if self.editor.page_width == Some(0) {
+            self.editor.page_width = None;
+        }
+        if self.editor.tab_size == 0 {
+            self.editor.tab_size = default_tab_size();
+        }
+        for lang in self.languages.values_mut() {
+            if lang.wrap_column == Some(0) {
+                lang.wrap_column = None;
+            }
+            if lang.page_width == Some(0) {
+                lang.page_width = None;
+            }
+            if lang.tab_size == Some(0) {
+                lang.tab_size = None;
+            }
+        }
+    }
 
     /// Push config values into process-wide flags that need to be readable
     /// from contexts which don't carry a `Config` handle (e.g. the
@@ -7282,31 +7315,51 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_config_wrap_column_zero_is_unset() {
+    fn test_normalize_zero_sentinels_global() {
         let mut config = Config::default();
         config.editor.wrap_column = Some(0);
+        config.editor.page_width = Some(0);
+        config.editor.tab_size = 0;
 
-        // Language that explicitly sets 0 — should normalize to None, not wrap at 0.
+        config.normalize_zero_sentinels();
+
+        // Global 0 -> default behavior.
+        assert_eq!(config.editor.wrap_column, None);
+        assert_eq!(config.editor.page_width, None);
+        assert_eq!(config.editor.tab_size, default_tab_size());
+    }
+
+    #[test]
+    fn test_normalize_zero_sentinels_language_inherits_global() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(120);
+        config.editor.page_width = Some(80);
+        config.editor.tab_size = 8;
+
+        // A language that sets everything to 0 — should clear to None so it
+        // inherits the (non-zero) global values, NOT become the default.
         config.languages.insert(
             "markdown".to_string(),
             LanguageConfig {
                 extensions: vec!["md".to_string()],
                 wrap_column: Some(0),
+                page_width: Some(0),
+                tab_size: Some(0),
                 ..Default::default()
             },
         );
 
-        // Global 0 -> None
-        assert_eq!(
-            BufferConfig::resolve(&config, Some("rust")).wrap_column,
-            None
-        );
-        assert_eq!(BufferConfig::resolve(&config, None).wrap_column, None);
-        // Language-level 0 -> None
-        assert_eq!(
-            BufferConfig::resolve(&config, Some("markdown")).wrap_column,
-            None
-        );
+        config.normalize_zero_sentinels();
+
+        let lang = &config.languages["markdown"];
+        assert_eq!(lang.wrap_column, None);
+        assert_eq!(lang.page_width, None);
+        assert_eq!(lang.tab_size, None);
+
+        // Resolved buffer config inherits the global values.
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md.wrap_column, Some(120));
+        assert_eq!(md.tab_size, 8);
     }
 
     #[test]

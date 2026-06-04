@@ -23,16 +23,17 @@ pub(crate) fn line_wrap(language: &str, config: &Config) -> bool {
 /// Effective `wrap_column` for a buffer with the given language.
 ///
 /// Returns the language-specific `wrap_column` if explicitly set, otherwise
-/// the global `editor.wrap_column`. A resolved value of `0` (global or
-/// language-level) is treated as unset (`None`), i.e. wrap at the viewport
-/// edge rather than at a fixed column.
+/// the global `editor.wrap_column`. Zero-as-unset normalization happens at
+/// config resolution (`Config::normalize_zero_sentinels`), so a language-level
+/// `0` has already been cleared to `None` (inherits global) and a global `0`
+/// to `None` (wrap at the viewport edge) by the time we get here.
 pub(crate) fn wrap_column(language: &str, config: &Config) -> Option<usize> {
-    let resolved = config
-        .languages
-        .get(language)
-        .and_then(|lang_config| lang_config.wrap_column)
-        .or(config.editor.wrap_column);
-    resolved.filter(|&col| col != 0)
+    if let Some(lang_config) = config.languages.get(language) {
+        if lang_config.wrap_column.is_some() {
+            return lang_config.wrap_column;
+        }
+    }
+    config.editor.wrap_column
 }
 
 /// Effective `page_view` width for a buffer with the given language.
@@ -101,24 +102,6 @@ mod tests {
         let mut config = Config::default();
         config.editor.wrap_column = Some(80);
         assert_eq!(wrap_column("unknown", &config), Some(80));
-    }
-
-    #[test]
-    fn wrap_column_global_zero_is_treated_as_unset() {
-        let mut config = Config::default();
-        config.editor.wrap_column = Some(0);
-        assert_eq!(wrap_column("unknown", &config), None);
-    }
-
-    #[test]
-    fn wrap_column_language_zero_is_treated_as_unset() {
-        let mut lang = LanguageConfig::default();
-        lang.wrap_column = Some(0);
-        let mut config = config_with("rust", lang);
-        // Language override of 0 wins over the global, then normalizes to None —
-        // it does NOT fall through to the global value.
-        config.editor.wrap_column = Some(80);
-        assert_eq!(wrap_column("rust", &config), None);
     }
 
     #[test]

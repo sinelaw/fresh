@@ -332,7 +332,7 @@
           "x-section": "Display"
         },
         "wrap_column": {
-          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
+          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nA value of `0` is treated the same as `null` (no fixed wrap column).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
           "type": [
             "integer",
             "null"
@@ -343,7 +343,7 @@
           "x-section": "Display"
         },
         "page_width": {
-          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nDefaults to 80. Set to `null` to use the full viewport width.",
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nDefaults to 80. Set to `null` (or `0`) to use the full viewport width.",
           "type": [
             "integer",
             "null"
@@ -515,7 +515,7 @@
           "x-section": "Editing"
         },
         "tab_size": {
-          "description": "Number of spaces per tab character",
+          "description": "Number of spaces per tab character\nA value of `0` is treated as unset and falls back to the default (4).",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
@@ -1261,7 +1261,7 @@
           "default": null
         },
         "wrap_column": {
-          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.",
+          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"
@@ -1279,7 +1279,7 @@
           "default": null
         },
         "page_width": {
-          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), falls back to the global `editor.page_width` setting.",
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), falls back to the global `editor.page_width` setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"
@@ -1297,7 +1297,7 @@
           "default": null
         },
         "tab_size": {
-          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.",
+          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"
