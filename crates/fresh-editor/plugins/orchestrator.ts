@@ -5177,18 +5177,7 @@ async function runRemoteAttach(
     // Authority + window are live and the hook has adopted the facet — only
     // now is it safe to dismiss the dialog. (Guard against the user having
     // cancelled / reopened the form while the connect was in flight.)
-    if (form && form.submitting) {
-      closeForm();
-      // When the form was opened over the dock, the born-attached remote
-      // window is the new active session — hand keyboard focus to it by
-      // blurring the dock (which stays visible). Without this, focus fell
-      // back to the still-focused dock and the new session's buffer/terminal
-      // silently swallowed the user's keystrokes (mirrors the local path).
-      if (openPanel && dockMode) {
-        dockBlurred = true;
-        editor.floatingPanelControl(openPanel.id(), "blur", 0);
-      }
-    }
+    if (form && form.submitting) closeForm();
   } catch (e) {
     pendingRemoteFacet = null;
     if (!form) return;
