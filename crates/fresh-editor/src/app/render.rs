@@ -55,34 +55,8 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
-        // Drain any plugin commands enqueued BEFORE this frame began —
-        // notably `UnmountFloatingWidget` from a Toggle-Dock invocation
-        // earlier in the same input cycle. The mid-render
-        // `process_commands` block below runs *after* `compute_dock_split`,
-        // so without this early drain the dock unmount lands too late:
-        // this frame computes `dock_area` / `chrome_area` from the stale
-        // `self.dock = Some(_)`, the chrome paints into the post-dock
-        // offset column, and the freed columns render as blank
-        // whitespace until the next user input forces another render.
-        #[cfg(feature = "plugins")]
-        {
-            let early_commands = self.plugin_manager.write().unwrap().process_commands();
-            if !early_commands.is_empty() {
-                tracing::trace!(
-                    count = early_commands.len(),
-                    "process_commands at top of render (pre-layout drain)"
-                );
-                for command in early_commands {
-                    if let Err(e) = self.handle_plugin_command(command) {
-                        tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
-                    }
-                }
-            }
-        }
+        self.drain_pre_layout_plugin_commands();
 
-        // Refresh terminal tab titles from any OSC 0/1/2 title the running
-        // programs set since the last frame. Done for every window so
-        // background tabs stay current, not just the active one.
         for window in self.windows.values_mut() {
             window.sync_terminal_titles();
         }
@@ -108,118 +82,14 @@ impl Editor {
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
 
-        // For scroll sync groups, we need to update the active split's viewport position BEFORE
-        // calling sync_scroll_groups, so that the sync reads the correct position.
-        // Otherwise, cursor movements like 'G' (go to end) won't sync properly because
-        // viewport.top_byte hasn't been updated yet.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        {
-            let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
-            self.active_window_mut()
-                .pre_sync_ensure_visible(active_split);
-        }
-
-        // Synchronize scroll sync groups (anchor-based scroll for side-by-side diffs)
-        // This sets viewport positions based on the authoritative scroll_line in each group
-        {
-            let _span = tracing::info_span!("sync_scroll_groups").entered();
-            self.active_window_mut().sync_scroll_groups();
-        }
+        self.pre_sync_and_scroll_sync();
 
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
         // correct content area dimensions. Don't sync here with incorrect EditorState viewport size.
 
-        // Prepare all buffers for rendering (pre-load viewport data for lazy loading)
-        // Each split may have a different viewport position on the same buffer
-        let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
-            std::collections::HashMap::new();
-        {
-            let _span = tracing::info_span!("compute_semantic_ranges").entered();
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .get_buffer_id((*split_id).into())
-                {
-                    if let Some(state) = self
-                        .windows
-                        .get(&self.active_window)
-                        .map(|w| &w.buffers)
-                        .expect("active window present")
-                        .get(&buffer_id)
-                    {
-                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
-                        let visible_lines =
-                            view_state.viewport.visible_line_count().saturating_sub(1);
-                        let end_line = start_line.saturating_add(visible_lines);
-                        semantic_ranges
-                            .entry(buffer_id)
-                            .and_modify(|(min_start, max_end)| {
-                                *min_start = (*min_start).min(start_line);
-                                *max_end = (*max_end).max(end_line);
-                            })
-                            .or_insert((start_line, end_line));
-                    }
-                }
-            }
-        }
-        for (buffer_id, (start_line, end_line)) in semantic_ranges {
-            self.maybe_request_semantic_tokens_range(buffer_id, start_line, end_line);
-            self.maybe_request_semantic_tokens_full_debounced(buffer_id);
-            self.maybe_request_folding_ranges_debounced(buffer_id);
-        }
+        self.request_semantic_ranges_for_visible_splits();
 
-        {
-            let _span = tracing::info_span!("prepare_for_render").entered();
-            // Pre-collect (split_id, top_byte, height, buffer_id) so we
-            // can mutate buffers below without holding a read borrow on
-            // self.windows.
-            let active_id = self.active_window;
-            let prep_targets: Vec<(BufferId, usize, u16)> = {
-                let win = self
-                    .windows
-                    .get(&active_id)
-                    .expect("active window must exist");
-                let (mgr, vs_map) = win
-                    .buffers
-                    .splits()
-                    .expect("active window must have a populated split layout");
-                vs_map
-                    .iter()
-                    .filter_map(|(split_id, vs)| {
-                        mgr.get_buffer_id((*split_id).into())
-                            .map(|bid| (bid, vs.viewport.top_byte, vs.viewport.height))
-                    })
-                    .collect()
-            };
-            let win_buffers = &mut self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist")
-                .buffers;
-            for (buffer_id, top_byte, height) in prep_targets {
-                if let Some(state) = win_buffers.get_mut(&buffer_id) {
-                    if let Err(e) = state.prepare_for_render(top_byte, height) {
-                        tracing::error!("Failed to prepare buffer for render: {}", e);
-                    }
-                }
-            }
-        }
+        self.prepare_visible_buffers_for_render();
 
         // Refresh search highlights only during incremental search (when prompt is active)
         // After search is confirmed, overlays exist for ALL matches and shouldn't be overwritten
@@ -859,6 +729,13 @@ impl Editor {
         // panes or moved more than two rows within the same pane. The
         // trail crosses pane separators when the jump is across splits —
         // that's the intended "follow the focus" cue.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
 
         // Detect viewport changes and fire hooks
@@ -1804,6 +1681,148 @@ impl Editor {
             // panel instead gets the whole frame (`size`).
             let modal_area = if fullscreen { size } else { chrome_area };
             self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
+        }
+    }
+
+    /// Drain plugin commands enqueued before this frame's layout pass.
+    ///
+    /// Must run before `compute_dock_split` because commands such as
+    /// `UnmountFloatingWidget` affect the dock state that layout reads.
+    /// The mid-render drain (after `compute_dock_split`) runs too late for
+    /// those: the dock area would be computed from stale state and the freed
+    /// columns would render blank until the next input event.
+    fn drain_pre_layout_plugin_commands(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            let early_commands = self.plugin_manager.write().unwrap().process_commands();
+            if !early_commands.is_empty() {
+                tracing::trace!(
+                    count = early_commands.len(),
+                    "process_commands at top of render (pre-layout drain)"
+                );
+                for command in early_commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.
+    ///
+    /// Order matters: `sync_scroll_groups` reads the `viewport.top_byte` that
+    /// `pre_sync_ensure_visible` just updated.  Doing it after the render would
+    /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
+    /// change (e.g. `G` in a side-by-side diff).
+    fn pre_sync_and_scroll_sync(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        {
+            let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
+            self.active_window_mut()
+                .pre_sync_ensure_visible(active_split);
+        }
+        {
+            let _span = tracing::info_span!("sync_scroll_groups").entered();
+            self.active_window_mut().sync_scroll_groups();
+        }
+    }
+
+    /// Compute the visible byte range for each split and issue debounced LSP
+    /// requests for semantic tokens and folding ranges.
+    fn request_semantic_ranges_for_visible_splits(&mut self) {
+        let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
+            std::collections::HashMap::new();
+        {
+            let _span = tracing::info_span!("compute_semantic_ranges").entered();
+            for (split_id, view_state) in self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+            {
+                if let Some(buffer_id) = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .get_buffer_id((*split_id).into())
+                {
+                    if let Some(state) = self
+                        .windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
+                        .get(&buffer_id)
+                    {
+                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
+                        let visible_lines =
+                            view_state.viewport.visible_line_count().saturating_sub(1);
+                        let end_line = start_line.saturating_add(visible_lines);
+                        semantic_ranges
+                            .entry(buffer_id)
+                            .and_modify(|(min_start, max_end)| {
+                                *min_start = (*min_start).min(start_line);
+                                *max_end = (*max_end).max(end_line);
+                            })
+                            .or_insert((start_line, end_line));
+                    }
+                }
+            }
+        }
+        for (buffer_id, (start_line, end_line)) in semantic_ranges {
+            self.maybe_request_semantic_tokens_range(buffer_id, start_line, end_line);
+            self.maybe_request_semantic_tokens_full_debounced(buffer_id);
+            self.maybe_request_folding_ranges_debounced(buffer_id);
+        }
+    }
+
+    /// Pre-load viewport data for each visible buffer.
+    ///
+    /// Large files use lazy loading: data outside the viewport isn't in memory.
+    /// This pass materialises the bytes each split needs before the renderer
+    /// touches them, so the render sees a fully-populated buffer.
+    fn prepare_visible_buffers_for_render(&mut self) {
+        let _span = tracing::info_span!("prepare_for_render").entered();
+        // Pre-collect targets so we can take a mut borrow on buffers below
+        // without holding the immutable read borrow on self.windows.
+        let active_id = self.active_window;
+        let prep_targets: Vec<(BufferId, usize, u16)> = {
+            let win = self
+                .windows
+                .get(&active_id)
+                .expect("active window must exist");
+            let (mgr, vs_map) = win
+                .buffers
+                .splits()
+                .expect("active window must have a populated split layout");
+            vs_map
+                .iter()
+                .filter_map(|(split_id, vs)| {
+                    mgr.get_buffer_id((*split_id).into())
+                        .map(|bid| (bid, vs.viewport.top_byte, vs.viewport.height))
+                })
+                .collect()
+        };
+        let win_buffers = &mut self
+            .windows
+            .get_mut(&active_id)
+            .expect("active window must exist")
+            .buffers;
+        for (buffer_id, top_byte, height) in prep_targets {
+            if let Some(state) = win_buffers.get_mut(&buffer_id) {
+                if let Err(e) = state.prepare_for_render(top_byte, height) {
+                    tracing::error!("Failed to prepare buffer for render: {}", e);
+                }
+            }
         }
     }
 
