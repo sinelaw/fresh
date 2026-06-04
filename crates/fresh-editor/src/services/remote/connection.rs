@@ -174,9 +174,15 @@ impl SshConnection {
             .ok_or_else(|| SshError::AgentStartFailed("failed to get stdout".to_string()))?;
         let stderr = child.stderr.take();
 
-        // Send the agent code (exact byte count)
-        stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
-        stdin.flush().await?;
+        // Send the agent code (exact byte count). If the carrier already died
+        // (a failed connect — e.g. the host was unreachable), this write/flush
+        // races the child's exit and can fail with a broken pipe. That pipe
+        // error isn't the actionable reason; the carrier's own stderr is. Fall
+        // through to the same EOF path so we surface "ssh: …" rather than a bare
+        // `SpawnFailed`, regardless of which side loses the race.
+        if stdin.write_all(AGENT_SOURCE.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+            return Err(ssh_eof_error(&mut child, &params, stderr).await);
+        }
 
         // Create buffered reader for stdout
         let mut reader = BufReader::new(stdout);
