@@ -177,6 +177,11 @@ jobs:
 
       - name: Install .deb package
         run: |
+          # Ubuntu's minimal docker images ship /etc/dpkg/dpkg.cfg.d/excludes
+          # which path-excludes /usr/share/man and /usr/share/doc, so man pages
+          # never land on disk even though they're in the package. Remove it so
+          # the man-page verification below reflects a real install.
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get update
           apt-get install -y ./packages/*.deb
 
@@ -250,7 +255,10 @@ jobs:
 
       - name: Install .rpm package
         run: |
-          dnf install -y packages/*.rpm
+          # Fedora/Rocky minimal images default to tsflags=nodocs in dnf.conf,
+          # which skips man pages. Override with an empty tsflags so docs install
+          # and the man-page verification below reflects a real install.
+          dnf install -y --setopt=tsflags='' packages/*.rpm
 
       - name: Verify installation
         run: |
