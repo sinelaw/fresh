@@ -958,7 +958,14 @@ function filterSessions(needle: string): number[] {
     const activeId = editor.activeWindow();
     allIds = allIds.filter((id) => {
       const s = orchestratorSessions.get(id)!;
-      if (s.discovered || id === activeId) return true;
+      // Keep: the active session (you must see where you are), discovered
+      // worktree rows (their own toggle governs them), and any remote
+      // (SSH / k8s) session. A remote session is a live connection, never an
+      // "empty restored shell" — and its persisted workspace records no local
+      // terminal, so it looked trivial and got dropped the instant it stopped
+      // being the active card. In the dock (a live switcher) that made the
+      // first card vanish on the first ↓ and desynced the selection.
+      if (s.discovered || id === activeId || s.remote) return true;
       const c = sessionContentByRoot.get(normRoot(s.root));
       return !c || !c.trivial;
     });
@@ -1046,7 +1053,7 @@ function dockProjectOptions(): string[] {
   const keys = new Set<string>();
   for (const [id, s] of orchestratorSessions) {
     if (!showWorktrees && s.discovered) continue;
-    if (hideTrivial && !s.discovered && id !== activeId) {
+    if (hideTrivial && !s.discovered && id !== activeId && !s.remote) {
       const c = sessionContentByRoot.get(normRoot(s.root));
       if (c && c.trivial) continue;
     }
