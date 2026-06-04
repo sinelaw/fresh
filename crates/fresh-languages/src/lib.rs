@@ -600,6 +600,212 @@ impl Language {
             _ => HighlightCategory::from_default_index(index),
         }
     }
+
+    /// The tree-sitter parser `Language` for this language, or `None` when its
+    /// grammar is not compiled into this build.
+    ///
+    /// This is the single chokepoint for per-grammar `#[cfg]`s: callers in
+    /// fresh-editor (indentation, reference highlighting) stay feature-agnostic
+    /// — a `None` simply means "no grammar, use the syntect / indent-rules
+    /// fallbacks". Only the languages that *must* use tree-sitter because
+    /// syntect ships no grammar for them (JavaScript, TypeScript, JSON-with-
+    /// comments, Templ — plus Go, which Templ extends) are bundled by default;
+    /// every other arm returns `None` unless the opt-in `all-languages` feature
+    /// re-enables its grammar.
+    pub fn ts_language(&self) -> Option<tree_sitter::Language> {
+        match self {
+            Self::Rust => {
+                #[cfg(feature = "tree-sitter-rust")]
+                {
+                    Some(tree_sitter_rust::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-rust"))]
+                {
+                    None
+                }
+            }
+            Self::Python => {
+                #[cfg(feature = "tree-sitter-python")]
+                {
+                    Some(tree_sitter_python::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-python"))]
+                {
+                    None
+                }
+            }
+            Self::JavaScript => {
+                #[cfg(feature = "tree-sitter-javascript")]
+                {
+                    Some(tree_sitter_javascript::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-javascript"))]
+                {
+                    None
+                }
+            }
+            Self::TypeScript => {
+                #[cfg(feature = "tree-sitter-typescript")]
+                {
+                    Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+                }
+                #[cfg(not(feature = "tree-sitter-typescript"))]
+                {
+                    None
+                }
+            }
+            Self::HTML => {
+                #[cfg(feature = "tree-sitter-html")]
+                {
+                    Some(tree_sitter_html::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-html"))]
+                {
+                    None
+                }
+            }
+            Self::CSS => {
+                #[cfg(feature = "tree-sitter-css")]
+                {
+                    Some(tree_sitter_css::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-css"))]
+                {
+                    None
+                }
+            }
+            Self::C => {
+                #[cfg(feature = "tree-sitter-c")]
+                {
+                    Some(tree_sitter_c::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-c"))]
+                {
+                    None
+                }
+            }
+            Self::Cpp => {
+                #[cfg(feature = "tree-sitter-cpp")]
+                {
+                    Some(tree_sitter_cpp::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-cpp"))]
+                {
+                    None
+                }
+            }
+            Self::Go => {
+                #[cfg(feature = "tree-sitter-go")]
+                {
+                    Some(tree_sitter_go::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-go"))]
+                {
+                    None
+                }
+            }
+            Self::Json | Self::Jsonc => {
+                #[cfg(feature = "tree-sitter-json")]
+                {
+                    Some(tree_sitter_json::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-json"))]
+                {
+                    None
+                }
+            }
+            Self::Java => {
+                #[cfg(feature = "tree-sitter-java")]
+                {
+                    Some(tree_sitter_java::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-java"))]
+                {
+                    None
+                }
+            }
+            Self::CSharp => {
+                #[cfg(feature = "tree-sitter-c-sharp")]
+                {
+                    Some(tree_sitter_c_sharp::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-c-sharp"))]
+                {
+                    None
+                }
+            }
+            Self::Php => {
+                #[cfg(feature = "tree-sitter-php")]
+                {
+                    Some(tree_sitter_php::LANGUAGE_PHP.into())
+                }
+                #[cfg(not(feature = "tree-sitter-php"))]
+                {
+                    None
+                }
+            }
+            Self::Ruby => {
+                #[cfg(feature = "tree-sitter-ruby")]
+                {
+                    Some(tree_sitter_ruby::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-ruby"))]
+                {
+                    None
+                }
+            }
+            Self::Bash => {
+                #[cfg(feature = "tree-sitter-bash")]
+                {
+                    Some(tree_sitter_bash::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-bash"))]
+                {
+                    None
+                }
+            }
+            Self::Lua => {
+                #[cfg(feature = "tree-sitter-lua")]
+                {
+                    Some(tree_sitter_lua::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-lua"))]
+                {
+                    None
+                }
+            }
+            Self::Pascal => {
+                #[cfg(feature = "tree-sitter-pascal")]
+                {
+                    Some(tree_sitter_pascal::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-pascal"))]
+                {
+                    None
+                }
+            }
+            Self::Odin => {
+                #[cfg(feature = "tree-sitter-odin")]
+                {
+                    Some(tree_sitter_odin::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-odin"))]
+                {
+                    None
+                }
+            }
+            Self::Templ => {
+                #[cfg(feature = "tree-sitter-templ")]
+                {
+                    Some(tree_sitter_templ::LANGUAGE.into())
+                }
+                #[cfg(not(feature = "tree-sitter-templ"))]
+                {
+                    None
+                }
+            }
+        }
+    }
 }
 
 impl Language {

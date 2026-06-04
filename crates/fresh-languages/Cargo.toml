@@ -37,10 +37,26 @@ tree-sitter-templ = { version = "2.2.0", optional = true }
 # for the embedded Go portions of a templ file.
 tree-sitter-templ = ["dep:tree-sitter-templ", "tree-sitter-go"]
 
+# The grammars Fresh bundles by default: only languages that *must* use
+# tree-sitter because syntect ships no grammar for them — JavaScript,
+# TypeScript, JSON-with-comments (tree-sitter-json), and Templ — plus Go,
+# which the Templ grammar extends. Every other language is highlighted by
+# syntect and indented by the regex indent-rules tier, so its multi-megabyte
+# parse table is no longer linked. Dropping the other 14 grammars reclaims
+# ~20 MB of the release binary (the bulk of it the C#, C++, Ruby, Odin, PHP
+# and Bash parse tables).
+bundled-languages = [
+    "tree-sitter-javascript", "tree-sitter-typescript",
+    "tree-sitter-json", "tree-sitter-go", "tree-sitter-templ",
+]
+
+# Opt-in: every supported grammar, including the ones not bundled by default.
+# Restores tree-sitter highlighting / AST indentation / scope-aware reference
+# highlighting for the full language set at the cost of binary size.
 all-languages = [
-    "tree-sitter-rust", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript",
-    "tree-sitter-html", "tree-sitter-css", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-go",
-    "tree-sitter-json", "tree-sitter-java", "tree-sitter-c-sharp", "tree-sitter-php", "tree-sitter-ruby",
+    "bundled-languages",
+    "tree-sitter-rust", "tree-sitter-python",
+    "tree-sitter-html", "tree-sitter-css", "tree-sitter-c", "tree-sitter-cpp",
+    "tree-sitter-java", "tree-sitter-c-sharp", "tree-sitter-php", "tree-sitter-ruby",
     "tree-sitter-bash", "tree-sitter-lua", "tree-sitter-pascal", "tree-sitter-odin",
-    "tree-sitter-templ"
 ]

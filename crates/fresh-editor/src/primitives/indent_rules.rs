@@ -679,19 +679,31 @@ mod parity {
     fn rules_match_tree_sitter_on_corpus() {
         // (tree-sitter Language, rules id, code). Indent is taken at end-of-buffer,
         // which is the cursor position when Enter is pressed.
-        let cases: &[(Language, &str, &str)] = &[
-            // Curly-brace: openers, a continuation line, a closed statement.
+        //
+        // Only languages whose grammar is actually compiled in can be compared.
+        // The default build bundles just the must-keep grammars, so the always-on
+        // corpus is the bundled curly-brace languages (Go/TS/JS). Building with
+        // `--features tree-sitter-all` restores every grammar and extends the
+        // corpus to the dropped languages, re-verifying the full rules set.
+        let mut cases: Vec<(Language, &str, &str)> = vec![
+            (Language::TypeScript, "typescript", "function f() {"),
+            (Language::TypeScript, "typescript", "class A {"),
+            (Language::TypeScript, "typescript", "let x = 1;"),
+            (Language::Go, "go", "func main() {"),
+            (Language::JavaScript, "javascript", "function f() {"),
+        ];
+        #[cfg(feature = "tree-sitter-all")]
+        cases.extend_from_slice(&[
             (Language::Rust, "rust", "fn main() {"),
             (Language::Rust, "rust", "fn main() {\n    let x = 1;"),
             (Language::Rust, "rust", "let x = 1;"),
-            (Language::Go, "go", "func main() {"),
-            (Language::Java, "java", "class A {"),
             (Language::Cpp, "cpp", "int main() {"),
             (Language::C, "c", "int main() {"),
-            // Python: colon opener body continuation, flow-exit dedent.
+            (Language::Java, "java", "class A {"),
             (Language::Python, "python", "def foo():\n\tx = 1"),
             (Language::Python, "python", "def foo():\n\treturn 42"),
-        ];
+        ]);
+        let cases = &cases[..];
 
         let tab = 4;
         let mut mismatches = Vec::new();
@@ -720,6 +732,6 @@ mod parity {
         );
         // Guard against the corpus silently going all-skips (e.g. an API change
         // making tree-sitter always return None) which would make this vacuous.
-        assert!(compared >= 6, "too few comparable cases ({compared}); guard is vacuous");
+        assert!(compared >= 4, "too few comparable cases ({compared}); guard is vacuous");
     }
 }
