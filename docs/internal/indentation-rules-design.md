@@ -317,5 +317,18 @@ demanding parity with tree-sitter would wrongly forbid the better behavior.
    fallbacks. The full-corpus parity guard still passes under
    `--features tree-sitter-all`, confirming the dropped languages' rules
    match what tree-sitter produced.
-4. **TODO.** Wire the `[languages.<id>.indent]` config + language-pack
-   override path so users can add/tune rules without a rebuild.
+4. **Done.** Added the `[languages.<id>.indent]` config override
+   (`IndentRulesConfig`: `increase_indent_pattern`, `decrease_indent_pattern`,
+   `indent_next_line_pattern`, `dedent_next_line_pattern`, `self_close_pattern`).
+   `indent_rules` keeps a `USER_RULES` registry layered over the built-in
+   families: a lookup checks user overrides first, and an unset pattern inherits
+   from the language's family — so a config that sets only one pattern keeps the
+   rest, and a config can add indentation for a language Fresh doesn't know.
+   `config::reload_indent_overrides` re-registers them on every config load /
+   reload (called alongside `apply_language_config`). Example:
+
+   ```toml
+   [languages.kotlin.indent]
+   increase_indent_pattern = "[\\{\\[\\(]\\s*$"
+   decrease_indent_pattern = "^\\s*[\\}\\]\\)]"
+   ```

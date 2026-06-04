@@ -45,6 +45,7 @@ use crate::model::buffer::Buffer;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 /// A language family. Most languages map to one of these; the per-language
 /// table ([`family_for_id`]) is data, so adding a language is one row.
@@ -87,16 +88,33 @@ pub struct IndentRules {
 
 impl IndentRules {
     fn compile(def: &IndentRulesDef) -> Self {
-        // Patterns are authored in-tree (not user input here); a bad pattern is
-        // a programmer error, so compile-or-drop keeps a typo from indenting
-        // *nothing* rather than panicking the editor.
+        Self::compile_parts(
+            def.increase,
+            def.decrease,
+            def.indent_next_line,
+            def.dedent_next_line,
+            def.self_close,
+        )
+    }
+
+    /// Compile from individual pattern strings of any lifetime. A pattern that
+    /// fails to compile is dropped (treated as "never matches") rather than
+    /// panicking — for built-in rules a bad pattern is a programmer error; for
+    /// user config it keeps one typo'd rule from taking the editor down.
+    fn compile_parts(
+        increase: Option<&str>,
+        decrease: Option<&str>,
+        indent_next_line: Option<&str>,
+        dedent_next_line: Option<&str>,
+        self_close: Option<&str>,
+    ) -> Self {
         let c = |p: Option<&str>| p.and_then(|s| Regex::new(s).ok());
         Self {
-            increase: c(def.increase),
-            decrease: c(def.decrease),
-            indent_next_line: c(def.indent_next_line),
-            dedent_next_line: c(def.dedent_next_line),
-            self_close: c(def.self_close),
+            increase: c(increase),
+            decrease: c(decrease),
+            indent_next_line: c(indent_next_line),
+            dedent_next_line: c(dedent_next_line),
+            self_close: c(self_close),
         }
     }
 
@@ -191,19 +209,25 @@ fn matches(re: &Option<Regex>, text: &str) -> bool {
     re.as_ref().is_some_and(|r| r.is_match(text))
 }
 
-/// Look up compiled rules for a language id (e.g. `"rust"`, `"ruby"`). Returns
-/// `None` for languages with no rules, so the caller falls back to the generic
-/// bracket heuristic.
-pub fn rules_for_id(id: &str) -> Option<&'static IndentRules> {
+/// Look up the effective rules for a language id (e.g. `"rust"`, `"ruby"`).
+///
+/// A user override registered via [`set_user_rule`] (from a
+/// `[languages.<id>.indent]` config block) takes precedence over the built-in
+/// family. Returns `None` when neither exists, so the caller falls back to the
+/// generic bracket heuristic.
+pub fn rules_for_id(id: &str) -> Option<Arc<IndentRules>> {
+    if let Some(rules) = USER_RULES.read().unwrap().get(id) {
+        return Some(rules.clone());
+    }
     let family = family_for_id(id)?;
-    FAMILY_RULES.get(&family)
+    FAMILY_RULES.get(&family).cloned()
 }
 
 /// Look up rules from a syntect display name (e.g. `"C++"`, `"C#"`,
 /// `"Kotlin"`). Normalizes the common verbose/aliased names then defers to
 /// [`rules_for_id`]. Used by the no-tree-sitter indent path, which only has a
 /// syntect syntax name to go on.
-pub fn rules_for_syntax_name(name: &str) -> Option<&'static IndentRules> {
+pub fn rules_for_syntax_name(name: &str) -> Option<Arc<IndentRules>> {
     let lower = name.to_ascii_lowercase();
     let id = match lower.as_str() {
         "c++" => "cpp",
@@ -234,17 +258,77 @@ fn family_for_id(id: &str) -> Option<Family> {
     Some(f)
 }
 
+/// The built-in `IndentRulesDef` for a family. Used both to build
+/// [`FAMILY_RULES`] and as the base a user override is layered onto.
+fn def_for_family(family: Family) -> &'static IndentRulesDef {
+    match family {
+        Family::CurlyBrace => &CURLY_BRACE,
+        Family::Python => &PYTHON,
+        Family::RubyLike => &RUBY_LIKE,
+        Family::LuaLike => &LUA_LIKE,
+        Family::BashLike => &BASH_LIKE,
+        Family::PascalLike => &PASCAL_LIKE,
+    }
+}
+
 /// Compiled rules per family, built once on first use.
-static FAMILY_RULES: Lazy<HashMap<Family, IndentRules>> = Lazy::new(|| {
+static FAMILY_RULES: Lazy<HashMap<Family, Arc<IndentRules>>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    m.insert(Family::CurlyBrace, IndentRules::compile(&CURLY_BRACE));
-    m.insert(Family::Python, IndentRules::compile(&PYTHON));
-    m.insert(Family::RubyLike, IndentRules::compile(&RUBY_LIKE));
-    m.insert(Family::LuaLike, IndentRules::compile(&LUA_LIKE));
-    m.insert(Family::BashLike, IndentRules::compile(&BASH_LIKE));
-    m.insert(Family::PascalLike, IndentRules::compile(&PASCAL_LIKE));
+    for family in [
+        Family::CurlyBrace,
+        Family::Python,
+        Family::RubyLike,
+        Family::LuaLike,
+        Family::BashLike,
+        Family::PascalLike,
+    ] {
+        m.insert(family, Arc::new(IndentRules::compile(def_for_family(family))));
+    }
     m
 });
+
+/// User-supplied indentation rules from `[languages.<id>.indent]`, keyed by
+/// language id. Checked before [`FAMILY_RULES`] in [`rules_for_id`]. Rebuilt by
+/// [`clear_user_rules`] + [`set_user_rule`] whenever config is (re)loaded.
+static USER_RULES: Lazy<RwLock<HashMap<String, Arc<IndentRules>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Drop all user overrides. Call before re-applying config so removed blocks
+/// stop taking effect.
+pub fn clear_user_rules() {
+    USER_RULES.write().unwrap().clear();
+}
+
+/// Register a user override for `id` (e.g. from `[languages.rust.indent]`).
+///
+/// Any pattern left `None` inherits from the language's built-in family (so a
+/// config that sets only `increase_indent_pattern` keeps the family's
+/// `decrease`/`self_close`); a language with no family starts from blank rules,
+/// which is how config can add indentation for an otherwise-unknown language.
+/// Patterns are VS Code-style regexes evaluated against the line's code view
+/// (comment/string spans masked out); see the module docs.
+pub fn set_user_rule(
+    id: &str,
+    increase: Option<&str>,
+    decrease: Option<&str>,
+    indent_next_line: Option<&str>,
+    dedent_next_line: Option<&str>,
+    self_close: Option<&str>,
+) {
+    // Inherit each unset pattern from the built-in family (if any).
+    let base = family_for_id(id).map(def_for_family);
+    let rules = IndentRules::compile_parts(
+        increase.or(base.and_then(|d| d.increase)),
+        decrease.or(base.and_then(|d| d.decrease)),
+        indent_next_line.or(base.and_then(|d| d.indent_next_line)),
+        dedent_next_line.or(base.and_then(|d| d.dedent_next_line)),
+        self_close.or(base.and_then(|d| d.self_close)),
+    );
+    USER_RULES
+        .write()
+        .unwrap()
+        .insert(id.to_string(), Arc::new(rules));
+}
 
 const CURLY_BRACE: IndentRulesDef = IndentRulesDef {
     // Line ends opening a block/group. Trailing whitespace (and masked
@@ -636,6 +720,32 @@ mod tests {
         assert!(rules_for_id("rust").unwrap().increase.is_some());
         assert!(rules_for_id("python").unwrap().dedent_next_line.is_some());
         assert!(rules_for_id("ruby").unwrap().self_close.is_some());
+    }
+
+    // A single test owns the global USER_RULES mutation so it can't race the
+    // other (read-only) tests under the parallel runner.
+    #[test]
+    fn user_overrides_register_and_merge() {
+        clear_user_rules();
+
+        // Full override for a language with no built-in family: config can add
+        // indentation for a language Fresh otherwise doesn't know.
+        set_user_rule("zz_newlang", Some(r":\s*$"), Some(r"^\s*end\b"), None, None, None);
+        let r = rules_for_id("zz_newlang").expect("user rule registered");
+        assert_eq!(r.calculate_indent(&buf("foo:"), 4, 4, |_| true), 4);
+
+        // Partial override merges with the family: overriding `increase` only on
+        // a CurlyBrace language keeps the family's `decrease`.
+        set_user_rule("kotlin", Some(r"=>\s*$"), None, None, None, None);
+        let k = rules_for_id("kotlin").expect("kotlin via override");
+        assert!(k.decrease.is_some(), "decrease inherited from CurlyBrace family");
+        let c = "val f = x =>";
+        assert_eq!(k.calculate_indent(&buf(c), c.len(), 4, |_| true), 4);
+
+        clear_user_rules();
+        assert!(rules_for_id("zz_newlang").is_none(), "override cleared");
+        // kotlin falls back to its built-in CurlyBrace family rule.
+        assert!(rules_for_id("kotlin").is_some());
     }
 }
 

@@ -1338,6 +1338,18 @@
             "null"
           ],
           "default": null
+        },
+        "indent": {
+          "description": "VS Code–style indentation rules for this language. Overrides (and, for\nunspecified patterns, inherits from) the built-in rules. Lets users tune\nauto-indent — or add it for a language Fresh doesn't know — without a\ntree-sitter grammar. See `IndentRulesConfig`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IndentRulesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "x-display-field": "/grammar"
@@ -1422,6 +1434,52 @@
         "command"
       ],
       "x-display-field": "/command"
+    },
+    "IndentRulesConfig": {
+      "description": "User-overridable indentation rules, modeled on VS Code's\n`language-configuration.json#indentationRules`. Each pattern is a regex\nmatched against a line's *code view* (comment/string spans are masked out\nbefore matching, so a `{` inside a string never triggers an indent). Any\nfield left unset inherits from the language's built-in rule family.",
+      "type": "object",
+      "properties": {
+        "increase_indent_pattern": {
+          "description": "If the line above matches, the new line is indented one level deeper\n(e.g. `[\\{\\[\\(]\\s*$` — a line ending with an opening bracket).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "decrease_indent_pattern": {
+          "description": "If the new line's leading content matches, it is dedented one level\n(e.g. `^\\s*[\\}\\]\\)]` — a line starting with a closing bracket).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "indent_next_line_pattern": {
+          "description": "One-shot +1 for the immediately following line only (e.g. a braceless\n`if (x)` head).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "dedent_next_line_pattern": {
+          "description": "One-shot −1 for the following line (e.g. Python `return`/`pass`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "self_close_pattern": {
+          "description": "Suppresses `increase_indent_pattern` when the same line also closes the\nblock it opened (e.g. Ruby `\\bend\\b` for one-liners like `def f; end`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
     },
     "LspLanguageConfig": {
       "description": "One or more LSP server configs for this language.\nAccepts both a single object and an array for backwards compatibility.",

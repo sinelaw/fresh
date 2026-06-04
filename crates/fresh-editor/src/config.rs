@@ -2206,6 +2206,79 @@ pub struct LanguageConfig {
     /// - Rust (default): `""` (standard alphanumeric + underscore)
     #[serde(default)]
     pub word_characters: Option<String>,
+
+    /// VS Code–style indentation rules for this language. Overrides (and, for
+    /// unspecified patterns, inherits from) the built-in rules. Lets users tune
+    /// auto-indent — or add it for a language Fresh doesn't know — without a
+    /// tree-sitter grammar. See `IndentRulesConfig`.
+    #[serde(default)]
+    pub indent: Option<IndentRulesConfig>,
+}
+
+/// User-overridable indentation rules, modeled on VS Code's
+/// `language-configuration.json#indentationRules`. Each pattern is a regex
+/// matched against a line's *code view* (comment/string spans are masked out
+/// before matching, so a `{` inside a string never triggers an indent). Any
+/// field left unset inherits from the language's built-in rule family.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct IndentRulesConfig {
+    /// If the line above matches, the new line is indented one level deeper
+    /// (e.g. `[\{\[\(]\s*$` — a line ending with an opening bracket).
+    #[serde(default)]
+    pub increase_indent_pattern: Option<String>,
+
+    /// If the new line's leading content matches, it is dedented one level
+    /// (e.g. `^\s*[\}\]\)]` — a line starting with a closing bracket).
+    #[serde(default)]
+    pub decrease_indent_pattern: Option<String>,
+
+    /// One-shot +1 for the immediately following line only (e.g. a braceless
+    /// `if (x)` head).
+    #[serde(default)]
+    pub indent_next_line_pattern: Option<String>,
+
+    /// One-shot −1 for the following line (e.g. Python `return`/`pass`).
+    #[serde(default)]
+    pub dedent_next_line_pattern: Option<String>,
+
+    /// Suppresses `increase_indent_pattern` when the same line also closes the
+    /// block it opened (e.g. Ruby `\bend\b` for one-liners like `def f; end`).
+    #[serde(default)]
+    pub self_close_pattern: Option<String>,
+}
+
+impl IndentRulesConfig {
+    /// True when no pattern is set (so there is nothing to register).
+    pub fn is_empty(&self) -> bool {
+        self.increase_indent_pattern.is_none()
+            && self.decrease_indent_pattern.is_none()
+            && self.indent_next_line_pattern.is_none()
+            && self.dedent_next_line_pattern.is_none()
+            && self.self_close_pattern.is_none()
+    }
+}
+
+/// Re-register all `[languages.<id>.indent]` overrides into the indentation
+/// engine. Call after (re)loading config so config edits take effect and
+/// removed blocks stop applying.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub fn reload_indent_overrides(languages: &HashMap<String, LanguageConfig>) {
+    use crate::primitives::indent_rules;
+    indent_rules::clear_user_rules();
+    for (id, lc) in languages {
+        let Some(ind) = &lc.indent else { continue };
+        if ind.is_empty() {
+            continue;
+        }
+        indent_rules::set_user_rule(
+            id,
+            ind.increase_indent_pattern.as_deref(),
+            ind.decrease_indent_pattern.as_deref(),
+            ind.indent_next_line_pattern.as_deref(),
+            ind.dedent_next_line_pattern.as_deref(),
+            ind.self_close_pattern.as_deref(),
+        );
+    }
 }
 
 /// Resolved editor configuration for a specific buffer.
@@ -3474,6 +3547,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3504,6 +3578,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3534,6 +3609,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3568,6 +3644,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3623,6 +3700,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3660,6 +3738,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3685,6 +3764,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3725,6 +3805,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3754,6 +3835,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3779,6 +3861,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3809,6 +3892,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3864,6 +3948,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3889,6 +3974,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3919,6 +4005,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3944,6 +4031,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -3975,6 +4063,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4000,6 +4089,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4025,6 +4115,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4050,6 +4141,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4075,6 +4167,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4107,6 +4200,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4132,6 +4226,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4158,6 +4253,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4188,6 +4284,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4218,6 +4315,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4243,6 +4341,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4268,6 +4367,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4293,6 +4393,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4322,6 +4423,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4347,6 +4449,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4372,6 +4475,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4397,6 +4501,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4422,6 +4527,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4447,6 +4553,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4472,6 +4579,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4497,6 +4605,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4527,6 +4636,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4552,6 +4662,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4577,6 +4688,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4602,6 +4714,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4627,6 +4740,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4652,6 +4766,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4682,6 +4797,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4707,6 +4823,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4732,6 +4849,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4757,6 +4875,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4782,6 +4901,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4807,6 +4927,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4837,6 +4958,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4862,6 +4984,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4891,6 +5014,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4916,6 +5040,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4941,6 +5066,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4966,6 +5092,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -4991,6 +5118,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5016,6 +5144,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5041,6 +5170,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5066,6 +5196,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5091,6 +5222,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5116,6 +5248,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5141,6 +5274,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5166,6 +5300,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5191,6 +5326,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5218,6 +5354,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5243,6 +5380,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5268,6 +5406,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5293,6 +5432,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5318,6 +5458,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5347,6 +5488,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5372,6 +5514,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5397,6 +5540,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5422,6 +5566,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5447,6 +5592,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -5472,6 +5618,7 @@ impl Config {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -7277,6 +7424,7 @@ mod tests {
                 format_on_save: true,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 

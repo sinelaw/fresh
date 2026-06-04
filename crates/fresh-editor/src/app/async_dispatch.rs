@@ -834,6 +834,7 @@ impl Editor {
                     std::sync::Arc::get_mut(&mut registry)
                         .expect("freshly-received grammar registry Arc must be uniquely owned")
                         .apply_language_config(&self.config.languages);
+                    crate::config::reload_indent_overrides(&self.config.languages);
                     self.grammar_registry = registry;
                     // Propagate the new grammar registry to every window's
                     // resources so window-side syntax detection picks up the
