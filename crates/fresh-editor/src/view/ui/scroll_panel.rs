@@ -248,7 +248,7 @@ impl ScrollablePanel {
         // First pass: assume no scrollbar
         let height1: u16 = items.iter().map(|i| i.height(area_width)).sum();
         self.scroll.set_content_height(height1);
-        
+
         // If a scrollbar is needed, it reduces width, which might change height
         if self.scroll.needs_scrollbar() && area_width > 0 {
             let height2: u16 = items.iter().map(|i| i.height(area_width - 1)).sum();
@@ -266,7 +266,12 @@ impl ScrollablePanel {
     }
 
     /// Get Y offset for an item by index at the given effective content width.
-    pub fn item_y_offset<I: ScrollItem>(&self, items: &[I], index: usize, content_width: u16) -> u16 {
+    pub fn item_y_offset<I: ScrollItem>(
+        &self,
+        items: &[I],
+        index: usize,
+        content_width: u16,
+    ) -> u16 {
         items[..index].iter().map(|i| i.height(content_width)).sum()
     }
 
@@ -284,7 +289,7 @@ impl ScrollablePanel {
 
         // Must sync content height first to know if scrollbar is present
         self.update_content_height(items, area_width);
-        
+
         let content_width = self.content_width(area_width);
 
         // Calculate Y offset of focused item
