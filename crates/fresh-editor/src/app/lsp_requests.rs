@@ -56,6 +56,46 @@ fn lsp_range_contains(range: &lsp_types::Range, line: u32, character: u32) -> bo
     true
 }
 
+/// Whether an LSP range overlaps the half-open range
+/// `[(b_start_line, b_start_char), (b_end_line, b_end_char))`. Zero-length
+/// ranges on either side are treated as their single anchor point — so a
+/// point cursor matches any diagnostic whose range covers that point, and a
+/// point-style diagnostic matches a selection that covers its anchor.
+fn lsp_range_overlaps(
+    a: &lsp_types::Range,
+    b_start_line: u32,
+    b_start_char: u32,
+    b_end_line: u32,
+    b_end_char: u32,
+) -> bool {
+    let b_is_point = b_start_line == b_end_line && b_start_char == b_end_char;
+    if b_is_point {
+        return lsp_range_contains(a, b_start_line, b_start_char);
+    }
+    let a_is_point = a.start.line == a.end.line && a.start.character == a.end.character;
+    if a_is_point {
+        let (p_line, p_char) = (a.start.line, a.start.character);
+        if p_line < b_start_line || (p_line == b_start_line && p_char < b_start_char) {
+            return false;
+        }
+        if p_line > b_end_line || (p_line == b_end_line && p_char >= b_end_char) {
+            return false;
+        }
+        return true;
+    }
+    // Both have extent. A entirely before B?
+    if a.end.line < b_start_line || (a.end.line == b_start_line && a.end.character <= b_start_char)
+    {
+        return false;
+    }
+    // A entirely after B?
+    if a.start.line > b_end_line || (a.start.line == b_end_line && a.start.character >= b_end_char)
+    {
+        return false;
+    }
+    true
+}
+
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
 
@@ -1596,10 +1636,31 @@ impl Editor {
             (line as u32, character as u32, line as u32, character as u32)
         };
 
-        // Get diagnostics at cursor position for context
-        // TODO: Implement diagnostic retrieval when needed
-        let diagnostics: Vec<lsp_types::Diagnostic> = Vec::new();
         let buffer_id = self.active_buffer();
+
+        // Populate `context.diagnostics` with stored diagnostics whose ranges
+        // overlap the code-action request range. Many servers (clangd,
+        // eslint, ...) gate quickfix actions on this — without it, every
+        // diagnostic-driven "fix available" produces zero actions
+        // (sinelaw/fresh#2212).
+        let diagnostics: Vec<lsp_types::Diagnostic> = {
+            let window = self.active_window();
+            window
+                .buffer_metadata
+                .get(&buffer_id)
+                .and_then(|m| m.file_uri())
+                .and_then(|uri| window.stored_diagnostics.get(uri.as_str()))
+                .map(|diags| {
+                    diags
+                        .iter()
+                        .filter(|d| {
+                            lsp_range_overlaps(&d.range, start_line, start_char, end_line, end_char)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
 
         // Pre-allocate request IDs for all eligible servers
         let base_request_id = self.active_window_mut().next_lsp_request_id;
@@ -3448,7 +3509,7 @@ mod tests {
     fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
         Arc::new(StdFileSystem)
     }
-    use super::{lsp_range_contains, Editor};
+    use super::{lsp_range_contains, lsp_range_overlaps, Editor};
 
     fn range(sl: u32, sc: u32, el: u32, ec: u32) -> lsp_types::Range {
         lsp_types::Range {
@@ -3512,6 +3573,74 @@ mod tests {
         assert!(!lsp_range_contains(&r, 6, 4));
         assert!(!lsp_range_contains(&r, 8, 4));
     }
+
+    #[test]
+    fn test_lsp_range_overlaps_point_cursor_in_diagnostic_range() {
+        // Diagnostic at line 3, cols 10..20. A zero-width cursor anywhere
+        // inside (including at start) overlaps; just outside does not.
+        let diag = range(3, 10, 3, 20);
+        // Cursor on the start anchor.
+        assert!(lsp_range_overlaps(&diag, 3, 10, 3, 10));
+        // Cursor inside.
+        assert!(lsp_range_overlaps(&diag, 3, 15, 3, 15));
+        // Cursor at exclusive end — not contained.
+        assert!(!lsp_range_overlaps(&diag, 3, 20, 3, 20));
+        // Cursor before start.
+        assert!(!lsp_range_overlaps(&diag, 3, 9, 3, 9));
+        // Cursor on a different line.
+        assert!(!lsp_range_overlaps(&diag, 4, 15, 4, 15));
+    }
+
+    #[test]
+    fn test_lsp_range_overlaps_selection_intersects_diagnostic() {
+        // Diagnostic at line 3, cols 10..20.
+        let diag = range(3, 10, 3, 20);
+        // Selection entirely inside diag.
+        assert!(lsp_range_overlaps(&diag, 3, 12, 3, 18));
+        // Selection straddling the start of diag.
+        assert!(lsp_range_overlaps(&diag, 3, 5, 3, 15));
+        // Selection straddling the end of diag.
+        assert!(lsp_range_overlaps(&diag, 3, 15, 3, 25));
+        // Selection entirely covering diag.
+        assert!(lsp_range_overlaps(&diag, 3, 0, 3, 30));
+        // Selection adjacent before (touches at start, half-open end).
+        assert!(!lsp_range_overlaps(&diag, 3, 0, 3, 10));
+        // Selection adjacent after (starts at exclusive end of diag).
+        assert!(!lsp_range_overlaps(&diag, 3, 20, 3, 30));
+        // Selection on the wrong line.
+        assert!(!lsp_range_overlaps(&diag, 4, 0, 4, 100));
+    }
+
+    #[test]
+    fn test_lsp_range_overlaps_point_diagnostic_within_selection() {
+        // Point-style diagnostic at line 3, col 10.
+        let diag = range(3, 10, 3, 10);
+        // Selection covering the point.
+        assert!(lsp_range_overlaps(&diag, 3, 5, 3, 15));
+        // Selection starting at the point (half-open includes start).
+        assert!(lsp_range_overlaps(&diag, 3, 10, 3, 15));
+        // Selection ending at the point (half-open excludes end).
+        assert!(!lsp_range_overlaps(&diag, 3, 0, 3, 10));
+        // Zero-width cursor on the exact anchor.
+        assert!(lsp_range_overlaps(&diag, 3, 10, 3, 10));
+        // Zero-width cursor not on the anchor.
+        assert!(!lsp_range_overlaps(&diag, 3, 9, 3, 9));
+    }
+
+    #[test]
+    fn test_lsp_range_overlaps_multiline() {
+        // Diagnostic spans line 2 col 5 through line 4 col 3.
+        let diag = range(2, 5, 4, 3);
+        // Cursor on an interior line, anywhere.
+        assert!(lsp_range_overlaps(&diag, 3, 0, 3, 0));
+        // Selection crossing line boundary into the diagnostic.
+        assert!(lsp_range_overlaps(&diag, 1, 0, 2, 6));
+        // Selection that starts at the exclusive end of the diagnostic — no overlap.
+        assert!(!lsp_range_overlaps(&diag, 4, 3, 4, 10));
+        // Selection entirely after the diagnostic.
+        assert!(!lsp_range_overlaps(&diag, 5, 0, 5, 10));
+    }
+
     use crate::model::buffer::Buffer;
     use crate::state::EditorState;
     use crate::view::virtual_text::VirtualTextPosition;

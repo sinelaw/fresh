@@ -90,6 +90,7 @@ pub mod locale;
 pub mod lsp;
 pub mod lsp_autostart_selective;
 pub mod lsp_bulk_edit_undo_desync;
+pub mod lsp_code_action_diagnostic_context;
 pub mod lsp_code_action_modal;
 pub mod lsp_code_action_resolve_and_commands;
 pub mod lsp_completion_duplicate_entries_1514;

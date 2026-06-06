@@ -1928,6 +1928,119 @@ done
         dir.join("fake_lsp_server_code_actions_b.sh")
     }
 
+    /// Spawn a fake LSP server that mimics clangd-style diagnostic-gated
+    /// quickfixes: it publishes a diagnostic on `didOpen`, and only returns
+    /// a code action when the `textDocument/codeAction` request carries a
+    /// non-empty `context.diagnostics`. Used to regression-test
+    /// sinelaw/fresh#2212.
+    pub fn spawn_with_diagnostic_gated_code_actions(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"codeActionProvider":true}}}'
+        ;;
+    "textDocument/didOpen")
+        uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+        # Publish a diagnostic at line 0, cols 4..5 (the "x" in "let x = ...").
+        send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'$uri'","diagnostics":[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":5}},"severity":2,"message":"Unused variable (fix available)","source":"fake-lsp"}]}}'
+        ;;
+    "textDocument/codeAction")
+        # Gate quickfix actions on context.diagnostics being non-empty,
+        # mirroring clangd's behavior: empty context -> no fixes.
+        if echo "$msg" | grep -q '"diagnostics":\[\]'; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        else
+            uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"title":"Remove unused variable","kind":"quickfix","edit":{"changes":{"'$uri'":[{"range":{"start":{"line":0,"character":0},"end":{"line":1,"character":0}},"newText":""}]}}}]}'
+        fi
+        ;;
+    "textDocument/didChange"|"textDocument/didClose"|"initialized")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "textDocument/inlayHint")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/foldingRange")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "textDocument/documentSymbol")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[]}'
+        ;;
+    "$/cancelRequest")
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::diagnostic_gated_code_actions_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the diagnostic-gated code actions fake LSP server script
+    pub fn diagnostic_gated_code_actions_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_diag_gated_code_actions.sh")
+    }
+
     /// Spawn a fake LSP server that returns completion items.
     /// Unlike the default `spawn()`, this does NOT declare semanticTokensProvider.
     pub fn spawn_with_completions_a(dir: &std::path::Path) -> anyhow::Result<Self> {
