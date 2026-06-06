@@ -9,6 +9,31 @@
 
 use super::help;
 use crate::app::window::Window;
+use crate::app::Editor;
+
+impl Editor {
+    /// Register the built-in `"special"` buffer mode used by the help
+    /// manual and keyboard-shortcuts viewers. Both viewers document
+    /// "Press q to close" inline, so we bind `q -> close_tab` here.
+    /// `inherit_normal_bindings` keeps cursor motion / copy / search
+    /// usable even though `editing_disabled` blocks edits.
+    ///
+    /// Idempotent: `handle_define_mode` clears prior plugin defaults
+    /// for the mode before re-installing, so it's safe to call on
+    /// every viewer open. Re-calling after a config reload (which
+    /// wipes `KeybindingResolver`) also restores the binding without
+    /// any extra wiring.
+    pub(super) fn ensure_help_panel_mode_registered(&mut self) {
+        self.handle_define_mode(
+            "special".to_string(),
+            vec![("q".to_string(), "close_tab".to_string())],
+            true,
+            false,
+            true,
+            None,
+        );
+    }
+}
 
 impl Window {
     /// Open the built-in help manual in a read-only buffer.

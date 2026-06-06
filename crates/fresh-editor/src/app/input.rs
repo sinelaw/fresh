@@ -1211,9 +1211,11 @@ impl Editor {
                 self.handle_redo();
             }
             Action::ShowHelp => {
+                self.ensure_help_panel_mode_registered();
                 self.active_window_mut().open_help_manual();
             }
             Action::ShowKeyboardShortcuts => {
+                self.ensure_help_panel_mode_registered();
                 self.active_window_mut().open_keyboard_shortcuts();
             }
             Action::ShowWarnings => {

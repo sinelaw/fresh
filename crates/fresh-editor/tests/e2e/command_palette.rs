@@ -1721,6 +1721,92 @@ fn test_show_keyboard_shortcuts_open_close_reopen() {
     );
 }
 
+/// Regression test for issue #2165: pressing `q` in the
+/// `*Keyboard Shortcuts*` buffer must close it, matching the
+/// "Press 'q' to close this buffer." instruction the buffer itself
+/// renders. Before the fix, `q` fell through to the read-only text
+/// layer and tripped `Editing disabled in this buffer` while the
+/// buffer stayed open.
+#[test]
+fn test_keyboard_shortcuts_q_closes_buffer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("show keyboard").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("Keyboard Shortcuts"),
+        "Keyboard Shortcuts buffer should be visible before 'q'. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        !after.contains("Editing disabled"),
+        "Pressing q should close the buffer, not trip 'Editing disabled'.\nScreen:\n{}",
+        after
+    );
+    assert!(
+        !after.contains("*Keyboard Shortcuts*"),
+        "*Keyboard Shortcuts* tab should be gone after pressing q.\nScreen:\n{}",
+        after
+    );
+}
+
+/// Regression test paired with `test_keyboard_shortcuts_q_closes_buffer`:
+/// the Fresh Manual viewer shares the same `"special"` buffer mode and
+/// also documents "Press q or Esc to close this page", so `q` must
+/// close it too.
+#[test]
+fn test_fresh_manual_q_closes_buffer() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 30).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.type_text("show manual").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("*Fresh Manual*"),
+        "Fresh Manual buffer should be visible before 'q'. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        !after.contains("Editing disabled"),
+        "Pressing q should close the buffer, not trip 'Editing disabled'.\nScreen:\n{}",
+        after
+    );
+    assert!(
+        !after.contains("*Fresh Manual*"),
+        "*Fresh Manual* tab should be gone after pressing q.\nScreen:\n{}",
+        after
+    );
+}
+
 /// Test that command palette fuzzy matches on command descriptions
 #[test]
 fn test_command_palette_description_fuzzy_matching() {
