@@ -282,7 +282,10 @@ static FAMILY_RULES: Lazy<HashMap<Family, Arc<IndentRules>>> = Lazy::new(|| {
         Family::BashLike,
         Family::PascalLike,
     ] {
-        m.insert(family, Arc::new(IndentRules::compile(def_for_family(family))));
+        m.insert(
+            family,
+            Arc::new(IndentRules::compile(def_for_family(family))),
+        );
     }
     m
 });
@@ -375,9 +378,12 @@ const LUA_LIKE: IndentRulesDef = IndentRulesDef {
 };
 
 const BASH_LIKE: IndentRulesDef = IndentRulesDef {
-    // `then`/`do` line ends, `case … in`, or an opening `{`/`(`.
-    increase: Some(r"(\b(then|do)\s*$)|(^\s*case\b.*\bin\s*$)|([\{\(]\s*$)"),
-    decrease: Some(r"^\s*(fi|done|esac|else|elif|\}|\))"),
+    // `then`/`do` line ends, `case … in`, or a function body's opening `{`.
+    // Note: `(` is deliberately excluded — in Bash `$(...)` / `(...)` is a
+    // subshell/command-substitution, not an indented block, so a trailing `(`
+    // must not deepen indent (mirrors the grammar's indents.scm).
+    increase: Some(r"(\b(then|do)\s*$)|(^\s*case\b.*\bin\s*$)|(\{\s*$)"),
+    decrease: Some(r"^\s*(fi|done|esac|else|elif|\})"),
     indent_next_line: None,
     dedent_next_line: None,
     self_close: None,
@@ -558,13 +564,9 @@ mod tests {
     #[test]
     fn curly_dedent_for_typed_brace() {
         let content = "fn main() {\n    body\n";
-        let dedent = rules_for_id("rust").unwrap().calculate_dedent_for_delimiter(
-            &buf(content),
-            content.len(),
-            '}',
-            4,
-            |_| true,
-        );
+        let dedent = rules_for_id("rust")
+            .unwrap()
+            .calculate_dedent_for_delimiter(&buf(content), content.len(), '}', 4, |_| true);
         assert_eq!(dedent, Some(0));
     }
 
@@ -730,7 +732,14 @@ mod tests {
 
         // Full override for a language with no built-in family: config can add
         // indentation for a language Fresh otherwise doesn't know.
-        set_user_rule("zz_newlang", Some(r":\s*$"), Some(r"^\s*end\b"), None, None, None);
+        set_user_rule(
+            "zz_newlang",
+            Some(r":\s*$"),
+            Some(r"^\s*end\b"),
+            None,
+            None,
+            None,
+        );
         let r = rules_for_id("zz_newlang").expect("user rule registered");
         assert_eq!(r.calculate_indent(&buf("foo:"), 4, 4, |_| true), 4);
 
@@ -738,7 +747,10 @@ mod tests {
         // a CurlyBrace language keeps the family's `decrease`.
         set_user_rule("kotlin", Some(r"=>\s*$"), None, None, None, None);
         let k = rules_for_id("kotlin").expect("kotlin via override");
-        assert!(k.decrease.is_some(), "decrease inherited from CurlyBrace family");
+        assert!(
+            k.decrease.is_some(),
+            "decrease inherited from CurlyBrace family"
+        );
         let c = "val f = x =>";
         assert_eq!(k.calculate_indent(&buf(c), c.len(), 4, |_| true), 4);
 
@@ -817,7 +829,9 @@ mod parity {
                 .unwrap_or_else(|| panic!("no rules for {id}"))
                 .calculate_indent(&buf(code), code.len(), tab, |_| true);
             if ts != rules {
-                mismatches.push(format!("  {id}: code={code:?} tree-sitter={ts} rules={rules}"));
+                mismatches.push(format!(
+                    "  {id}: code={code:?} tree-sitter={ts} rules={rules}"
+                ));
             }
         }
 
@@ -830,6 +844,9 @@ mod parity {
         );
         // Guard against the corpus silently going all-skips (e.g. an API change
         // making tree-sitter always return None) which would make this vacuous.
-        assert!(compared >= 4, "too few comparable cases ({compared}); guard is vacuous");
+        assert!(
+            compared >= 4,
+            "too few comparable cases ({compared}); guard is vacuous"
+        );
     }
 }

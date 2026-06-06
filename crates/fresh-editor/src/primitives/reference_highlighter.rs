@@ -1020,9 +1020,10 @@ mod tests {
         use crate::primitives::highlighter::Language;
 
         let mut highlighter = ReferenceHighlighter::new();
-        highlighter.set_language(&Language::Rust);
+        // Go is a bundled grammar with a locals query (most grammars were
+        // dropped; their reference highlighting falls back to text match).
+        highlighter.set_language(&Language::Go);
 
-        // Rust should have locals support
         assert!(highlighter.has_locals());
     }
 

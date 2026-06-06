@@ -91,12 +91,14 @@ impl IndentCalculator {
             let (lang_name, query_str) = match language {
                 Language::Rust => ("rust", include_str!("../../queries/rust/indents.scm")),
                 Language::Python => ("python", include_str!("../../queries/python/indents.scm")),
-                Language::JavaScript => {
-                    ("javascript", include_str!("../../queries/javascript/indents.scm"))
-                }
-                Language::TypeScript => {
-                    ("typescript", include_str!("../../queries/typescript/indents.scm"))
-                }
+                Language::JavaScript => (
+                    "javascript",
+                    include_str!("../../queries/javascript/indents.scm"),
+                ),
+                Language::TypeScript => (
+                    "typescript",
+                    include_str!("../../queries/typescript/indents.scm"),
+                ),
                 Language::C => ("c", include_str!("../../queries/c/indents.scm")),
                 Language::Cpp => ("cpp", include_str!("../../queries/cpp/indents.scm")),
                 Language::Go => ("go", include_str!("../../queries/go/indents.scm")),
@@ -188,6 +190,16 @@ impl IndentCalculator {
             self.calculate_indent_tree_sitter(buffer, position, language, tab_size)
         {
             return Some(indent);
+        }
+
+        // No tree-sitter grammar (most languages aren't bundled) or it couldn't
+        // decide: consult the per-language regex rules tier, which knows each
+        // language's openers/closers (Python `:`/`return`, Ruby `end`, …). This
+        // path runs without scope masking (no highlighter here); the editor's
+        // primary, masked rules pass happens earlier in `actions.rs`, so this is
+        // mainly the fallback for languages whose grammar was dropped.
+        if let Some(rules) = crate::primitives::indent_rules::rules_for_id(language.id()) {
+            return Some(rules.calculate_indent(buffer, position, tab_size, |_| true));
         }
 
         // Tree-sitter could not decide. For keyword-delimited languages, copy
@@ -360,8 +372,23 @@ impl IndentCalculator {
         language: &Language,
         tab_size: usize,
     ) -> Option<usize> {
-        // Get parser and query for this language
-        let (parser, query) = self.get_config(language)?;
+        // Get parser and query for this language. When no grammar is bundled
+        // (most languages), defer to the per-language regex rules tier, then to
+        // the language-agnostic bracket scanner.
+        let Some((parser, query)) = self.get_config(language) else {
+            if let Some(rules) = crate::primitives::indent_rules::rules_for_id(language.id()) {
+                if let Some(indent) = rules.calculate_dedent_for_delimiter(
+                    buffer,
+                    position,
+                    _delimiter,
+                    tab_size,
+                    |_| true,
+                ) {
+                    return Some(indent);
+                }
+            }
+            return Self::calculate_dedent_pattern(buffer, position, tab_size);
+        };
 
         // Extract context before cursor (for parsing)
         let parse_start = position.saturating_sub(MAX_PARSE_BYTES);
@@ -1443,15 +1470,18 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_used_for_complete_block() {
-        // Test that tree-sitter is used when we have a complete block with context
+        // Test that tree-sitter is used when we have a complete block with
+        // context. Uses TypeScript, one of the bundled grammars (most grammars
+        // were dropped; their indentation is served by the rules tier instead).
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("function main() {\n    let x = 1;\n}");
         // Position after the closing }
         let position = buffer.len();
 
         // Tree-sitter should recognize this is a complete block
         // Pattern matching would see '}' and not indent, but tree-sitter context should work
-        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+        let ts_result =
+            calc.calculate_indent_tree_sitter(&buffer, position, &Language::TypeScript, 4);
 
         // Tree-sitter should return Some (even if it's 0 indent)
         assert!(
@@ -1546,13 +1576,15 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_enter_after_close_brace_returns_zero() {
-        // Verify tree-sitter correctly handles Enter after closing brace
+        // Verify tree-sitter correctly handles Enter after closing brace. Uses
+        // TypeScript (a bundled grammar) so the direct tree-sitter assertion
+        // below is meaningful.
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("function main() {\n    let x = 1;\n}");
         let position = buffer.len(); // Position right after the }
 
         // Tree-sitter should recognize we're outside the block and return 0 indent
-        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        let indent = calc.calculate_indent(&buffer, position, &Language::TypeScript, 4);
         assert_eq!(
             indent,
             Some(0),
@@ -1560,7 +1592,8 @@ mod tests {
         );
 
         // Verify tree-sitter is being used (not just pattern fallback)
-        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+        let ts_result =
+            calc.calculate_indent_tree_sitter(&buffer, position, &Language::TypeScript, 4);
         assert!(ts_result.is_some(), "Tree-sitter should handle this case");
     }
 
@@ -1894,25 +1927,19 @@ mod tests {
     }
 
     #[test]
-    fn test_ruby_def_opens_block_via_tree_sitter_structural_rescue() {
-        // Verifiable improvement: Ruby `def foo` opens a method block.
-        // Master with the old pattern fallback returned 0 (last char `o`,
-        // no C-family trigger). With tree-sitter as source of truth and the
-        // structural "opens-on-cursor-line" rescue, when tree-sitter does
-        // produce a `(method)` capture this should yield +tab_size. When the
-        // input is so short tree-sitter can't recover (just an ERROR node),
-        // we accept "stay at current line indent" as the safe default.
+    fn test_ruby_def_opens_block() {
+        // Ruby `def foo` opens a method block. The old tree-sitter+keyword
+        // pipeline returned 0 on this incomplete input (no `end` yet); the
+        // regex rules tier (RubyLike: `def` is a block opener, no `end` on the
+        // line so `self_close` doesn't suppress it) correctly indents the body
+        // one level — the improvement the old code aimed for but couldn't reach.
         let mut calc = IndentCalculator::new();
         let buffer = Buffer::from_str_test("def foo");
         let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Ruby, 4);
-        // The result must NOT come from the C-family pattern matcher. With
-        // pattern fallback engaged the answer would still be 0 here (last
-        // char `o`, no trigger), so the meaningful assertion is that this
-        // is an answer we can justify structurally — copy current line indent.
         assert_eq!(
             indent,
-            Some(0),
-            "Ruby: short `def foo` (incomplete syntax) falls back to current line indent"
+            Some(4),
+            "Ruby: `def foo` opens a method block — should indent +4"
         );
     }
 

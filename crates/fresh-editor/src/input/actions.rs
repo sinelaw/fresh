@@ -504,7 +504,11 @@ fn byte_is_code(state: &EditorState, pos: usize) -> bool {
 fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
     let rules =
         crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;
-    Some(rules.calculate_indent(&state.buffer, position, tab_size, |b| byte_is_code(state, b)))
+    Some(
+        rules.calculate_indent(&state.buffer, position, tab_size, |b| {
+            byte_is_code(state, b)
+        }),
+    )
 }
 
 /// Closing-delimiter variant of [`rules_indent`].

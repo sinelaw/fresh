@@ -1281,10 +1281,18 @@ fn test_crlf_syntax_highlighting_offset() {
     // Using Java (.java) which uses TextMate highlighting (not tree-sitter)
     let content = "public int x = 1;\r\npublic int x = 2;\r\npublic int x = 3;\r\npublic int x = 4;\r\npublic int x = 5;\r\npublic int x = 6;\r\n";
 
-    // Create fixture with .java extension so it gets TextMate syntax highlighting
+    // Create fixture with .java extension so it gets TextMate syntax highlighting.
     let fixture = TestFixture::new("test_crlf.java", content).unwrap();
 
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Java is highlighted by syntect (its tree-sitter grammar was dropped), so
+    // the test needs the full grammar registry — the minimal default registry
+    // only carries the bundled tree-sitter grammars.
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        common::harness::HarnessOptions::new().with_full_grammar_registry(),
+    )
+    .unwrap();
     harness.open_file(&fixture.path).unwrap();
 
     // Wait a bit for syntax highlighting to initialize
