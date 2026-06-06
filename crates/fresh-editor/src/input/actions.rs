@@ -522,37 +522,43 @@ fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize)
 
 /// Calculate the correct indent for a closing delimiter.
 ///
-/// Tiering: per-language regex rules ([`crate::primitives::indent_rules`],
-/// keyed by syntax name) → tree-sitter (for the few languages that keep a
-/// grammar, e.g. Templ) → the generic C-style bracket scanner. The rules tier
-/// runs first so every syntect-highlighted language gets language-aware,
-/// scope-masked dedent; tree-sitter is consulted only for grammar-only
-/// languages the rules tier doesn't recognise.
+/// Tiering mirrors the Enter-indent path: a language with a *bundled*
+/// tree-sitter grammar (Go, JSON(C), TypeScript, JavaScript, Templ) uses the
+/// AST dedent; everything else uses the per-language regex rules tier
+/// (scope-masked, keyed by syntax name), then the generic C-style bracket
+/// scanner for unknown syntaxes.
 fn calculate_closing_delimiter_indent(
     state: &mut EditorState,
     insert_position: usize,
     ch: char,
     tab_size: usize,
 ) -> usize {
+    if let Some(language) = state.highlighter.language() {
+        if language.ts_language().is_some() {
+            return state
+                .indent_calculator
+                .borrow_mut()
+                .calculate_dedent_for_delimiter(
+                    &state.buffer,
+                    insert_position,
+                    ch,
+                    language,
+                    tab_size,
+                )
+                .unwrap_or(0);
+        }
+    }
     if let Some(indent) = rules_dedent(state, insert_position, ch, tab_size) {
         return indent;
     }
-    if let Some(language) = state.highlighter.language() {
-        state
-            .indent_calculator
-            .borrow_mut()
-            .calculate_dedent_for_delimiter(&state.buffer, insert_position, ch, language, tab_size)
-            .unwrap_or(0)
-    } else {
-        // No rules and no grammar: language-agnostic bracket scanner.
-        PatternIndentCalculator::calculate_dedent_for_delimiter(
-            &state.buffer,
-            insert_position,
-            ch,
-            tab_size,
-        )
-        .unwrap_or(0)
-    }
+    // No bundled grammar and no rules: language-agnostic bracket scanner.
+    PatternIndentCalculator::calculate_dedent_for_delimiter(
+        &state.buffer,
+        insert_position,
+        ch,
+        tab_size,
+    )
+    .unwrap_or(0)
 }
 
 /// Convert a visual indent width to actual indent characters.
@@ -1063,28 +1069,32 @@ fn handle_insert_newline(
 
         if auto_indent {
             let use_tabs = state.buffer_settings.use_tabs;
-            // Tiering: per-language regex rules (keyed by syntax name, with
-            // comment/string scope masking) → tree-sitter for the few languages
-            // that keep a grammar (e.g. Templ) → the language-agnostic heuristic
-            // for everything else (.txt, …). Rules run first so every
-            // syntect-highlighted language gets language-aware indentation.
-            let indent_width_opt = if let Some(w) = rules_indent(state, indent_position, tab_size) {
-                Some(w)
-            } else if let Some(language) = state.highlighter.language() {
-                state.indent_calculator.borrow_mut().calculate_indent(
-                    &state.buffer,
-                    indent_position,
-                    language,
-                    tab_size,
-                )
-            } else {
-                Some(
-                    crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
-                        &state.buffer,
-                        indent_position,
-                        tab_size,
-                    ),
-                )
+            // Tiering: a language with a *bundled* tree-sitter grammar (Go,
+            // JSON(C), TypeScript, JavaScript, Templ) uses the AST indenter,
+            // which handles its block structure — and strings/comments —
+            // precisely. Every other language uses the per-language regex rules
+            // tier (keyed by syntax name, with comment/string scope masking),
+            // falling back to the language-agnostic heuristic for unknown
+            // syntaxes (.txt, …). `IndentCalculator` itself also falls back to
+            // the rules tier when a language has no grammar.
+            let indent_width_opt = match state.highlighter.language() {
+                Some(language) if language.ts_language().is_some() => state
+                    .indent_calculator
+                    .borrow_mut()
+                    .calculate_indent(&state.buffer, indent_position, language, tab_size),
+                _ => {
+                    if let Some(w) = rules_indent(state, indent_position, tab_size) {
+                        Some(w)
+                    } else {
+                        Some(
+                            crate::primitives::indent::IndentCalculator::calculate_indent_no_language(
+                                &state.buffer,
+                                indent_position,
+                                tab_size,
+                            ),
+                        )
+                    }
+                }
             };
             if let Some(indent_width) = indent_width_opt {
                 let indent_str = indent_to_string(indent_width, use_tabs, tab_size);

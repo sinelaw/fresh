@@ -152,18 +152,23 @@ impl IndentRules {
         let ref_code = code_view(buffer, reference.start, reference.end, &is_code);
 
         let mut indent = base;
-        if self.increases(&ref_code) {
-            indent += unit;
-        } else if matches(&self.indent_next_line, &ref_code) {
+        let opened = self.increases(&ref_code) || matches(&self.indent_next_line, &ref_code);
+        if opened {
             indent += unit;
         } else if matches(&self.dedent_next_line, &ref_code) {
             indent = indent.saturating_sub(unit);
         }
 
         // The new line's tail (text that moves down past the cursor). A leading
-        // `}` / `end` here dedents the line being created.
+        // `}` / `end` here dedents the line being created — UNLESS the opener we
+        // just counted is on this same line (the `{│}` case: cursor between a
+        // freshly typed/auto-closed pair). There the closer is relocated to its
+        // own line by the editor's bracket-expansion, so it must not cancel the
+        // cursor line's one-level indent. Only a closer paired with an opener on
+        // a *previous* reference line genuinely dedents (e.g. `{\n    │}`).
         let tail = code_view(buffer, position, cur.end, &is_code);
-        if matches(&self.decrease, &tail) {
+        let opener_on_current_line = opened && cur_has_content;
+        if matches(&self.decrease, &tail) && !opener_on_current_line {
             indent = indent.saturating_sub(unit);
         }
 
