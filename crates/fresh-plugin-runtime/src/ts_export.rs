@@ -162,6 +162,13 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // sync with `crates/fresh-editor/src/services/authority/mod.rs`.
         "AuthorityPayload" => Some(AUTHORITY_PAYLOAD_DECL.to_string()),
 
+        // Remote-agent attach spec for `editor.attachRemoteAgent(...)`.
+        // Hand-written for the same reason as `AuthorityPayload`: the
+        // authoritative `RemoteAgentSpec` struct lives in `fresh-editor`.
+        // Keep in sync with
+        // `crates/fresh-editor/src/services/authority/mod.rs`.
+        "RemoteAgentSpec" => Some(REMOTE_AGENT_SPEC_DECL.to_string()),
+
         // Remote Indicator override — payload for
         // `editor.setRemoteIndicatorState(...)`. Same hand-written
         // rationale: the authoritative enum lives in
@@ -216,6 +223,57 @@ type AuthorityPayload = {
 type PathTranslationSpec = {
   host_root: string;
   remote_root: string;
+};"#;
+
+/// Hand-written declaration for `RemoteAgentSpec` (the
+/// `editor.attachRemoteAgent(...)` payload), covering both transports
+/// (`kubectl-exec` and `ssh`) and the window-mode fields. Keep in sync with
+/// `crates/fresh-editor/src/services/authority/mod.rs`'s `RemoteAgentSpec` /
+/// `RemoteTransportSpec` — this crate must not depend on `fresh-editor`, so the
+/// shape is mirrored by hand.
+const REMOTE_AGENT_SPEC_DECL: &str = r#"type RemoteAgentTransport = {
+  kind: "kubectl-exec";
+  /** kubeconfig context to select (`--context`); omit for the current one. */
+  context?: string | null;
+  namespace: string;
+  pod: string;
+  /** Target container in a multi-container pod (`-c`). */
+  container?: string | null;
+  /** Pod-side workspace root the terminal opens in. */
+  workspace?: string | null;
+} | {
+  kind: "ssh";
+  /** Login user. Optional — omit for `host` / `ssh://host`, letting ssh pick
+  * the user from its own config or the current local user. */
+  user?: string | null;
+  host: string;
+  port?: number | null;
+  identity_file?: string | null;
+  /** Remote directory to root the session at. */
+  remote_path?: string | null;
+  /** Extra `ssh` arguments (e.g. `-J jump`, `-o ProxyCommand=…`) applied to
+  * every ssh invocation for this session. */
+  extra_args?: string[];
+};
+
+type RemoteAgentSpec = {
+  transport: RemoteAgentTransport;
+  /**
+  * Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+  * binary-presence probes. Omit when no probe was run.
+  */
+  base_env?: [string, string][];
+  /**
+  * When true, attach as a NEW window (born-attached, coexisting with the
+  * existing windows) instead of the default global restart that replaces the
+  * whole editor's authority. The Orchestrator sets this so a cloud session is
+  * a real session row beside local ones.
+  */
+  window?: boolean;
+  /** Window label (window mode only). Omit to use the transport's display. */
+  label?: string;
+  /** Optional agent argv for the new window's seed terminal (window mode). */
+  command?: string[];
 };"#;
 
 /// Hand-written declaration for `RemoteIndicatorStatePayload`. Keep in

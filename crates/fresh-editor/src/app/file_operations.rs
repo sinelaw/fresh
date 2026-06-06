@@ -1013,11 +1013,7 @@ impl Editor {
         // Check if we can spawn LSP (respects auto_start setting)
         let spawn_result = {
             let __active_id = self.active_window;
-            let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            else {
+            let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) else {
                 return;
             };
             lsp.try_spawn(&language, Some(path))
@@ -1039,11 +1035,7 @@ impl Editor {
 
             let __active_id = self.active_window;
 
-            if let Some(lsp) = self
-                .windows
-                .get_mut(&__active_id)
-                .and_then(|w| w.lsp.as_mut())
-            {
+            if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                 for sh in lsp.get_handles_mut(&language) {
                     if opened_with.contains(&sh.handle.id()) {
                         continue;
@@ -1070,11 +1062,8 @@ impl Editor {
             // Mark all handles as opened
             let active_id = self.active_window;
             if let Some(__win) = self.windows.get_mut(&active_id) {
-                if let (Some(lsp), Some(metadata)) = (
-                    __win.lsp.as_ref(),
-                    __win.buffer_metadata.get_mut(&buffer_id),
-                ) {
-                    for sh in lsp.get_handles(&language) {
+                if let Some(metadata) = __win.buffer_metadata.get_mut(&buffer_id) {
+                    for sh in __win.lsp.get_handles(&language) {
                         metadata.lsp_opened_with.insert(sh.handle.id());
                     }
                 }
@@ -1083,11 +1072,7 @@ impl Editor {
 
         // Use full document sync - broadcast to all handles
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             let content_change = TextDocumentContentChangeEvent {
                 range: None, // None means full document replacement
                 range_length: None,
@@ -1454,10 +1439,7 @@ impl crate::app::window::Window {
             .unwrap_or((999, 10000, 0));
 
         // Now borrow lsp and do all LSP operations
-        let Some(lsp) = self.lsp.as_mut() else {
-            tracing::debug!("No LSP manager available");
-            return;
-        };
+        let lsp = &mut self.lsp;
         let __next_id = &mut self.next_lsp_request_id;
 
         tracing::debug!("LSP manager available for file: {}", path.display());

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fake `ssh` for tests: models a connect that fails immediately (like a real
+# ssh that can't resolve / reach the host). It writes a recognizable line to
+# stderr and exits 255 — the conventional ssh "connection error" code.
+#
+# `SshConnection::connect` streams the agent source into our stdin before
+# reading stdout, so we drain stdin in the background to keep that write from
+# blocking; the drainer's stdio is pointed at /dev/null so the stdout/stderr
+# pipes the parent captures still EOF promptly once we exit.
+cat >/dev/null 2>&1 &
+echo "ssh: simulated connect failure (fake ssh)" 1>&2
+exit 255

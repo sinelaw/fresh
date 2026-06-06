@@ -68,6 +68,26 @@ jobs:
             libc6-dev-arm64-cross \
             binutils-aarch64-linux-gnu
 
+      - name: Install arm64 runtime libraries for shlibdeps
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          # dpkg-shlibdeps (run by dh_shlibdeps during the .deb build) resolves
+          # the cross-built binary's library deps against installed dpkg metadata.
+          # libc6-dev-arm64-cross installs into /usr/aarch64-linux-gnu with no
+          # shlibs/symbols files, so dpkg-shlibdeps can neither find the libraries
+          # nor map them to package names. Enable the arm64 architecture and pull
+          # the real runtime libraries from the Ubuntu ports mirror; this both
+          # satisfies the lookup and lets ${shlibs:Depends} resolve to correct,
+          # versioned dependencies (libc6, libgcc-s1).
+          sed -i 's|^deb http|deb [arch=amd64] http|g' /etc/apt/sources.list
+          {
+            echo 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main restricted universe multiverse'
+            echo 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main restricted universe multiverse'
+          } >> /etc/apt/sources.list
+          dpkg --add-architecture arm64
+          apt-get update
+          apt-get install -y --no-install-recommends libc6:arm64 libgcc-s1:arm64
+
       - name: Install cargo-generate-rpm
         run: |
           cargo install cargo-generate-rpm
@@ -157,6 +177,11 @@ jobs:
 
       - name: Install .deb package
         run: |
+          # Ubuntu's minimal docker images ship /etc/dpkg/dpkg.cfg.d/excludes
+          # which path-excludes /usr/share/man and /usr/share/doc, so man pages
+          # never land on disk even though they're in the package. Remove it so
+          # the man-page verification below reflects a real install.
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get update
           apt-get install -y ./packages/*.deb
 
@@ -230,7 +255,12 @@ jobs:
 
       - name: Install .rpm package
         run: |
-          dnf install -y packages/*.rpm
+          # Fedora/Rocky minimal images ship neither the `file` utility (used by
+          # the ELF check below) nor, by default, man pages — dnf.conf sets
+          # tsflags=nodocs. Install `file` and override tsflags so docs install
+          # and the verification below reflects a real install.
+          dnf install -y file
+          dnf install -y --setopt=tsflags='' packages/*.rpm
 
       - name: Verify installation
         run: |
@@ -487,6 +517,7 @@ jobs:
             devscripts \
             fakeroot \
             lintian \
+            rsync \
             xz-utils
 
       - uses: actions/checkout@v6

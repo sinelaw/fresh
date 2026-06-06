@@ -23,6 +23,8 @@ pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+#[cfg(feature = "plugins")]
+pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
 pub mod document_model;
 pub mod emacs_actions;
@@ -132,10 +134,12 @@ pub mod multicursor;
 pub mod on_save_actions;
 pub mod open_folder;
 pub mod orchestrator_dock;
+pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
 #[cfg(feature = "plugins")]
 pub mod panel_mode_window_switch_leak;
 pub mod paste;
+pub mod per_session_authority;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod popup_selection;
@@ -198,6 +202,7 @@ pub mod symlinks;
 pub mod syntax_highlighting_coverage;
 pub mod syntax_highlighting_embedded_offset;
 pub mod syntax_language_case;
+pub mod syntax_variable_builtin;
 pub mod tab_config;
 pub mod tab_drag;
 pub mod terminal;

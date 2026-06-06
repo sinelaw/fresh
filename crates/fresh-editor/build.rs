@@ -316,6 +316,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/toml.sublime-syntax", "TOML"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
+        ("src/grammars/gdscript.sublime-syntax", "GDScript"),
         ("src/grammars/git-rebase.sublime-syntax", "Git Rebase Todo"),
         (
             "src/grammars/git-commit.sublime-syntax",

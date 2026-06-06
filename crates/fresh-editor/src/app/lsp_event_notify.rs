@@ -229,7 +229,8 @@ impl crate::app::window::Window {
         );
 
         // Only send didSave if LSP is already running (respect auto_start setting)
-        if let Some(lsp) = self.lsp.as_mut() {
+        {
+            let lsp = &mut self.lsp;
             use crate::services::lsp::manager::LspSpawnResult;
             if lsp.try_spawn(&language, file_path.as_deref()) != LspSpawnResult::Spawned {
                 tracing::debug!(
@@ -255,8 +256,6 @@ impl crate::app::window::Window {
             } else {
                 tracing::warn!("notify_lsp_save: no LSP handles for {}", language);
             }
-        } else {
-            tracing::debug!("notify_lsp_save: no LSP manager available");
         }
     }
 }

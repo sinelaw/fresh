@@ -46,7 +46,7 @@ fn setup_project(name: &str) -> (tempfile::TempDir, PathBuf) {
 ///
 /// `Toggle Dock` sets focus asynchronously through the plugin→host
 /// bridge (the plugin issues `setFocusKey("sessions")` after the dock
-/// mounts), so a key event dispatched after just `wait_until("ORCHESTRATOR")`
+/// mounts), so a key event dispatched after just `wait_until("Orchestrator")`
 /// can land *before* `dock.focused = true` — falling through to the
 /// editor base and leaving any follow-up `wait_until` to block forever
 /// on a dock response that never comes. Polling `is_dock_focused()`
@@ -59,7 +59,7 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -82,7 +82,7 @@ fn dock_renders_as_left_column_beside_chrome() {
     open_dock(&mut h);
 
     // The dock and its controls render...
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     h.assert_screen_contains("+ New");
     // ...and the editor chrome (menu bar) is still present to its right,
     // i.e. the dock is a column beside the window, not a replacement.
@@ -112,7 +112,7 @@ fn ctrl_p_opens_palette_while_dock_focused_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("Open File"))
         .unwrap();
     h.assert_screen_contains("Open File");
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 }
 
 /// Alt+O toggles keyboard focus between the editor and the dock, and the
@@ -152,7 +152,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O → hand focus back to the editor. The dock stays visible
     // (non-modal), but its divider dims to the muted colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     let blurred_fg = divider_fg(&h);
     assert_ne!(
         focused_fg, blurred_fg,
@@ -162,7 +162,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O again → dive back into the dock: the divider relights with the
     // original focused colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     assert_eq!(
         divider_fg(&h),
         focused_fg,
@@ -262,13 +262,13 @@ fn mouse_click_on_dock_new_button_opens_form() {
     // The dock and the centered form occupy disjoint slots, so opening
     // the form must NOT tear down the dock — its header stays painted in
     // the left column beside the modal.
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 
     // Esc cancels the form; the dock regains focus and stays visible.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Session"))
         .unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 }
 
 #[test]
@@ -287,13 +287,56 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
     h.assert_screen_contains("New Session");
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
 
     // Esc returns to the dock, which is still mounted and re-focused.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Session"))
         .unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
+}
+
+/// Enter on a Tab-focused dock button runs THAT button's action, not the
+/// session list's dive. The dock's `dispatch_floating_widget_key` Enter
+/// branch used to fire `dock_activate` unconditionally — so once the user
+/// Tab-cycled focus onto a button (or checkbox), Enter ignored the focused
+/// control and merely re-focused the list. Buttons worked with the mouse
+/// but not the keyboard. Enter now routes through the smart-key dispatcher
+/// when focus is off the list, activating the focused Button/Toggle.
+#[test]
+fn dock_enter_on_focused_button_runs_button_action() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Focus opens on the sessions list. One Tab lands on the "+ New"
+    // button (spec-order first tabbable). Enter must open the new-session
+    // form — the same thing a click on "+ New" does — not dive the list.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.assert_screen_contains("New Session");
+
+    // Esc the form; the dock is still mounted and re-focused on the list.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // Walk focus to the "view:" toggle button (sessions → new-session →
+    // manage → view-toggle) and Enter it. The label flips card↔compact,
+    // proving Enter activated the focused button rather than diving.
+    h.assert_screen_contains("view: card");
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    h.assert_screen_contains("view: compact");
 }
 
 #[test]
@@ -321,88 +364,17 @@ fn dock_slash_filters_and_enter_returns_to_list() {
     h.type_text("gamma").unwrap();
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("gamma") && !s.contains("] beta")
+        s.contains("gamma") && !s.contains("beta")
     })
     .unwrap();
-    h.assert_screen_not_contains("] beta");
+    h.assert_screen_not_contains("beta");
 
     // Enter in the filter returns to the list (does NOT dive) — the dock
     // stays visible and focused.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    h.assert_screen_contains("ORCHESTRATOR");
+    h.assert_screen_contains("Orchestrator");
     h.assert_screen_contains("gamma");
-}
-
-#[test]
-fn dock_space_toggles_multiselect_checkbox() {
-    // Wire up the test-process tracing subscriber so the dock/host-side
-    // `tracing::warn!` breadcrumbs added in
-    // `dispatch_floating_widget_key` (Space branch),
-    // `set_panel_focus_and_notify`, `refocus_floating_panel`,
-    // `blur_floating_panel`, and the dock mouse-click router fire to
-    // stderr when the test runs with `RUST_LOG=fresh::dock=warn` (the
-    // default `RUST_LOG=warn` also picks them up). This is the
-    // diagnostic hook for the Windows-CI timeout of this test —
-    // `Space` doesn't produce `[x]` on Windows but does on Linux/CI,
-    // and the breadcrumbs trace the dispatch path from key arrival
-    // through plugin notification.
-    crate::common::tracing::init_tracing_from_env();
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.editor_mut()
-        .create_window_at(root.join("wt-beta"), "beta".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("beta"))
-        .unwrap();
-
-    // No row checked initially.
-    h.assert_screen_not_contains("[x]");
-    // Space toggles the highlighted row's checkbox (host fires dock_space,
-    // the plugin owns the selection set).
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[x]"))
-        .unwrap();
-    h.assert_screen_contains("[x]");
-    // Space again clears it.
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("[x]"))
-        .unwrap();
-}
-
-#[test]
-fn dock_mouse_click_row_then_space_selects_that_row() {
-    // A click on a session row must focus the dock so the keyboard works
-    // afterward (regression: clicking after a dive left the dock unable to
-    // receive keys). Click the second row, then Space; that row's checkbox
-    // must toggle — proving the click selected + re-focused it.
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.editor_mut()
-        .create_window_at(root.join("wt-beta"), "beta".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("beta"))
-        .unwrap();
-
-    let beta_row = row_of(&h, "beta") as u16;
-    h.mouse_click(3, beta_row).unwrap();
-    h.render().unwrap();
-    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[x]"))
-        .unwrap();
-    // The checked row is the one we clicked (beta).
-    let checked = row_of(&h, "[x]");
-    let beta = row_of(&h, "beta");
-    assert_eq!(
-        checked, beta,
-        "Space after click should check the clicked (beta) row"
-    );
 }
 
 /// 0-based column of `needle` within screen row `row`.
@@ -422,7 +394,7 @@ fn dock_right_border_drag_resizes_and_persists() {
         .create_window_at(root.join("wt-beta"), "beta".to_string());
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator"))
         .unwrap();
 
     // The menu bar ("Edit") sits right of the dock on row 0; its index in
@@ -458,7 +430,7 @@ fn dock_right_border_drag_resizes_and_persists() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
         .unwrap();
     open_dock(&mut h);
     let edit_reopened = col_in_row(&h, 0, "Edit");
@@ -601,21 +573,28 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
     );
 }
 
-/// Invoking `Orchestrator: Open` while the dock is visible must not be a
-/// silent no-op. The dock and the modal picker share one panel + state
-/// today, so the modal can't render on top; the command refocuses the
-/// dock and surfaces a hint instead. Before the fix `openControlRoom`
-/// bailed at `if (openPanel) return` and nothing happened at all.
+/// Invoking `Orchestrator: Open` while the dock is visible opens the full
+/// modal control room *fullscreen over* the dock — not as a refusal nag,
+/// and not by tearing the dock down. The control room is a global
+/// orchestrator feature, so it opts into fullscreen placement (covering
+/// its own dimmed dock) rather than being cramped beside it. The dock
+/// stays mounted in its own host slot (PanelSlot::Dock); Esc drops the
+/// modal and hands control back to it.
 #[test]
-fn open_command_gives_feedback_when_dock_is_visible() {
-    // Wide terminal so the dock (left column) still leaves the status bar
-    // room to show the full hint text.
+fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
+    // Wide terminal so the 90%-width fullscreen modal clearly covers the
+    // dock's "Manage" button (which sits in the dock's right half).
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(200, 40, Default::default(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    // Sanity: the dock (not the modal picker) is what's up, and the dock's
+    // "Manage" button — which only the dock renders, never the picker — is
+    // on screen.
+    h.assert_screen_not_contains("ORCHESTRATOR :: Sessions");
+    h.assert_screen_contains("Manage");
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
     // "Orchestrator: Open" from it.
@@ -627,30 +606,235 @@ fn open_command_gives_feedback_when_dock_is_visible() {
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // With the fix the command refocuses the dock (Ctrl+P had blurred it)
-    // and surfaces a status hint. Without the fix `openControlRoom` bails
-    // at `if (openPanel) return` — nothing happens and the dock stays
-    // blurred, so this wait times out.
-    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
-
+    // The control room surfaces (no nag) ...
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    h.assert_screen_not_contains("the dock already lists sessions");
+    // ... fullscreen *over* the dock: the modal's title renders well within
+    // the dock's left column (its left border lands at ~col 10 of the full
+    // frame, not past the ~40-col dock). A beside-dock modal would lay into
+    // `chrome_area`, pushing the title past the dock's right edge. Count
+    // chars (not bytes) up to the title — the modal's `│` border before it
+    // is multi-byte, so a byte offset would overstate the column.
     let screen = h.screen_to_string();
-    // The status bar carries the hint (feedback, not silence)...
+    let title_line = screen
+        .lines()
+        .find(|l| l.contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    let byte_idx = title_line.find("ORCHESTRATOR :: Sessions").unwrap();
+    let title_col = title_line[..byte_idx].chars().count();
     assert!(
-        screen.contains("the dock already lists sessions"),
-        "Open should surface a hint when the dock is visible.\nScreen:\n{screen}"
+        title_col < 38,
+        "the control room must render fullscreen *over* the dock — its title \
+         is at col {title_col}, expected within the dock's left region (the \
+         modal would start past col ~40 if confined beside the dock).\n\
+         Screen:\n{}",
+        h.screen_to_string()
     );
-    // ...the dock is still there...
-    assert!(
-        screen.contains("ORCHESTRATOR"),
-        "the dock must stay visible.\nScreen:\n{screen}"
+
+    // Esc drops the modal and hands keyboard control back to the live
+    // dock — it could not regain focus if it had been unmounted — and the
+    // dock's "Manage" button is still there.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    h.assert_screen_contains("Manage");
+}
+
+/// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
+/// with the suggestions popup above it — both sit in the chrome area to the
+/// right of the dock. The hint row used to hardcode `x: 0`, drawing the bar
+/// starting at the very left edge (under the dock column), so it was
+/// partially obscured by the dock and visibly offset from the suggestions
+/// box. The fix anchors the hint at the prompt's `x` (= the box's left
+/// column), so "file" lands exactly `left_margin` (2) cols past the box's
+/// left border.
+#[test]
+fn quick_open_hint_aligns_with_suggestions_not_under_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 36, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Ctrl+P blurs the dock and opens the command palette; the dock stays
+    // visible in its left column beside the prompt + suggestions.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    // Wait for both the Quick Open hint and the suggestions box to paint.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains(">command") && s.contains('┌')
+    })
+    .unwrap();
+
+    // Char-column (not byte offset — the box borders are multi-byte) of the
+    // hint's first word and of the suggestions popup's top-left corner.
+    let screen = h.screen_to_string();
+    let hint_line = screen.lines().find(|l| l.contains(">command")).unwrap();
+    let hint_byte = hint_line.find("file").unwrap();
+    let hint_col = hint_line[..hint_byte].chars().count();
+    let box_line = screen.lines().find(|l| l.contains('┌')).unwrap();
+    let box_byte = box_line.find('┌').unwrap();
+    let box_col = box_line[..box_byte].chars().count();
+
+    // The box left border sits at the prompt's `x` (right of the dock); the
+    // hint text begins `left_margin` (2) cols into that same region. If the
+    // hint were still drawn at `x: 0`, "file" would land at col 2 — far left
+    // of the dock-offset box — and this would fail.
+    assert_eq!(
+        hint_col,
+        box_col + 2,
+        "Quick Open hint must align with the suggestions box (left_margin=2 \
+         past its left border at col {box_col}), not be drawn under the dock.\n\
+         Screen:\n{screen}"
     );
-    // ...and the centered modal picker did NOT open on top of it (the
-    // dock header is "ORCHESTRATOR"; the modal title is the longer
-    // "ORCHESTRATOR :: Sessions").
-    assert!(
-        !screen.contains("ORCHESTRATOR :: Sessions"),
-        "the modal picker must not open over the dock.\nScreen:\n{screen}"
+}
+
+/// On a narrow preview pane the control room's action buttons must wrap onto
+/// additional lines rather than the right-most ones being clipped off the
+/// edge. With a plain (non-wrapping) row the merged button line is truncated
+/// to the pane width, so "Delete" (the last button) vanishes; `wrappingRow`
+/// reflows it onto a later line, keeping every action reachable.
+#[test]
+fn control_room_preview_buttons_wrap_on_narrow_pane() {
+    // Narrow terminal so the preview pane (≈half the modal) can't fit all
+    // five action buttons on one line.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(80, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Open the control room (no dock needed). A session is selected on
+    // mount, so its preview pane — with the action buttons — renders.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .unwrap();
+
+    // Every action stays on screen — the right-most "Delete" would be
+    // clipped off a non-wrapping row at this width.
+    h.wait_until(|h| h.screen_to_string().contains("Delete"))
+        .unwrap();
+    h.assert_screen_contains("Archive");
+
+    // And they actually wrapped: "Visit" (first button) and "Delete" (last)
+    // land on different rows.
+    let visit_row = row_of(&h, "Visit");
+    let delete_row = row_of(&h, "Delete");
+    assert_ne!(
+        visit_row,
+        delete_row,
+        "preview action buttons must wrap onto separate rows on a narrow \
+         pane (Visit at row {visit_row}, Delete at {delete_row}).\nScreen:\n{}",
+        h.screen_to_string()
     );
+}
+
+/// The New-Session form's Cancel / Create Session buttons must wrap onto
+/// separate lines on a narrow form rather than "Create Session" being
+/// clipped off the right edge (a plain row truncates the merged button line
+/// to the form width). `wrappingRow` reflows the pair instead.
+#[test]
+fn new_session_form_buttons_wrap_on_narrow_form() {
+    // Narrow terminal so the 60%-width form can't fit both buttons on one
+    // line.
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(50, 30, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Open the New-Session form via the palette.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: New Session").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // Both buttons stay on screen — "Create Session" would be clipped off a
+    // non-wrapping row at this width — and they land on different rows.
+    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+        .unwrap();
+    let cancel_row = row_of(&h, "Cancel");
+    let create_row = row_of(&h, "Create Session");
+    assert_ne!(
+        cancel_row,
+        create_row,
+        "New-Session form buttons must wrap onto separate rows on a narrow \
+         form (Cancel at row {cancel_row}, Create Session at {create_row}).\n\
+         Screen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The New-Session form is a fully modal dialog: it must swallow every
+/// mouse event, even a double-click landing over the editor buffer it sits
+/// in front of. Single clicks were already routed to the panel, but
+/// double/triple-clicks (and the alternate-screen terminal forward) ran
+/// *before* that guard, so a double-click leaked to the buffer underneath
+/// and selected a word there. Observed via typing after the dialog closes:
+/// a leaked word-select would be replaced by the typed text.
+#[test]
+fn new_session_form_swallows_doubleclick_no_buffer_leak() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    // Selectable text in the editor buffer underneath, cursor left at end.
+    h.type_text("hello world").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("hello world"))
+        .unwrap();
+
+    // Open the New-Session form (a fully modal centered dialog).
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: New Session").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // "hello world" stays visible above the vertically-centered form. Find
+    // "world" there and double-click it (two clicks at one spot; the test
+    // clock doesn't advance, so they register as a double-click). This point
+    // is over the editor, outside the modal box — the dialog must eat it.
+    let screen = h.screen_to_string();
+    let (wrow, wline) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("hello world"))
+        .unwrap();
+    let wcol = wline.find("world").unwrap(); // ASCII row: byte == column
+    h.mouse_click(wcol as u16, wrow as u16).unwrap();
+    h.mouse_click(wcol as u16, wrow as u16).unwrap();
+
+    // Close the dialog and type. If the double-click had leaked it would
+    // have selected "world", and the keystroke would replace it ("hello Z").
+    // Full modal capture leaves the buffer untouched, so the insert lands at
+    // the cursor (end): "hello worldZ".
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.type_text("Z").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("hello worldZ"))
+        .unwrap();
 }
 
 #[test]
@@ -750,6 +934,21 @@ fn click_un_dive_switches_to_clicked_session() {
     h.wait_until(|h| h.editor().active_window().root == beta_root)
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Enter's dive blurs the dock through the plugin→host bridge
+    // asynchronously: the `activate` handler in `orchestrator.ts` calls
+    // `floatingPanelControl(panel, "blur")`, which only flips the host's
+    // `dock.focused` once that bridge command is applied. This is the
+    // mirror of the focus-grab race `open_dock` guards against. Without
+    // waiting for the blur to land, the first `Z` below can race in
+    // *before* the dock blurs and get routed to the still-focused dock
+    // instead of beta's `[No Name]` buffer — only the second `Z` then
+    // lands, the screen shows a lone `Z`, and the `contains("ZZ")` wait
+    // blocks to the external nextest timeout. Gate on the same
+    // screen-adjacent readiness signal (`is_dock_focused`) the dock's
+    // own helpers use (CONTRIBUTING §3: semantic waiting, not implicit
+    // keystroke-ordering assumptions).
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
 
     // Type a two-char sentinel into the dived-into buffer. With the
     // dock blurred and beta's `[No Name]` buffer active, the
@@ -890,7 +1089,7 @@ fn dock_close_reflows_buffer_to_full_width() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR"))
+    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
         .unwrap();
 
     // After the dock closes, the line-1 gutter must land at col 0
@@ -908,4 +1107,177 @@ fn dock_close_reflows_buffer_to_full_width() {
         after_close_col.0,
         after_close_col.1,
     );
+}
+
+/// F7: creating a worktree session in a repo with no commits surfaces
+/// git's *real* failure verbatim, rather than a synthesized guess at the
+/// cause. An earlier version assumed any failed HEAD probe meant "no
+/// commits yet" and replaced the error with that message — but a
+/// non-zero git exit can have other causes (corrupt repo, etc.), so we
+/// always show what git actually said instead of guessing.
+#[test]
+fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
+    // `setup_project` runs `git init` but never commits, so HEAD is
+    // unborn — `git worktree add` fails with a `fatal:` reference error.
+    let (_tmp, root) = setup_project("freshrepo");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Open the new-session form. The "Create a new git worktree" box
+    // defaults on for a git repo, so submitting attempts a worktree add.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // The form opens focused on the first field (Project Path). It now leads
+    // with a "Run in:" type-tab row (Local / SSH / Kubernetes / Devcontainer),
+    // so the four tab buttons sit *before* the fields in the focus order.
+    // Stepping back past the four tabs reaches the first focusable, and one
+    // more Shift+Tab wraps to the last one — the "Create Session" button —
+    // regardless of how many fields lie between. Five Shift+Tabs therefore
+    // land on Create (and close any path-completion popup along the way).
+    // Enter submits.
+    for _ in 0..5 {
+        h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // git's actual error is surfaced (a `fatal:` line from the failed
+    // `git worktree add`), not a synthesized substitute.
+    h.wait_until(|h| h.screen_to_string().contains("fatal"))
+        .unwrap();
+}
+
+/// F5: the dock filter must reset when focus leaves the dock, so
+/// re-entering always shows the full session list. A stale filter
+/// otherwise silently hides sessions on the next focus (only the filter
+/// box hints why), with no one-key clear from the list.
+#[test]
+fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // Filter to "gamma" — the "beta" row drops out of the list.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    // Enter returns to the list (filter still applied); Esc then leaves
+    // the dock. Leaving must clear the filter, so the previously hidden
+    // "beta" row is back the moment the dock is shown again.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("beta"))
+        .unwrap();
+    h.assert_screen_contains("beta");
+    // The filter *input* must clear too, not just the filtering: the box
+    // is a controlled widget, so without resetting its value it would
+    // still read the old query while the list shows everything. The
+    // empty box shows its placeholder ("…to search…").
+    h.assert_screen_contains("to search");
+}
+
+/// F6: the auto-generated session name is rooted in the project
+/// (`<project>-N`) rather than a bare `session-N`, so a dock row tells
+/// you which project a session belongs to.
+#[test]
+fn dock_new_session_name_is_rooted_in_the_project() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+
+    // The Session Name field's auto-default carries the project basename
+    // and a numeric suffix ("alphaproj-…"). Without the fix it reads
+    // "session-N", which has no "alphaproj-" stem.
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj-"))
+        .unwrap();
+    h.assert_screen_contains("alphaproj-");
+}
+
+/// F8: accepting a directory path-completion with Tab CLOSES the
+/// dropdown instead of re-popping it over the form fields. Because Tab
+/// *accepts* while a popup is open, the old re-pop (which listed the
+/// accepted directory's children) buried the worktree / Session Name
+/// fields and trapped a Tab-to-advance user in a loop of re-accepting.
+///
+/// We observe the dropdown's open/closed state through the **"Session
+/// Name" label**, which the popup paints over while it is up. We do NOT
+/// assert on the candidate text: completion rows render the *full
+/// absolute path* and the host tail-truncates them (render.rs
+/// `render_completion_item`), so on a deep CI temp directory the
+/// directory basename is cut off the end and never appears on screen —
+/// that environment-dependent truncation made earlier versions of this
+/// test hang to the external timeout. The label is fixed-width, git
+/// independent, and always legible, so this is deterministic regardless
+/// of how long the host's temp path is.
+#[test]
+fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
+    let (_tmp, root) = setup_project("alphaproj");
+    // A directory that sorts first, so the path-completion's top
+    // (highlighted) candidate is a directory. Give it several children so
+    // that, *without* the fix, accepting `aaa_dir/` re-pops a dropdown
+    // tall enough to keep the form fields buried (the bug's signature).
+    let aaa = root.join("aaa_dir");
+    fs::create_dir(&aaa).unwrap();
+    for child in ["inner_a", "inner_b", "inner_c"] {
+        fs::create_dir(aaa.join(child)).unwrap();
+    }
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    // The form opens with every field visible, "Session Name" among them.
+    assert!(
+        h.screen_to_string().contains("Session Name"),
+        "form should open with its fields visible:\n{}",
+        h.screen_to_string()
+    );
+
+    // The Project Path field is empty on open (it only *shows* the
+    // detected root as a placeholder). Type the project root + "/" so the
+    // dropdown lists the directory's children; the top one is `aaa_dir/`.
+    // Path completion is synchronous, so the popup is up once typing
+    // finishes — and it paints over the fields below Project Path, hiding
+    // the "Session Name" label.
+    h.type_text(&format!("{}/", root.display())).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Session Name"))
+        .unwrap();
+
+    // Tab accepts the highlighted `aaa_dir/`. With the fix the dropdown
+    // CLOSES, so the form fields — including "Session Name" — reappear.
+    // Without the fix it re-pops `aaa_dir`'s children, keeping the fields
+    // buried, and this wait times out: the observable bug.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Session Name"))
+        .unwrap();
 }

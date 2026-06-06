@@ -1,5 +1,56 @@
 # Release Notes
 
+## 0.3.12
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+### Features
+
+* **Orchestrator Dock**: a persistent, non-modal left-column session switcher. Alt+O toggles focus; arrows live-switch the active session. Each row shows status (working/idle), project, branch, git summary, and a PR badge. Project dropdown, card/compact view toggle, and a Manage button for the Orchestrator dialog.
+
+* **Create SSH sessions from within the UI**: You could already open a remote host from the cli, now you can do it via the Orchestrator: New dialog - it has a type selector (Local / SSH, and experimental Kubernetes / Devcontainer). Like the cli invocation - SSH attaches a full remote session:filesystem, LSP, process spawners, and a terminal on the remote host; switching retargets without a restart.
+
+* **Kubernetes sessions** (initial, experimental): connect over `kubectl exec` to any cluster, with a keepalive heartbeat and reconnect.
+
+* **Go to LSP Symbol**: a symbol finder with live preview, a precise jump to the symbol name (line and column), source-line snippets, and preselection of the symbol under the cursor (#1886, by @PavelLoparev).
+
+* **Terminal tab auto-naming**: tabs follow the foreground process and OSC title. Setting `editor.terminal_auto_title` (on by default).
+
+* **Open file from a diff**: in the side-by-side and review-diff views, Enter opens the working-tree file (NEW pane) or the read-only HEAD version (OLD pane) at that line.
+
+* **Rainbow bracket colorization** for matching brackets across the viewport (#1088, by @asukaminato0721).
+
+* **Minimal static Linux binary** release artifact (musl, x86_64 and aarch64) optimized for a small binary size.
+
+### Improvements
+
+* **`variable.builtin` syntax category** for `this` / `self` / `super` (#2150, by @masmu).
+* **`storage.type`** keywords highlight as keywords rather than types (#2151, by @masmu).
+* **Async clipboard paste**: paste no longer blocks the editor, and a hung X11/Wayland clipboard owner should no longer freeze it (#2155).
+* **Nested `fresh` launches** (`$EDITOR`, `git commit`) inside Fresh's terminal open in the parent editor instead of a second editor; falls back to inline if the parent is unreachable.
+* **Python indentation**: Enter after `return` / `pass` / `raise` / `break` / `continue` dedents out of the block, and an extra indent level after a statement inside a block is fixed (#2192, reported by @WorldChallenge1).
+* **Terminal scrollback** survives resize, `clear`, and alternate-screen programs; the scroll-back view soft-wraps long lines.
+* **SSH remote editing** is documented in `fresh --help`.
+
+### Bug Fixes
+
+* **Inlay hints** participate in line wrapping and horizontal scroll (#2190, reported by @TakemiSora).
+* **LSP capabilities**: dynamic `client/registerCapability` is now applied, and `workspace/configuration` and the diagnostic / inlay-hint / semantic-token refresh capabilities are advertised, so more servers pull config and re-pull stale results.
+* No crash on a malformed mouse input sequence (#2234).
+* Failed SSH/Kubernetes connects show their error instead of corrupting the screen.
+* Fixed stuck keyboard input after using a session terminal and then opening a file (#2237, #2234).
+* Fixed a client/server freeze when copying a large terminal-scrollback selection.
+* File Explorer no longer re-roots the wrong window when previewing a restored session.
+* Every session is archivable and deletable, including the launch session and the last window.
+* The dock's working/idle indicator tracks the right session and idles when output stops.
+* A worktree session in a repo with no commits reports git's real error.
+* Text-input fields in dialogs focus on click (#2234).
+* Diff "removed" lines no longer wrap one character per row at narrow widths, or when a language overrides the wrap column to 0 (#2177, reported by @biscuitvicious).
+* LSP hover popups no longer appear while the LSP status popup is open (#2244, reported by @biscuitvicious).
+* `editor.scroll_offset` is respected (#2162, reported and fixed by @PavelLoparev).
+* Windows: long paths middle-truncate, and short-name / `\\?\` path differences no longer reorder the dock.
+* Fixed a marker-tree corruption that could drop edits to markers and highlights.
+
 ## 0.3.10
 
 A lot of work on bug fixes and polish in this release.

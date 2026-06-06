@@ -3494,132 +3494,53 @@ fn render_entry_dialog_at(
     render_entry_dialog_inner(frame, parent_area, dialog, theme);
 }
 
-/// Render the entry detail dialog for editing Language/LSP/Keybinding entries
-///
-/// Now uses the same SettingItem/SettingControl infrastructure as the main settings UI,
-/// eliminating duplication and ensuring consistent rendering.
-fn render_entry_dialog_inner(
+/// Render the scrolled list of items and (when needed) the scrollbar.
+#[allow(clippy::too_many_arguments)]
+fn render_entry_items(
     frame: &mut Frame,
-    parent_area: Rect,
-    dialog: &mut super::entry_dialog::EntryDialogState,
+    dialog_area: Rect,
+    inner: Rect,
+    dialog: &super::entry_dialog::EntryDialogState,
     theme: &Theme,
+    label_col_width: u16,
+    scroll_offset: usize,
+    total_content_height: usize,
+    viewport_height: usize,
 ) {
-    // Calculate dialog size - use most of available space for editing
-    let dialog_width = (parent_area.width * 85 / 100).clamp(50, 90);
-    let dialog_height = (parent_area.height * 90 / 100).max(15);
-    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
-
-    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-
-    // Clear and draw border
-    frame.render_widget(Clear, dialog_area);
-
-    // Dialog title bar reads `Edit Item` clean / `Edit Item • modified`
-    // when the form has uncommitted edits — gives the user an
-    // at-a-glance "is there anything to save?" answer without making
-    // the Save button itself misleadingly disabled (UX review
-    // suggestion: Save stays clickable; the title carries the cue).
-    let title = if dialog.is_dirty() {
-        format!(" {} • modified ", dialog.title)
-    } else {
-        format!(" {} ", dialog.title)
-    };
-
-    let border_color = if dialog.is_dirty() {
-        theme.diagnostic_warning_fg
-    } else {
-        theme.popup_border_fg
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(theme.popup_bg));
-    frame.render_widget(block, dialog_area);
-
-    // Inner area (reserve 2 lines for buttons and help at bottom)
-    let inner = Rect::new(
-        dialog_area.x + 2,
-        dialog_area.y + 1,
-        dialog_area.width.saturating_sub(4),
-        dialog_area.height.saturating_sub(5), // 1 border + 2 button/help rows + 2 padding
-    );
-
-    // Calculate optimal label column width based on actual item names
-    let max_label_width = (inner.width / 2).max(20);
-    let label_col_width = dialog
-        .items
-        .iter()
-        .map(|item| item.name.len() as u16 + 2) // +2 for ": "
-        .filter(|&w| w <= max_label_width)
-        .max()
-        .unwrap_or(20)
-        .min(max_label_width);
-
-    // Calculate total content height and viewport
-    let total_content_height = dialog.total_content_height();
-    let viewport_height = inner.height as usize;
-
-    // Store viewport height for use in focus navigation
-    dialog.viewport_height = viewport_height;
-
-    let scroll_offset = dialog.scroll_offset;
     let needs_scroll = total_content_height > viewport_height;
-
-    // Track current position in content (for scrolling)
     let mut content_y: usize = 0;
     let mut screen_y = inner.y;
 
-    // Track if we need to render a separator (between read-only and editable items)
     let first_editable = dialog.first_editable_index;
-    let has_readonly_items = first_editable > 0;
-    let has_editable_items = first_editable < dialog.items.len();
-    let needs_separator = has_readonly_items && has_editable_items;
+    let needs_separator = first_editable > 0 && first_editable < dialog.items.len();
 
     for (idx, item) in dialog.items.iter().enumerate() {
-        // Render separator before first editable item
+        // Separator between read-only and editable sections
         if needs_separator && idx == first_editable {
-            // Add separator row to content height calculation
-            let separator_start = content_y;
             let separator_end = content_y + 1;
-
-            if separator_end > scroll_offset && screen_y < inner.y + inner.height {
-                // Separator is visible
-                let skip_sep = if separator_start < scroll_offset {
-                    1
-                } else {
-                    0
-                };
-                if skip_sep == 0 {
-                    let sep_style = Style::default().fg(theme.line_number_fg);
-                    let separator_line = "─".repeat(inner.width.saturating_sub(2) as usize);
-                    frame.render_widget(
-                        Paragraph::new(separator_line).style(sep_style),
-                        Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
-                    );
-                    screen_y += 1;
-                }
+            if separator_end > scroll_offset
+                && screen_y < inner.y + inner.height
+                && content_y >= scroll_offset
+            {
+                let sep_style = Style::default().fg(theme.line_number_fg);
+                let separator_line = "─".repeat(inner.width.saturating_sub(2) as usize);
+                frame.render_widget(
+                    Paragraph::new(separator_line).style(sep_style),
+                    Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
+                );
+                screen_y += 1;
             }
             content_y = separator_end;
         }
 
-        // Render section header if this is the first item in a section
+        // Section header (2 logical rows: title + blank spacer below)
         if item.is_section_start {
             if let Some(ref section_name) = item.section {
                 let header_start = content_y;
-                let header_end = content_y + 2; // 2 lines: label + separator
-
+                let header_end = content_y + 2;
                 if header_end > scroll_offset && screen_y < inner.y + inner.height {
-                    let skip_h = if header_start < scroll_offset {
-                        (scroll_offset - header_start) as u16
-                    } else {
-                        0
-                    };
+                    let skip_h = header_start.saturating_sub(scroll_offset) as u16;
                     if skip_h == 0 {
-                        // Section label
                         let section_style = Style::default()
                             .fg(theme.line_number_fg)
                             .add_modifier(Modifier::BOLD);
@@ -3630,8 +3551,7 @@ fn render_entry_dialog_inner(
                         screen_y += 1;
                     }
                     if skip_h <= 1 && screen_y < inner.y + inner.height {
-                        // Blank line after section header
-                        screen_y += 1;
+                        screen_y += 1; // blank line after header
                     }
                 }
                 content_y = header_end;
@@ -3639,30 +3559,22 @@ fn render_entry_dialog_inner(
         }
 
         let control_height = item.control.control_height() as usize;
-
-        // Check if this item is visible in the viewport
         let item_start = content_y;
         let item_end = content_y + control_height;
 
-        // Skip items completely above the viewport
         if item_end <= scroll_offset {
             content_y = item_end;
             continue;
         }
-
-        // Stop if we're past the viewport
         if screen_y >= inner.y + inner.height {
             break;
         }
 
-        // Calculate how many rows to skip at top of this item
         let skip_rows = if item_start < scroll_offset {
             (scroll_offset - item_start) as u16
         } else {
             0
         };
-
-        // Calculate visible height for this item
         let visible_height = control_height.saturating_sub(skip_rows as usize);
         let available_height = (inner.y + inner.height).saturating_sub(screen_y) as usize;
         let render_height = visible_height.min(available_height);
@@ -3672,79 +3584,59 @@ fn render_entry_dialog_inner(
             continue;
         }
 
-        // Read-only items are not focusable - no focus/hover highlighting
         let is_readonly = item.read_only;
         let is_focused = !is_readonly && !dialog.focus_on_buttons && dialog.selected_item == idx;
         let is_hovered = !is_readonly && dialog.hover_item == Some(idx);
 
-        // Draw selection or hover highlight background (only for editable items)
         if is_focused || is_hovered {
             let bg_style = if is_focused {
                 Style::default().bg(theme.settings_selected_bg)
             } else {
                 Style::default().bg(theme.menu_hover_bg)
             };
-
             if item.control.is_composite() {
-                // For composite controls, only highlight the focused sub-row
                 let sub_row = item.control.focused_sub_row();
                 if sub_row >= skip_rows && (sub_row - skip_rows) < render_height as u16 {
                     let highlight_y = screen_y + sub_row - skip_rows;
-                    let row_area = Rect::new(inner.x, highlight_y, inner.width, 1);
-                    frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+                    frame.render_widget(
+                        Paragraph::new("").style(bg_style),
+                        Rect::new(inner.x, highlight_y, inner.width, 1),
+                    );
                 }
             } else {
-                // For simple controls, highlight the entire area
                 for row in 0..render_height as u16 {
-                    let row_area = Rect::new(inner.x, screen_y + row, inner.width, 1);
-                    frame.render_widget(Paragraph::new("").style(bg_style), row_area);
+                    frame.render_widget(
+                        Paragraph::new("").style(bg_style),
+                        Rect::new(inner.x, screen_y + row, inner.width, 1),
+                    );
                 }
             }
         }
 
-        // Indicator area takes 3 chars: [>][●][ ] -> focus, modified, separator
-        // Examples: ">● ", ">  ", " ● ", "   "
+        // Indicator column: [>] focus  [●] modified  [ ] spacer
         let focus_indicator_width: u16 = 3;
-
-        // Render focus indicator ">" — on sub-row for composites, first row for simple controls
-        if is_focused && skip_rows == 0 {
-            let indicator_style = Style::default()
-                .fg(theme.settings_selected_fg)
-                .add_modifier(Modifier::BOLD);
-
+        if is_focused {
             let indicator_y = if item.control.is_composite() {
                 let sub_row = item.control.focused_sub_row();
-                if sub_row < render_height as u16 {
-                    screen_y + sub_row
+                let visible_sub = sub_row.saturating_sub(skip_rows);
+                if visible_sub < render_height as u16 {
+                    screen_y + visible_sub
                 } else {
                     screen_y
                 }
             } else {
                 screen_y
             };
-
-            frame.render_widget(
-                Paragraph::new(">").style(indicator_style),
-                Rect::new(inner.x, indicator_y, 1, 1),
-            );
-        } else if is_focused && skip_rows > 0 {
-            // If the item is partially scrolled, check if the focused sub-row is visible
-            if item.control.is_composite() {
-                let sub_row = item.control.focused_sub_row();
-                if sub_row >= skip_rows && (sub_row - skip_rows) < render_height as u16 {
-                    let indicator_style = Style::default()
-                        .fg(theme.settings_selected_fg)
-                        .add_modifier(Modifier::BOLD);
-                    let indicator_y = screen_y + sub_row - skip_rows;
-                    frame.render_widget(
-                        Paragraph::new(">").style(indicator_style),
-                        Rect::new(inner.x, indicator_y, 1, 1),
-                    );
-                }
+            if indicator_y >= screen_y && indicator_y < screen_y + render_height as u16 {
+                let indicator_style = Style::default()
+                    .fg(theme.settings_selected_fg)
+                    .add_modifier(Modifier::BOLD);
+                frame.render_widget(
+                    Paragraph::new(">").style(indicator_style),
+                    Rect::new(inner.x, indicator_y, 1, 1),
+                );
             }
         }
-
-        // Render modified indicator "●" at position 1 for modified items
         if item.modified && skip_rows == 0 {
             let modified_style = Style::default().fg(theme.settings_selected_fg);
             frame.render_widget(
@@ -3753,15 +3645,12 @@ fn render_entry_dialog_inner(
             );
         }
 
-        // Calculate control area (offset by focus indicator width)
         let control_area = Rect::new(
             inner.x + focus_indicator_width,
             screen_y,
             inner.width.saturating_sub(focus_indicator_width),
             render_height as u16,
         );
-
-        // Render using the same render_control function as main settings
         let _layout = render_control(
             frame,
             control_area,
@@ -3778,10 +3667,7 @@ fn render_entry_dialog_inner(
         content_y = item_end;
     }
 
-    // Render scrollbar if needed
     if needs_scroll {
-        use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
-
         let scrollbar_x = dialog_area.x + dialog_area.width - 3;
         let scrollbar_area = Rect::new(scrollbar_x, inner.y, 1, inner.height);
         let scrollbar_state =
@@ -3789,21 +3675,20 @@ fn render_entry_dialog_inner(
         let scrollbar_colors = ScrollbarColors::from_theme(theme);
         render_scrollbar(frame, scrollbar_area, &scrollbar_state, &scrollbar_colors);
     }
+}
 
-    // Render buttons at bottom.
-    //
-    // Order is [Save, Cancel, Delete] — Save and Cancel are the
-    // non-destructive pair the user reaches first via Tab, with
-    // Delete pushed to the far right (with extra spacing) so the
-    // destructive action is impossible to hit by accidentally
-    // tabbing one too many times. Delete keeps its red Danger
-    // styling whether focused or not.
-    //
-    // The Delete label is scoped to the entry it acts on so the user
-    // can tell what gets removed without committing first. For map
-    // entries the entry_key (the map key) is shown; for array items
-    // the numeric index is useless to the user, so a generic "item"
-    // label is shown instead.
+/// Render the Save / Cancel / Delete button row.
+///
+/// Order: [Save] [Cancel]  [Delete …] — Delete is separated by a wider gap so
+/// the destructive action cannot be reached by accidentally pressing Tab one
+/// extra time.  Delete uses a per-entry label (map key or generic "item") so
+/// the user knows what will be removed before committing.
+fn render_entry_buttons(
+    frame: &mut Frame,
+    dialog_area: Rect,
+    dialog: &super::entry_dialog::EntryDialogState,
+    theme: &Theme,
+) {
     let button_y = dialog_area.y + dialog_area.height - 2;
     let has_delete = !dialog.is_new && !dialog.no_delete;
     let delete_label = entry_delete_button_label(dialog);
@@ -3816,13 +3701,12 @@ fn render_entry_dialog_inner(
     } else {
         vec!["[ Save ]".to_string(), "[ Cancel ]".to_string()]
     };
-    // Index of Delete (last entry, when present). Used for the
-    // visual gap between safe buttons and Delete.
     let delete_idx = if has_delete {
         Some(buttons.len() - 1)
     } else {
         None
     };
+
     const BUTTON_GAP: u16 = 2;
     const DELETE_GAP: u16 = 6;
     let button_width: u16 = buttons
@@ -3846,13 +3730,10 @@ fn render_entry_dialog_inner(
         let is_selected = dialog.focus_on_buttons && dialog.focused_button == idx;
         let is_hovered = dialog.hover_button == Some(idx);
         let is_delete = Some(idx) == delete_idx;
-        // Apply the inter-button gap before this button (except the
-        // first one). Delete gets a wider gap so it stands apart.
+
         if idx > 0 {
-            let gap = if is_delete { DELETE_GAP } else { BUTTON_GAP };
-            x += gap;
+            x += if is_delete { DELETE_GAP } else { BUTTON_GAP };
         }
-        // Render ">" focus indicator before selected button
         if is_selected {
             let indicator_style = Style::default()
                 .fg(theme.settings_selected_fg)
@@ -3862,13 +3743,10 @@ fn render_entry_dialog_inner(
                 Rect::new(x.saturating_sub(2), button_y, 1, 1),
             );
         }
+
+        // Selected Delete keeps red fg as a "still destructive" cue while
+        // REVERSED signals keyboard focus — consistent with other selected items.
         let style = if is_selected && is_delete {
-            // Selected Delete: keep the red fg as a "this is still a
-            // destructive action" cue, but add a focused bg so the
-            // user can still see Tab landed here. REVERSED matches the
-            // visual convention for "this is the active button" and
-            // also lets keyboard-focus tests detect the selected button
-            // via cell style rather than fragile byte-vs-cell offsets.
             Style::default()
                 .fg(theme.diagnostic_error_fg)
                 .bg(theme.popup_selection_bg)
@@ -3894,27 +3772,32 @@ fn render_entry_dialog_inner(
         } else {
             Style::default().fg(theme.editor_fg)
         };
+
         frame.render_widget(
             Paragraph::new(label.as_str()).style(style),
             Rect::new(x, button_y, label.len() as u16, 1),
         );
         x += label.len() as u16;
     }
+}
 
-    // Render a single line of helper text for the focused field, on
-    // the row immediately above the button bar. Surface the schema's
-    // description so the user can tell, say, what `Name` actually
-    // means without having to leave the dialog. Skip when focused on
-    // buttons (no field selected).
+/// Render the field-description hint (row above buttons) and the keybinding
+/// legend (row below buttons) at the bottom of the entry dialog.
+fn render_entry_footer(
+    frame: &mut Frame,
+    dialog_area: Rect,
+    inner: Rect,
+    dialog: &super::entry_dialog::EntryDialogState,
+    theme: &Theme,
+) {
+    let button_y = dialog_area.y + dialog_area.height - 2;
     let helper_y = button_y.saturating_sub(1);
+
+    // One line of contextual help immediately above the buttons.
     if !dialog.focus_on_buttons && helper_y > inner.y {
-        // F4: when the user is sitting on a TextList's pending
-        // `[+] Add new` row (slot focused via `focused_item.is_none()`),
-        // override the field description with a caption that names the
-        // current state. Before this, the [+] row silently absorbed
-        // keystrokes with no UI feedback — typing felt like it might or
-        // might not be saved. The caption tells the user exactly what
-        // Enter / Esc will do here.
+        // When the cursor is on a TextList's "[+] Add new" row the focused
+        // item slot is None; surface a caption that names what Enter/Esc do
+        // rather than silently absorbing keystrokes.
         let pending_list_caption = dialog.current_item().and_then(|it| {
             if let SettingControl::TextList(state) = &it.control {
                 if state.focused_item.is_none() {
@@ -3956,8 +3839,7 @@ fn render_entry_dialog_inner(
         }
     }
 
-    // Check if current item has invalid JSON (for Text controls with validation)
-    // and if we're actively editing a JSON control
+    // Keybinding legend / validation warning on the row below the buttons.
     let is_editing_json = dialog.editing_text && dialog.is_editing_json();
     let (has_invalid_json, is_json_control) = dialog
         .current_item()
@@ -3968,7 +3850,6 @@ fn render_entry_dialog_inner(
         })
         .unwrap_or((false, false));
 
-    // Render help text or warning
     let help_area = Rect::new(
         dialog_area.x + 2,
         button_y + 1,
@@ -3976,37 +3857,106 @@ fn render_entry_dialog_inner(
         1,
     );
 
-    if has_invalid_json && !is_json_control {
-        // Text control with JSON validation - must fix before leaving
-        let warning = "⚠ Invalid JSON - fix before leaving field";
-        let warning_style = Style::default().fg(theme.diagnostic_warning_fg);
-        frame.render_widget(Paragraph::new(warning).style(warning_style), help_area);
-    } else if has_invalid_json && is_json_control {
-        // JSON control with invalid JSON
-        let warning = "⚠ Invalid JSON";
-        let warning_style = Style::default().fg(theme.diagnostic_warning_fg);
-        frame.render_widget(Paragraph::new(warning).style(warning_style), help_area);
+    let (text, style) = if has_invalid_json && !is_json_control {
+        (
+            "⚠ Invalid JSON - fix before leaving field",
+            Style::default().fg(theme.diagnostic_warning_fg),
+        )
+    } else if has_invalid_json {
+        (
+            "⚠ Invalid JSON",
+            Style::default().fg(theme.diagnostic_warning_fg),
+        )
     } else if is_json_control {
-        // Editing JSON control
-        let help = "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit";
-        let help_style = Style::default().fg(theme.line_number_fg);
-        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
+        (
+            "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit",
+            Style::default().fg(theme.line_number_fg),
+        )
     } else if dialog.editing_text {
-        // Editing a plain text/number field: Enter and Tab both commit
-        // the value and move on, Esc cancels. Keeps the footer honest now
-        // that Enter no longer leaves the user stuck in edit mode.
-        let help = "Enter/Tab:Commit field  Esc:Cancel";
-        let help_style = Style::default().fg(theme.line_number_fg);
-        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
+        (
+            "Enter/Tab:Commit field  Esc:Cancel",
+            Style::default().fg(theme.line_number_fg),
+        )
     } else {
-        // The trailing `●:modified` legend is the only place in the
-        // dialog that explains what the `●` row-indicator means. Without
-        // it the user has to guess whether it's a focus dot, a bullet,
-        // or noise.
-        let help = "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Ctrl+R:Reset  Esc:Cancel  ●:modified";
-        let help_style = Style::default().fg(theme.line_number_fg);
-        frame.render_widget(Paragraph::new(help).style(help_style), help_area);
-    }
+        // The `●:modified` legend is the only place that explains the row-indicator.
+        (
+            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Ctrl+R:Reset  Esc:Cancel  ●:modified",
+            Style::default().fg(theme.line_number_fg),
+        )
+    };
+    frame.render_widget(Paragraph::new(text).style(style), help_area);
+}
+
+/// Draw the entry-edit dialog into `parent_area`.
+fn render_entry_dialog_inner(
+    frame: &mut Frame,
+    parent_area: Rect,
+    dialog: &mut super::entry_dialog::EntryDialogState,
+    theme: &Theme,
+) {
+    let dialog_width = (parent_area.width * 85 / 100).clamp(50, 90);
+    let dialog_height = (parent_area.height * 90 / 100).max(15);
+    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
+    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
+    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
+
+    frame.render_widget(Clear, dialog_area);
+
+    // Title shows "• modified" when the form has uncommitted edits.
+    let title = if dialog.is_dirty() {
+        format!(" {} • modified ", dialog.title)
+    } else {
+        format!(" {} ", dialog.title)
+    };
+    let border_color = if dialog.is_dirty() {
+        theme.diagnostic_warning_fg
+    } else {
+        theme.popup_border_fg
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .style(Style::default().bg(theme.popup_bg));
+    frame.render_widget(block, dialog_area);
+
+    // Reserve 2 lines at the bottom for the button row + keybinding hint.
+    let inner = Rect::new(
+        dialog_area.x + 2,
+        dialog_area.y + 1,
+        dialog_area.width.saturating_sub(4),
+        dialog_area.height.saturating_sub(5),
+    );
+
+    let max_label_width = (inner.width / 2).max(20);
+    let label_col_width = dialog
+        .items
+        .iter()
+        .map(|item| item.name.len() as u16 + 2)
+        .filter(|&w| w <= max_label_width)
+        .max()
+        .unwrap_or(20)
+        .min(max_label_width);
+
+    let total_content_height = dialog.total_content_height();
+    let viewport_height = inner.height as usize;
+    dialog.viewport_height = viewport_height;
+    let scroll_offset = dialog.scroll_offset;
+
+    render_entry_items(
+        frame,
+        dialog_area,
+        inner,
+        dialog,
+        theme,
+        label_col_width,
+        scroll_offset,
+        total_content_height,
+        viewport_height,
+    );
+    render_entry_buttons(frame, dialog_area, dialog, theme);
+    render_entry_footer(frame, dialog_area, inner, dialog, theme);
 }
 
 /// Render the help overlay showing keyboard shortcuts

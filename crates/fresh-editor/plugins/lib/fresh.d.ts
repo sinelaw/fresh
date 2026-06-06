@@ -959,8 +959,35 @@ type WidgetSpec = {
 	flex: boolean;
 	key?: string | null;
 } | {
+	"kind": "divider";
+	/**
+	* Glyph repeated across the full width. Defaults to `─`.
+	*/
+	ch: string;
+	/**
+	* Optional whole-rule styling (e.g. a dim `fg`). Same shape as a
+	* styled segment's `style`.
+	*/
+	style?: Partial<OverlayOptions>;
+	key?: string | null;
+} | {
 	"kind": "list";
 	items: Array<TextPropertyEntry>;
+	/**
+	* Optional parallel array of per-item widget specs. When
+	* non-empty it **overrides** `items`: each entry is rendered
+	* via the normal widget renderer into a multi-row block
+	* (e.g. a `LabeledSection` for a rounded "card"/"pill"), and
+	* the list lays items out, selects, scrolls, and routes
+	* clicks in *item* units — one card per logical item,
+	* regardless of how many terminal rows it occupies. All
+	* cards share a uniform height (the tallest item's row count;
+	* shorter items pad). `item_keys` / `selected_index` are
+	* still indexed per item. Interactive widgets nested inside a
+	* card aren't routed yet — the whole card is one `select`
+	* hit. Leave empty for the classic one-row-per-`items` list.
+	*/
+	itemSpecs?: Array<WidgetSpec>;
 	itemKeys: Array<string>;
 	selectedIndex: number;
 	/**
@@ -1511,6 +1538,49 @@ type LspServerPackConfig = {
 	* Process resource limits (memory and CPU)
 	*/
 	processLimits: ProcessLimitsPackConfig | null;
+};
+type RemoteAgentTransport = {
+	kind: "kubectl-exec";
+	/** kubeconfig context to select (`--context`); omit for the current one. */
+	context?: string | null;
+	namespace: string;
+	pod: string;
+	/** Target container in a multi-container pod (`-c`). */
+	container?: string | null;
+	/** Pod-side workspace root the terminal opens in. */
+	workspace?: string | null;
+} | {
+	kind: "ssh";
+	/** Login user. Optional — omit for `host` / `ssh://host`, letting ssh pick
+	* the user from its own config or the current local user. */
+	user?: string | null;
+	host: string;
+	port?: number | null;
+	identity_file?: string | null;
+	/** Remote directory to root the session at. */
+	remote_path?: string | null;
+	/** Extra `ssh` arguments (e.g. `-J jump`, `-o ProxyCommand=…`) applied to
+	* every ssh invocation for this session. */
+	extra_args?: string[];
+};
+type RemoteAgentSpec = {
+	transport: RemoteAgentTransport;
+	/**
+	* Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+	* binary-presence probes. Omit when no probe was run.
+	*/
+	base_env?: [string, string][];
+	/**
+	* When true, attach as a NEW window (born-attached, coexisting with the
+	* existing windows) instead of the default global restart that replaces the
+	* whole editor's authority. The Orchestrator sets this so a cloud session is
+	* a real session row beside local ones.
+	*/
+	window?: boolean;
+	/** Window label (window mode only). Omit to use the transport's display. */
+	label?: string;
+	/** Optional agent argv for the new window's seed terminal (window mode). */
+	command?: string[];
 };
 type RemoteIndicatorStatePayload = {
 	kind: "local";
@@ -2905,7 +2975,9 @@ interface EditorAPI {
 	/**
 	* Control a mounted floating panel's placement / focus without
 	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
+	* centered panel cover the whole frame over the dock). See
+	* `PluginCommand::FloatingPanelControl`.
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**
@@ -2942,6 +3014,31 @@ interface EditorAPI {
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
+	/**
+	* Attach to a remote agent that needs a live connection (an SSH host or a
+	* `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous —
+	* the editor spawns the carrier, bootstraps the agent and builds the
+	* session in the background — and this returns a promise that settles on
+	* the real outcome:
+	* 
+	* * resolves once the session (authority + window) is fully
+	* constructed, so a caller can keep its dialog open until there is a
+	* real session to show;
+	* * rejects with the failure reason (e.g. ssh "Could not resolve
+	* hostname") if the connect or window creation fails — in which case
+	* no window is created and the editor stays on its current authority.
+	* 
+	* The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
+	* plugins hand-build an object matching it.
+	*/
+	attachRemoteAgent(payload: RemoteAgentSpec): Promise<void>;
+	/**
+	* Cancel any in-flight `attachRemoteAgent` connect — the New-Session
+	* dialog's Cancel. The pending promise rejects with "cancelled" and the
+	* background connect's late result is discarded, so no window is built.
+	* A no-op when nothing is connecting.
+	*/
+	cancelRemoteAgent(): void;
 	/**
 	* Activate an environment: set the live env recipe (`snippet` run in
 	* `dir`). Applied to every spawn, re-evaluated on demand — no restart.

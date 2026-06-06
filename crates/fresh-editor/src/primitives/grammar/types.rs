@@ -150,6 +150,10 @@ pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-sy
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
 
+/// Embedded GDScript grammar
+/// Based on https://github.com/beefsack/GDScript-sublime (MIT License)
+pub const GDSCRIPT_GRAMMAR: &str = include_str!("../../grammars/gdscript.sublime-syntax");
+
 /// Embedded Git Rebase Todo grammar for interactive rebase
 pub const GIT_REBASE_GRAMMAR: &str = include_str!("../../grammars/git-rebase.sublime-syntax");
 
@@ -559,6 +563,17 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded Zig grammar: {}", e);
+            }
+        }
+
+        // GDScript grammar
+        match SyntaxDefinition::load_from_str(GDSCRIPT_GRAMMAR, true, Some("GDScript")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded GDScript grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded GDScript grammar: {}", e);
             }
         }
 
@@ -1578,6 +1593,7 @@ mod tests {
             ("test.md", true),
             ("test.html", true),
             ("test.css", true),
+            ("test.gd", true),
             ("test.unknown_extension_xyz", false),
         ];
 
@@ -2024,6 +2040,20 @@ mod tests {
             Some(fresh_languages::Language::JavaScript),
             "JavaScript must carry the tree-sitter language"
         );
+
+        let gdscript = registry
+            .find_by_path(Path::new("player.gd"), None)
+            .expect("player.gd should resolve to GDScript");
+        assert_eq!(gdscript.display_name, "GDScript");
+        assert_eq!(gdscript.language_id, "gdscript");
+        assert!(
+            gdscript.engines.syntect.is_some(),
+            "GDScript should use the embedded Syntect grammar"
+        );
+        assert!(
+            gdscript.engines.tree_sitter.is_none(),
+            "GDScript must not carry a tree-sitter parser"
+        );
     }
 
     #[test]
@@ -2427,6 +2457,7 @@ mod tests {
             tree_sitter_for_syntect_name("Rust"),
             Some(fresh_languages::Language::Rust)
         );
+        assert_eq!(tree_sitter_for_syntect_name("GDScript"), None);
         // Must NOT fuzzy-match Nushell to Bash.
         assert_eq!(tree_sitter_for_syntect_name("Nushell"), None);
         // Must NOT match arbitrary strings.

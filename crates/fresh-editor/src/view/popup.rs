@@ -872,8 +872,10 @@ impl Popup {
     pub fn calculate_area(&self, terminal_area: Rect, cursor_pos: Option<(u16, u16)>) -> Rect {
         match self.position {
             PopupPosition::AtCursor | PopupPosition::BelowCursor | PopupPosition::AboveCursor => {
-                let (cursor_x, cursor_y) =
-                    cursor_pos.unwrap_or((terminal_area.width / 2, terminal_area.height / 2));
+                let (cursor_x, cursor_y) = cursor_pos.unwrap_or((
+                    terminal_area.x + terminal_area.width / 2,
+                    terminal_area.y + terminal_area.height / 2,
+                ));
 
                 let width = self.width.min(terminal_area.width);
                 // Use the minimum of max_height, actual content height, and terminal height
@@ -882,16 +884,25 @@ impl Popup {
                     .min(self.max_height)
                     .min(terminal_area.height);
 
-                let x = if cursor_x + width > terminal_area.width {
-                    terminal_area.width.saturating_sub(width)
+                // `cursor_*` are absolute screen coordinates, so clamp
+                // against the area's absolute edges. The area's `x`/`y`
+                // are non-zero when rendering into the chrome area beside
+                // a left dock; using the bare width/height here would clamp
+                // relative to column 0 and pull the popup under the dock.
+                let right = terminal_area.x + terminal_area.width;
+                let bottom = terminal_area.y + terminal_area.height;
+
+                let x = if cursor_x + width > right {
+                    right.saturating_sub(width)
                 } else {
                     cursor_x
-                };
+                }
+                .max(terminal_area.x);
 
                 let y = match self.position {
                     PopupPosition::AtCursor => cursor_y,
                     PopupPosition::BelowCursor => {
-                        if cursor_y + 1 + height > terminal_area.height {
+                        if cursor_y + 1 + height > bottom {
                             // Not enough space below, put above cursor
                             cursor_y.saturating_sub(height)
                         } else {
@@ -919,14 +930,17 @@ impl Popup {
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
-                // Clamp x and y to ensure popup stays within terminal bounds
-                let x = if x + width > terminal_area.width {
-                    terminal_area.width.saturating_sub(width)
+                // Clamp x and y to ensure popup stays within the area's
+                // absolute bounds (its `x`/`y` may be offset by a left dock).
+                let right = terminal_area.x + terminal_area.width;
+                let bottom = terminal_area.y + terminal_area.height;
+                let x = if x + width > right {
+                    right.saturating_sub(width)
                 } else {
                     x
                 };
-                let y = if y + height > terminal_area.height {
-                    terminal_area.height.saturating_sub(height)
+                let y = if y + height > bottom {
+                    bottom.saturating_sub(height)
                 } else {
                     y
                 };
@@ -943,8 +957,8 @@ impl Popup {
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
-                let x = (terminal_area.width.saturating_sub(width)) / 2;
-                let y = (terminal_area.height.saturating_sub(height)) / 2;
+                let x = terminal_area.x + (terminal_area.width.saturating_sub(width)) / 2;
+                let y = terminal_area.y + (terminal_area.height.saturating_sub(height)) / 2;
                 Rect {
                     x,
                     y,
@@ -962,8 +976,8 @@ impl Popup {
                 let height = ((terminal_area.height as u32 * h_pct) / 100) as u16;
                 let width = width.max(1).min(terminal_area.width);
                 let height = height.max(1).min(terminal_area.height);
-                let x = (terminal_area.width.saturating_sub(width)) / 2;
-                let y = (terminal_area.height.saturating_sub(height)) / 2;
+                let x = terminal_area.x + (terminal_area.width.saturating_sub(width)) / 2;
+                let y = terminal_area.y + (terminal_area.height.saturating_sub(height)) / 2;
                 Rect {
                     x,
                     y,
@@ -977,12 +991,16 @@ impl Popup {
                     .content_height()
                     .min(self.max_height)
                     .min(terminal_area.height);
-                // Position in bottom right, leaving 2 rows for status bar
-                let x = terminal_area.width.saturating_sub(width);
-                let y = terminal_area
-                    .height
-                    .saturating_sub(height)
-                    .saturating_sub(2);
+                // Position in bottom right of the area, leaving 2 rows for
+                // the status bar. Offset by the area's `x`/`y` so the popup
+                // hugs the chrome's right edge (beside a left dock) rather
+                // than floating mid-screen.
+                let x = terminal_area.x + terminal_area.width.saturating_sub(width);
+                let y = terminal_area.y
+                    + terminal_area
+                        .height
+                        .saturating_sub(height)
+                        .saturating_sub(2);
                 Rect {
                     x,
                     y,
@@ -998,11 +1016,13 @@ impl Popup {
                     .min(terminal_area.height);
                 // Reserve the rightmost column for the editor scrollbar.
                 // Without the reservation, a popup that overflows the
-                // right edge gets clamped flush to `terminal_area.width`
+                // right edge gets clamped flush to the area's right edge
                 // and its right border paints over the scrollbar of the
-                // split underneath.
-                let max_x = terminal_area.width.saturating_sub(width).saturating_sub(1);
-                let x = x.min(max_x);
+                // split underneath. The right edge is absolute so the
+                // clamp respects a left-dock offset.
+                let right = terminal_area.x + terminal_area.width;
+                let max_x = right.saturating_sub(width).saturating_sub(1);
+                let x = x.min(max_x).max(terminal_area.x);
                 // Sit the popup's bottom border on the row immediately
                 // above the status bar. Anchoring to `status_row` (rather
                 // than `terminal_area.height - 2`) keeps the popup hugging
@@ -1670,6 +1690,64 @@ mod tests {
         let area = popup_below.calculate_area(terminal_area, Some((20, 10)));
         assert_eq!(area.x, 20);
         assert_eq!(area.y, 11); // One row below cursor
+    }
+
+    /// Popups computed against a dock-offset area (`x > 0`, e.g. the
+    /// `chrome_area` to the right of the orchestrator left dock) must stay
+    /// inside that area instead of being placed relative to column 0 and
+    /// bleeding left under the dock. Regression test for the same class of
+    /// bug as the keybinding-editor modal centering.
+    #[test]
+    fn test_popup_area_respects_left_dock_offset() {
+        let theme = crate::view::theme::Theme::load_builtin(theme::THEME_DARK).unwrap();
+        // 34-column left dock carved off a 120x40 screen.
+        let chrome = Rect {
+            x: 34,
+            y: 0,
+            width: 120 - 34,
+            height: 40,
+        };
+
+        let popup = Popup::text(vec!["test".to_string()], &theme)
+            .with_width(30)
+            .with_max_height(10);
+
+        // Centered: centred within the chrome area, never under the dock.
+        let centered = popup
+            .clone()
+            .with_position(PopupPosition::Centered)
+            .calculate_area(chrome, None);
+        assert!(centered.x >= chrome.x, "centered popup bleeds under dock");
+        assert_eq!(centered.x, chrome.x + (chrome.width - 30) / 2);
+        assert!(centered.x + centered.width <= chrome.x + chrome.width);
+
+        // CenteredOverlay: same — offset by the area origin.
+        let overlay = popup
+            .clone()
+            .with_position(PopupPosition::CenteredOverlay {
+                width_pct: 50,
+                height_pct: 50,
+            })
+            .calculate_area(chrome, None);
+        assert!(overlay.x >= chrome.x);
+        assert!(overlay.x + overlay.width <= chrome.x + chrome.width);
+
+        // BottomRight: hugs the chrome's right/bottom edges.
+        let br = popup
+            .clone()
+            .with_position(PopupPosition::BottomRight)
+            .calculate_area(chrome, None);
+        assert_eq!(br.x + br.width, chrome.x + chrome.width);
+        assert!(br.x >= chrome.x);
+
+        // Cursor-anchored near the right edge: clamped to the chrome's
+        // absolute right edge, not column `chrome.width`.
+        let below = popup
+            .clone()
+            .with_position(PopupPosition::BelowCursor)
+            .calculate_area(chrome, Some((115, 10)));
+        assert!(below.x >= chrome.x, "cursor popup bleeds under dock");
+        assert!(below.x + below.width <= chrome.x + chrome.width);
     }
 
     #[test]

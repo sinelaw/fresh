@@ -149,6 +149,12 @@ impl Editor {
                 self.set_status_message(t!("split.error", error = e.to_string()).to_string());
             }
         }
+
+        // A new split changes every sibling pane's width/height. Reflow
+        // through the single layout funnel so existing terminals shrink to
+        // their new pane immediately, instead of waiting for the next
+        // unrelated resize trigger.
+        self.relayout();
     }
 
     /// Close the active split
@@ -228,6 +234,11 @@ impl Editor {
                 );
             }
         }
+
+        // Closing a split gives its space back to the surviving panes.
+        // Reflow through the single layout funnel so their terminals grow
+        // into the reclaimed area.
+        self.relayout();
     }
 
     /// Switch to next split
@@ -276,7 +287,7 @@ impl Editor {
         }
 
         if was_maximized {
-            self.active_window_mut().resize_visible_terminals();
+            self.relayout();
         }
 
         // Ensure the active tab is visible in the newly active split
@@ -346,8 +357,8 @@ impl Editor {
 
             let percent = (delta * 100.0) as i32;
             self.set_status_message(t!("split.size_adjusted", percent = percent).to_string());
-            // Resize visible terminals to match new split dimensions
-            self.active_window_mut().resize_visible_terminals();
+            // Split ratios changed: reflow through the single layout funnel.
+            self.relayout();
         }
     }
 
@@ -366,8 +377,8 @@ impl Editor {
                 } else {
                     self.set_status_message(t!("split.restored").to_string());
                 }
-                // Resize visible terminals to match new split dimensions
-                self.active_window_mut().resize_visible_terminals();
+                // Maximize/restore changed the split sizes: reflow via funnel.
+                self.relayout();
             }
             Err(e) => self.set_status_message(e),
         }

@@ -894,14 +894,23 @@ impl IndentCalculator {
         let tree = parser.parse(&source, None)?;
         let root = tree.root_node();
 
-        // Find capture indices for @indent and @dedent
+        // Find capture indices for @indent, @dedent and @dedent_after
         let mut indent_capture_idx = None;
         let mut dedent_capture_idx = None;
+        // `@dedent_after` marks statements that end the current block's
+        // straight-line flow (Python `return`/`pass`/`raise`/`break`/
+        // `continue`). When the cursor is at the end of such a statement,
+        // pressing Enter dedents the new line one level — matching VS Code,
+        // PyCharm and neovim. Languages opt in by adding the capture to their
+        // `indents.scm`; those that don't are unaffected.
+        let mut dedent_after_capture_idx = None;
         for (i, name) in query.capture_names().iter().enumerate() {
             if *name == "indent" {
                 indent_capture_idx = Some(i);
             } else if *name == "dedent" {
                 dedent_capture_idx = Some(i);
+            } else if *name == "dedent_after" {
+                dedent_after_capture_idx = Some(i);
             }
         }
 
@@ -1015,6 +1024,18 @@ impl IndentCalculator {
         // the cursor means a block has just been opened — pressing Enter
         // should go one level deeper.
         let mut indent_opens_on_cursor_line = false;
+        // Distinguishes "this line *opens* a new block" from "the cursor is on a
+        // statement *inside* an already-open block". Languages whose body is its
+        // own node (Python's `(block)`, captured as @indent separately from the
+        // compound statement) start that body node at the block's first
+        // statement — on the cursor's line — so `indent_opens_on_cursor_line`
+        // alone fires even when we are merely continuing the block, producing a
+        // spurious extra level (issue #2192). A freshly-opened block instead
+        // surfaces as an *empty* @indent node sitting exactly at the cursor
+        // (e.g. `def foo():` yields `block 10..10`; `if x:` yields the inner
+        // `block 20..20`). Use that as the precise "a block was just opened"
+        // signal.
+        let mut empty_indent_node_at_cursor = false;
         // Tree-sitter analogue of the old "line ends with `}`" byte rescue:
         // if the last token on the cursor's line is itself captured as @dedent
         // (any closing delimiter the language declares — `}`, `end`, `fi`,
@@ -1023,6 +1044,10 @@ impl IndentCalculator {
         // produces asymmetric results when the `@dedent` token sits on the
         // boundary of an `@indent` node).
         let mut last_nonws_is_dedent_capture = false;
+        // Set when the cursor's line is a flow-exit statement captured as
+        // `@dedent_after` (see capture-index lookup above): the new line should
+        // drop one level out of the block this statement closes.
+        let mut cursor_line_is_dedent_after = false;
 
         // Manually iterate through matches to count indent/dedent captures
         let mut captures = query_cursor.captures(query, root, source.as_slice());
@@ -1054,6 +1079,12 @@ impl IndentCalculator {
                         if cursor_inside_node && !node_on_previous_line {
                             indent_opens_on_cursor_line = true;
                         }
+
+                        // An empty @indent node sitting exactly at the cursor is
+                        // a block that has just been opened with no body yet.
+                        if node_start == cursor_offset && node_end == cursor_offset {
+                            empty_indent_node_at_cursor = true;
+                        }
                     }
                 }
 
@@ -1076,7 +1107,34 @@ impl IndentCalculator {
                         }
                     }
                 }
+
+                // Handle @dedent_after captures: the cursor's line is a
+                // flow-exit statement when one of these nodes starts on this
+                // line and covers the line's last non-whitespace token.
+                // Requiring the node to start on the cursor's line avoids
+                // dedenting in the middle of a multi-line statement.
+                if let Some(idx) = dedent_after_capture_idx {
+                    if capture.index == idx as u32 {
+                        if let Some(last_pos) = last_nonws_offset {
+                            if node_start >= line_start_offset
+                                && node_start <= last_pos
+                                && last_pos < node_end
+                            {
+                                cursor_line_is_dedent_after = true;
+                            }
+                        }
+                    }
+                }
             }
+        }
+
+        // Flow-exit statement: dedent one level relative to the statement's own
+        // indent. Takes priority over the @dedent maintain branch below so that
+        // `return foo()` (which ends in `)`, a @dedent token) dedents just like
+        // `return 42`.
+        if cursor_line_is_dedent_after {
+            let line_indent = Self::get_current_line_indent(buffer, position, tab_size);
+            return Some(line_indent.saturating_sub(tab_size));
         }
 
         // When the current line ends with a token captured as @dedent (`}`,
@@ -1104,7 +1162,20 @@ impl IndentCalculator {
         // filter excludes it. Detect this structurally: if a `@indent` node
         // opens on the cursor's line and contains the cursor, treat it as one
         // additional level of nesting.
-        if indent_delta == 0 && indent_opens_on_cursor_line {
+        //
+        // The rescue must only fire when the line genuinely *opens* a block, not
+        // when the cursor is on a statement *inside* an already-open block whose
+        // body node (e.g. Python's `(block)`) happens to start on this line. Two
+        // signals confirm a real opener: an empty @indent node at the cursor (a
+        // bodyless block just opened, e.g. after `def foo():` or `if x:`), or
+        // the opener being at the outermost level (`cursor_indent_count == 0`,
+        // e.g. Bash `if true; then`, where no separate body node is emitted).
+        // Without this guard, pressing Enter after `\tmy_var = 42` inside a
+        // function wrongly indented an extra level (issue #2192).
+        if indent_delta == 0
+            && indent_opens_on_cursor_line
+            && (empty_indent_node_at_cursor || cursor_indent_count == 0)
+        {
             indent_delta = 1;
             found_any_captures = true;
         }
@@ -1320,6 +1391,122 @@ mod tests {
         assert!(indent.is_some());
         // Should suggest indenting
         assert!(indent.unwrap() >= 4);
+    }
+
+    // ============================================================================
+    // Issue #2192: pressing Enter at the end of a statement *inside* a Python
+    // block must keep the current indent, not add a spurious second level.
+    //
+    // The cursor sits at the END of the statement line (where Enter is pressed),
+    // i.e. there is no trailing newline, so `buffer.len()` is the end of the
+    // statement. Before the fix these returned 8 (two levels) because Python's
+    // `(block)` node starts at the block's first statement — on the cursor's
+    // line — which tripped the "a block opens on this line" rescue.
+    // ============================================================================
+
+    #[test]
+    fn test_python_enter_after_statement_keeps_indent_tabs() {
+        // Case 1 from the issue (tab-indented body).
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n\tmy_var = 42");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(
+            indent,
+            Some(4),
+            "Enter after a statement inside a function body must stay at one level (got {:?})",
+            indent
+        );
+    }
+
+    #[test]
+    fn test_python_enter_after_statement_keeps_indent_spaces() {
+        // Same as above but space-indented: the bug was not tab-specific.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n    my_var = 42");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(indent, Some(4), "got {:?}", indent);
+    }
+
+    #[test]
+    fn test_python_enter_after_return_dedents() {
+        // Case 2 from the issue. The doubling bug returned 8; the correct
+        // behaviour (VS Code / PyCharm / neovim) is to dedent one level out of
+        // the function body after `return`.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n\treturn 42");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(
+            indent,
+            Some(0),
+            "Enter after `return` should dedent one level (got {:?})",
+            indent
+        );
+    }
+
+    #[test]
+    fn test_python_flow_exit_statements_dedent() {
+        // `pass`, `raise`, `break`, `continue` all end the block's flow and
+        // dedent the next line one level, just like `return`.
+        let mut calc = IndentCalculator::new();
+        for stmt in ["pass", "raise ValueError", "break", "continue"] {
+            let src = format!("while True:\n\tif x:\n\t\t{stmt}");
+            let buffer = Buffer::from_str_test(&src);
+            let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+            assert_eq!(
+                indent,
+                Some(4),
+                "Enter after `{stmt}` (at col 8) should dedent to col 4 (got {:?})",
+                indent
+            );
+        }
+    }
+
+    #[test]
+    fn test_python_return_with_call_dedents_like_plain_return() {
+        // `return foo()` ends in `)` (a @dedent token); it must dedent the same
+        // way as `return 42` rather than merely maintaining indent.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n\treturn bar()");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(indent, Some(0), "got {:?}", indent);
+    }
+
+    #[test]
+    fn test_python_non_flow_statement_does_not_dedent() {
+        // A plain assignment must NOT dedent — only flow-exit statements do.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n\tx = returns_value()");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(
+            indent,
+            Some(4),
+            "`x = returns_value()` is not a flow-exit statement (got {:?})",
+            indent
+        );
+    }
+
+    #[test]
+    fn test_python_enter_after_nested_statement_keeps_indent() {
+        // A statement two levels deep must stay at two levels (8), not jump to 12.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n    if x:\n        my_var = 42");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(indent, Some(8), "got {:?}", indent);
+    }
+
+    #[test]
+    fn test_python_enter_after_block_header_still_indents() {
+        // Regression guard: the fix must NOT break the genuine "open a block"
+        // case. Enter after a nested `if x:` header should go one level deeper.
+        let mut calc = IndentCalculator::new();
+        let buffer = Buffer::from_str_test("def foo():\n    if x:");
+        let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Python, 4);
+        assert_eq!(
+            indent,
+            Some(8),
+            "Enter after a block header must still indent one level deeper (got {:?})",
+            indent
+        );
     }
 
     #[test]

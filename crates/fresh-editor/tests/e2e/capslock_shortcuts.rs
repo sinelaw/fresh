@@ -37,6 +37,12 @@ fn test_capslock_ctrl_a_selects_all() {
 fn test_capslock_ctrl_c_copies() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Internal-only clipboard so the real Ctrl+C/V flow is synchronous and
+    // isolated from the host. The system/OSC52 path reads the clipboard
+    // asynchronously, which never resolves in headless CI and races the
+    // assertion (CONTRIBUTING.md "Testing" #4: internal clipboard mode).
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
     harness.type_text("hello").unwrap();
 
     // Select all with normal Ctrl+A
@@ -61,6 +67,12 @@ fn test_capslock_ctrl_c_copies() {
 fn test_capslock_ctrl_v_pastes() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
+    // Internal-only clipboard so the real Ctrl+C/V flow is synchronous and
+    // isolated from the host. The system/OSC52 path reads the clipboard
+    // asynchronously, which never resolves in headless CI and races the
+    // assertion (CONTRIBUTING.md "Testing" #4: internal clipboard mode).
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
     harness.type_text("hello").unwrap();
 
     // Select all and copy normally
@@ -84,6 +96,12 @@ fn test_capslock_ctrl_v_pastes() {
 #[test]
 fn test_capslock_ctrl_x_cuts() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Internal-only clipboard so the real Ctrl+X/V flow is synchronous and
+    // isolated from the host. The system/OSC52 path reads the clipboard
+    // asynchronously, which never resolves in headless CI and races the
+    // assertion (CONTRIBUTING.md "Testing" #4: internal clipboard mode).
+    harness.editor_mut().set_clipboard_for_test(String::new());
 
     harness.type_text("hello").unwrap();
 

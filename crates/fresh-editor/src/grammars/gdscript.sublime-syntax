@@ -1,0 +1,329 @@
+%YAML 1.2
+---
+# GDScript syntax highlighting for Fresh editor.
+#
+# Based on https://github.com/beefsack/GDScript-sublime/blob/master/GDScript.sublime-syntax
+# by Michael Alexander, licensed under MIT.
+#
+# MIT License notice from the upstream project:
+# Copyright (c) 2016 Michael Alexander
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# Useful references for GDScript lexical analysis:
+# - https://github.com/godotengine/godot-docs/blob/master/extensions/gdscript.py
+# - https://github.com/godotengine/godot/blob/master/modules/gdscript/gdscript_tokenizer.cpp
+name: GDScript
+file_extensions:
+  - gd
+scope: source.gdscript
+
+variables:
+  # Godot doesn't allow single underscore as var name, for example, `var x = _`
+  # and `func f(_)` are illegal. `func _()` and `_()`, however, are legal so
+  # this inconsistency might be a Godot bug.
+  identifier: \b[a-zA-Z_][a-zA-Z_0-9]*\b
+
+contexts:
+  prototype:
+    - include: comments
+    - include: line-continuation
+
+  main:
+    - include: docstrings
+    - include: expressions
+    - include: assignments
+
+  docstrings:
+    - match: ^\s*(""")
+      captures:
+        1: punctuation.definition.comment.begin.gdscript
+      push:
+        - meta_scope: comment.block.documentation.gdscript
+        - meta_include_prototype: false
+        - include: character-escapes
+        - match: \"""
+          scope: punctuation.definition.comment.end.gdscript
+          pop: true
+
+  literals:
+    - include: strings
+    - match: '@"'
+      push:
+        - meta_scope: string.quoted.double.node-path.gdscript
+        - match: (?<!\\)"
+          pop: true
+    - match: \b(?i:0x[0-9A-Fa-f]*)\b
+      scope: constant.numeric.integer.hexadecimal.gdscript
+    - match: '\b(?i:(\d+\.\d*(e[\-\+]?\d+)?))\b'
+      scope: constant.numeric.float.gdscript
+    - match: '\b(?i:(\.\d+(e[\-\+]?\d+)?))\b'
+      scope: constant.numeric.float.gdscript
+    - match: '\b(?i:(\d+e[\-\+]?\d+))\b'
+      scope: constant.numeric.float.gdscript
+    - match: \b\d+\b
+      scope: constant.numeric.integer.gdscript
+
+  expressions:
+    - include: literals
+    - include: builtin-types
+    - include: dictionaries
+    - match: \b(?i:elif|else|for|if|while|break|continue|pass|return|match)\b
+      scope: keyword.control.flow.gdscript
+    - match: \b(?i:&&|and|in|is|!|not|\|\||or)\b
+      scope: keyword.operator.logical.gdscript
+    - match: <=|>=|==|<|>|!=
+      scope: keyword.operator.comparison.gdscript
+    - match: \+=|-=|\*=|/=|%=|&=|\|=|\*|/|%|\+|-|<<|>>|&|\||\^|~
+      scope: keyword.operator.arithmetic.gdscript
+    - include: yields
+    - include: function-calls
+
+  assignments:
+    - match: "="
+      scope: keyword.operator.assignment.gdscript
+
+    - match: '^\s*(?i:(class))\s+({{identifier}})\s*'
+      captures:
+        1: storage.type.class.gdscript
+        2: entity.name.type.class.gdscript
+
+    - include: functions
+    - include: signals
+
+    - match: '(?i:\b(?:(onready)\s+)?(var))\s+({{identifier}})'
+      captures:
+        1: keyword.other.onready.gdscript
+        2: storage.type.var.gdscript
+        3: variable.other.gdscript
+    - match: '\b(?i:(const))\s+({{identifier}})'
+      captures:
+        1: storage.type.const.gdscript
+        2: variable.other.gdscript
+    - match: '\b(?i:(enum))\s+({{identifier}})?'
+      captures:
+        1: storage.type.enum.gdscript
+        2: entity.name.type.gdscript
+    - match: \b(?i:extends|assert|breakpoint)\b
+      scope: keyword.other.gdscript
+    - match: '(?<=extends)\s+{{identifier}}(\.({{identifier}}))?'
+      scope: entity.other.inherited-class.gdscript
+    - match: \b(?i:true|false|null)\b
+      scope: constant.language.gdscript
+    - match: \b(?i:export|tool)\b
+      scope: storage.modifier.static.gdscript
+    - match: \b(setget)\b\s*({{identifier}})?\s*(,)?\s*({{identifier}})?
+      captures:
+        1: keyword.operator.setget.gdscript
+        2: variable.function.setter.gdscript
+        3: punctuation.separator.parameters.gdscript
+        4: variable.function.getter.gdscript
+
+  comments:
+    - match: (#).*
+      scope: comment.line.number-sign.gdscript
+      captures:
+        1: punctuation.definition.comment.number-sign.gdscript
+
+  strings:
+    - match: \"""
+      scope: punctuation.definition.string.begin.gdscript
+      push:
+        - meta_scope: meta.string.gdscript string.quoted.double.block.gdscript
+        - meta_include_prototype: false
+        - include: character-escapes
+        - match: \"""
+          scope: punctuation.definition.string.end.gdscript
+          pop: true
+    # GDScript has double-quoted multiline strings but not single-quoted ones.
+    - match: \"
+      scope: punctuation.definition.string.begin.gdscript
+      push:
+        - meta_scope: meta.string.gdscript string.quoted.double.gdscript
+        - meta_include_prototype: false
+        - include: character-escapes
+        - match: \"
+          scope: punctuation.definition.string.end.gdscript
+          pop: true
+    - match: \'
+      scope: punctuation.definition.string.begin.gdscript
+      push:
+        - meta_scope: meta.string.gdscript string.quoted.single.gdscript
+        - meta_include_prototype: false
+        - include: character-escapes
+        - match: \'
+          scope: punctuation.definition.string.end.gdscript
+          pop: true
+
+  character-escapes:
+    - match: \\["'\\]
+      scope: constant.character.escape.gdscript
+
+  builtin-types:
+    # It is debatable whether these "built-in types" should be categorized as
+    # storage or support. This follows the upstream grammar's storage choice.
+    - match: \b(?:bool|int|float|String|funcref)\b
+      scope: storage.type.basic.gdscript
+    - match: '\b(?:Vector[23]|Rect2|Matrix32?|Plane|Quat|AABB|Transform)\b'
+      scope: storage.type.vector.gdscript
+    - match: \b(?:Color|Image|NodePath|RID|Object|InputEvent)\b
+      scope: storage.type.engine.gdscript
+    - match: '\b(Array|Dictionary|ByteArray|IntArray|FloatArray|StringArray|Vector[23]Array|ColorArray)\b'
+      scope: storage.type.container.gdscript
+
+  functions:
+    - match: ^\s*(?:(static|remote|sync|master|slave)\s+)?(func)\b
+      captures:
+        1: storage.modifier.gdscript
+        2: storage.type.function.gdscript
+      push:
+        - meta_scope: meta.function.gdscript
+        - match: '{{identifier}}'
+          scope: entity.name.function.gdscript
+        - match: (?=\()
+          set:
+            - meta_scope: meta.function.parameters.gdscript
+            - match: \(
+              scope: punctuation.section.parameters.begin.gdscript
+            - match: '{{identifier}}'
+              scope: variable.parameter.gdscript
+            - match: ','
+              scope: punctuation.separator.parameters.gdscript
+            - match: \)
+              scope: punctuation.section.parameters.end.gdscript
+              set:
+                - meta_scope: meta.function.gdscript
+                - include: start-func-body
+                - match: ->
+                  scope: keyword.operator.arrow.forward.gdscript
+                  set:
+                    - meta_scope: meta.function.return-type
+                    - include: start-func-body
+                    - include: builtin-types
+                    - match: \bvoid\b
+                      scope: storage.type.basic.gdscript
+                    - match: '{{identifier}}'
+                      scope: support.class.gdscript
+
+  start-func-body:
+    - match: ':'
+      scope: punctuation.section.function.begin.gdscript
+      pop: true
+
+  signals:
+    - match: ^\s*signal\b
+      scope: storage.type.signal.gdscript
+      push:
+        - meta_scope: meta.signal.gdscript
+        - match: '{{identifier}}'
+          scope: entity.name.signal.gdscript
+        - match: $
+          pop: true
+        - match: (?=\()
+          set:
+            - meta_scope: meta.signal.parameters.gdscript
+            - match: \(
+              scope: punctuation.section.parameters.begin.gdscript
+            - match: '{{identifier}}'
+              scope: variable.parameter.gdscript
+            - match: ','
+              scope: punctuation.separator.parameters.gdscript
+            - match: \)
+              scope: punctuation.section.parameters.end.gdscript
+              pop: true
+
+  dictionaries:
+    - match: '{'
+      scope: punctuation.section.mapping.begin.gdscript
+      set: dictionary-keys
+
+  dictionary-keys:
+    - meta_scope: meta.mapping.gdscript
+    - include: dictionary-close-pop
+    - match: '[:=]'
+      scope: punctuation.separator.mapping.key-value.gdscript
+      set: dictionary-values
+    - match: ','
+      scope: punctuation.separator.mapping.key-value.gdscript
+    - match: (?=\S)
+      set:
+        - meta_scope: meta.mapping.key.gdscript
+        - match: '{{identifier}}(?=\s*=)'
+          set: dictionary-keys
+        - match: '{{identifier}}(?=\s*[,}\n])'
+          scope: entity.name.enum.gdscript
+          set: dictionary-keys
+        - match: (?=\s*[:=])
+          set: dictionary-keys
+        - include: expressions
+
+  dictionary-values:
+    - meta_scope: meta.mapping.gdscript
+    - include: dictionary-close-pop
+    - match: ','
+      scope: punctuation.separator.mapping.gdscript
+      set: dictionary-keys
+    - match: (?=\S)
+      set:
+        - meta_scope: meta.mapping.value.gdscript
+        - include: dictionary-close-pop
+        - match: (?=\s*,)
+          set: dictionary-values
+        - include: expressions
+
+  dictionary-close-pop:
+    - match: '\s*(})'
+      captures:
+        1: punctuation.section.mapping.end.gdscript
+      pop: true
+
+  function-calls:
+    - match: '{{identifier}}\s*(?=\()'
+      scope: meta.function-call.gdscript variable.function.gdscript
+    - match: (?=\()
+      push:
+        - meta_scope: meta.function-call.arguments.gdscript
+        - include: arguments-list
+
+  yields:
+    - match: \byield\b
+      scope: keyword.control.flow.yield.gdscript
+      push:
+        - match: (?=\()
+          push:
+            - include: arguments-list
+        - match: ''
+          pop: true
+
+  arguments-list:
+    - match: \(
+      scope: punctuation.section.arguments.begin.gdscript
+    - include: expressions
+    - match: ','
+      scope: punctuation.separator.arguments.gdscript
+    - match: \)
+      scope: punctuation.section.arguments.end.gdscript
+      pop: true
+
+  line-continuation:
+    # From Sublime's built-in Python syntax, with slight modification.
+    - match: (\\)(.*)$\n?
+      captures:
+        1: punctuation.separator.continuation.line.gdscript
+        2: invalid.illegal.unexpected-text.gdscript

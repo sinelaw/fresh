@@ -5633,7 +5633,9 @@ impl JsEditorApi {
 
     /// Control a mounted floating panel's placement / focus without
     /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
-    /// "center", "focus", "blur". See `PluginCommand::FloatingPanelControl`.
+    /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
+    /// centered panel cover the whole frame over the dock). See
+    /// `PluginCommand::FloatingPanelControl`.
     #[qjs(rename = "floatingPanelControl")]
     pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
         self.command_sender
@@ -5775,6 +5777,46 @@ impl JsEditorApi {
     #[plugin_api(js_name = "clearAuthority")]
     pub fn clear_authority(&self) {
         let _ = self.command_sender.send(PluginCommand::ClearAuthority);
+    }
+
+    /// Attach to a remote agent that needs a live connection (an SSH host or a
+    /// `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous —
+    /// the editor spawns the carrier, bootstraps the agent and builds the
+    /// session in the background — and this returns a promise that settles on
+    /// the real outcome:
+    ///
+    ///   * resolves once the session (authority + window) is fully
+    ///     constructed, so a caller can keep its dialog open until there is a
+    ///     real session to show;
+    ///   * rejects with the failure reason (e.g. ssh "Could not resolve
+    ///     hostname") if the connect or window creation fails — in which case
+    ///     no window is created and the editor stays on its current authority.
+    ///
+    /// The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
+    /// plugins hand-build an object matching it.
+    #[plugin_api(async_promise, js_name = "attachRemoteAgent", ts_return = "void")]
+    #[qjs(rename = "_attachRemoteAgentStart")]
+    pub fn attach_remote_agent(
+        &self,
+        ctx: rquickjs::Ctx<'_>,
+        #[plugin_api(ts_type = "RemoteAgentSpec")] payload: rquickjs::Value<'_>,
+    ) -> u64 {
+        let json = js_to_json(&ctx, payload);
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::AttachRemoteAgent {
+            payload: json,
+            request_id: id,
+        });
+        id
+    }
+
+    /// Cancel any in-flight `attachRemoteAgent` connect — the New-Session
+    /// dialog's Cancel. The pending promise rejects with "cancelled" and the
+    /// background connect's late result is discarded, so no window is built.
+    /// A no-op when nothing is connecting.
+    #[plugin_api(js_name = "cancelRemoteAgent")]
+    pub fn cancel_remote_agent(&self) {
+        let _ = self.command_sender.send(PluginCommand::CancelRemoteAttach);
     }
 
     /// Activate an environment: set the live env recipe (`snippet` run in
@@ -6990,6 +7032,7 @@ impl QuickJsBackend {
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");
+                editor.attachRemoteAgent = _wrapAsync("_attachRemoteAgentStart", "attachRemoteAgent");
 
                 // Pull-based streaming search. Producers (host searcher tasks)
                 // write into shared state at full speed; the consumer drains

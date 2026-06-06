@@ -317,10 +317,58 @@ impl Editor {
             None
         };
         let anim_deadline = self.active_window().animations.next_deadline();
-        [lsp_progress_deadline, anim_deadline]
+        // Paste-pending deadline: the editor tick falls back to the
+        // internal clipboard if the async arboard read doesn't return
+        // by this point. Including it here makes the main loop wake
+        // exactly when the timeout needs to fire, so a hung clipboard
+        // owner can't block the UI past `PASTE_ASYNC_DEADLINE`.
+        let paste_deadline = self.next_paste_deadline();
+        // Note: the terminal-title poll deadline is intentionally NOT folded
+        // in here. This deadline path caps the loop's wait to one frame
+        // (~16ms) for smooth animation, which would turn the ~1s title poll
+        // into a 60Hz busy loop. The loop's existing 50ms idle poll is fine
+        // granularity to notice `terminal_titles_need_poll` going true.
+        [lsp_progress_deadline, anim_deadline, paste_deadline]
             .into_iter()
             .flatten()
             .min()
+    }
+
+    /// Earliest time a terminal tab needs its foreground-process title
+    /// re-polled, across all windows. `None` when no window has an
+    /// auto-named (non-explicit) terminal. Drives the event loop's periodic
+    /// wakeups so a tab reflects a command that starts or exits while the
+    /// UI is otherwise idle (the render that follows runs
+    /// `Window::sync_terminal_titles`).
+    pub fn terminal_title_poll_deadline(&self) -> Option<std::time::Instant> {
+        if !self.config.editor.terminal_auto_title {
+            return None;
+        }
+        let mut earliest: Option<std::time::Instant> = None;
+        for window in self.windows.values() {
+            let has_auto = window
+                .terminal_buffers
+                .keys()
+                .any(|b| !window.terminal_explicit_titles.contains(b));
+            if !has_auto {
+                continue;
+            }
+            let deadline = match window.terminal_fg_poll_at {
+                Some(last) => last + crate::app::terminal::FG_POLL_INTERVAL,
+                None => std::time::Instant::now(),
+            };
+            earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
+        }
+        earliest
+    }
+
+    /// Whether a terminal tab is due for a foreground-process title poll
+    /// (its deadline has passed). The event loop ORs this into its
+    /// `needs_render` decision so the periodic wakeup actually paints a
+    /// frame, matching how animations and the LSP spinner are handled.
+    pub fn terminal_titles_need_poll(&self) -> bool {
+        self.terminal_title_poll_deadline()
+            .is_some_and(|d| d <= std::time::Instant::now())
     }
 
     /// Get stored LSP diagnostics (for testing and external access)
@@ -368,11 +416,7 @@ impl Editor {
     /// Configure LSP server for a specific language
     pub fn set_lsp_config(&mut self, language: String, config: Vec<LspServerConfig>) {
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.set_language_configs(language, config);
         }
     }
@@ -425,6 +469,32 @@ impl Editor {
         self.request_restart(self.working_dir().to_path_buf());
     }
 
+    /// Install a new authority that owns a live connection, parking its
+    /// keepalive bundle so the connection survives the restart.
+    ///
+    /// Remote-agent backends (SSH-style, K8s) hold carrier processes,
+    /// reconnect/heartbeat tasks, and a Tokio handle that must outlive
+    /// the `Editor` rebuild — exactly the role of the daemon's
+    /// `session_keepalive` slot. The restart loop pairs
+    /// `take_pending_authority` with `take_pending_keepalive` and moves
+    /// the bundle into the process-/server-level keepalive, dropping the
+    /// previous one (tearing down the prior connection). Opaque
+    /// `Box<dyn Any + Send>` so core/main need not name the backend.
+    pub fn install_authority_with_keepalive(
+        &mut self,
+        authority: crate::services::authority::Authority,
+        keepalive: Box<dyn std::any::Any + Send>,
+        working_dir: std::path::PathBuf,
+    ) {
+        // Unlike `install_authority` (which re-opens the *current* working
+        // dir), a remote-agent attach must re-root the editor at the pod-side
+        // workspace — otherwise the explorer, quick-open, and open-file all
+        // operate on the local host path, which doesn't exist in the pod.
+        self.pending_keepalive = Some(keepalive);
+        self.pending_authority = Some(authority);
+        self.request_restart(working_dir);
+    }
+
     /// Restore the default local authority. Same destructive-restart
     /// semantics as `install_authority` — the caller never observes a
     /// half-transitioned editor.
@@ -440,6 +510,14 @@ impl Editor {
     /// restart to move the queued authority into the fresh editor.
     pub fn take_pending_authority(&mut self) -> Option<crate::services::authority::Authority> {
         self.pending_authority.take()
+    }
+
+    /// Take the keepalive bundle queued alongside a pending authority by
+    /// [`Self::install_authority_with_keepalive`]. Called by the restart
+    /// loop right beside `take_pending_authority` so the new connection's
+    /// carrier/tasks are parked before the old `Editor` is dropped.
+    pub fn take_pending_keepalive(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.pending_keepalive.take()
     }
 
     /// Directly replace the active authority without triggering a
@@ -471,15 +549,20 @@ impl Editor {
         // translation rides along for the same reason — LSP URIs need
         // to be host↔container-translated under the new authority.
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.set_long_running_spawner(self.authority.long_running_spawner.clone());
             lsp.set_path_translation(self.authority.path_translation.clone());
             lsp.set_workspace_trust(self.authority.workspace_trust.clone());
         }
+        // Re-point quick-open's file provider at the new backend. The provider
+        // captured the *previous* authority's filesystem + spawner; without
+        // this, quick-open's `git ls-files` keeps listing the old backend's
+        // files after an in-place authority swap (see
+        // `QuickOpenRegistry::set_file_backends`).
+        self.quick_open_registry.set_file_backends(
+            self.authority.filesystem.clone(),
+            self.authority.process_spawner.clone(),
+        );
         #[cfg(feature = "plugins")]
         {
             self.update_plugin_state_snapshot();
@@ -494,6 +577,107 @@ impl Editor {
                 "authority_changed",
                 crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
             );
+        }
+    }
+
+    /// The active window's id. The active session under the (in-progress)
+    /// per-session model; today pinned to the single window.
+    pub fn active_window_id(&self) -> fresh_core::WindowId {
+        self.active_window
+    }
+
+    /// Swap a *single* session's (window's) authority without a restart —
+    /// the per-session counterpart to [`Self::set_boot_authority`], which
+    /// fans one authority across every window at boot.
+    ///
+    /// Updates that window's `resources.authority` and re-points its LSP
+    /// backend (long-running spawner, path translation, trust); when the
+    /// window is the active one, mirrors into the editor-wide `authority`
+    /// cache the rest of the editor reads and fires the `authority_changed`
+    /// hook. This is the activation primitive a per-session attach (the
+    /// planned `attachRemoteAgent` op, and the Orchestrator session-swap)
+    /// builds on, and the seam that lets distinct windows hold distinct
+    /// authorities concurrently (`AUTHORITY_DESIGN.md` §"Evolution:
+    /// per-session authority").
+    ///
+    /// Caveat — why production attach still goes through the destructive
+    /// `install_authority` restart: like `set_boot_authority`, this does
+    /// not invalidate per-buffer captured filesystem handles or terminals
+    /// opened under the previous authority. Hot-swapping those safely is
+    /// the remaining per-window cache-invalidation work gated on the live
+    /// multi-session migration; until it lands, this method is the
+    /// infrastructure seam, exercised by tests and the activation path,
+    /// not yet the user-facing attach.
+    pub fn set_session_authority(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        authority: crate::services::authority::Authority,
+    ) {
+        let is_active = self.active_window == window_id;
+        if let Some(w) = self.windows.get_mut(&window_id) {
+            w.resources.authority = authority.clone();
+            // Each window owns its `LspManager` by construction (no longer an
+            // `Option`); re-point its backend handles, matching the active-
+            // window re-pointing `set_boot_authority` does for every window.
+            let lsp = &mut w.lsp;
+            lsp.set_long_running_spawner(authority.long_running_spawner.clone());
+            lsp.set_path_translation(authority.path_translation.clone());
+            lsp.set_workspace_trust(authority.workspace_trust.clone());
+        }
+        if is_active {
+            self.authority = authority;
+            // Re-point quick-open's file provider at the now-active backend
+            // (see `set_boot_authority` — same stale-capture fix).
+            self.quick_open_registry.set_file_backends(
+                self.authority.filesystem.clone(),
+                self.authority.process_spawner.clone(),
+            );
+            #[cfg(feature = "plugins")]
+            {
+                self.update_plugin_state_snapshot();
+                let label = self.authority.display_label.clone();
+                self.plugin_manager.read().unwrap().run_hook(
+                    "authority_changed",
+                    crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
+                );
+            }
+        }
+    }
+
+    /// Adopt the now-active window's authority into the editor-wide caches,
+    /// called by [`Self::set_active_window`] right after the active pointer
+    /// moves. The per-window `resources.authority` is already correct (each
+    /// window owns its own, re-pointed at creation / on
+    /// `set_session_authority`); this propagates it to the single editor-wide
+    /// `self.authority` the rest of the editor reads, and re-points quick-open
+    /// at the new backend's filesystem/spawner.
+    ///
+    /// `previous_label` is the active backend's label *before* the switch:
+    /// when it is unchanged (the overwhelmingly common local→local case, and
+    /// any switch between same-backend windows) we skip the
+    /// `authority_changed` hook + snapshot churn so window switching stays
+    /// cheap and the status bar doesn't flicker.
+    pub(crate) fn adopt_active_window_authority(&mut self, previous_label: &str) {
+        let new_authority = self.active_window().authority().clone();
+        let label_changed = new_authority.display_label != previous_label;
+        self.authority = new_authority;
+        // Re-point quick-open's file provider at the now-active backend (the
+        // same stale-capture fix `set_boot_authority` / `set_session_authority`
+        // apply). Cheap `Arc` clones, so it's fine to do on every switch.
+        self.quick_open_registry.set_file_backends(
+            self.authority.filesystem.clone(),
+            self.authority.process_spawner.clone(),
+        );
+        if label_changed {
+            #[cfg(feature = "plugins")]
+            {
+                self.update_plugin_state_snapshot();
+                let label = self.authority.display_label.clone();
+                self.plugin_manager.read().unwrap().run_hook(
+                    "authority_changed",
+                    crate::services::plugins::hooks::HookArgs::AuthorityChanged { label },
+                );
+            }
         }
     }
 
@@ -529,21 +713,6 @@ impl Editor {
     /// The active session's id.
     pub fn active_session_id(&self) -> fresh_core::WindowId {
         self.active_window
-    }
-
-    /// Find the window that owns `terminal_id`, if any. Terminals live in
-    /// their owning window's `terminal_manager`, so a background session's
-    /// terminal is invisible from `active_window()` — this scans every
-    /// window. Used to attribute `TerminalOutput`/`TerminalExited` to the
-    /// right session even when it isn't the focused one.
-    pub fn window_id_of_terminal(
-        &self,
-        terminal_id: crate::services::terminal::TerminalId,
-    ) -> Option<fresh_core::WindowId> {
-        self.windows
-            .iter()
-            .find(|(_, w)| w.terminal_manager.get(terminal_id).is_some())
-            .map(|(id, _)| *id)
     }
 
     /// True iff the editor-global dock is open AND currently holds
@@ -610,24 +779,14 @@ impl Editor {
         self.panel_ids_mut().insert(key, buffer_id);
     }
 
-    /// True iff the active session has an LSP manager attached.
-    /// Used by tests to assert that the active window's `lsp`
-    /// slot is populated. (Pre-0b this exercised the warm-swap
-    /// code; post-0b the LSP manager lives directly on `Window`,
-    /// so the assertion is just "this window's `lsp` is `Some`.")
+    /// True iff the active session has an LSP manager attached. Every
+    /// window now owns one by construction (`Window::new`), so this is
+    /// always true; the helper is retained as a regression guard so a
+    /// future change that reintroduces a manager-less window state is
+    /// caught by the orchestrator-window tests.
     #[doc(hidden)]
     pub fn has_lsp_for_test(&self) -> bool {
         self.lsp().is_some()
-    }
-
-    /// Inject an LspManager so tests can prove the swap routes
-    /// it through the session stash without depending on real
-    /// LSP server spawn.
-    #[doc(hidden)]
-    pub fn install_dummy_lsp_for_test(&mut self) {
-        let active = self.active_window;
-        self.active_window_mut().lsp =
-            Some(crate::services::lsp::manager::LspManager::new(active, None));
     }
 
     /// Most-recent `path_changed` event the editor received.
@@ -822,19 +981,20 @@ impl Editor {
         &mut self.active_window_mut().buffers
     }
 
-    /// Active window's LSP manager (`None` if no LSP has been spawned
-    /// for this window yet). Each window has its own LSP set rooted
-    /// at its project root.
+    /// Active window's LSP manager. Each window owns one rooted at its
+    /// project root (built in `Window::new`), so this is always
+    /// present; the `Option` is retained for call-site ergonomics and
+    /// because the active-window lookup is itself fallible in spirit.
     pub(crate) fn lsp(&self) -> Option<&crate::services::lsp::manager::LspManager> {
-        self.active_window().lsp.as_ref()
+        Some(&self.active_window().lsp)
     }
 
     /// Mutable handle to the active window's LSP manager. Same
     /// borrow caveat as `file_explorer_mut()`: at sites that also
     /// need to read other Editor fields, prefer direct
-    /// `self.windows.get_mut(&self.active_window).and_then(|w| w.lsp.as_mut())`.
+    /// `self.windows.get_mut(&self.active_window).map(|w| &mut w.lsp)`.
     pub(crate) fn lsp_mut(&mut self) -> Option<&mut crate::services::lsp::manager::LspManager> {
-        self.active_window_mut().lsp.as_mut()
+        Some(&mut self.active_window_mut().lsp)
     }
 
     /// Active window's split tree. Panics if the window has no
@@ -1034,9 +1194,29 @@ impl Editor {
     /// This implements debounced hover - we wait for the configured delay before
     /// sending the request to avoid spamming the LSP server on every mouse move.
     /// Returns true if a hover request was triggered.
+    /// True when the LSP status popup (the one opened by clicking the "LSP"
+    /// indicator in the status bar) is the top popup.
+    ///
+    /// Hover popups share the active state's popup stack with it, but the LSP
+    /// status popup is non-transient, so the hover dismiss-transients pass
+    /// leaves it in place and a hover would stack on top of it. Callers use
+    /// this to suppress hover while it is open.
+    pub(crate) fn is_lsp_status_popup_open(&self) -> bool {
+        self.active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, crate::view::popup::PopupResolver::LspStatus))
+    }
+
     pub fn check_mouse_hover_timer(&mut self) -> bool {
         // Check if mouse hover is enabled
         if !self.config.editor.mouse_hover_enabled {
+            return false;
+        }
+
+        // Suppress hover while the LSP status popup is open so the hover card
+        // doesn't stack on top of it.
+        if self.is_lsp_status_popup_open() {
             return false;
         }
 

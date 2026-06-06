@@ -215,10 +215,10 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     }
 
     // Variables
-    if scope_lower.starts_with("variable.parameter")
-        || scope_lower.starts_with("variable.other")
-        || scope_lower.starts_with("variable.language")
-    {
+    if scope_lower.starts_with("variable.language") {
+        return Some(HighlightCategory::VariableBuiltin);
+    }
+    if scope_lower.starts_with("variable.parameter") || scope_lower.starts_with("variable.other") {
         return Some(HighlightCategory::Variable);
     }
 
@@ -1937,6 +1937,18 @@ mod tests {
         assert_eq!(
             scope_to_category("punctuation.definition.comment.begin"),
             Some(HighlightCategory::Comment)
+        );
+    }
+
+    #[test]
+    fn test_variable_builtin_category() {
+        assert_eq!(
+            scope_to_category("variable.language.this"),
+            Some(HighlightCategory::VariableBuiltin)
+        );
+        assert_eq!(
+            scope_to_category("variable.language.super"),
+            Some(HighlightCategory::VariableBuiltin)
         );
     }
 

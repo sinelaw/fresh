@@ -487,18 +487,10 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_label(LeafId(split_id), label);
+                self.handle_set_split_label(split_id, label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .clear_label(split_id);
+                self.handle_clear_split_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 self.handle_get_split_by_label(label, request_id);
@@ -645,10 +637,7 @@ impl Editor {
                 self.handle_add_plugin_config_field(plugin_name, field_name, field_schema);
             }
             PluginCommand::ReloadThemes { apply_theme } => {
-                self.reload_themes();
-                if let Some(theme_name) = apply_theme {
-                    self.apply_theme(&theme_name);
-                }
+                self.handle_reload_themes(apply_theme);
             }
             PluginCommand::RegisterGrammar {
                 language,
@@ -700,13 +689,7 @@ impl Editor {
                 self.handle_await_next_key(callback_id);
             }
             PluginCommand::SetKeyCaptureActive { active } => {
-                self.active_window_mut().key_capture_active = active;
-                if !active {
-                    // Capture window closed; any leftover queued keys
-                    // were intended for the plugin and should not now
-                    // leak into the editor's normal dispatch.
-                    self.active_window_mut().pending_key_capture_buffer.clear();
-                }
+                self.handle_set_key_capture_active(active);
             }
             PluginCommand::SetPromptSuggestions {
                 suggestions,
@@ -715,54 +698,31 @@ impl Editor {
                 self.handle_set_prompt_suggestions(suggestions, selected_index);
             }
             PluginCommand::SetPromptInputSync { sync } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.sync_input_on_navigate = sync;
-                }
+                self.handle_set_prompt_input_sync(sync);
             }
             PluginCommand::SetPromptTitle { title } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.title = title;
-                }
+                self.handle_set_prompt_title(title);
             }
             PluginCommand::SetPromptFooter { footer } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.footer = footer;
-                }
+                self.handle_set_prompt_footer(footer);
             }
             PluginCommand::SetPromptToolbar { spec } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.toolbar_widget = spec;
-                }
+                self.handle_set_prompt_toolbar(spec);
             }
             PluginCommand::ToggleOverlayToolbarWidget { key } => {
                 self.toggle_overlay_toolbar_widget(&key);
             }
             PluginCommand::SetPromptStatus { status } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.status = status;
-                }
+                self.handle_set_prompt_status(status);
             }
             PluginCommand::SetPromptSelectedIndex { index } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    let len = prompt.suggestions.len();
-                    if len > 0 {
-                        let clamped = (index as usize).min(len - 1);
-                        prompt.selected_suggestion = Some(clamped);
-                    }
-                }
+                self.handle_set_prompt_selected_index(index);
             }
 
             // ==================== Session lifecycle ====================
             // See docs/internal/orchestrator-sessions-design.md.
             PluginCommand::CreateWindow { root, label } => {
-                if !root.is_absolute() {
-                    tracing::warn!(
-                        "CreateWindow rejected: root must be absolute, got {:?}",
-                        root
-                    );
-                } else {
-                    let _ = self.create_window_at(root, label);
-                }
+                self.handle_create_window(root, label);
             }
             PluginCommand::CreateWindowWithTerminal {
                 root,
@@ -795,34 +755,14 @@ impl Editor {
                 recursive,
                 request_id,
             } => {
-                let result = if let Some(ref bridge) = self.async_bridge {
-                    self.file_watcher_manager.watch(bridge, &path, recursive)
-                } else {
-                    Err(
-                        "watchPath: no async bridge — file watching is unavailable in this build"
-                            .to_string(),
-                    )
-                };
-                self.last_watch_response_for_test = Some((request_id, result.clone()));
-                self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
-                    request_id,
-                    result,
-                });
+                self.handle_watch_path(path, recursive, request_id);
             }
             PluginCommand::UnwatchPath { handle } => {
                 self.file_watcher_manager.unwatch(handle);
             }
 
             PluginCommand::PreviewWindowInRect { id } => {
-                // Validate: only honour if the session exists and
-                // is not the active one (no point previewing the
-                // session whose UI is already on screen).
-                self.preview_window_id = match id {
-                    Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => {
-                        Some(sid)
-                    }
-                    _ => None,
-                };
+                self.handle_preview_window_in_rect(id);
             }
 
             // ==================== Command/Mode Registration ====================
@@ -834,26 +774,14 @@ impl Editor {
                 token_name,
                 title,
             } => {
-                if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title)
-                {
-                    tracing::warn!("Failed to register statusbar element: {}", e);
-                }
+                self.handle_register_status_bar_element(plugin_name, token_name, title);
             }
             PluginCommand::SetStatusBarValue {
                 buffer_id,
                 key,
                 value,
             } => {
-                if let Err(e) =
-                    self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
-                {
-                    // Plugins compute the value asynchronously off a lagging
-                    // state snapshot, then publish to the buffer that was
-                    // active when they started. If that buffer closed in the
-                    // meantime the value is simply discarded — an expected,
-                    // benign race, not a misuse worth warning about.
-                    tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
-                }
+                self.handle_set_status_bar_value(buffer_id, key, value);
             }
             PluginCommand::UnregisterCommand { name } => {
                 self.handle_unregister_command(name);
@@ -878,17 +806,7 @@ impl Editor {
 
             // ==================== File/Navigation Commands ====================
             PluginCommand::OpenFileInBackground { path, window_id } => {
-                let route_to_inactive = match window_id {
-                    Some(id) if id != self.active_window && self.windows.contains_key(&id) => {
-                        Some(id)
-                    }
-                    _ => None,
-                };
-                if let Some(target) = route_to_inactive {
-                    self.handle_open_file_in_inactive_session(target, path);
-                } else {
-                    self.handle_open_file_in_background(path);
-                }
+                self.handle_open_file_in_background_routed(path, window_id);
             }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 return self.handle_open_file_at_location(path, line, column);
@@ -948,9 +866,7 @@ impl Editor {
                 self.handle_start_animation_virtual_buffer(id, buffer_id, kind);
             }
             PluginCommand::CancelAnimation { id } => {
-                self.active_window_mut()
-                    .animations
-                    .cancel(crate::view::animation::AnimationId::from_raw(id));
+                self.handle_cancel_animation(id);
             }
 
             // ==================== LSP Commands ====================
@@ -996,34 +912,27 @@ impl Editor {
                 self.handle_set_authority(payload);
             }
 
+            PluginCommand::AttachRemoteAgent {
+                payload,
+                request_id,
+            } => {
+                self.handle_attach_remote_agent(payload, request_id);
+            }
+
+            PluginCommand::CancelRemoteAttach => {
+                self.cancel_remote_attaches();
+            }
+
             PluginCommand::ClearAuthority => {
-                tracing::info!("Plugin cleared authority; restoring local");
-                self.clear_authority();
+                self.handle_clear_authority();
             }
 
             PluginCommand::SetEnv { snippet, dir } => {
-                // Activation runs repo-controlled code, so it's only honored in
-                // a Trusted workspace — defense in depth even though the plugin
-                // already gates on `workspaceTrustLevel()`.
-                use crate::services::workspace_trust::TrustLevel;
-                if self.authority.workspace_trust.level() == TrustLevel::Trusted {
-                    self.authority
-                        .env_provider
-                        .set(snippet, dir.map(std::path::PathBuf::from));
-                    // Re-evaluate already-running tooling under the new env.
-                    self.request_restart(self.working_dir().to_path_buf());
-                } else {
-                    self.active_window_mut().status_message =
-                        Some("Workspace not trusted — cannot activate environment".to_string());
-                }
+                self.handle_set_env(snippet, dir);
             }
 
             PluginCommand::ClearEnv => {
-                let was_active = self.authority.env_provider.is_active();
-                self.authority.env_provider.clear();
-                if was_active {
-                    self.request_restart(self.working_dir().to_path_buf());
-                }
+                self.handle_clear_env();
             }
 
             PluginCommand::SetRemoteIndicatorState { state } => {
@@ -1173,11 +1082,7 @@ impl Editor {
 
             // ==================== Review Diff Commands ====================
             PluginCommand::SetReviewDiffHunks { hunks } => {
-                self.active_window_mut().review_hunks = hunks;
-                tracing::debug!(
-                    "Set {} review hunks",
-                    self.active_window_mut().review_hunks.len()
-                );
+                self.handle_set_review_diff_hunks(hunks);
             }
 
             // ==================== Vi Mode Commands ====================
@@ -1326,26 +1231,10 @@ impl Editor {
                 self.flush_layout();
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                self.active_window_mut()
-                    .composite_next_hunk(split_id, buffer_id);
+                self.handle_composite_next_hunk(buffer_id);
             }
             PluginCommand::CompositePrevHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                self.active_window_mut()
-                    .composite_prev_hunk(split_id, buffer_id);
+                self.handle_composite_prev_hunk(buffer_id);
             }
 
             // ==================== Buffer Groups ====================
@@ -1535,6 +1424,360 @@ impl Editor {
             }
         }
         Ok(())
+    }
+
+    // ── Delegated handlers extracted from the dispatch match ─────────────
+
+    fn handle_watch_path(&mut self, path: std::path::PathBuf, recursive: bool, request_id: u64) {
+        let result = if let Some(ref bridge) = self.async_bridge {
+            self.file_watcher_manager.watch(bridge, &path, recursive)
+        } else {
+            Err(
+                "watchPath: no async bridge — file watching is unavailable in this build"
+                    .to_string(),
+            )
+        };
+        self.last_watch_response_for_test = Some((request_id, result.clone()));
+        self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
+            request_id,
+            result,
+        });
+    }
+
+    fn handle_set_env(&mut self, snippet: String, dir: Option<String>) {
+        // Activation runs repo-controlled code, so it's only honored in
+        // a Trusted workspace — defense in depth even though the plugin
+        // already gates on `workspaceTrustLevel()`.
+        use crate::services::workspace_trust::TrustLevel;
+        if self.authority.workspace_trust.level() == TrustLevel::Trusted {
+            self.authority
+                .env_provider
+                .set(snippet, dir.map(std::path::PathBuf::from));
+            // Re-evaluate already-running tooling under the new env.
+            self.request_restart(self.working_dir().to_path_buf());
+        } else {
+            self.active_window_mut().status_message =
+                Some("Workspace not trusted — cannot activate environment".to_string());
+        }
+    }
+
+    fn handle_clear_env(&mut self) {
+        let was_active = self.authority.env_provider.is_active();
+        self.authority.env_provider.clear();
+        if was_active {
+            self.request_restart(self.working_dir().to_path_buf());
+        }
+    }
+
+    fn handle_open_file_in_background_routed(
+        &mut self,
+        path: std::path::PathBuf,
+        window_id: Option<fresh_core::WindowId>,
+    ) {
+        let route_to_inactive =
+            window_id.filter(|&id| id != self.active_window && self.windows.contains_key(&id));
+        if let Some(target) = route_to_inactive {
+            self.handle_open_file_in_inactive_session(target, path);
+        } else {
+            self.handle_open_file_in_background(path);
+        }
+    }
+
+    // ── Handlers extracted from the dispatch match ───────────────────────
+
+    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_label(LeafId(split_id), label);
+    }
+
+    fn handle_clear_split_label(&mut self, split_id: SplitId) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .clear_label(split_id);
+    }
+
+    fn handle_reload_themes(&mut self, apply_theme: Option<String>) {
+        self.reload_themes();
+        if let Some(theme_name) = apply_theme {
+            self.apply_theme(&theme_name);
+        }
+    }
+
+    fn handle_set_key_capture_active(&mut self, active: bool) {
+        self.active_window_mut().key_capture_active = active;
+        if !active {
+            // Capture window closed; any leftover queued keys were intended
+            // for the plugin and should not leak into normal dispatch.
+            self.active_window_mut().pending_key_capture_buffer.clear();
+        }
+    }
+
+    fn handle_set_prompt_input_sync(&mut self, sync: bool) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.sync_input_on_navigate = sync;
+        }
+    }
+
+    fn handle_set_prompt_title(&mut self, title: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.title = title;
+        }
+    }
+
+    fn handle_set_prompt_footer(&mut self, footer: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.footer = footer;
+        }
+    }
+
+    fn handle_set_prompt_toolbar(&mut self, spec: Option<fresh_core::api::WidgetSpec>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.toolbar_widget = spec;
+        }
+    }
+
+    fn handle_set_prompt_status(&mut self, status: String) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.status = status;
+        }
+    }
+
+    fn handle_set_prompt_selected_index(&mut self, index: u32) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            let len = prompt.suggestions.len();
+            if len > 0 {
+                prompt.selected_suggestion = Some((index as usize).min(len - 1));
+            }
+        }
+    }
+
+    fn handle_create_window(&mut self, root: std::path::PathBuf, label: String) {
+        if !root.is_absolute() {
+            tracing::warn!(
+                "CreateWindow rejected: root must be absolute, got {:?}",
+                root
+            );
+        } else {
+            let _ = self.create_window_at(root, label);
+        }
+    }
+
+    fn handle_preview_window_in_rect(&mut self, id: Option<fresh_core::WindowId>) {
+        // Only honour if the session exists and is not the active one
+        // (no point previewing the session whose UI is already on screen).
+        self.preview_window_id = match id {
+            Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => Some(sid),
+            _ => None,
+        };
+    }
+
+    fn handle_register_status_bar_element(
+        &mut self,
+        plugin_name: String,
+        token_name: String,
+        title: String,
+    ) {
+        if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title) {
+            tracing::warn!("Failed to register statusbar element: {}", e);
+        }
+    }
+
+    fn handle_set_status_bar_value(&mut self, buffer_id: u64, key: String, value: String) {
+        if let Err(e) =
+            self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
+        {
+            // Plugins compute asynchronously off a lagging state snapshot, so
+            // the target buffer may have closed — an expected, benign race.
+            tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
+        }
+    }
+
+    fn handle_cancel_animation(&mut self, id: u64) {
+        self.active_window_mut()
+            .animations
+            .cancel(crate::view::animation::AnimationId::from_raw(id));
+    }
+
+    fn handle_clear_authority(&mut self) {
+        tracing::info!("Plugin cleared authority; restoring local");
+        self.clear_authority();
+    }
+
+    fn handle_set_review_diff_hunks(&mut self, hunks: Vec<fresh_core::api::ReviewHunk>) {
+        self.active_window_mut().review_hunks = hunks;
+        tracing::debug!(
+            "Set {} review hunks",
+            self.active_window_mut().review_hunks.len()
+        );
+    }
+
+    fn handle_composite_next_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_next_hunk(split_id, buffer_id);
+    }
+
+    fn handle_composite_prev_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_prev_hunk(split_id, buffer_id);
+    }
+
+    // ── Virtual-buffer display configuration ────────────────────────────
+
+    /// Apply the three display flags (line numbers, cursor visibility,
+    /// editing lock) that every `create_virtual_buffer_*` command sets
+    /// on the newly-created buffer's state.
+    fn configure_vbuf_display(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+        }
+    }
+
+    // ── Virtual-buffer-in-split sub-paths ───────────────────────────────
+
+    /// Utility-dock fast path: a leaf with `dock_leaf`'s role already exists,
+    /// so attach the new virtual buffer there instead of spawning a new split.
+    #[allow(clippy::too_many_arguments)]
+    fn route_vbuf_to_existing_dock(
+        &mut self,
+        dock_leaf: crate::model::event::LeafId,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        panel_id: Option<&str>,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        request_id: Option<u64>,
+    ) {
+        // Capture the source split *before* create_virtual_buffer tabs the
+        // new buffer into it; we drop that phantom tab after the dock attach.
+        let source_split_before_create = self.split_manager().active_split();
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode, read_only);
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        if let Some(pid) = panel_id {
+            self.panel_ids_mut().insert(pid.to_string(), buffer_id);
+        }
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
+            return;
+        }
+        // Swap the dock leaf's active buffer to the new one and add it as a tab.
+        self.split_manager_mut().set_active_split(dock_leaf);
+        self.active_window_mut()
+            .set_pane_buffer(dock_leaf, buffer_id);
+        // Drop the phantom tab from the source split.
+        if dock_leaf != source_split_before_create {
+            if let Some(source_view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&source_split_before_create)
+            {
+                source_view_state.remove_buffer(buffer_id);
+            }
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: buffer_id.0 as u64,
+                split_id: Some(dock_leaf.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+        tracing::info!(
+            "Routed virtual buffer '{}' into existing utility dock {:?}",
+            name,
+            dock_leaf
+        );
+    }
+
+    /// Idempotent panel update: `panel_name` already maps to a live buffer,
+    /// so just refresh its content and focus the split it lives in.
+    fn update_existing_vbuf_panel(
+        &mut self,
+        existing_buffer_id: crate::model::event::BufferId,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        request_id: Option<u64>,
+        panel_name: &str,
+    ) {
+        match self.set_virtual_buffer_content(existing_buffer_id, entries) {
+            Ok(()) => tracing::info!("Updated existing panel '{}' content", panel_name),
+            Err(e) => tracing::error!("Failed to update panel content: {}", e),
+        }
+        let splits = self.split_manager().splits_for_buffer(existing_buffer_id);
+        if let Some(&split_id) = splits.first() {
+            self.split_manager_mut().set_active_split(split_id);
+            // Route through set_pane_buffer so tree + SVS stay consistent.
+            self.active_window_mut()
+                .set_pane_buffer(split_id, existing_buffer_id);
+            tracing::debug!("Focused split {:?} containing panel buffer", split_id);
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: existing_buffer_id.0 as u64,
+                split_id: splits.first().map(|s| s.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+    }
+
+    // ── Line-position shared implementation ─────────────────────────────
+
+    /// Shared implementation for `handle_get_line_start_position` and
+    /// `handle_get_line_end_position`. When `want_end` is false the byte
+    /// offset of the line's first character is returned; when true, the
+    /// byte offset of its terminating newline (or `buffer_len` for the
+    /// last line without a trailing newline).
+    fn handle_get_line_position(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        line: u32,
+        request_id: u64,
+        want_end: bool,
+    ) {
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let len = state.buffer.len();
+                let content = state.get_text_range(0, len);
+                buffer_line_byte_offset(&content, len, line as usize, want_end)
+            });
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Save a buffer to a specific file path (for :w filename)
@@ -1793,39 +2036,15 @@ impl Editor {
             .resolve_callback(callback_id, json);
     }
 
-    /// Get the byte offset of the start of a line in the active buffer
+    /// Get the byte offset of the start of a line in the active buffer.
     fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, false)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, false);
     }
 
     /// Get the byte offset of the end of a line (position of its terminating newline,
     /// or `buffer_len` for the last line without a trailing newline).
     fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, true)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, true);
     }
 
     /// Get the total number of lines in a buffer
@@ -1841,20 +2060,12 @@ impl Editor {
         {
             let buffer_len = state.buffer.len();
             let content = state.get_text_range(0, buffer_len);
-
-            // Count lines (number of newlines + 1, unless empty)
-            if content.is_empty() {
-                Some(1) // Empty buffer has 1 line
+            let newlines = content.bytes().filter(|&b| b == b'\n').count();
+            Some(if content.is_empty() {
+                1
             } else {
-                let newline_count = content.chars().filter(|&c| c == '\n').count();
-                // If file ends with newline, don't count extra line
-                let ends_with_newline = content.ends_with('\n');
-                if ends_with_newline {
-                    Some(newline_count)
-                } else {
-                    Some(newline_count + 1)
-                }
-            }
+                newlines + usize::from(!content.ends_with('\n'))
+            })
         } else {
             None
         };
@@ -2418,6 +2629,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_with_content(
         &mut self,
         name: String,
@@ -2440,37 +2652,13 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
         // TODO: show_line_numbers is duplicated between EditorState.margins and
         // BufferViewState. The renderer reads BufferViewState and overwrites
         // margins each frame via configure_for_line_numbers(), making the margin
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        let active_split = self.split_manager().active_split();
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2524,6 +2712,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_split(
         &mut self,
         name: String,
@@ -2548,178 +2737,58 @@ impl Editor {
             _ => None,
         };
 
-        // Utility-dock fast path (issue #1796 / Section 2 of the design):
-        // if a leaf with this role already exists, swap its active
-        // buffer instead of spawning a fresh split. The buffer is
-        // created normally, registered in `panel_ids`, and added as a
-        // tab in the dock leaf.
-        if let Some(target_role) = split_role {
-            if let Some(dock_leaf) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .find_leaf_by_role(target_role)
-            {
-                // Capture the source split *before* create_virtual_buffer
-                // tabs the new buffer into it; we drop that phantom tab
-                // after the dock attach so the buffer only shows in the
-                // dock.
-                let source_split_before_create = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                let buffer_id = self.active_window_mut().create_virtual_buffer(
-                    name.clone(),
-                    mode.clone(),
-                    read_only,
-                );
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
-                    .expect("active window present")
-                    .get_mut(&buffer_id)
-                {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                }
-                if let Some(pid) = &panel_id {
-                    self.panel_ids_mut().insert(pid.clone(), buffer_id);
-                }
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
-                    tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
-                    return;
-                }
-
-                // Swap the dock leaf's active buffer to the new one and
-                // add it as a tab so the user can flip between
-                // dock-resident utilities (Diagnostics ↔ Quickfix etc.).
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_active_split(dock_leaf);
-                self.active_window_mut()
-                    .set_pane_buffer(dock_leaf, buffer_id);
-
-                // Drop the phantom tab from the source split.
-                if dock_leaf != source_split_before_create {
-                    if let Some(source_view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
-                        .get_mut(&source_split_before_create)
-                    {
-                        source_view_state.remove_buffer(buffer_id);
-                    }
-                }
-
-                if let Some(req_id) = request_id {
-                    let result = fresh_core::api::VirtualBufferResult {
-                        buffer_id: buffer_id.0 as u64,
-                        split_id: Some(dock_leaf.0 .0 as u64),
-                    };
-                    self.plugin_manager.read().unwrap().resolve_callback(
-                        fresh_core::api::JsCallbackId::from(req_id),
-                        serde_json::to_string(&result).unwrap_or_default(),
-                    );
-                }
-                tracing::info!(
-                    "Routed virtual buffer '{}' into existing utility dock {:?}",
-                    name,
-                    dock_leaf
-                );
-                return;
-            }
+        // Path 1 — Utility-dock fast path (issue #1796 / Section 2 of the design):
+        // if a leaf with this role already exists, attach the new buffer there
+        // instead of spawning a fresh split.
+        if let Some(dock_leaf) = split_role.and_then(|r| self.split_manager().find_leaf_by_role(r))
+        {
+            return self.route_vbuf_to_existing_dock(
+                dock_leaf,
+                name,
+                mode,
+                read_only,
+                entries,
+                panel_id.as_deref(),
+                show_line_numbers,
+                show_cursors,
+                editing_disabled,
+                request_id,
+            );
             // No dock yet — fall through to normal split creation,
             // then tag the new leaf with the requested role at the end.
         }
 
-        // Check if this panel already exists (for idempotent operations)
-        if let Some(pid) = &panel_id {
-            if let Some(&existing_buffer_id) = self.panel_ids().get(pid) {
-                // Verify the buffer actually exists (defensive check for stale entries)
-                if self
+        // Path 2 — Idempotent panel update: if this panel_id already maps to a
+        // live buffer, refresh its content and re-focus it.
+        if let Some(pid) = panel_id.as_deref() {
+            let maybe_existing = self.panel_ids().get(pid).copied();
+            if let Some(existing_id) = maybe_existing {
+                let buffer_alive = self
                     .windows
                     .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .contains_key(&existing_buffer_id)
-                {
-                    // Panel exists, just update its content
-                    if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries) {
-                        tracing::error!("Failed to update panel content: {}", e);
-                    } else {
-                        tracing::info!("Updated existing panel '{}' content", pid);
-                    }
-
-                    // Find and focus the split that contains this buffer
-                    let splits = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .splits_for_buffer(existing_buffer_id);
-                    if let Some(&split_id) = splits.first() {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_active_split(split_id);
-                        // Route through set_pane_buffer so tree + SVS
-                        // stay consistent (issue #1620 invariant).
-                        self.active_window_mut()
-                            .set_pane_buffer(split_id, existing_buffer_id);
-                        tracing::debug!("Focused split {:?} containing panel buffer", split_id);
-                    }
-
-                    // Send response with existing buffer ID and split ID via callback resolution
-                    if let Some(req_id) = request_id {
-                        let result = fresh_core::api::VirtualBufferResult {
-                            buffer_id: existing_buffer_id.0 as u64,
-                            split_id: splits.first().map(|s| s.0 .0 as u64),
-                        };
-                        self.plugin_manager.read().unwrap().resolve_callback(
-                            fresh_core::api::JsCallbackId::from(req_id),
-                            serde_json::to_string(&result).unwrap_or_default(),
-                        );
-                    }
-                    return;
-                } else {
-                    // Buffer no longer exists, remove stale panel_id entry
-                    tracing::warn!(
-                        "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
-                        pid,
-                        existing_buffer_id
-                    );
-                    self.panel_ids_mut().remove(pid);
-                    // Fall through to create a new buffer
+                    .map(|w| w.buffers.contains_key(&existing_id))
+                    .unwrap_or(false);
+                if buffer_alive {
+                    return self.update_existing_vbuf_panel(existing_id, entries, request_id, pid);
                 }
+                // Buffer no longer exists — remove the stale entry and fall through.
+                tracing::warn!(
+                    "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
+                    pid,
+                    existing_id
+                );
+                self.panel_ids_mut().remove(pid);
             }
         }
 
+        // Path 3 — Fresh split creation.
+        //
         // Capture the source split before creating the buffer —
-        // `create_virtual_buffer` unconditionally adds the new buffer
-        // as a tab to the currently active split, which is the wrong
-        // thing for a panel that lives in its own dedicated split
-        // (it would show up as a tab in BOTH splits — see bug #3).
-        let source_split_before_create = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        // `create_virtual_buffer` unconditionally adds the new buffer as a tab
+        // to the currently active split, which is wrong for a panel that lives
+        // in its own dedicated split (it would appear in BOTH splits — bug #3).
+        let source_split_before_create = self.split_manager().active_split();
 
-        // Create the virtual buffer first
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode.clone(), read_only);
@@ -2730,155 +2799,113 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Store the panel ID mapping if provided
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid, buffer_id);
         }
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
         }
 
-        // Determine split direction
         let split_dir = match direction.as_deref() {
             Some("vertical") => crate::model::event::SplitDirection::Vertical,
             _ => crate::model::event::SplitDirection::Horizontal,
         };
 
-        // Create a split with the new buffer. When the caller asked
-        // for `role = "utility_dock"` and no dock leaf exists yet,
-        // split at the *root* so the dock spans the full width below
-        // any pre-existing side-by-side panes — splitting the active
-        // leaf would nest the dock under whichever pane was focused.
-        let created_split_id =
-            match if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_root_positioned(split_dir, buffer_id, ratio, before)
-            } else {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_active_positioned(split_dir, buffer_id, ratio, before)
-            } {
-                Ok(new_split_id) => {
-                    // The buffer now lives in its own split, so drop its
-                    // tab from the source split (see bug #3).  Only do
-                    // this when the new split actually differs from the
-                    // source split — otherwise we'd leave no split
-                    // displaying the buffer.
-                    if new_split_id != source_split_before_create {
-                        if let Some(source_view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&source_split_before_create)
-                        {
-                            source_view_state.remove_buffer(buffer_id);
-                        }
-                    }
-                    // Create independent view state for the new split with the buffer in tabs
-                    let mut view_state = SplitViewState::with_buffer(
-                        self.terminal_width,
-                        self.terminal_height,
-                        buffer_id,
-                    );
-                    view_state.apply_config_defaults(
-                        self.config.editor.line_numbers,
-                        self.config.editor.highlight_current_line,
-                        line_wrap.unwrap_or_else(|| {
-                            self.active_window().resolve_line_wrap_for_buffer(buffer_id)
-                        }),
-                        self.config.editor.wrap_indent,
-                        self.active_window()
-                            .resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
-                        self.config.editor.scroll_offset,
-                    );
-                    // Override with plugin-requested show_line_numbers
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                    self.windows
+        // When the caller requested `role = "utility_dock"` but no dock leaf
+        // existed yet (we fell through the fast path above), split at the
+        // *root* so the dock spans the full width — splitting the active leaf
+        // would nest it under whichever pane was focused.
+        let split_result = if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
+            self.split_manager_mut()
+                .split_root_positioned(split_dir, buffer_id, ratio, before)
+        } else {
+            self.split_manager_mut()
+                .split_active_positioned(split_dir, buffer_id, ratio, before)
+        };
+
+        let created_split_id = match split_result {
+            Ok(new_split_id) => {
+                // The buffer now lives in its own split — drop its phantom tab
+                // from the source split (bug #3). Only when the splits differ;
+                // otherwise we'd leave the buffer with no display.
+                if new_split_id != source_split_before_create {
+                    if let Some(src_vs) = self
+                        .windows
                         .get_mut(&self.active_window)
                         .and_then(|w| w.split_view_states_mut())
                         .expect("active window must have a populated split layout")
-                        .insert(new_split_id, view_state);
-
-                    // Focus the new split (the diagnostics panel)
-                    self.windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
-                        .expect("active window must have a populated split layout")
-                        .set_active_split(new_split_id);
-                    // NOTE: split tree was updated by split_active, active_buffer derives from it
-
-                    // If a role was requested but no dock existed (we fell
-                    // through the fast-path above), tag the freshly created
-                    // leaf so the next utility lands here. Clear any stale
-                    // role from elsewhere first to preserve the
-                    // one-leaf-per-role invariant.
-                    if let Some(target_role) = split_role {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .clear_role(target_role);
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_leaf_role(new_split_id, Some(target_role));
-                        tracing::info!(
-                            "Tagged new dock leaf {:?} with role {:?}",
-                            new_split_id,
-                            target_role
-                        );
+                        .get_mut(&source_split_before_create)
+                    {
+                        src_vs.remove_buffer(buffer_id);
                     }
+                }
 
+                let mut view_state = SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_state.apply_config_defaults(
+                    self.config.editor.line_numbers,
+                    self.config.editor.highlight_current_line,
+                    line_wrap.unwrap_or_else(|| {
+                        self.active_window().resolve_line_wrap_for_buffer(buffer_id)
+                    }),
+                    self.config.editor.wrap_indent,
+                    self.active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id),
+                    self.config.editor.rulers.clone(),
+                    self.config.editor.scroll_offset,
+                );
+                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .insert(new_split_id, view_state);
+
+                self.split_manager_mut().set_active_split(new_split_id);
+
+                // Tag the new leaf with the requested role so the next
+                // utility-dock open lands here. Clear any stale role first
+                // to maintain the one-leaf-per-role invariant.
+                if let Some(target_role) = split_role {
+                    self.split_manager_mut().clear_role(target_role);
+                    self.split_manager_mut()
+                        .set_leaf_role(new_split_id, Some(target_role));
                     tracing::info!(
-                        "Created {:?} split with virtual buffer {:?}",
-                        split_dir,
-                        buffer_id
+                        "Tagged new dock leaf {:?} with role {:?}",
+                        new_split_id,
+                        target_role
                     );
-                    Some(new_split_id)
                 }
-                Err(e) => {
-                    tracing::error!("Failed to create split: {}", e);
-                    // Fall back to just switching to the buffer
-                    self.set_active_buffer(buffer_id);
-                    None
-                }
-            };
 
-        // Send response with buffer ID and split ID via callback resolution
-        // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
+                tracing::info!(
+                    "Created {:?} split with virtual buffer {:?}",
+                    split_dir,
+                    buffer_id
+                );
+                Some(new_split_id)
+            }
+            Err(e) => {
+                tracing::error!("Failed to create split: {}", e);
+                self.set_active_buffer(buffer_id);
+                None
+            }
+        };
+
         if let Some(req_id) = request_id {
-            tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
+            tracing::trace!(
+                "CreateVirtualBufferInSplit: resolving callback for request_id={}, \
+                 buffer_id={:?}, split_id={:?}",
+                req_id,
+                buffer_id,
+                created_split_id
+            );
             let result = fresh_core::api::VirtualBufferResult {
                 buffer_id: buffer_id.0 as u64,
                 split_id: created_split_id.map(|s| s.0 .0 as u64),
@@ -2890,6 +2917,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_existing_split(
         &mut self,
         name: String,
@@ -2915,20 +2943,8 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
@@ -3176,6 +3192,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_terminal(
         &mut self,
         cwd: Option<String>,
@@ -3446,6 +3463,156 @@ impl Editor {
             Err(e) => {
                 tracing::warn!("setAuthority: failed to parse payload: {}", e);
                 self.set_status_message(format!("setAuthority rejected: {}", e));
+            }
+        }
+    }
+
+    fn handle_attach_remote_agent(&mut self, payload: serde_json::Value, request_id: u64) {
+        // Opaque at the fresh-core boundary; the concrete schema lives in
+        // services::authority so core stays backend-agnostic.
+        let spec =
+            match serde_json::from_value::<crate::services::authority::RemoteAgentSpec>(payload) {
+                Ok(spec) => spec,
+                Err(e) => {
+                    tracing::warn!("attachRemoteAgent: invalid payload: {}", e);
+                    self.reject_remote_attach(request_id, format!("invalid attach spec: {e}"));
+                    return;
+                }
+            };
+
+        // Take owned handles up front so the immutable borrows of `self`
+        // end before the mutable `set_status_message` / spawn below.
+        let runtime = self.tokio_runtime.clone();
+        let sender = self.async_bridge.as_ref().map(|b| b.sender());
+        let (Some(runtime), Some(sender)) = (runtime, sender) else {
+            self.reject_remote_attach(request_id, "async runtime not available".to_string());
+            return;
+        };
+
+        // Track this connect as in-flight so a plugin can cancel it (the
+        // New-Session dialog's Cancel) before it resolves. The cancel sender is
+        // handed to the connect via its `select!`; signalling it tears down the
+        // in-flight carrier child.
+        self.remote_attach_inflight.insert(request_id);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        self.remote_attach_cancels.insert(request_id, cancel_tx);
+
+        // Window-mode opts captured before `spec` is consumed — when `window`
+        // is set the main loop spawns a born-attached new window instead of
+        // restarting the whole editor.
+        let window_mode = spec.window;
+        let window_label = spec.label.clone();
+        let window_command = spec.command.clone();
+        let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
+        let env = std::sync::Arc::clone(&self.authority.env_provider);
+
+        // The connect (spawn the carrier, bootstrap the agent, await `ready`)
+        // is async and can take seconds, so run it on the runtime and report
+        // back via the bridge instead of blocking the event loop. On success
+        // the main loop installs the authority + keepalive (restart or new
+        // window); on failure it surfaces the error. Both transports converge
+        // on the same `RemoteAttachReady`; only the connect future differs.
+        use crate::services::authority::RemoteTransportSpec;
+        let base_env = spec.base_env.clone();
+        let mode_for = |label: &str| {
+            if window_mode {
+                crate::services::async_bridge::RemoteAttachMode::Window {
+                    label: window_label.clone().unwrap_or_else(|| label.to_string()),
+                    command: window_command.clone(),
+                }
+            } else {
+                crate::services::async_bridge::RemoteAttachMode::Restart
+            }
+        };
+
+        match spec.transport {
+            RemoteTransportSpec::KubectlExec { .. } => {
+                let (target, base_env) = spec.into_kube_target();
+                let label = target.display();
+                // Pod-side workspace to re-root at (e.g. `/workspace`).
+                let workspace = target.workspace.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_kube_authority(
+                        target,
+                        base_env,
+                        trust,
+                        env,
+                        Some(cancel_rx),
+                    )
+                    .await;
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                                request_id,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                            request_id,
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
+            }
+            RemoteTransportSpec::Ssh {
+                user,
+                host,
+                port,
+                identity_file,
+                remote_path,
+                extra_args,
+            } => {
+                let _ = base_env; // SSH probes its own env on the remote host.
+                let params = crate::services::remote::ConnectionParams {
+                    user: user.clone().filter(|u| !u.is_empty()),
+                    host: host.clone(),
+                    port,
+                    identity_file: identity_file.map(std::path::PathBuf::from),
+                    extra_args,
+                };
+                // Label: `user@host` when a user was given, else bare `host`.
+                let target = params.ssh_target();
+                let label = match port {
+                    Some(p) => format!("ssh:{target}:{p}"),
+                    None => format!("ssh:{target}"),
+                };
+                let workspace = remote_path.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_ssh_authority(
+                        params,
+                        remote_path,
+                        trust,
+                        env,
+                        Some(cancel_rx),
+                    )
+                    .await;
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                                request_id,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                            request_id,
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
             }
         }
     }
@@ -3768,17 +3935,34 @@ impl Editor {
             WidgetMutation::SetSelectedIndex { widget_key, index } => {
                 // List selected_index lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-                    let prev_scroll = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::List {
-                            scroll_offset, ..
-                        }) => *scroll_offset,
-                        _ => 0,
-                    };
+                    let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::List {
+                                scroll_offset,
+                                selected_index,
+                                item_height,
+                                user_scrolled,
+                            }) => (
+                                *scroll_offset,
+                                *selected_index,
+                                *item_height,
+                                *user_scrolled,
+                            ),
+                            _ => (0, -1, 1, false),
+                        };
+                    // Re-pinning the *same* index (which `refreshOpenDialog`
+                    // does on every repaint) must preserve a user scroll —
+                    // otherwise a probe-poll refresh would snap the view back
+                    // to the selection a beat after a mouse scroll. Only an
+                    // actual selection change re-arms scroll-follows-selection.
+                    let user_scrolled = prev_user_scrolled && index == prev_index;
                     panel.instance_states.insert(
                         widget_key,
                         crate::widgets::WidgetInstanceState::List {
                             scroll_offset: prev_scroll,
                             selected_index: index,
+                            item_height: prev_item_height,
+                            user_scrolled,
                         },
                     );
                 }
@@ -3976,6 +4160,7 @@ impl Editor {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
+            fullscreen: false,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -4008,6 +4193,14 @@ impl Editor {
             width_pct,
             height_pct
         );
+
+        // Mounting a panel as the left dock carves a full-height column out
+        // of the chrome. Run the single layout funnel so terminals and
+        // viewports reflow to the post-dock width right away (a centered
+        // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
+        if as_dock {
+            self.relayout();
+        }
     }
 
     fn handle_update_floating_widget(&mut self, panel_id: u64, spec: fresh_core::api::WidgetSpec) {
@@ -4072,6 +4265,19 @@ impl Editor {
         };
         *self.panel_opt_mut(slot) = None;
         let _ = self.widget_registry.unmount(panel_id);
+        // Hiding the left dock frees its full-height column. The next
+        // frame's `compute_dock_split` already lays the chrome back out
+        // full-width (and the early command drain in `render` makes that
+        // happen in the *same* frame as the unmount), so the layout is
+        // correct — but the freed strip can still show stale glyphs from
+        // the old dock until something repaints those cells. Force a full
+        // clear+redraw so the reclaim is unconditional on every terminal,
+        // mirroring how a resize relayout clears. Gated to the dock slot:
+        // a centered modal overlays the full-width chrome without carving
+        // it, so clearing on its close would only cause a visible flicker.
+        if slot == super::PanelSlot::Dock {
+            self.request_full_redraw();
+        }
         // Restore the active window's visible terminal PTYs to their
         // dive-view split rects. The orchestrator picker's preview
         // pane shrinks PTYs to the embed size on every frame while
@@ -4083,8 +4289,11 @@ impl Editor {
         // rows. Resizing here on every panel unmount restores the
         // full dive-view dimensions; for panels that didn't preview
         // anything (the new-session form, plugin overlays) this is a
-        // cheap no-op because the PTY sizes already match.
-        self.active_window_mut().resize_visible_terminals();
+        // cheap no-op because the PTY sizes already match. Unmounting the
+        // dock also frees its column, so route through the single layout
+        // funnel: it re-derives `dock_cols` (now 0 for a dock unmount) and
+        // reflows every window's terminals + viewports to the reclaimed width.
+        self.relayout();
         tracing::debug!("Unmounted floating widget panel {}", panel_id);
     }
 
@@ -4110,12 +4319,15 @@ impl Editor {
         let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
-        match op {
+        // Whether this op changed the chrome geometry (dock width/placement),
+        // so we know to re-derive the layout once the `fwp` borrow ends.
+        let geometry_changed = match op {
             "dock" => {
                 let requested = persisted.unwrap_or(arg as u16);
                 let width_cols = requested.clamp(10, max_cols);
                 fwp.placement = super::PanelPlacement::LeftDock { width_cols };
                 fwp.focused = true;
+                true
             }
             // Update the dock's width WITHOUT touching focus — used by the
             // plugin to make the dock responsive (re-issued on terminal
@@ -4127,14 +4339,39 @@ impl Editor {
                     let requested = persisted.unwrap_or(arg as u16);
                     let width_cols = requested.clamp(10, max_cols);
                     fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                    true
+                } else {
+                    false
                 }
             }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;
                 fwp.focused = true;
+                true
             }
-            "focus" => fwp.focused = true,
-            other => tracing::warn!("FloatingPanelControl: unknown op {other:?}"),
+            "focus" => {
+                fwp.focused = true;
+                false
+            }
+            // Render a centered panel over the whole frame (covering the
+            // dimmed dock) instead of beside the dock in `chrome_area`.
+            // `arg != 0` enables it. No chrome-geometry change (the dock
+            // and editor layout are untouched — only where the modal
+            // paints), so no relayout; the next frame reads the flag.
+            "fullscreen" => {
+                fwp.fullscreen = arg != 0.0;
+                false
+            }
+            other => {
+                tracing::warn!("FloatingPanelControl: unknown op {other:?}");
+                false
+            }
+        };
+        // The `fwp` mutable borrow ends above; now that the dock's
+        // placement/width is settled, run the single layout funnel so
+        // terminals, viewports and panels all reflow to the new chrome.
+        if geometry_changed {
+            self.relayout();
         }
     }
 
@@ -4183,11 +4420,7 @@ impl Editor {
     fn handle_disable_lsp_for_language(&mut self, language: String) {
         tracing::info!("Disabling LSP for language: {}", language);
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.shutdown_server(&language);
             tracing::info!("Stopped LSP server for {}", language);
         }
@@ -4219,11 +4452,7 @@ impl Editor {
             .get(&self.active_buffer())
             .and_then(|meta| meta.file_path().cloned());
         let __active_id = self.active_window;
-        let success = if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        let success = if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
             self.active_window_mut().status_message = Some(msg);
             ok
@@ -4241,11 +4470,7 @@ impl Editor {
         match uri.parse::<lsp_types::Uri>() {
             Ok(parsed_uri) => {
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     let restarted = lsp.set_language_root_uri(&language, parsed_uri);
                     if restarted {
                         self.active_window_mut().status_message = Some(format!(

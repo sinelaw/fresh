@@ -6,8 +6,7 @@
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{
-    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
-    MouseEvent,
+    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEventKind,
 };
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
@@ -1361,10 +1360,11 @@ fn connect_remote(
         .context("Failed to create Tokio runtime for remote connection")?;
 
     let connection_params = remote::ConnectionParams {
-        user: remote.user.clone(),
+        user: Some(remote.user.clone()),
         host: remote.host.clone(),
         port: remote.port,
         identity_file: None,
+        extra_args: Vec::new(),
     };
 
     match remote.port {
@@ -3731,7 +3731,7 @@ fn real_main() -> AnyhowResult<()> {
         gpm_client,
         mut terminal_modes,
         authority: startup_authority,
-        _remote_session,
+        _remote_session: remote_session,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
@@ -3749,6 +3749,15 @@ fn real_main() -> AnyhowResult<()> {
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
     let mut current_authority = startup_authority;
+
+    // Process-lifetime keepalive for a connection-backed authority.
+    // Seeded from the SSH startup session (if any); replaced when a
+    // plugin attaches a remote agent (K8s) mid-session via
+    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
+    // tears the previous connection down. Boxed opaquely so this loop
+    // never names a backend.
+    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
+        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -3786,13 +3795,10 @@ fn real_main() -> AnyhowResult<()> {
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
 
-        // The editor constructor still takes a filesystem (tests use
-        // it to inject mocks). The authority we want is installed
-        // immediately after construction via `set_boot_authority`, so
-        // that later init — plugin loading, session restore, the
-        // first event-loop tick — sees the real backend.
-        let fs = current_authority.filesystem.clone();
-
+        // The editor is constructed with the *real* authority it runs
+        // under — local or a connected remote — so that every later step
+        // (plugin loading, session restore, the first event-loop tick) sees
+        // the correct backend from construction. No post-construction swap.
         tracing::info!("Creating editor instance...");
         let mut editor = Editor::with_working_dir_opts(
             config.clone(),
@@ -3802,17 +3808,12 @@ fn real_main() -> AnyhowResult<()> {
             dir_context.clone(),
             !args.no_plugins,
             color_capability,
-            fs,
+            current_authority.clone(),
             true, // defer_plugin_load: TUI startup; plugin loads run on the
                   // plugin thread and arrive via AsyncBridge each tick.
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
-
-        // Install the real authority before any plugin / init.ts code
-        // runs, so everything that loads below sees the correct
-        // backend from the first tick.
-        editor.set_boot_authority(current_authority.clone());
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
@@ -3923,6 +3924,20 @@ fn real_main() -> AnyhowResult<()> {
         if let Some(new_authority) = editor.take_pending_authority() {
             tracing::info!("Authority transition queued; restarting editor");
             current_authority = new_authority;
+            // A connection-backed authority (remote agent / K8s) queues
+            // its keepalive alongside the authority. Adopt it here so the
+            // live carrier + reconnect/heartbeat tasks survive into the
+            // next iteration; the previous keepalive drops (tearing down
+            // the old connection). A plain local/docker transition
+            // carries no keepalive, leaving the slot — and any current
+            // remote session — untouched.
+            if let Some(new_keepalive) = editor.take_pending_keepalive() {
+                // Swap in the new session and drop the previous one,
+                // explicitly tearing the old connection down before the
+                // next iteration builds against the new backend.
+                let previous = current_keepalive.replace(new_keepalive);
+                drop(previous);
+            }
         }
 
         // Pluck the warning-log channel back out of the soon-to-be-
@@ -4153,12 +4168,57 @@ fn run_event_loop(
         terminal_modes,
         |timeout| {
             if event_poll(timeout)? {
-                Ok(Some(event_read()?))
+                Ok(safe_event_read()?)
             } else {
                 Ok(None)
             }
         },
     )
+}
+
+/// Read one terminal event, guarding against a panic inside crossterm's input
+/// parser.
+///
+/// A malformed or zero-coordinate SGR mouse sequence can trip an
+/// `attempt to subtract with overflow` inside crossterm's parse path. That
+/// panic would otherwise unwind straight through the event loop and abort the
+/// whole editor over a single bad byte sequence. We catch it and report "no
+/// event" so the loop carries on.
+///
+/// crossterm only clears its internal byte buffer when a parse returns `Err`,
+/// not when it *panics*, so the offending bytes can remain and panic again on
+/// the next read. To avoid spinning forever on a wedged parser we count
+/// consecutive recovered panics and, past a small threshold, surface an error
+/// so the caller shuts the loop down cleanly instead of busy-looping. Any
+/// successful read resets the counter.
+fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const MAX_CONSECUTIVE_PARSE_PANICS: u32 = 8;
+    static CONSECUTIVE_PANICS: AtomicU32 = AtomicU32::new(0);
+
+    match catch_unwind(AssertUnwindSafe(event_read)) {
+        Ok(res) => {
+            CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+            res.map(Some)
+        }
+        Err(_) => {
+            let n = CONSECUTIVE_PANICS.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!(
+                "crossterm event parser panicked on malformed input \
+                 (consecutive: {n}); dropping the event"
+            );
+            if n >= MAX_CONSECUTIVE_PARSE_PANICS {
+                CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+                Err(std::io::Error::other(
+                    "crossterm input parser repeatedly panicked; aborting read loop",
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 fn run_event_loop_common<F>(
@@ -4254,7 +4314,19 @@ where
             needs_render = true;
         }
 
-        if needs_render && last_render.elapsed() >= FRAME_DURATION {
+        // Terminal tabs auto-name from the foreground process (tmux-style);
+        // poll on an interval so a command that starts/exits while the UI is
+        // idle is reflected without waiting for an unrelated event.
+        if editor.terminal_titles_need_poll() {
+            needs_render = true;
+        }
+
+        if needs_render
+            && last_render.elapsed() >= FRAME_DURATION
+            && !editor.should_suppress_render()
+        {
+            let r0 = Instant::now();
+            let was_paste_pending = editor.is_paste_pending();
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
@@ -4262,6 +4334,7 @@ where
                 terminal.draw(|frame| editor.render(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }
+            tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
             needs_render = false;
         }
@@ -4285,7 +4358,6 @@ where
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
                 timeout = timeout.min(until_deadline);
             }
-
             poll_event(timeout)?
         };
 
@@ -4309,37 +4381,24 @@ where
             continue;
         }
 
-        match event {
-            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                let _span = tracing::trace_span!(
+        // All raw-event dispatch now lives on `Editor` so the
+        // paste-pending input queue can intercept keys/mouse/paste
+        // events in exactly one place. The match below only handles
+        // tracing spans + key-translation that depend on
+        // event-loop-local state.
+        let _span = match &event {
+            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => Some(
+                tracing::trace_span!(
                     "handle_key",
                     code = ?key_event.code,
                     modifiers = ?key_event.modifiers,
                 )
-                .entered();
-                // Apply key translation (for input calibration)
-                // Use editor's translator so calibration changes take effect immediately
-                let translated_event = editor.key_translator().translate(key_event);
-                handle_key_event(editor, translated_event)?;
-                needs_render = true;
-            }
-            CrosstermEvent::Mouse(mouse_event) if handle_mouse_event(editor, mouse_event)? => {
-                needs_render = true;
-            }
-            CrosstermEvent::Resize(w, h) => {
-                editor.resize(w, h);
-                needs_render = true;
-            }
-            CrosstermEvent::Paste(text) => {
-                // External paste from terminal (bracketed paste mode)
-                editor.paste_text(text);
-                needs_render = true;
-            }
-            CrosstermEvent::FocusGained => {
-                editor.focus_gained();
-                needs_render = true;
-            }
-            _ => {}
+                .entered(),
+            ),
+            _ => None,
+        };
+        if editor.handle_input_event(event)? {
+            needs_render = true;
         }
     }
 
@@ -4358,7 +4417,7 @@ fn poll_with_gpm(
     // If no GPM client, just use crossterm polling
     let Some(gpm) = gpm_client else {
         return if event_poll(timeout)? {
-            Ok(Some(event_read()?))
+            Ok(safe_event_read()?)
         } else {
             Ok(None)
         };
@@ -4428,52 +4487,13 @@ fn poll_with_gpm(
     if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         // Use crossterm's read since it handles escape sequence parsing
         if event_poll(Duration::ZERO)? {
-            return Ok(Some(event_read()?));
+            if let Some(ev) = safe_event_read()? {
+                return Ok(Some(ev));
+            }
         }
     }
 
     Ok(None)
-}
-
-/// Handle a keyboard event
-fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> AnyhowResult<()> {
-    // Trace the full key event
-    tracing::trace!(
-        "Key event received: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
-        key_event.code,
-        key_event.modifiers,
-        key_event.kind,
-        key_event.state
-    );
-
-    // Log the keystroke
-    let key_code = format!("{:?}", key_event.code);
-    let modifiers = format!("{:?}", key_event.modifiers);
-    editor
-        .active_window_mut()
-        .log_keystroke(&key_code, &modifiers);
-
-    // Delegate to the editor's handle_key method
-    editor.handle_key(key_event.code, key_event.modifiers)?;
-
-    Ok(())
-}
-
-/// Handle a mouse event
-/// Returns true if a re-render is needed
-fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> AnyhowResult<bool> {
-    tracing::trace!(
-        "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
-        mouse_event.kind,
-        mouse_event.column,
-        mouse_event.row,
-        mouse_event.modifiers
-    );
-
-    // Delegate to the editor's handle_mouse method
-    editor
-        .handle_mouse(mouse_event)
-        .context("Failed to handle mouse event")
 }
 
 /// Skip stale mouse move events, return the latest one.
@@ -4490,7 +4510,9 @@ fn coalesce_mouse_moves(
 
     let mut latest = event;
     while event_poll(Duration::ZERO)? {
-        let next = event_read()?;
+        let Some(next) = safe_event_read()? else {
+            continue;
+        };
         if matches!(&next, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
             latest = next; // Newer move, skip the old one
         } else {

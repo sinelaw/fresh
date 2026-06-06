@@ -350,31 +350,46 @@ impl SearchOptionsLayout {
 /// Result of truncating a path for display
 #[derive(Debug, Clone)]
 pub struct TruncatedPath {
-    /// The first component of the path (e.g., "/home" or "C:\")
+    /// The first component(s) of the path (e.g. "/home" or "C:\Users")
     pub prefix: String,
     /// Whether truncation occurred (if true, display "[...]" between prefix and suffix)
     pub truncated: bool,
-    /// The last components of the path (e.g., "project/src")
+    /// The last components of the path (e.g. "project/src")
     pub suffix: String,
+    /// The path's own separator, reused when re-joining the prefix /
+    /// ellipsis / suffix so a Windows `\`-path doesn't display with `/`.
+    pub sep: char,
 }
 
 impl TruncatedPath {
     /// Get the full display string (without styling)
     pub fn to_string_plain(&self) -> String {
         if self.truncated {
-            format!("{}/[...]{}", self.prefix, self.suffix)
+            format!("{}{}[...]{}", self.prefix, self.sep, self.suffix)
         } else {
             format!("{}{}", self.prefix, self.suffix)
         }
     }
 
-    /// Get the display length
+    /// Get the display length. The ellipsis marker is one separator column
+    /// plus "[...]" regardless of which separator is in use.
     pub fn display_len(&self) -> usize {
         if self.truncated {
-            self.prefix.len() + "/[...]".len() + self.suffix.len()
+            self.prefix.len() + self.sep.len_utf8() + "[...]".len() + self.suffix.len()
         } else {
             self.prefix.len() + self.suffix.len()
         }
+    }
+}
+
+/// The separator a path string is written with: `\` for a Windows-style
+/// path (so it round-trips natively), `/` otherwise. Splitting always
+/// accepts both — this only decides how pieces are re-joined for display.
+fn path_display_sep(path_str: &str) -> char {
+    if path_str.contains('\\') {
+        '\\'
+    } else {
+        '/'
     }
 }
 
@@ -391,6 +406,11 @@ impl TruncatedPath {
 /// A TruncatedPath struct with prefix, truncation indicator, and suffix
 pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
     let path_str = path.to_string_lossy();
+    // Re-join pieces with the path's own separator so a Windows `\`-path
+    // doesn't render as `C:/[...]/x`. Splitting accepts both separators —
+    // crucially so a `\`-path isn't treated as one giant component (which
+    // previously forced the crude end-truncation branch on Windows).
+    let sep = path_display_sep(&path_str);
 
     // If path fits, return as-is
     if path_str.len() <= max_len {
@@ -398,37 +418,61 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
             prefix: String::new(),
             truncated: false,
             suffix: path_str.to_string(),
+            sep,
         };
     }
 
-    let components: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
+    let components: Vec<&str> = path_str
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .collect();
 
     if components.is_empty() {
         return TruncatedPath {
-            prefix: "/".to_string(),
+            prefix: sep.to_string(),
             truncated: false,
             suffix: String::new(),
+            sep,
         };
     }
 
-    // Always keep the root and first component as prefix
-    let prefix = if path_str.starts_with('/') {
-        format!("/{}", components.first().unwrap_or(&""))
+    // Keep "root + first directory" as the prefix, like the Unix display
+    // (`/private/[...]`). A Windows drive letter ("C:") plays the part of
+    // the root, so keep `C:\<firstdir>` to stay symmetric instead of just
+    // the bare drive.
+    let leading_sep = path_str.starts_with('/') || path_str.starts_with('\\');
+    let is_drive = |c: &str| {
+        let b = c.as_bytes();
+        b.len() == 2 && b[1] == b':' && b[0].is_ascii_alphabetic()
+    };
+    let prefix_count = if !leading_sep && is_drive(components[0]) {
+        2
     } else {
-        components.first().unwrap_or(&"").to_string()
+        1
+    }
+    .min(components.len());
+    let sep_str = sep.to_string();
+    let prefix = {
+        let joined = components[..prefix_count].join(&sep_str);
+        if leading_sep {
+            format!("{}{}", sep, joined)
+        } else {
+            joined
+        }
     };
 
-    // The "[...]/" takes 6 characters
-    let ellipsis_len = "/[...]".len();
+    // The "<sep>[...]" marker takes 6 bytes (separator + "[...]").
+    let ellipsis_len = sep.len_utf8() + "[...]".len();
 
     // Calculate how much space we have for the suffix
     let available_for_suffix = max_len.saturating_sub(prefix.len() + ellipsis_len);
 
-    if available_for_suffix < 5 || components.len() <= 1 {
-        // Not enough space or only one component, just truncate the end.
-        // Walk back to a char boundary so paths with non-ASCII components
-        // (e.g. `/home/ユーザー/project`) don't byte-slice through a
-        // multi-byte UTF-8 sequence and panic (same class as #1718).
+    if available_for_suffix < 5 || components.len() <= prefix_count {
+        // Not enough space or nothing past the prefix, just truncate the
+        // end. Walk back to a char boundary so paths with non-ASCII
+        // components (e.g. `/home/ユーザー/project`) don't byte-slice
+        // through a multi-byte UTF-8 sequence and panic (same class as
+        // #1718).
         let truncated_path = if path_str.len() > max_len.saturating_sub(3) {
             let cut = path_str.floor_char_boundary(max_len.saturating_sub(3));
             format!("{}...", &path_str[..cut])
@@ -439,6 +483,7 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
             prefix: String::new(),
             truncated: false,
             suffix: truncated_path,
+            sep,
         };
     }
 
@@ -446,8 +491,8 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
     let mut suffix_parts: Vec<&str> = Vec::new();
     let mut suffix_len = 0;
 
-    for component in components.iter().skip(1).rev() {
-        let component_len = component.len() + 1; // +1 for the '/'
+    for component in components.iter().skip(prefix_count).rev() {
+        let component_len = component.len() + 1; // +1 for the separator
         if suffix_len + component_len <= available_for_suffix {
             suffix_parts.push(component);
             suffix_len += component_len;
@@ -459,11 +504,12 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
     suffix_parts.reverse();
 
     // If we included all remaining components, no truncation needed
-    if suffix_parts.len() == components.len() - 1 {
+    if suffix_parts.len() == components.len() - prefix_count {
         return TruncatedPath {
             prefix: String::new(),
             truncated: false,
             suffix: path_str.to_string(),
+            sep,
         };
     }
 
@@ -475,18 +521,19 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
         let truncate_to = available_for_suffix.saturating_sub(4); // "/.." and some chars
         if truncate_to > 0 && last.len() > truncate_to {
             let cut = last.floor_char_boundary(truncate_to);
-            format!("/{}...", &last[..cut])
+            format!("{}{}...", sep, &last[..cut])
         } else {
-            format!("/{}", last)
+            format!("{}{}", sep, last)
         }
     } else {
-        format!("/{}", suffix_parts.join("/"))
+        format!("{}{}", sep, suffix_parts.join(&sep_str))
     };
 
     TruncatedPath {
         prefix,
         truncated: true,
         suffix,
+        sep,
     }
 }
 
@@ -682,6 +729,7 @@ impl StatusBarRenderer {
                 prefix: String::new(),
                 truncated: false,
                 suffix: dir_path.to_string(),
+                sep: path_display_sep(&dir_path),
             }
         };
 
@@ -689,8 +737,11 @@ impl StatusBarRenderer {
         if truncated.truncated {
             // Prefix (dimmed)
             spans.push(Span::styled(truncated.prefix.clone(), dir_style));
-            // Ellipsis "/[...]" (highlighted)
-            spans.push(Span::styled("/[...]", ellipsis_style));
+            // Ellipsis "<sep>[...]" (highlighted)
+            spans.push(Span::styled(
+                format!("{}[...]", truncated.sep),
+                ellipsis_style,
+            ));
             // Suffix with trailing slash (dimmed)
             let suffix_with_slash = if truncated.suffix.ends_with('/') {
                 truncated.suffix.clone()
@@ -1801,6 +1852,7 @@ mod tests {
             prefix: "/home".to_string(),
             truncated: true,
             suffix: "/project/src".to_string(),
+            sep: '/',
         };
 
         assert_eq!(truncated.to_string_plain(), "/home/[...]/project/src");
@@ -1812,9 +1864,44 @@ mod tests {
             prefix: String::new(),
             truncated: false,
             suffix: "/home/user/project".to_string(),
+            sep: '/',
         };
 
         assert_eq!(truncated.to_string_plain(), "/home/user/project");
+    }
+
+    /// A Windows-style "\"-path must middle-truncate (keeping drive +
+    /// first dir and the tail) and render with backslashes — not fall into
+    /// the crude end-truncation that `split('/')` forced because a
+    /// backslash path has no '/' to split on. (We can exercise this on any
+    /// OS because `truncate_path` works on the path *string*.)
+    #[test]
+    fn test_truncate_path_windows_backslashes() {
+        let path = Path::new(r"C:\Users\me\projects\fresh\crates\editor\src\main.rs");
+        let t = truncate_path(path, 34);
+        assert!(t.truncated, "long backslash path should middle-truncate");
+        assert_eq!(t.sep, '\\', "should re-join with backslashes");
+        let shown = t.to_string_plain();
+        assert!(
+            shown.starts_with(r"C:\Users"),
+            "keeps drive + first dir: {shown}"
+        );
+        assert!(
+            shown.contains(r"\[...]\"),
+            "uses a backslash ellipsis: {shown}"
+        );
+        assert!(shown.ends_with("main.rs"), "keeps the tail: {shown}");
+        assert!(!shown.contains('/'), "no forward slashes leak in: {shown}");
+        assert!(shown.len() <= 34, "respects max_len: {shown}");
+    }
+
+    /// A short backslash path that fits is returned unchanged.
+    #[test]
+    fn test_truncate_path_windows_short_unchanged() {
+        let path = Path::new(r"C:\a\b");
+        let t = truncate_path(path, 80);
+        assert!(!t.truncated);
+        assert_eq!(t.to_string_plain(), r"C:\a\b");
     }
 
     #[test]

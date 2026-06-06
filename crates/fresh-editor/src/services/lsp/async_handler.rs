@@ -263,14 +263,17 @@ fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
         CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
-        DiagnosticWorkspaceClientCapabilities, DynamicRegistrationClientCapabilities,
+        DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
+        DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
+        DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
         FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
         FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
-        HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
-        PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
-        SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
-        TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
-        WorkspaceEditClientCapabilities,
+        HoverClientCapabilities, InlayHintClientCapabilities, InlayHintWorkspaceClientCapabilities,
+        MarkupKind, PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
+        SemanticTokensWorkspaceClientCapabilities, SignatureHelpClientCapabilities, TagSupport,
+        TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
+        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+        WorkspaceSymbolClientCapabilities,
     };
 
     ClientCapabilities {
@@ -293,12 +296,31 @@ fn create_client_capabilities() -> ClientCapabilities {
             // pulls in `resolve_workspace_configuration`, sourcing the
             // requested section from each server's `initialization_options`.
             configuration: Some(true),
+            // Accept dynamically-registered workspace-symbol providers. We
+            // apply `client/registerCapability` (see handler), so servers that
+            // register `workspace/symbol` after `initialize` get the feature.
+            symbol: Some(WorkspaceSymbolClientCapabilities {
+                dynamic_registration: Some(true),
+                ..Default::default()
+            }),
             // Accept server-driven diagnostic refreshes. We handle
             // `workspace/diagnostic/refresh` (re-pulling diagnostics for all
             // open docs), but servers only send it when the client advertises
             // refresh support — e.g. rust-analyzer fires it once indexing
             // finishes, which is when the first real diagnostics exist.
             diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
+            // Accept server-driven inlay-hint and semantic-token refreshes.
+            // These fire when the server learns something later that changes a
+            // file the user never edited (e.g. cross-file type inference), so
+            // it isn't otherwise re-pulled. We handle them by re-pulling for
+            // all open docs of the language; servers only send them because we
+            // advertise refresh support here (sinelaw/fresh#2195 §2).
+            inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
+            semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
             ..Default::default()
@@ -308,22 +330,45 @@ fn create_client_capabilities() -> ClientCapabilities {
                 did_save: Some(true),
                 ..Default::default()
             }),
+            // `dynamicRegistration: true` on every capability we actually
+            // honor: many servers advertise little statically in `initialize`
+            // and register providers afterwards via `client/registerCapability`
+            // (which we now apply). Without the flag a spec-compliant server is
+            // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
+                dynamic_registration: Some(true),
                 content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
-                ..Default::default()
             }),
             signature_help: Some(SignatureHelpClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             definition: Some(GotoCapability {
+                dynamic_registration: Some(true),
                 link_support: Some(true),
+            }),
+            references: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            document_highlight: Some(DocumentHighlightClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
-            references: Some(DynamicRegistrationClientCapabilities::default()),
+            formatting: Some(DocumentFormattingClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
+            range_formatting: Some(DocumentRangeFormattingClientCapabilities {
+                dynamic_registration: Some(true),
+            }),
             code_action: Some(CodeActionClientCapabilities {
+                dynamic_registration: Some(true),
                 // Without `codeActionLiteralSupport`, rust-analyzer (and
                 // servers that follow the same spec branch) returns `null`
                 // for `textDocument/codeAction` whenever the action would be
@@ -362,9 +407,11 @@ fn create_client_capabilities() -> ClientCapabilities {
                 data_support: Some(true),
             }),
             inlay_hint: Some(InlayHintClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             diagnostic: Some(DiagnosticClientCapabilities {
+                dynamic_registration: Some(true),
                 ..Default::default()
             }),
             folding_range: Some(FoldingRangeClientCapabilities {
@@ -2093,7 +2140,11 @@ impl LspState {
     ) -> Result<(), String> {
         use lsp_types::DocumentDiagnosticParams;
 
-        // Check if server supports pull diagnostics (diagnosticProvider capability)
+        // Check if server supports pull diagnostics (diagnosticProvider capability).
+        // This raw `ServerCapabilities` snapshot is kept in sync with dynamic
+        // `client/registerCapability` updates (sinelaw/fresh#2195) by the stdout
+        // reader, so a server like pyright that registers `diagnosticProvider`
+        // dynamically rather than statically is honored here too.
         let supports_pull = self
             .capabilities
             .lock()
@@ -2761,6 +2812,7 @@ impl LspTask {
         shutting_down: Arc<AtomicBool>,
         document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
         config_options: Arc<std::sync::Mutex<Option<Value>>>,
+        capabilities: Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
     ) {
         tokio::spawn(async move {
             tracing::info!("LSP stdout reader task started for {}", language);
@@ -2778,6 +2830,7 @@ impl LspTask {
                             &stdin_writer,
                             &document_versions,
                             &config_options,
+                            &capabilities,
                         )
                         .await
                         {
@@ -2889,6 +2942,7 @@ impl LspTask {
             shutting_down.clone(),
             self.document_versions.clone(),
             config_options.clone(),
+            state.capabilities.clone(),
         );
 
         // Sequential command dispatch loop.
@@ -3560,6 +3614,70 @@ async fn read_message_from_stdout(
     serde_json::from_str(&json).map_err(|e| format!("Failed to deserialize message: {}", e))
 }
 
+/// Parse the `registrations` out of a `client/registerCapability` request's
+/// params into `(method, register_options)` pairs. Malformed params yield an
+/// empty list (we still ack the request).
+fn registrations_from_params(params: Option<&Value>) -> Vec<(String, Option<Value>)> {
+    params
+        .and_then(|p| serde_json::from_value::<lsp_types::RegistrationParams>(p.clone()).ok())
+        .map(|rp| {
+            rp.registrations
+                .into_iter()
+                .map(|r| (r.method, r.register_options))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse the unregistered method names out of a `client/unregisterCapability`
+/// request's params. Malformed params yield an empty list.
+fn unregistrations_from_params(params: Option<&Value>) -> Vec<String> {
+    params
+        .and_then(|p| serde_json::from_value::<lsp_types::UnregistrationParams>(p.clone()).ok())
+        .map(|up| up.unregisterations.into_iter().map(|u| u.method).collect())
+        .unwrap_or_default()
+}
+
+/// Reflect dynamic capability (un)registrations into the raw `ServerCapabilities`
+/// snapshot held by the LSP task.
+///
+/// The main-loop `ServerCapabilitySummary` is the primary gate for whether a
+/// request is sent, and it is updated from the same registrations. But a few
+/// task-side send checks read this raw snapshot instead — currently only
+/// `handle_document_diagnostic` (pull diagnostics) — so the diagnostic provider
+/// must be mirrored here or those requests are silently skipped for servers
+/// (e.g. pyright) that register `diagnosticProvider` dynamically rather than
+/// statically. Other features gate solely on the summary; extend this if a new
+/// task-side gate is added (sinelaw/fresh#2195).
+fn sync_raw_capabilities(
+    capabilities: &Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
+    registrations: &[(String, Option<Value>)],
+    register: bool,
+) {
+    use lsp_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+
+    if !registrations
+        .iter()
+        .any(|(method, _)| method == "textDocument/diagnostic")
+    {
+        return;
+    }
+
+    let mut guard = capabilities.lock().unwrap();
+    let caps = guard.get_or_insert_with(ServerCapabilities::default);
+    for (method, options) in registrations {
+        if method == "textDocument/diagnostic" {
+            caps.diagnostic_provider = register.then(|| {
+                let opts = options
+                    .as_ref()
+                    .and_then(|o| serde_json::from_value::<DiagnosticOptions>(o.clone()).ok())
+                    .unwrap_or_default();
+                DiagnosticServerCapabilities::Options(opts)
+            });
+        }
+    }
+}
+
 /// Build the response to a `workspace/configuration` request.
 ///
 /// LSP servers pull their settings by asking the client for named
@@ -3653,6 +3771,130 @@ fn server_command_is_rust_analyzer(server_command: &str) -> bool {
         .contains("rust-analyzer")
 }
 
+/// Build a null-result JSON-RPC response for `id`.
+fn null_response(id: i64) -> JsonRpcResponse {
+    JsonRpcResponse {
+        jsonrpc: "2.0".to_string(),
+        id,
+        result: Some(Value::Null),
+        error: None,
+    }
+}
+
+/// Parse the `{type, message}` body common to `window/showMessage` and
+/// `window/logMessage`. Returns `None` for malformed params.
+fn parse_window_message(
+    params: Option<Value>,
+    default_type: i64,
+) -> Option<(LspMessageType, String)> {
+    let msg = serde_json::from_value::<serde_json::Map<String, Value>>(params?).ok()?;
+    let type_num = msg
+        .get("type")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(default_type);
+    let message = msg
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no message)")
+        .to_string();
+    let message_type = match type_num {
+        1 => LspMessageType::Error,
+        2 => LspMessageType::Warning,
+        3 => LspMessageType::Info,
+        _ => LspMessageType::Log,
+    };
+    Some((message_type, message))
+}
+
+/// Emit a tracing record for an LSP window message at the level matching
+/// `message_type`.
+fn log_lsp_message(message_type: LspMessageType, language: &str, message: &str) {
+    match message_type {
+        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
+        LspMessageType::Warning => tracing::warn!("LSP ({}): {}", language, message),
+        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
+        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
+    }
+}
+
+/// Parse a `$/progress` notification into `(token, LspProgressValue)`.
+/// Returns `None` for unknown kinds or malformed params.
+fn parse_progress_notification(
+    params: Option<Value>,
+    language: &str,
+) -> Option<(String, LspProgressValue)> {
+    let progress = serde_json::from_value::<serde_json::Map<String, Value>>(params?).ok()?;
+    let token = progress
+        .get("token")
+        .and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let value_obj = progress.get("value").and_then(|v| v.as_object())?;
+    let kind = value_obj.get("kind").and_then(|v| v.as_str());
+    let value = match kind {
+        Some("begin") => {
+            let title = value_obj
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Working...")
+                .to_string();
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let percentage = value_obj
+                .get("percentage")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32);
+            tracing::info!(
+                "LSP ({}) progress begin: {} {:?} {:?}",
+                language,
+                title,
+                message,
+                percentage
+            );
+            LspProgressValue::Begin {
+                title,
+                message,
+                percentage,
+            }
+        }
+        Some("report") => {
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let percentage = value_obj
+                .get("percentage")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u32);
+            tracing::trace!(
+                "LSP ({}) progress report: {:?} {:?}",
+                language,
+                message,
+                percentage
+            );
+            LspProgressValue::Report {
+                message,
+                percentage,
+            }
+        }
+        Some("end") => {
+            let message = value_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            tracing::info!("LSP ({}) progress end: {:?}", language, message);
+            LspProgressValue::End { message }
+        }
+        _ => return None,
+    };
+    Some((token, value))
+}
+
 /// Standalone function to handle and dispatch messages (for reader task)
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::let_underscore_must_use)] // oneshot/mpsc send results are best-effort; receiver drop is not actionable
@@ -3666,6 +3908,7 @@ async fn handle_message_dispatch(
     stdin_writer: &Arc<tokio::sync::Mutex<ChildStdin>>,
     document_versions: &Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
     config_options: &Arc<std::sync::Mutex<Option<Value>>>,
+    capabilities: &Arc<std::sync::Mutex<Option<ServerCapabilities>>>,
 ) -> Result<(), String> {
     match message {
         JsonRpcMessage::Response(response) => {
@@ -3715,12 +3958,7 @@ async fn handle_message_dispatch(
                 "window/workDoneProgress/create" => {
                     // Server wants to create a progress token - acknowledge it
                     tracing::trace!("Acknowledging workDoneProgress/create (id={})", request.id);
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
                 "workspace/configuration" => {
                     // The server is pulling configuration for one or more named
@@ -3754,17 +3992,55 @@ async fn handle_message_dispatch(
                     }
                 }
                 "client/registerCapability" => {
-                    // Server wants to register a capability dynamically - acknowledge
-                    tracing::trace!(
-                        "Acknowledging client/registerCapability (id={})",
-                        request.id
+                    // Many servers advertise little or nothing statically in
+                    // their `initialize` result and register providers
+                    // dynamically here instead. Parse the registrations and
+                    // forward them so the stored `ServerCapabilities` is updated
+                    // — otherwise the feature stays gated off for the whole
+                    // session (sinelaw/fresh#2195). Still ack with `null`.
+                    let registrations = registrations_from_params(request.params.as_ref());
+                    tracing::debug!(
+                        "client/registerCapability (id={}) registering {} method(s): {:?}",
+                        request.id,
+                        registrations.len(),
+                        registrations.iter().map(|(m, _)| m).collect::<Vec<_>>()
                     );
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
+                    if !registrations.is_empty() {
+                        // Keep the task-side raw capability snapshot in sync for
+                        // the few send gates that read it (pull diagnostics).
+                        sync_raw_capabilities(capabilities, &registrations, true);
+                        let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
+                            language: language.to_string(),
+                            server_name: server_name.to_string(),
+                            register: true,
+                            registrations,
+                        });
                     }
+                    null_response(request.id)
+                }
+                "client/unregisterCapability" => {
+                    // Mirror of registerCapability: the server is withdrawing a
+                    // dynamically-registered provider, so clear the matching
+                    // capability flag.
+                    let methods = unregistrations_from_params(request.params.as_ref());
+                    tracing::debug!(
+                        "client/unregisterCapability (id={}) unregistering {} method(s): {:?}",
+                        request.id,
+                        methods.len(),
+                        methods
+                    );
+                    if !methods.is_empty() {
+                        let registrations: Vec<(String, Option<Value>)> =
+                            methods.into_iter().map(|m| (m, None)).collect();
+                        sync_raw_capabilities(capabilities, &registrations, false);
+                        let _ = async_tx.send(AsyncMessage::LspDynamicCapabilities {
+                            language: language.to_string(),
+                            server_name: server_name.to_string(),
+                            register: false,
+                            registrations,
+                        });
+                    }
+                    null_response(request.id)
                 }
                 "workspace/diagnostic/refresh" => {
                     // Server wants us to re-pull diagnostics for all open documents
@@ -3776,12 +4052,32 @@ async fn handle_message_dispatch(
                     let _ = async_tx.send(AsyncMessage::LspDiagnosticRefresh {
                         language: language.to_string(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
+                }
+                "workspace/inlayHint/refresh" => {
+                    // Server learned more (e.g. a cross-file type change) and
+                    // wants cached inlay hints re-pulled for all open documents.
+                    // Servers only send this because we advertise
+                    // `workspace.inlayHint.refreshSupport` (sinelaw/fresh#2195 §2).
+                    tracing::info!(
+                        "LSP ({}) requested inlay-hint refresh (workspace/inlayHint/refresh)",
+                        language
+                    );
+                    let _ = async_tx.send(AsyncMessage::LspInlayHintRefresh {
+                        language: language.to_string(),
+                    });
+                    null_response(request.id)
+                }
+                "workspace/semanticTokens/refresh" => {
+                    // Same idea as inlayHint/refresh, for semantic highlighting.
+                    tracing::info!(
+                        "LSP ({}) requested semantic-tokens refresh (workspace/semanticTokens/refresh)",
+                        language
+                    );
+                    let _ = async_tx.send(AsyncMessage::LspSemanticTokensRefresh {
+                        language: language.to_string(),
+                    });
+                    null_response(request.id)
                 }
                 "workspace/applyEdit" => {
                     // Server asks client to apply a workspace edit (e.g. during executeCommand)
@@ -3825,12 +4121,7 @@ async fn handle_message_dispatch(
                         method: request.method.clone(),
                         params: request.params.clone(),
                     });
-                    JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: request.id,
-                        result: Some(Value::Null),
-                        error: None,
-                    }
+                    null_response(request.id)
                 }
             };
 
@@ -3903,168 +4194,33 @@ async fn handle_notification_dispatch(
             }
         }
         "window/showMessage" => {
-            if let Some(params) = notification.params {
-                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(3);
-                    let message = msg
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no message)")
-                        .to_string();
-
-                    let message_type = match message_type_num {
-                        1 => LspMessageType::Error,
-                        2 => LspMessageType::Warning,
-                        3 => LspMessageType::Info,
-                        _ => LspMessageType::Log,
-                    };
-
-                    // Log it as well
-                    match message_type {
-                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => {
-                            tracing::warn!("LSP ({}): {}", language, message)
-                        }
-                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
-                        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
-                    }
-
-                    // Send to UI
-                    let _ = async_tx.send(AsyncMessage::LspWindowMessage {
-                        language: language.to_string(),
-                        message_type,
-                        message,
-                    });
-                }
+            if let Some((message_type, message)) = parse_window_message(notification.params, 3) {
+                log_lsp_message(message_type, language, &message);
+                let _ = async_tx.send(AsyncMessage::LspWindowMessage {
+                    language: language.to_string(),
+                    message_type,
+                    message,
+                });
             }
         }
         "window/logMessage" => {
-            if let Some(params) = notification.params {
-                if let Ok(msg) = serde_json::from_value::<serde_json::Map<String, Value>>(params) {
-                    let message_type_num = msg.get("type").and_then(|v| v.as_i64()).unwrap_or(4);
-                    let message = msg
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no message)")
-                        .to_string();
-
-                    let message_type = match message_type_num {
-                        1 => LspMessageType::Error,
-                        2 => LspMessageType::Warning,
-                        3 => LspMessageType::Info,
-                        _ => LspMessageType::Log,
-                    };
-
-                    // Log it as well
-                    match message_type {
-                        LspMessageType::Error => tracing::error!("LSP ({}): {}", language, message),
-                        LspMessageType::Warning => {
-                            tracing::warn!("LSP ({}): {}", language, message)
-                        }
-                        LspMessageType::Info => tracing::info!("LSP ({}): {}", language, message),
-                        LspMessageType::Log => tracing::trace!("LSP ({}): {}", language, message),
-                    }
-
-                    // Send to UI
-                    let _ = async_tx.send(AsyncMessage::LspLogMessage {
-                        language: language.to_string(),
-                        message_type,
-                        message,
-                    });
-                }
+            if let Some((message_type, message)) = parse_window_message(notification.params, 4) {
+                log_lsp_message(message_type, language, &message);
+                let _ = async_tx.send(AsyncMessage::LspLogMessage {
+                    language: language.to_string(),
+                    message_type,
+                    message,
+                });
             }
         }
         "$/progress" => {
-            if let Some(params) = notification.params {
-                if let Ok(progress) =
-                    serde_json::from_value::<serde_json::Map<String, Value>>(params)
-                {
-                    let token = progress
-                        .get("token")
-                        .and_then(|v| {
-                            v.as_str()
-                                .map(|s| s.to_string())
-                                .or_else(|| v.as_i64().map(|n| n.to_string()))
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    if let Some(value_obj) = progress.get("value").and_then(|v| v.as_object()) {
-                        let kind = value_obj.get("kind").and_then(|v| v.as_str());
-
-                        let value = match kind {
-                            Some("begin") => {
-                                let title = value_obj
-                                    .get("title")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("Working...")
-                                    .to_string();
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let percentage = value_obj
-                                    .get("percentage")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|p| p as u32);
-
-                                tracing::info!(
-                                    "LSP ({}) progress begin: {} {:?} {:?}",
-                                    language,
-                                    title,
-                                    message,
-                                    percentage
-                                );
-
-                                Some(LspProgressValue::Begin {
-                                    title,
-                                    message,
-                                    percentage,
-                                })
-                            }
-                            Some("report") => {
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                let percentage = value_obj
-                                    .get("percentage")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|p| p as u32);
-
-                                tracing::trace!(
-                                    "LSP ({}) progress report: {:?} {:?}",
-                                    language,
-                                    message,
-                                    percentage
-                                );
-
-                                Some(LspProgressValue::Report {
-                                    message,
-                                    percentage,
-                                })
-                            }
-                            Some("end") => {
-                                let message = value_obj
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-
-                                tracing::info!("LSP ({}) progress end: {:?}", language, message);
-
-                                Some(LspProgressValue::End { message })
-                            }
-                            _ => None,
-                        };
-
-                        if let Some(value) = value {
-                            let _ = async_tx.send(AsyncMessage::LspProgress {
-                                language: language.to_string(),
-                                token,
-                                value,
-                            });
-                        }
-                    }
-                }
+            if let Some((token, value)) = parse_progress_notification(notification.params, language)
+            {
+                let _ = async_tx.send(AsyncMessage::LspProgress {
+                    language: language.to_string(),
+                    token,
+                    value,
+                });
             }
         }
         "experimental/serverStatus" => {
@@ -5020,6 +5176,168 @@ mod tests {
                 "expected codeActionKind value_set to include {required:?}, got {kinds:?}",
             );
         }
+    }
+
+    #[test]
+    fn advertises_dynamic_registration_on_honored_capabilities() {
+        // Servers that register providers dynamically only do so when the
+        // client advertised `dynamicRegistration` for that capability
+        // (sinelaw/fresh#2195 §1). Spot-check the ones most commonly registered
+        // dynamically.
+        let caps = create_client_capabilities();
+        let td = caps
+            .text_document
+            .as_ref()
+            .expect("text_document capabilities must be set");
+
+        assert_eq!(
+            td.inlay_hint.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "inlay_hint must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.completion.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "completion must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.formatting.as_ref().and_then(|c| c.dynamic_registration),
+            Some(true),
+            "formatting must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            td.document_symbol
+                .as_ref()
+                .and_then(|c| c.dynamic_registration),
+            Some(true),
+            "document_symbol must advertise dynamicRegistration"
+        );
+        assert_eq!(
+            caps.workspace
+                .as_ref()
+                .and_then(|w| w.symbol.as_ref())
+                .and_then(|s| s.dynamic_registration),
+            Some(true),
+            "workspace.symbol must advertise dynamicRegistration"
+        );
+    }
+
+    #[test]
+    fn advertises_inlay_hint_and_semantic_tokens_refresh_support() {
+        // A server only sends `workspace/inlayHint/refresh` (and the semantic
+        // tokens equivalent) when the client advertised refresh support; we now
+        // handle both, so both must be advertised (sinelaw/fresh#2195 §2).
+        let caps = create_client_capabilities();
+        let workspace = caps.workspace.as_ref().expect("workspace caps must be set");
+
+        assert_eq!(
+            workspace
+                .inlay_hint
+                .as_ref()
+                .and_then(|c| c.refresh_support),
+            Some(true),
+            "workspace.inlayHint.refreshSupport must be advertised"
+        );
+        assert_eq!(
+            workspace
+                .semantic_tokens
+                .as_ref()
+                .and_then(|c| c.refresh_support),
+            Some(true),
+            "workspace.semanticTokens.refreshSupport must be advertised"
+        );
+    }
+
+    #[test]
+    fn sync_raw_capabilities_mirrors_dynamic_diagnostic_provider() {
+        // The task-side raw `ServerCapabilities` snapshot gates pull diagnostics
+        // (`handle_document_diagnostic`). A server like pyright registers
+        // `diagnosticProvider` dynamically, not statically, so without mirroring
+        // it here the pull is silently skipped (sinelaw/fresh#2195).
+        let caps: Arc<std::sync::Mutex<Option<ServerCapabilities>>> =
+            Arc::new(std::sync::Mutex::new(Some(ServerCapabilities::default())));
+        assert!(caps
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .diagnostic_provider
+            .is_none());
+
+        sync_raw_capabilities(
+            &caps,
+            &[("textDocument/diagnostic".to_string(), None)],
+            true,
+        );
+        assert!(
+            caps.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .diagnostic_provider
+                .is_some(),
+            "dynamic diagnostic registration must set diagnostic_provider so pulls aren't skipped"
+        );
+
+        sync_raw_capabilities(
+            &caps,
+            &[("textDocument/diagnostic".to_string(), None)],
+            false,
+        );
+        assert!(
+            caps.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .diagnostic_provider
+                .is_none(),
+            "unregister must clear diagnostic_provider"
+        );
+    }
+
+    #[test]
+    fn sync_raw_capabilities_ignores_non_diagnostic_methods() {
+        // Only the diagnostic provider is gated task-side; other methods must
+        // not disturb the raw snapshot (they gate on the main-loop summary).
+        let caps: Arc<std::sync::Mutex<Option<ServerCapabilities>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        sync_raw_capabilities(&caps, &[("textDocument/hover".to_string(), None)], true);
+        assert!(
+            caps.lock().unwrap().is_none(),
+            "a non-diagnostic registration must not materialize the raw snapshot"
+        );
+    }
+
+    #[test]
+    fn parses_register_and_unregister_capability_params() {
+        let register = serde_json::json!({
+            "registrations": [
+                { "id": "1", "method": "textDocument/inlayHint" },
+                {
+                    "id": "2",
+                    "method": "textDocument/completion",
+                    "registerOptions": { "triggerCharacters": ["."] }
+                }
+            ]
+        });
+        let parsed = registrations_from_params(Some(&register));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, "textDocument/inlayHint");
+        assert!(parsed[0].1.is_none());
+        assert_eq!(parsed[1].0, "textDocument/completion");
+        assert!(parsed[1].1.is_some());
+
+        let unregister = serde_json::json!({
+            "unregisterations": [
+                { "id": "1", "method": "textDocument/inlayHint" }
+            ]
+        });
+        let methods = unregistrations_from_params(Some(&unregister));
+        assert_eq!(methods, vec!["textDocument/inlayHint".to_string()]);
+
+        // Malformed params must not panic and yield empty lists.
+        assert!(registrations_from_params(Some(&serde_json::json!({ "bogus": 1 }))).is_empty());
+        assert!(unregistrations_from_params(None).is_empty());
     }
 
     #[test]

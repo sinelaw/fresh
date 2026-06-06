@@ -1338,6 +1338,11 @@ fn default_list_visible_rows() -> u32 {
     20
 }
 
+/// Default glyph for a `Divider`: the light horizontal box-drawing rule.
+fn default_divider_char() -> String {
+    "─".to_string()
+}
+
 /// Default for `Tree::selected_index`. -1 ⇒ "no selection".
 fn default_tree_selected() -> i32 {
     -1
@@ -1508,6 +1513,25 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// Full-width horizontal rule. The host draws `ch` repeated across
+    /// the panel's inner content width, so the separator always matches
+    /// the rendered width — including a user-dragged dock — without the
+    /// plugin computing the width itself. (A plugin-computed width forks
+    /// the host's authoritative width and drifts on resize/drag; this is
+    /// the declarative equivalent of `Spacer { flex: true }`, which fills
+    /// the row without the plugin knowing the gap size.)
+    Divider {
+        /// Glyph repeated across the full width. Defaults to `─`.
+        #[serde(default = "default_divider_char")]
+        ch: String,
+        /// Optional whole-rule styling (e.g. a dim `fg`). Same shape as a
+        /// styled segment's `style`.
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Vertical list of pre-rendered rows with host-managed
     /// selection styling, click routing, **and virtual scrolling**.
     ///
@@ -1533,6 +1557,20 @@ pub enum WidgetSpec {
     /// where `index` is the absolute (not visible-window) index.
     List {
         items: Vec<crate::text_property::TextPropertyEntry>,
+        /// Optional parallel array of per-item widget specs. When
+        /// non-empty it **overrides** `items`: each entry is rendered
+        /// via the normal widget renderer into a multi-row block
+        /// (e.g. a `LabeledSection` for a rounded "card"/"pill"), and
+        /// the list lays items out, selects, scrolls, and routes
+        /// clicks in *item* units — one card per logical item,
+        /// regardless of how many terminal rows it occupies. All
+        /// cards share a uniform height (the tallest item's row count;
+        /// shorter items pad). `item_keys` / `selected_index` are
+        /// still indexed per item. Interactive widgets nested inside a
+        /// card aren't routed yet — the whole card is one `select`
+        /// hit. Leave empty for the classic one-row-per-`items` list.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        item_specs: Vec<WidgetSpec>,
         #[serde(default)]
         item_keys: Vec<String>,
         #[serde(default = "default_list_selected")]
@@ -3624,6 +3662,33 @@ pub enum PluginCommand {
     /// restart.
     ClearAuthority,
 
+    /// Attach to a remote agent over a transport that requires a live
+    /// connection (today: `kubectl exec` into a K8s pod). Unlike
+    /// `SetAuthority` — which builds a synchronously-constructible
+    /// backend and restarts immediately — this kicks off an *async*
+    /// connect (spawn the carrier, bootstrap the agent, await `ready`);
+    /// only on success does the editor install the resulting authority
+    /// and restart. On failure the editor surfaces the error and stays
+    /// put.
+    ///
+    /// `payload` is opaque at the fresh-core boundary; the concrete
+    /// schema (`RemoteAgentSpec`) lives in `fresh-editor` so core stays
+    /// ignorant of backend kinds, exactly like `SetAuthority`.
+    AttachRemoteAgent {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+        /// JS callback id of the returned promise. The editor settles it once
+        /// the session is fully constructed (resolve) or the connect/window
+        /// creation fails (reject), so the plugin can await the real outcome.
+        request_id: u64,
+    },
+
+    /// Cancel every in-flight `attachRemoteAgent` connect. The New-Session
+    /// dialog's Cancel: the awaiting promise is rejected immediately and the
+    /// (uninterruptible) background connect's eventual result is discarded so
+    /// no window is ever built. A no-op when nothing is in flight.
+    CancelRemoteAttach,
+
     /// Activate an environment: set the live env provider's recipe (an
     /// activation shell `snippet` run in `dir`). Re-evaluated on demand on the
     /// active backend and applied to every spawn — no authority rebuild. Only
@@ -3777,6 +3842,9 @@ pub enum PluginCommand {
     /// - "focus"  — route keys to the panel (modal-ish capture).
     /// - "blur"   — stop routing keys to the panel; it stays rendered
     ///   so focus returns to the editor while the dock remains visible.
+    /// - "fullscreen" — a centered panel renders over the *entire* frame
+    ///   (covering the dimmed dock) when `arg != 0`, instead of laying
+    ///   into the chrome area beside the dock. No-op when no dock is up.
     FloatingPanelControl { panel_id: u64, op: String, arg: f64 },
 }
 

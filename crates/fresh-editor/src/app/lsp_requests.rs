@@ -517,7 +517,7 @@ impl Editor {
                 .to_string()?;
             let active_id = self.active_window;
             let __win = self.windows.get_mut(&active_id)?;
-            let lsp = __win.lsp.as_mut()?;
+            let lsp = &mut __win.lsp;
             for sh in lsp.get_handles_mut(language) {
                 if needs_open.contains(&sh.handle.id()) {
                     if let Err(e) =
@@ -900,6 +900,14 @@ impl Editor {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
         };
+
+        // A hover request may have been in flight when the user opened the
+        // status-bar LSP status popup. Don't show the hover card on top of it.
+        if self.is_lsp_status_popup_open() {
+            tracing::debug!("Suppressing hover response: LSP status popup is open");
+            self.active_window_mut().hover.set_symbol_range(None);
+            return;
+        }
         let hover_lsp_position = Some(position);
 
         // Gather any diagnostics whose range overlaps the hover position so
@@ -1879,11 +1887,7 @@ impl Editor {
 
         let __active_id = self.active_window;
 
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh
                     .handle
@@ -1911,11 +1915,7 @@ impl Editor {
 
         let __active_id = self.active_window;
 
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             for sh in lsp.get_handles_mut(&language) {
                 if let Err(e) = sh.handle.code_action_resolve(request_id, action.clone()) {
                     tracing::warn!("Failed to send codeAction/resolve to '{}': {}", sh.name, e);
@@ -2000,11 +2000,7 @@ impl Editor {
 
         let __active_id = self.active_window;
 
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Format) {
                 if let Err(e) = sh.handle.document_formatting(
                     request_id,
@@ -3058,9 +3054,7 @@ impl Editor {
         let __next_id = &mut __win.next_lsp_request_id;
         let __pending_folding = &mut __win.pending_folding_range_requests;
         let __folding_in_flight = &mut __win.folding_ranges_in_flight;
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut __win.lsp;
 
         if !lsp.folding_ranges_supported(&language) {
             return;
@@ -3169,9 +3163,7 @@ impl Editor {
         let __next_id = &mut __win.next_lsp_request_id;
         let __pending_st = &mut __win.pending_semantic_token_requests;
         let __st_in_flight = &mut __win.semantic_tokens_in_flight;
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut __win.lsp;
 
         // Ensure there is a running server
         use crate::services::lsp::manager::LspSpawnResult;
@@ -3303,9 +3295,7 @@ impl Editor {
         let __st_range_in_flight = &mut __win.semantic_tokens_range_in_flight;
         let __st_range_last = &mut __win.semantic_tokens_range_last_request;
         let __st_range_applied = &__win.semantic_tokens_range_applied;
-        let Some(lsp) = __win.lsp.as_mut() else {
-            return;
-        };
+        let lsp = &mut __win.lsp;
         let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
 
         // Ensure there is a running server
