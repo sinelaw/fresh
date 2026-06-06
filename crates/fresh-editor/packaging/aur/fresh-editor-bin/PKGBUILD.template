@@ -39,8 +39,8 @@ package() {
     # License
     install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
-    # Plugins
-    cp -r plugins "$pkgdir/usr/share/fresh-editor/"
+    # Plugins and themes are compiled into the binary (embed-plugins feature),
+    # so the release tarball ships no on-disk plugins/ directory.
 
     # Desktop file
     install -Dm644 fresh.desktop "$pkgdir/usr/share/applications/fresh.desktop"
