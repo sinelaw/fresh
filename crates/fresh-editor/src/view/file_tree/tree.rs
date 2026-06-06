@@ -141,12 +141,14 @@ impl FileTree {
 
         match result {
             Ok(entries) => {
-                // Sort entries: directories first, then by name
+                // Sort entries: directories first, then by name using
+                // a natural (alphanumeric) comparison so `chapter-2`
+                // sorts before `chapter-10` (issue #2073).
                 let mut sorted_entries = entries;
                 sorted_entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
                     (true, false) => std::cmp::Ordering::Less,
                     (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    _ => natural_cmp(&a.name, &b.name),
                 });
 
                 // Create child nodes
@@ -441,12 +443,147 @@ impl FileTree {
     }
 }
 
+/// Natural ordering of two filenames: ASCII-digit runs compare as
+/// integers, everything else as lowercase strings. This gives a
+/// "human" order like `chapter-2 < chapter-10` (issue #2073) without
+/// pulling in a sort crate.
+///
+/// Only ASCII digits are treated as a numeric run — letters, symbols,
+/// and non-ASCII characters fall back to lowercase string comparison.
+/// Leading zeros are ignored when comparing magnitudes (`v01 == v1`
+/// by value); ties resolve by raw width, with the shorter (unpadded)
+/// form first, matching GNU `sort -V` (`v1 < v01`).
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut ai = a.char_indices().peekable();
+    let mut bi = b.char_indices().peekable();
+    loop {
+        match (ai.peek().copied(), bi.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some((_, ca)), Some((_, cb))) => {
+                if ca.is_ascii_digit() && cb.is_ascii_digit() {
+                    // Compare numeric runs by magnitude (length of the
+                    // non-zero portion, then digit-by-digit), then by
+                    // raw width so leading-zero variants are ordered
+                    // deterministically without claiming equality.
+                    let (a_start, a_end) = take_digit_run(&mut ai);
+                    let (b_start, b_end) = take_digit_run(&mut bi);
+                    let a_digits = &a[a_start..a_end];
+                    let b_digits = &b[b_start..b_end];
+                    let a_trim = a_digits.trim_start_matches('0');
+                    let b_trim = b_digits.trim_start_matches('0');
+                    match a_trim.len().cmp(&b_trim.len()) {
+                        Ordering::Equal => match a_trim.cmp(b_trim) {
+                            Ordering::Equal => {
+                                if a_digits.len() != b_digits.len() {
+                                    return a_digits.len().cmp(&b_digits.len());
+                                }
+                            }
+                            other => return other,
+                        },
+                        other => return other,
+                    }
+                } else {
+                    let (_, ca) = ai.next().unwrap();
+                    let (_, cb) = bi.next().unwrap();
+                    let la = ca.to_ascii_lowercase();
+                    let lb = cb.to_ascii_lowercase();
+                    if la != lb {
+                        return la.cmp(&lb);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Consume a contiguous ASCII-digit run from `iter` and return its
+/// byte range in the original string. `iter` is left pointing at the
+/// first non-digit (or exhausted).
+fn take_digit_run<I>(iter: &mut std::iter::Peekable<I>) -> (usize, usize)
+where
+    I: Iterator<Item = (usize, char)>,
+{
+    let (start, _) = *iter.peek().expect("caller checked at least one digit");
+    let mut end = start;
+    while let Some(&(idx, c)) = iter.peek() {
+        if c.is_ascii_digit() {
+            end = idx + c.len_utf8();
+            iter.next();
+        } else {
+            break;
+        }
+    }
+    (start, end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::filesystem::StdFileSystem;
     use std::fs as std_fs;
     use tempfile::TempDir;
+
+    // ── natural_cmp ──────────────────────────────────────────────────
+
+    /// Issue #2073: digit runs in filenames should compare by
+    /// magnitude so `chapter-2 < chapter-10`, not lexicographically.
+    #[test]
+    fn natural_cmp_orders_digit_runs_by_magnitude() {
+        let mut names = vec![
+            "chapter-1.md",
+            "chapter-10.md",
+            "chapter-2.md",
+            "chapter-21.md",
+            "chapter-3.md",
+        ];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(
+            names,
+            vec![
+                "chapter-1.md",
+                "chapter-2.md",
+                "chapter-3.md",
+                "chapter-10.md",
+                "chapter-21.md",
+            ]
+        );
+    }
+
+    /// Non-digit segments keep falling back to case-insensitive
+    /// comparison — `Foo` and `foo` compare equal, `bar` sorts before
+    /// `Foo`, mixed cases still group together rather than splitting
+    /// upper- and lowercase apart the way raw `cmp` would.
+    #[test]
+    fn natural_cmp_is_case_insensitive_for_text() {
+        use std::cmp::Ordering;
+        assert_eq!(natural_cmp("Foo.txt", "foo.txt"), Ordering::Equal);
+        assert_eq!(natural_cmp("bar.txt", "Foo.txt"), Ordering::Less);
+    }
+
+    /// Leading zeros do not change magnitude but still break ties —
+    /// the shorter (unpadded) form wins, matching GNU `sort -V` so a
+    /// sorted listing is deterministic regardless of input order.
+    #[test]
+    fn natural_cmp_leading_zeros_break_ties_after_magnitude() {
+        use std::cmp::Ordering;
+        assert_eq!(natural_cmp("v1", "v01"), Ordering::Less);
+        assert_eq!(natural_cmp("v01", "v1"), Ordering::Greater);
+        // But magnitude wins over width — `v002` still sorts before `v10`.
+        assert_eq!(natural_cmp("v002.txt", "v10.txt"), Ordering::Less);
+    }
+
+    /// Mixed digit + text runs alternate cleanly: shared prefix,
+    /// numeric run by magnitude, shared suffix.
+    #[test]
+    fn natural_cmp_handles_mixed_runs() {
+        use std::cmp::Ordering;
+        assert_eq!(natural_cmp("img2a.png", "img10a.png"), Ordering::Less);
+        assert_eq!(natural_cmp("img2b.png", "img2a.png"), Ordering::Greater);
+        assert_eq!(natural_cmp("img.png", "img2.png"), Ordering::Less);
+    }
 
     async fn create_test_tree() -> (TempDir, FileTree) {
         let temp_dir = TempDir::new().unwrap();
