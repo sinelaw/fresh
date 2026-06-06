@@ -43,8 +43,10 @@ package() {
     # License
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
-    # Plugins
-    cp -r crates/fresh-editor/plugins "$pkgdir/usr/share/$pkgname/"
+    # Plugins (not shipped in all releases)
+    if [ -d plugins ]; then
+      cp -r plugins "$pkgdir/usr/share/fresh-editor/"
+    fi
 
     # Keymaps
     cp -r crates/fresh-editor/keymaps "$pkgdir/usr/share/$pkgname/"
