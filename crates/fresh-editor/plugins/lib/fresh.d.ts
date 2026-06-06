@@ -1675,6 +1675,11 @@ interface EditorAPI {
 	*/
 	getActiveSplitId(): number;
 	/**
+	* Returns true when search highlights are currently active in the buffer.
+	* Becomes true after a search is confirmed; false once cleared.
+	*/
+	hasActiveSearch(): boolean;
+	/**
 	* List all open buffers - returns array of BufferInfo objects
 	*/
 	listBuffers(): BufferInfo[];

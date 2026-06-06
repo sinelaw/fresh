@@ -1116,6 +1116,7 @@ impl JsEditorApi {
 
     /// Returns true when search highlights are currently active in the buffer.
     /// Becomes true after a search is confirmed; false once cleared.
+    #[plugin_api]
     pub fn has_active_search(&self) -> bool {
         self.state_snapshot
             .read()
