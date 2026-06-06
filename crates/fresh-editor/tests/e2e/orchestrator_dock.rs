@@ -1281,3 +1281,159 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     h.wait_until(|h| h.screen_to_string().contains("Session Name"))
         .unwrap();
 }
+
+/// Regression: with the dock's project dropdown open, the keyboard drives
+/// the *dropdown* — ↑/↓ move its cursor and Enter commits the highlighted
+/// option — instead of leaking to the session list beneath it. Before the
+/// fix the menu opened but was inert: focus stayed on the session list, so
+/// ↑/↓ switched sessions and Enter dived into one, and a keyboard user
+/// could never pick a project from the dropdown.
+///
+/// The toolbar's project control is the discriminator: it reads "All ▾"
+/// while unfiltered and the project's basename once a project is picked.
+/// Driving Alt+P → ↓ → Enter must flip it to "alphaproj ▾"; with the bug
+/// the filter stays on "All".
+#[test]
+fn dock_project_dropdown_is_keyboard_navigable() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The project control starts unfiltered.
+    h.assert_screen_contains("All ▾");
+
+    // Alt+P opens the dropdown; it lists "All projects" plus this project.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+
+    // ↓ moves the cursor from "All projects" onto the project row; Enter
+    // commits it. With the bug these keys drove the session list instead,
+    // leaving the filter on "All".
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The dropdown closed and the project filter is applied: the toolbar
+    // now reads the project basename, no longer "All".
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj ▾"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("All ▾"),
+        "project filter should be applied (toolbar should not read 'All ▾'):\n{screen}"
+    );
+    // And the menu itself is gone.
+    assert!(
+        !screen.contains("All projects"),
+        "dropdown should have closed after Enter:\n{screen}"
+    );
+}
+
+/// Esc cancels the open project dropdown without applying a filter and
+/// leaves the keyboard with the dock (it must not commit the cursor's
+/// option, nor blur the dock to the editor). We prove the dock kept focus
+/// by re-opening the dropdown with Alt+P afterwards: if Esc had blurred the
+/// dock, Alt+P would reach the editor instead and the menu would not return.
+#[test]
+fn dock_project_dropdown_esc_cancels_without_filtering() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+    // Move the cursor onto the project row, then cancel.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Menu closed and no filter applied — toolbar still reads "All ▾".
+    h.wait_until(|h| !h.screen_to_string().contains("All projects"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("All ▾"),
+        "Esc must not apply the cursor's project (toolbar should still read 'All ▾'):\n{screen}"
+    );
+
+    // The dock still owns the keyboard: Alt+P re-opens the dropdown.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+}
+
+/// Regression: creating a session while the dock is open moves the dock's
+/// highlight onto the new session. It becomes the active window, and the
+/// dock — a passive mirror once focus dives into the new terminal — must
+/// re-point at it instead of stranding the highlight on the previously
+/// active row. We read this off the *selected card border*: the highlighted
+/// card uses heavy box glyphs (a `┃` down each side), unselected cards keep
+/// the light `│`. After creation the new session's card must be the heavy
+/// one and the old session's must not.
+#[test]
+fn creating_session_moves_dock_highlight_to_new_session() {
+    let (_tmp, root) = setup_project("alphaproj");
+    // A non-git directory for the new session: the worktree toggle
+    // auto-disables there, so it spawns a plain terminal session with no
+    // git worktree to create. It sits beside the git project (the tempdir
+    // root is not itself a repo).
+    let plain = root.parent().unwrap().join("plainwork");
+    fs::create_dir(&plain).unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // The launch session (alphaproj) is the only row, and it's selected.
+    h.assert_screen_contains("alphaproj");
+
+    // Open the new-session form and point it at the non-git dir.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.type_text(&plain.display().to_string()).unwrap();
+    // The typed path lands in the field (its last segment is visible).
+    h.wait_until(|h| h.screen_to_string().contains("plainwork"))
+        .unwrap();
+    // Accept the path completion with Tab so the popup closes and the
+    // Create button is no longer obscured by it.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+        .unwrap();
+
+    // Submit by clicking "Create Session".
+    let screen = h.screen_to_string();
+    let (col, btn_row) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| l.find("Create Session").map(|c| (c as u16, r as u16)))
+        .expect("Create Session button should be visible");
+    h.mouse_click(col, btn_row).unwrap();
+
+    // The new session appears and becomes the highlighted (heavy-border)
+    // card; the spawn + active-window switch + dock refresh are async, so
+    // wait until the highlight has actually migrated onto it.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("plainwork") && l.starts_with('┃'))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let alpha_line = screen
+        .lines()
+        .find(|l| l.contains("alphaproj"))
+        .expect("the original session row should still be listed");
+    assert!(
+        !alpha_line.starts_with('┃'),
+        "the previously-active session must drop the heavy highlight border:\n{screen}"
+    );
+}

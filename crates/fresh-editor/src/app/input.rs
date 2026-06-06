@@ -2514,6 +2514,55 @@ impl Editor {
                 .focus_key(panel_id)
                 .map(|k| k == "filter")
                 .unwrap_or(false);
+            // The project dropdown owns the keyboard while panel focus
+            // sits on one of its `project-pick:` rows (the plugin moves
+            // focus there when the menu opens). In that state ↑/↓ move
+            // the dropdown cursor, Enter commits it, and Esc cancels —
+            // all routed to the plugin as `dock_menu_*` events. Without
+            // this, those keys fell through to the generic list nav
+            // below and drove the session list *under* the open menu,
+            // so the dropdown was visible but un-navigable by keyboard.
+            let on_project_menu = self
+                .widget_registry
+                .focus_key(panel_id)
+                .map(|k| k.starts_with("project-pick:"))
+                .unwrap_or(false);
+            if on_project_menu {
+                match code {
+                    KeyCode::Up => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_prev");
+                        return true;
+                    }
+                    KeyCode::Down => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_next");
+                        return true;
+                    }
+                    // Tab/Shift+Tab navigate the menu too, so they can't
+                    // tab focus *out* of the open dropdown into the dock
+                    // toolbar behind it.
+                    KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_prev");
+                        return true;
+                    }
+                    KeyCode::BackTab => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_prev");
+                        return true;
+                    }
+                    KeyCode::Tab => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_next");
+                        return true;
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_accept");
+                        return true;
+                    }
+                    KeyCode::Esc => {
+                        self.fire_dock_widget_event(panel_id, "dock_menu_cancel");
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
             match code {
                 KeyCode::Esc => {
                     if on_filter {

@@ -463,6 +463,12 @@ interface OpenDialogState {
   projectFilter: string | null;
   // `true` while the dock project dropdown overlay is open.
   projectMenuOpen: boolean;
+  // Keyboard cursor (highlighted row) within the open project
+  // dropdown, indexing `projectMenuKeys()` (0 = "All projects").
+  // Distinct from `projectFilter`, which is the *applied* scope shown
+  // with a `●`; this is just where ↑/↓ currently sit before Enter
+  // commits. Only meaningful while `projectMenuOpen`.
+  projectMenuIndex: number;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -2227,6 +2233,21 @@ function refreshOpenDialog(): void {
   }
 }
 
+// Move the dock's highlighted row onto the active window. Used when the
+// active session changes from *outside* the dock's own ↑/↓ live-switch —
+// a new session is created, or another window is focused — so the dock,
+// which is a passive mirror while blurred, highlights the session the
+// editor actually switched to instead of stranding the highlight on the
+// previously-active row. No-op when the active window isn't in the
+// (filtered) list.
+function syncDockSelectionToActive(): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  const idx = openDialog.filteredIds.indexOf(editor.activeWindow());
+  if (idx < 0) return;
+  openDialog.selectedIndex = idx;
+  openPanel.setSelectedIndex("sessions", idx);
+}
+
 // =============================================================================
 // PR probe — opportunistic `gh` integration for the pill's second line
 //
@@ -2508,6 +2529,7 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     bulkInFlight: null,
     projectFilter: asDock ? lastDockProjectFilter : null,
     projectMenuOpen: false,
+    projectMenuIndex: 0,
   };
   // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
   // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
@@ -2693,37 +2715,122 @@ function dockTitleRow(): WidgetSpec {
   };
 }
 
+// Option keys for the dock's project dropdown, in display order. Index 0
+// is always "All projects" (the empty-string key); the rest are the
+// projects with a session in the worktree/trivial-filtered set. The
+// project menu's keyboard cursor (`projectMenuIndex`) and the
+// `dock_menu_*` nav handlers index into this list, so it's the single
+// source of truth for both render and navigation.
+function projectMenuKeys(): string[] {
+  return ["", ...dockProjectOptions()];
+}
+
+// The `project-pick:<key>` widget key for a menu row — the host reads
+// this focus key to recognise that the dropdown (not the session list)
+// owns the keyboard, and to route ↑/↓/Enter/Esc to the `dock_menu_*`
+// events. Empty suffix = "All projects".
+function projectPickKey(optionKey: string): string {
+  return `project-pick:${optionKey}`;
+}
+
 // Floating menu for the dock's project dropdown: "All projects" plus
 // every project with a session in the worktree/trivial-filtered set.
 // Anchored just under the toolbar via `overlay`, so it paints over the
 // rows below without reflowing them. Each option is a button whose key
 // (`project-pick:<key>`, empty suffix = all) the widget_event handler
-// decodes.
+// decodes. The `●` marks the *applied* filter; the `primary` intent
+// marks the keyboard *cursor* (`projectMenuIndex`) — two separate
+// signals so ↑/↓ can move the cursor over options without yet applying
+// them, the way a standard dropdown behaves.
 function dockProjectMenu(): WidgetSpec {
   const cur = openDialog?.projectFilter ?? null;
-  const opts = dockProjectOptions();
-  const rows: WidgetSpec[] = [
-    row(
-      button(cur === null ? "● All projects" : "  All projects", {
-        key: "project-pick:",
-        intent: cur === null ? "primary" : "normal",
+  const keys = projectMenuKeys();
+  const cursor = clampMenuIndex(openDialog?.projectMenuIndex ?? 0, keys.length);
+  const rows: WidgetSpec[] = keys.map((key, i) => {
+    const applied = key === "" ? cur === null : key === cur;
+    const label = key === "" ? "All projects" : projectLabel(key);
+    return row(
+      button((applied ? "● " : "  ") + label, {
+        key: projectPickKey(key),
+        intent: i === cursor ? "primary" : "normal",
       }),
       flexSpacer(),
-    ),
-  ];
-  for (const key of opts) {
-    const sel = key === cur;
-    rows.push(
-      row(
-        button((sel ? "● " : "  ") + projectLabel(key), {
-          key: `project-pick:${key}`,
-          intent: sel ? "primary" : "normal",
-        }),
-        flexSpacer(),
-      ),
     );
-  }
+  });
   return overlay(labeledSection({ label: "project", child: col(...rows) }));
+}
+
+// Clamp a menu cursor into `[0, len)`, tolerating an empty list.
+function clampMenuIndex(idx: number, len: number): number {
+  if (len <= 0) return 0;
+  return Math.max(0, Math.min(idx, len - 1));
+}
+
+// Open the dock's project dropdown and hand it the keyboard. Seeds the
+// cursor on the *applied* option (so ↑/↓ start from where you are) and
+// moves panel focus onto that option's button — which is the signal the
+// host uses to route nav keys here instead of the session list.
+function openProjectMenu(): void {
+  if (!openDialog || !openPanel) return;
+  const keys = projectMenuKeys();
+  const applied = openDialog.projectFilter;
+  const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
+  openDialog.projectMenuOpen = true;
+  openDialog.projectMenuIndex = clampMenuIndex(idx, keys.length);
+  // Render the menu first so its buttons exist in the spec, *then* move
+  // focus onto the cursor row — otherwise the host re-clamps an unknown
+  // focus key back to the first tabbable.
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(projectPickKey(keys[openDialog.projectMenuIndex]));
+}
+
+// Close the dropdown and return the keyboard to the session list.
+function closeProjectMenu(): void {
+  if (!openDialog || !openPanel) return;
+  openDialog.projectMenuOpen = false;
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey("sessions");
+}
+
+// Move the dropdown cursor by `delta` (clamped, no wrap) and keep panel
+// focus on the highlighted row so the host keeps routing nav keys here.
+function moveProjectMenu(delta: number): void {
+  if (!openDialog || !openPanel || !openDialog.projectMenuOpen) return;
+  const keys = projectMenuKeys();
+  const next = clampMenuIndex(openDialog.projectMenuIndex + delta, keys.length);
+  openDialog.projectMenuIndex = next;
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(projectPickKey(keys[next]));
+}
+
+// Commit the cursor's option as the active project filter and close.
+function acceptProjectMenu(): void {
+  if (!openDialog || !openDialog.projectMenuOpen) return;
+  const keys = projectMenuKeys();
+  const key = keys[clampMenuIndex(openDialog.projectMenuIndex, keys.length)] ?? "";
+  pickProject(key);
+}
+
+// Apply a project-dropdown option (empty = "All projects") as the dock's
+// project filter, re-filter the session list, close the menu, and return
+// focus to the list. Shared by mouse clicks on a row, Enter on the
+// keyboard cursor, and any programmatic pick.
+function pickProject(optionKey: string): void {
+  if (!openDialog) return;
+  openDialog.projectFilter = optionKey === "" ? null : optionKey;
+  lastDockProjectFilter = openDialog.projectFilter;
+  // Re-filter to the chosen project and keep the active session selected
+  // when it's still in view.
+  const activeId = editor.activeWindow();
+  const next = filterSessions(openDialog.filter.value);
+  openDialog.filteredIds = next;
+  const activeIdx = next.indexOf(activeId);
+  openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+  closeProjectMenu();
+  refreshOpenDialog();
+  if (openPanel && next.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+  }
 }
 
 // Single-column spec for the dock. Reuses the same `sessions` list key +
@@ -2760,13 +2867,24 @@ function buildDockSpec(): WidgetSpec {
   // (req: hide them when the editor owns the keyboard). A blurred dock
   // gives the row back to the list.
   const showHints = !dockBlurred;
+  // While the project dropdown owns the keyboard, the hints describe the
+  // dropdown (choose/select/cancel), not the session list — otherwise
+  // they'd advertise the wrong keys for where focus actually is.
   const hintRow = row(
     flexSpacer(),
-    hintBar([
-      { keys: "↑↓", label: "switch" },
-      { keys: "Enter", label: "edit" },
-      { keys: "Esc", label: "editor" },
-    ]),
+    hintBar(
+      openDialog.projectMenuOpen
+        ? [
+          { keys: "↑↓", label: "choose" },
+          { keys: "Enter", label: "select" },
+          { keys: "Esc", label: "cancel" },
+        ]
+        : [
+          { keys: "↑↓", label: "switch" },
+          { keys: "Enter", label: "edit" },
+          { keys: "Esc", label: "editor" },
+        ],
+    ),
     flexSpacer(),
   );
   const bottom: WidgetSpec[] = showHints ? [hintRow] : [];
@@ -5583,8 +5701,16 @@ async function submitForm(): Promise<void> {
       branch: reportedBranch || undefined,
     };
     orchestratorSessions.set(id, tracked);
-    // Refresh the dock so the freshly-created session shows up.
-    if (openPanel && dockMode) refreshOpenDialog();
+    // Refresh the dock so the freshly-created session shows up, then move
+    // the highlight onto it: it's now the active window, so the dock
+    // (blurred to hand focus to the new terminal) should point at it
+    // rather than leave the highlight on the previously-active row. The
+    // `active_window_changed` that fired mid-`createWindowWithTerminal`
+    // ran before this session was tracked, so it couldn't select it.
+    if (openPanel && dockMode) {
+      refreshOpenDialog();
+      syncDockSelectionToActive();
+    }
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to start session — ${
@@ -6167,10 +6293,32 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "dock_toggle_scope") {
       // The dock's scope control is now the project dropdown; Alt+P
       // opens/closes it instead of flipping the old current/all scope.
+      // Opening hands the keyboard to the menu; closing returns it to
+      // the session list.
       if (dockMode) {
-        openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
-        if (openPanel) openPanel.update(buildDockSpec());
+        if (openDialog.projectMenuOpen) closeProjectMenu();
+        else openProjectMenu();
       }
+      return;
+    }
+    // Dock project dropdown keyboard nav. The host fires these only
+    // while panel focus sits on a `project-pick:` row (i.e. the menu is
+    // open and owns the keyboard), so ↑/↓/Enter/Esc drive the dropdown
+    // instead of leaking to the session list underneath.
+    if (e.event_type === "dock_menu_prev") {
+      moveProjectMenu(-1);
+      return;
+    }
+    if (e.event_type === "dock_menu_next") {
+      moveProjectMenu(1);
+      return;
+    }
+    if (e.event_type === "dock_menu_accept") {
+      acceptProjectMenu();
+      return;
+    }
+    if (e.event_type === "dock_menu_cancel") {
+      closeProjectMenu();
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
@@ -6306,8 +6454,8 @@ editor.on("widget_event", (e) => {
     // Dock project dropdown: the toolbar button toggles the menu open,
     // and each option button picks a project (empty suffix = all).
     if (e.event_type === "activate" && e.widget_key === "project-menu") {
-      openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
-      if (openPanel) openPanel.update(buildDockSpec());
+      if (openDialog.projectMenuOpen) closeProjectMenu();
+      else openProjectMenu();
       return;
     }
     if (
@@ -6315,21 +6463,7 @@ editor.on("widget_event", (e) => {
       typeof e.widget_key === "string" &&
       e.widget_key.startsWith("project-pick:")
     ) {
-      const key = e.widget_key.slice("project-pick:".length);
-      openDialog.projectFilter = key === "" ? null : key;
-      lastDockProjectFilter = openDialog.projectFilter;
-      openDialog.projectMenuOpen = false;
-      // Re-filter to the chosen project and keep the active session
-      // selected when it's still in view.
-      const activeId = editor.activeWindow();
-      const next = filterSessions(openDialog.filter.value);
-      openDialog.filteredIds = next;
-      const activeIdx = next.indexOf(activeId);
-      openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-      refreshOpenDialog();
-      if (openPanel && next.length > 0) {
-        openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-      }
+      pickProject(e.widget_key.slice("project-pick:".length));
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "scope-toggle") {
@@ -6488,6 +6622,12 @@ editor.on("active_window_changed", () => {
   const s = orchestratorSessions.get(editor.activeWindow());
   if (s) s.activatedAt = Date.now();
   refreshOpenDialog();
+  // A passive (blurred) dock mirrors the active window, so keep its
+  // highlighted row in sync when focus moves to another window from
+  // outside the dock. While the dock holds focus the user drives ↑/↓
+  // selection (and the debounced live-switch already aligns the two), so
+  // re-selecting here would fight the scroll — hence the blurred guard.
+  if (dockBlurred) syncDockSelectionToActive();
 });
 
 // Re-flow the open-picker on terminal resize. The dialog's
