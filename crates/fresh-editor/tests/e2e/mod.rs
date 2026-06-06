@@ -84,6 +84,7 @@ pub mod lifecycle;
 pub mod line_number_bugs;
 pub mod line_wrap_cache_consistency;
 pub mod line_wrapping;
+pub mod list_clamp_no_spurious_select;
 pub mod live_grep;
 pub mod locale;
 pub mod lsp;

@@ -975,11 +975,21 @@ impl Editor {
             );
         }
         self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
+        // A clamped move at the list's top/bottom edge leaves the
+        // selection where it was. Still re-render above (re-arming
+        // `user_scrolled = false` snaps a scrolled-away view back to the
+        // selection), but don't fire a `select` event for a no-op move:
+        // holding ↑/↓ against the boundary would otherwise spam the
+        // plugin with same-index selections — each one re-runs the
+        // plugin's preview / live-switch work (in the Orchestrator dock
+        // it schedules a redundant `scheduleDockSwitch`). Mirrors the
+        // Tree handler's "No change → bail (don't fire spurious select)".
+        if new_sel != cur_sel
+            && self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .has_hook_handlers("widget_event")
         {
             self.plugin_manager.read().unwrap().run_hook(
                 "widget_event",

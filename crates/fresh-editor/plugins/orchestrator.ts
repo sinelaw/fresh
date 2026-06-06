@@ -2837,33 +2837,16 @@ function buildDockSpec(): WidgetSpec {
 // every session in between. `fromEdge` drives the directional wipe.
 function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   const token = ++dockSwitchToken;
-  console.warn(`[dock-switch] scheduled token=${token} fromEdge=${fromEdge}`);
   void (async () => {
     await editor.delay(30);
-    if (token !== dockSwitchToken) {
-      console.warn(`[dock-switch] token=${token} superseded by ${dockSwitchToken}`);
-      return;
-    }
-    if (!openDialog || !openPanel || !dockMode || dockBlurred) {
-      console.warn(
-        `[dock-switch] token=${token} skipped: openDialog=${!!openDialog} openPanel=${!!openPanel} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
-      );
-      return;
-    }
+    // Superseded by a later keystroke — let the latest one win.
+    if (token !== dockSwitchToken) return;
+    if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
     const id = openDialog.filteredIds[openDialog.selectedIndex];
-    if (typeof id !== "number" || id <= 0) {
-      console.warn(`[dock-switch] token=${token} no valid id: ${id}`);
-      return;
-    }
-    if (orchestratorSessions.get(id)?.discovered) {
-      console.warn(`[dock-switch] token=${token} id=${id} is discovered, skipping`);
-      return;
-    }
-    if (id === editor.activeWindow()) {
-      console.warn(`[dock-switch] token=${token} id=${id} already active`);
-      return;
-    }
-    console.warn(`[dock-switch] token=${token} firing setActiveWindow(${id}) fromEdge=${fromEdge}`);
+    if (typeof id !== "number" || id <= 0) return;
+    // A discovered worktree has no window to switch to.
+    if (orchestratorSessions.get(id)?.discovered) return;
+    if (id === editor.activeWindow()) return;
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
   })();
@@ -6207,9 +6190,6 @@ editor.on("widget_event", (e) => {
     ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
-      console.warn(
-        `[dock-select] event reached plugin: idx=${idx} widget_key=${e.widget_key} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
-      );
       if (typeof idx === "number") {
         const prevIdx = openDialog.selectedIndex;
         openDialog.selectedIndex = idx;
