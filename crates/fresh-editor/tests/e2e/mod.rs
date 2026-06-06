@@ -1,3 +1,4 @@
+#[cfg(feature = "plugins")]
 pub mod action_popup_global;
 pub mod altgr_shift;
 pub mod ansi_cursor;
@@ -9,6 +10,7 @@ pub mod binary_file;
 pub mod block_selection;
 pub mod blog_showcases;
 pub mod buffer_groups;
+#[cfg(feature = "plugins")]
 pub mod buffer_lifecycle;
 pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
@@ -21,6 +23,8 @@ pub mod csharp_language_coherence;
 pub mod csi_u_session_input;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
+#[cfg(feature = "plugins")]
+pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
 pub mod document_model;
 pub mod emacs_actions;
@@ -42,6 +46,7 @@ pub mod gui;
 pub mod hot_exit_flows;
 pub mod hot_exit_recovery_lsp_sync;
 pub mod indent_dedent;
+pub mod inlay_hints_wrap_scroll;
 pub mod inline_diagnostics;
 pub mod issue_1288_word_select_whitespace;
 pub mod issue_1540_tab_click_focus;
@@ -96,6 +101,7 @@ pub mod lsp_cross_language_diagnostic_pull;
 pub mod lsp_diagnostic_flow;
 pub mod lsp_env;
 pub mod lsp_goto_definition_readonly;
+#[cfg(feature = "plugins")]
 pub mod lsp_indicator_click_bugs;
 pub mod lsp_indicator_click_to_open;
 pub mod lsp_inlay_hints_capability;
@@ -128,8 +134,13 @@ pub mod multicursor;
 pub mod occurrence_highlight;
 pub mod on_save_actions;
 pub mod open_folder;
+pub mod orchestrator_dock;
+pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
+#[cfg(feature = "plugins")]
+pub mod panel_mode_window_switch_leak;
 pub mod paste;
+pub mod per_session_authority;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 pub mod popup_selection;
@@ -159,6 +170,7 @@ pub mod search_viewport_stall_after_wrap;
 pub mod selection;
 pub mod server_session_lifecycle;
 pub mod session_hot_exit;
+#[cfg(feature = "plugins")]
 pub mod sessions;
 pub mod settings;
 pub mod settings_config_issue_806;
@@ -182,6 +194,7 @@ pub mod split_view;
 pub mod split_view_expectations;
 pub mod split_view_markdown_compose;
 pub mod status_bar_config;
+#[cfg(feature = "plugins")]
 pub mod status_bar_message_click;
 pub mod stdin_input;
 pub mod sudo_save_prompt;
@@ -190,6 +203,7 @@ pub mod symlinks;
 pub mod syntax_highlighting_coverage;
 pub mod syntax_highlighting_embedded_offset;
 pub mod syntax_language_case;
+pub mod syntax_variable_builtin;
 pub mod tab_config;
 pub mod tab_drag;
 pub mod terminal;
@@ -215,4 +229,5 @@ pub mod vi_mode;
 pub mod vi_mode_bugs;
 pub mod visual_regression;
 pub mod warning_indicators;
+#[cfg(feature = "plugins")]
 pub mod workspace;

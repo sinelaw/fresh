@@ -100,6 +100,10 @@ impl QuickOpenProvider for CommandProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -171,6 +175,10 @@ impl QuickOpenProvider for BufferProvider {
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -251,6 +259,10 @@ impl QuickOpenProvider for GotoLineProvider {
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
 }
@@ -344,6 +356,23 @@ impl FileProvider {
             async_sender,
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Re-point this provider at a new authority's filesystem + process
+    /// spawner (e.g. after `setAuthority` / a remote attach swaps the backend).
+    ///
+    /// The spawner is the important one: quick-open's fast path is
+    /// `git ls-files` through `process_spawner`, so a stale *local* spawner
+    /// would list host files in a remote session. The cached file list is from
+    /// the old backend, so it's cleared (which also cancels any in-flight walk).
+    pub fn set_backends(
+        &mut self,
+        filesystem: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        process_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner>,
+    ) {
+        self.filesystem = filesystem;
+        self.process_spawner = process_spawner;
+        self.clear_cache();
     }
 
     /// Clear the file cache (e.g., after file system changes).
@@ -969,6 +998,10 @@ impl QuickOpenProvider for FileProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]
@@ -1153,6 +1186,70 @@ mod tests {
             None, // no runtime → git ls-files path is skipped, sync fallback used
             None, // no async sender → sync fallback used
         )
+    }
+
+    /// A second distinguishable spawner so backend-swap tests can assert
+    /// *which* spawner the provider now holds by `Arc` identity.
+    struct OtherSpawner;
+
+    #[async_trait::async_trait]
+    impl crate::services::remote::ProcessSpawner for OtherSpawner {
+        async fn spawn(
+            &self,
+            _command: String,
+            _args: Vec<String>,
+            _cwd: Option<String>,
+        ) -> Result<crate::services::remote::SpawnResult, crate::services::remote::SpawnError>
+        {
+            Err(crate::services::remote::SpawnError::Process(
+                "other".to_string(),
+            ))
+        }
+    }
+
+    /// `set_backends` re-points the provider's spawner + filesystem at the new
+    /// authority and invalidates the cache built from the old one.
+    ///
+    /// This is the seam behind the "quick-open lists host files in a remote
+    /// session" bug: the file list's fast path is `git ls-files` through
+    /// `process_spawner`, so after an in-place authority swap the provider must
+    /// adopt the new spawner — otherwise it keeps querying the previous
+    /// backend. Before this re-pointing existed the provider was stuck on its
+    /// construction-time (local) spawner, which is exactly what surfaced host
+    /// files in a remote session.
+    #[test]
+    fn set_backends_repoints_spawner_and_invalidates_cache() {
+        let mut fp = make_file_provider();
+
+        // Seed a cache entry as if a previous load under the old backend
+        // populated it.
+        {
+            let mut c = fp.cache.lock().unwrap();
+            c.loaded_cwd = Some("/old".to_string());
+            c.files = Some(std::sync::Arc::new(vec![]));
+        }
+
+        let new_fs: std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem);
+        let new_spawner: std::sync::Arc<dyn crate::services::remote::ProcessSpawner> =
+            std::sync::Arc::new(OtherSpawner);
+
+        fp.set_backends(
+            std::sync::Arc::clone(&new_fs),
+            std::sync::Arc::clone(&new_spawner),
+        );
+
+        // The provider now routes through the *new* spawner (identity check) …
+        assert!(
+            std::sync::Arc::ptr_eq(&fp.process_spawner, &new_spawner),
+            "set_backends must adopt the new authority's spawner"
+        );
+        // … and the cache built from the old backend is gone.
+        let c = fp.cache.lock().unwrap();
+        assert!(
+            c.files.is_none() && c.loaded_cwd.is_none(),
+            "stale cache from the previous backend must be cleared"
+        );
     }
 
     #[test]

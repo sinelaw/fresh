@@ -188,18 +188,22 @@ fn test_remote_metadata_parsing() {
 fn test_connection_params_parse() {
     // Basic user@host
     let params = ConnectionParams::parse("alice@server.com").unwrap();
-    assert_eq!(params.user, "alice");
+    assert_eq!(params.user.as_deref(), Some("alice"));
     assert_eq!(params.host, "server.com");
     assert_eq!(params.port, None);
 
     // With port
     let params = ConnectionParams::parse("bob@example.org:2222").unwrap();
-    assert_eq!(params.user, "bob");
+    assert_eq!(params.user.as_deref(), Some("bob"));
     assert_eq!(params.host, "example.org");
     assert_eq!(params.port, Some(2222));
 
-    // Invalid cases
-    assert!(ConnectionParams::parse("noatsign").is_none());
+    // User optional: a bare host parses with user = None.
+    let params = ConnectionParams::parse("noatsign").unwrap();
+    assert_eq!(params.user, None);
+    assert_eq!(params.host, "noatsign");
+
+    // Invalid cases (empty user / empty host / empty string).
     assert!(ConnectionParams::parse("@nouser").is_none());
     assert!(ConnectionParams::parse("nohost@").is_none());
     assert!(ConnectionParams::parse("").is_none());
@@ -208,18 +212,20 @@ fn test_connection_params_parse() {
 #[test]
 fn test_connection_params_to_string() {
     let params = ConnectionParams {
-        user: "alice".to_string(),
+        user: Some("alice".to_string()),
         host: "server.com".to_string(),
         port: None,
         identity_file: None,
+        extra_args: Vec::new(),
     };
     assert_eq!(params.to_string(), "alice@server.com");
 
     let params = ConnectionParams {
-        user: "bob".to_string(),
+        user: Some("bob".to_string()),
         host: "example.org".to_string(),
         port: Some(2222),
         identity_file: None,
+        extra_args: Vec::new(),
     };
     assert_eq!(params.to_string(), "bob@example.org:2222");
 }

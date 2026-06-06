@@ -1,3 +1,7 @@
+// Exercises the plugin command dispatcher (CreateVirtualBufferWithContent),
+// which is gated behind the `plugins` feature.
+#![cfg(feature = "plugins")]
+
 mod common;
 use common::harness::EditorTestHarness;
 use fresh::primitives::text_property::TextPropertyEntry;

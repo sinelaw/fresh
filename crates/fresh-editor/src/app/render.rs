@@ -55,6 +55,20 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
+        self.drain_pre_layout_plugin_commands();
+
+        for window in self.windows.values_mut() {
+            window.sync_terminal_titles();
+        }
+
+        // Carve a full-height left column for a docked floating panel
+        // (e.g. the orchestrator dock) out of the screen *before* the
+        // chrome lays itself out, so the menu bar, splits, and status
+        // bar all sit to the dock's right. `chrome_area` is the region
+        // the rest of `render` lays into; `dock_area` (if any) is
+        // painted last alongside the centered-overlay path.
+        let (dock_area, chrome_area) = self.compute_dock_split(size);
+
         // Let active animations snapshot the previous frame's buffer
         // from the runner's own cache. We can't read the live
         // `frame.buffer_mut()` — ratatui resets it before each draw —
@@ -68,118 +82,14 @@ impl Editor {
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
 
-        // For scroll sync groups, we need to update the active split's viewport position BEFORE
-        // calling sync_scroll_groups, so that the sync reads the correct position.
-        // Otherwise, cursor movements like 'G' (go to end) won't sync properly because
-        // viewport.top_byte hasn't been updated yet.
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        {
-            let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
-            self.active_window_mut()
-                .pre_sync_ensure_visible(active_split);
-        }
-
-        // Synchronize scroll sync groups (anchor-based scroll for side-by-side diffs)
-        // This sets viewport positions based on the authoritative scroll_line in each group
-        {
-            let _span = tracing::info_span!("sync_scroll_groups").entered();
-            self.active_window_mut().sync_scroll_groups();
-        }
+        self.pre_sync_and_scroll_sync();
 
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
         // correct content area dimensions. Don't sync here with incorrect EditorState viewport size.
 
-        // Prepare all buffers for rendering (pre-load viewport data for lazy loading)
-        // Each split may have a different viewport position on the same buffer
-        let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
-            std::collections::HashMap::new();
-        {
-            let _span = tracing::info_span!("compute_semantic_ranges").entered();
-            for (split_id, view_state) in self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-            {
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .get_buffer_id((*split_id).into())
-                {
-                    if let Some(state) = self
-                        .windows
-                        .get(&self.active_window)
-                        .map(|w| &w.buffers)
-                        .expect("active window present")
-                        .get(&buffer_id)
-                    {
-                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
-                        let visible_lines =
-                            view_state.viewport.visible_line_count().saturating_sub(1);
-                        let end_line = start_line.saturating_add(visible_lines);
-                        semantic_ranges
-                            .entry(buffer_id)
-                            .and_modify(|(min_start, max_end)| {
-                                *min_start = (*min_start).min(start_line);
-                                *max_end = (*max_end).max(end_line);
-                            })
-                            .or_insert((start_line, end_line));
-                    }
-                }
-            }
-        }
-        for (buffer_id, (start_line, end_line)) in semantic_ranges {
-            self.maybe_request_semantic_tokens_range(buffer_id, start_line, end_line);
-            self.maybe_request_semantic_tokens_full_debounced(buffer_id);
-            self.maybe_request_folding_ranges_debounced(buffer_id);
-        }
+        self.request_semantic_ranges_for_visible_splits();
 
-        {
-            let _span = tracing::info_span!("prepare_for_render").entered();
-            // Pre-collect (split_id, top_byte, height, buffer_id) so we
-            // can mutate buffers below without holding a read borrow on
-            // self.windows.
-            let active_id = self.active_window;
-            let prep_targets: Vec<(BufferId, usize, u16)> = {
-                let win = self
-                    .windows
-                    .get(&active_id)
-                    .expect("active window must exist");
-                let (mgr, vs_map) = win
-                    .buffers
-                    .splits()
-                    .expect("active window must have a populated split layout");
-                vs_map
-                    .iter()
-                    .filter_map(|(split_id, vs)| {
-                        mgr.get_buffer_id((*split_id).into())
-                            .map(|bid| (bid, vs.viewport.top_byte, vs.viewport.height))
-                    })
-                    .collect()
-            };
-            let win_buffers = &mut self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist")
-                .buffers;
-            for (buffer_id, top_byte, height) in prep_targets {
-                if let Some(state) = win_buffers.get_mut(&buffer_id) {
-                    if let Err(e) = state.prepare_for_render(top_byte, height) {
-                        tracing::error!("Failed to prepare buffer for render: {}", e);
-                    }
-                }
-            }
-        }
+        self.prepare_visible_buffers_for_render();
 
         // Refresh search highlights only during incremental search (when prompt is active)
         // After search is confirmed, overlays exist for ALL matches and shouldn't be overwritten
@@ -279,7 +189,7 @@ impl Editor {
                     },
                 ), // Prompt line
             ])
-            .split(size);
+            .split(chrome_area);
 
         let menu_bar_area = main_chunks[0];
         let main_content_area = main_chunks[1];
@@ -337,7 +247,13 @@ impl Editor {
             let active_id = self.active_window;
             // Read window-state inputs before taking the &mut borrow on the
             // window for the explorer/buffer access below.
-            let is_focused = self.active_window().key_context == KeyContext::FileExplorer;
+            // The explorer reads as focused only when it actually owns the
+            // keyboard — not when a focused orchestrator dock has stolen it
+            // out from under the (still-FileExplorer) window context. Without
+            // this guard the explorer keeps its accent border while the dock
+            // is driving, making it ambiguous which panel is focused.
+            let is_focused = self.active_window().key_context == KeyContext::FileExplorer
+                && !self.dock.as_ref().is_some_and(|d| d.focused);
             let key_context_clone = self.active_window().key_context.clone();
             let close_button_hovered = matches!(
                 &self.active_window().mouse_state.hover_target,
@@ -566,18 +482,24 @@ impl Editor {
             // load), the response arrives one frame late, which is imperceptible
             // at 60fps. The plugin's own refreshLines() call from cursor_moved
             // ensures a follow-up render cycle picks up any missed commands.
-            let commands = self.plugin_manager.write().unwrap().process_commands();
-            let dispatched_any = !commands.is_empty();
-            if dispatched_any {
-                let cmd_names: Vec<String> =
-                    commands.iter().map(|c| c.debug_variant_name()).collect();
-                tracing::trace!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
-            }
-            for command in commands {
-                if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling plugin command: {}", e);
+            #[cfg(not(feature = "plugins"))]
+            let dispatched_any = false;
+            #[cfg(feature = "plugins")]
+            let dispatched_any = {
+                let commands = self.plugin_manager.write().unwrap().process_commands();
+                let dispatched_any = !commands.is_empty();
+                if dispatched_any {
+                    let cmd_names: Vec<String> =
+                        commands.iter().map(|c| c.debug_variant_name()).collect();
+                    tracing::trace!(count = commands.len(), cmds = ?cmd_names, "process_commands during render");
                 }
-            }
+                for command in commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command: {}", e);
+                    }
+                }
+                dispatched_any
+            };
 
             // Flush any deferred grammar rebuilds as a single batch
             self.flush_pending_grammars();
@@ -668,7 +590,7 @@ impl Editor {
                             },
                         ),
                     ])
-                    .split(size);
+                    .split(chrome_area);
             }
         }
 
@@ -689,6 +611,7 @@ impl Editor {
         let hide_cursor = self.menu_state.active_menu.is_some()
             || self.active_window_mut().key_context == KeyContext::FileExplorer
             || self.active_window().terminal_mode
+            || self.dock.as_ref().is_some_and(|d| d.focused)
             || settings_visible
             || self.keybinding_editor.is_some();
 
@@ -806,6 +729,13 @@ impl Editor {
         // panes or moved more than two rows within the same pane. The
         // trail crosses pane separators when the jump is across splits —
         // that's the intended "follow the focus" cue.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
 
         // Detect viewport changes and fire hooks
@@ -1253,7 +1183,7 @@ impl Editor {
 
         // Render file browser popup or suggestions popup AFTER status bar + prompt,
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
-        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], size.width);
+        self.render_prompt_popups(frame, main_chunks[prompt_line_idx], chrome_area);
 
         // Render popups from the active buffer state
         // Clone theme to avoid borrow checker issues with active_state_mut()
@@ -1360,7 +1290,10 @@ impl Editor {
                         } else {
                             cursor_screen_pos
                         };
-                        let popup_area = popup.calculate_area(size, Some(popup_pos));
+                        // Clamp within the chrome area (right of a left
+                        // dock) so a cursor-anchored popup near the left
+                        // edge can't extend into the dock column.
+                        let popup_area = popup.calculate_area(chrome_area, Some(popup_pos));
 
                         // Track popup area for mouse hit testing
                         // Account for description height when calculating the list item area
@@ -1457,7 +1390,9 @@ impl Editor {
             )
         });
         if !top_is_trust_modal {
-            self.render_top_global_popup(frame, size, &theme_clone, hover_target.as_ref());
+            // Global popups render within the chrome area (right of a
+            // left dock) so corner/centred popups don't overrun it.
+            self.render_top_global_popup(frame, chrome_area, &theme_clone, hover_target.as_ref());
         }
 
         // Render menu bar last so dropdown appears on top of all other content
@@ -1472,15 +1407,17 @@ impl Editor {
             .map(|s| s.visible)
             .unwrap_or(false);
         if settings_visible {
-            // Dim the editor content behind the settings modal
-            crate::view::dimming::apply_dimming(frame, size);
+            // Dim the editor content behind the settings modal. Use the
+            // chrome area (right of a left dock) so the modal sits beside
+            // the persistent dock instead of being overlapped by it.
+            crate::view::dimming::apply_dimming(frame, chrome_area);
         }
         if let Some(ref mut settings_state) = self.settings_state {
             if settings_state.visible {
                 settings_state.update_focus_states();
                 let settings_layout = crate::view::settings::render_settings(
                     frame,
-                    size,
+                    chrome_area,
                     settings_state,
                     &*self.theme.read().unwrap(),
                 );
@@ -1491,10 +1428,10 @@ impl Editor {
         // Render calibration wizard if active
         if let Some(ref wizard) = self.calibration_wizard {
             // Dim the editor content behind the wizard modal
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::calibration_wizard::render_calibration_wizard(
                 frame,
-                size,
+                chrome_area,
                 wizard,
                 &*self.theme.read().unwrap(),
             );
@@ -1502,10 +1439,10 @@ impl Editor {
 
         // Render keybinding editor if active
         if let Some(ref mut kb_editor) = self.keybinding_editor {
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::keybinding_editor::render_keybinding_editor(
                 frame,
-                size,
+                chrome_area,
                 kb_editor,
                 &*self.theme.read().unwrap(),
             );
@@ -1514,10 +1451,10 @@ impl Editor {
         // Render event debug dialog if active
         if let Some(ref debug) = self.active_window().event_debug {
             // Dim the editor content behind the dialog modal
-            crate::view::dimming::apply_dimming(frame, size);
+            crate::view::dimming::apply_dimming(frame, chrome_area);
             crate::view::event_debug::render_event_debug(
                 frame,
-                size,
+                chrome_area,
                 debug,
                 &*self.theme.read().unwrap(),
             );
@@ -1695,11 +1632,197 @@ impl Editor {
             .animations
             .apply_all(frame.buffer_mut());
 
-        // Floating widget panel is drawn last so it sits above every
-        // other layer (prompts, popups, animations).
+        // Panels are drawn last so they sit above every other layer
+        // (prompts, popups, animations). The two slots are independent:
+        // the dock paints into its carved column (`dock_area`); a
+        // centered modal paints over the whole frame (dimmed). Draw the
+        // dock first so a centered modal sits visually above it.
+        if let Some(dock) = dock_area {
+            if self.dock.is_some() {
+                self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
+            }
+        }
         if self.floating_widget_panel.is_some() {
-            let frame_area = frame.area();
-            self.render_floating_widget_panel(frame, frame_area);
+            // A `fullscreen` modal paints over the whole frame, covering the
+            // dock; otherwise it lays into `chrome_area` beside the dock.
+            // The orchestrator's global modals (control room, New-Session
+            // form) opt into fullscreen so they're not cramped into the
+            // narrow region right of their own dock.
+            let fullscreen = self
+                .floating_widget_panel
+                .as_ref()
+                .map(|f| f.fullscreen)
+                .unwrap_or(false);
+            // A centered modal makes the *whole* UI a passive, dimmed
+            // background — the dock included. The dock was drawn above at
+            // full brightness. A beside-dock modal only dims `chrome_area`,
+            // so dim the dock column explicitly here; a fullscreen modal
+            // dims the whole frame itself (its own `apply_dimming_excluding`
+            // runs over the full area below), so skip the redundant pass.
+            // Either way the dock is blurred + input-inaccessible while a
+            // modal is up (the host blurs it on mount and the modal swallows
+            // keys/clicks/wheel), so dimming it makes that passivity visible
+            // rather than leaving it looking live beside the dialog.
+            if !fullscreen {
+                if let Some(dock) = dock_area {
+                    if self.dock.is_some() {
+                        crate::view::dimming::apply_dimming(frame, dock);
+                    }
+                }
+            }
+            // Render the centered modal within `chrome_area` (the region to
+            // the right of a left dock) rather than the whole frame, so it
+            // sits beside the dock and dims only the chrome instead of
+            // painting over the dock column. When no dock is up
+            // `chrome_area` is the whole frame, so this is unchanged for the
+            // common case. This is what lets a plugin's Open picker coexist
+            // with the dock — mirroring the settings / keybinding-editor
+            // modals, which already lay into `chrome_area`. A `fullscreen`
+            // panel instead gets the whole frame (`size`).
+            let modal_area = if fullscreen { size } else { chrome_area };
+            self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
+        }
+    }
+
+    /// Drain plugin commands enqueued before this frame's layout pass.
+    ///
+    /// Must run before `compute_dock_split` because commands such as
+    /// `UnmountFloatingWidget` affect the dock state that layout reads.
+    /// The mid-render drain (after `compute_dock_split`) runs too late for
+    /// those: the dock area would be computed from stale state and the freed
+    /// columns would render blank until the next input event.
+    fn drain_pre_layout_plugin_commands(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            let early_commands = self.plugin_manager.write().unwrap().process_commands();
+            if !early_commands.is_empty() {
+                tracing::trace!(
+                    count = early_commands.len(),
+                    "process_commands at top of render (pre-layout drain)"
+                );
+                for command in early_commands {
+                    if let Err(e) = self.handle_plugin_command(command) {
+                        tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.
+    ///
+    /// Order matters: `sync_scroll_groups` reads the `viewport.top_byte` that
+    /// `pre_sync_ensure_visible` just updated.  Doing it after the render would
+    /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
+    /// change (e.g. `G` in a side-by-side diff).
+    fn pre_sync_and_scroll_sync(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        {
+            let _span = tracing::info_span!("pre_sync_ensure_visible").entered();
+            self.active_window_mut()
+                .pre_sync_ensure_visible(active_split);
+        }
+        {
+            let _span = tracing::info_span!("sync_scroll_groups").entered();
+            self.active_window_mut().sync_scroll_groups();
+        }
+    }
+
+    /// Compute the visible byte range for each split and issue debounced LSP
+    /// requests for semantic tokens and folding ranges.
+    fn request_semantic_ranges_for_visible_splits(&mut self) {
+        let mut semantic_ranges: std::collections::HashMap<BufferId, (usize, usize)> =
+            std::collections::HashMap::new();
+        {
+            let _span = tracing::info_span!("compute_semantic_ranges").entered();
+            for (split_id, view_state) in self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+            {
+                if let Some(buffer_id) = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .get_buffer_id((*split_id).into())
+                {
+                    if let Some(state) = self
+                        .windows
+                        .get(&self.active_window)
+                        .map(|w| &w.buffers)
+                        .expect("active window present")
+                        .get(&buffer_id)
+                    {
+                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
+                        let visible_lines =
+                            view_state.viewport.visible_line_count().saturating_sub(1);
+                        let end_line = start_line.saturating_add(visible_lines);
+                        semantic_ranges
+                            .entry(buffer_id)
+                            .and_modify(|(min_start, max_end)| {
+                                *min_start = (*min_start).min(start_line);
+                                *max_end = (*max_end).max(end_line);
+                            })
+                            .or_insert((start_line, end_line));
+                    }
+                }
+            }
+        }
+        for (buffer_id, (start_line, end_line)) in semantic_ranges {
+            self.maybe_request_semantic_tokens_range(buffer_id, start_line, end_line);
+            self.maybe_request_semantic_tokens_full_debounced(buffer_id);
+            self.maybe_request_folding_ranges_debounced(buffer_id);
+        }
+    }
+
+    /// Pre-load viewport data for each visible buffer.
+    ///
+    /// Large files use lazy loading: data outside the viewport isn't in memory.
+    /// This pass materialises the bytes each split needs before the renderer
+    /// touches them, so the render sees a fully-populated buffer.
+    fn prepare_visible_buffers_for_render(&mut self) {
+        let _span = tracing::info_span!("prepare_for_render").entered();
+        // Pre-collect targets so we can take a mut borrow on buffers below
+        // without holding the immutable read borrow on self.windows.
+        let active_id = self.active_window;
+        let prep_targets: Vec<(BufferId, usize, u16)> = {
+            let win = self
+                .windows
+                .get(&active_id)
+                .expect("active window must exist");
+            let (mgr, vs_map) = win
+                .buffers
+                .splits()
+                .expect("active window must have a populated split layout");
+            vs_map
+                .iter()
+                .filter_map(|(split_id, vs)| {
+                    mgr.get_buffer_id((*split_id).into())
+                        .map(|bid| (bid, vs.viewport.top_byte, vs.viewport.height))
+                })
+                .collect()
+        };
+        let win_buffers = &mut self
+            .windows
+            .get_mut(&active_id)
+            .expect("active window must exist")
+            .buffers;
+        for (buffer_id, top_byte, height) in prep_targets {
+            if let Some(state) = win_buffers.get_mut(&buffer_id) {
+                if let Err(e) = state.prepare_for_render(top_byte, height) {
+                    tracing::error!("Failed to prepare buffer for render: {}", e);
+                }
+            }
         }
     }
 
@@ -1882,17 +2005,19 @@ impl Editor {
         &mut self,
         frame: &mut Frame,
         prompt_area: ratatui::layout::Rect,
-        width: u16,
+        chrome: ratatui::layout::Rect,
     ) {
+        let width = chrome.width;
         let Some(prompt) = &self.active_window_mut().prompt else {
             return;
         };
 
         // Overlay prompts (Live Grep, issue #1796) get a dedicated
         // centred floating frame instead of the bottom-anchored popup.
+        // Centre it in the chrome area (right of a left dock) so it never
+        // overlaps the dock column.
         if prompt.overlay {
-            let frame_area = frame.area();
-            self.render_overlay_prompt(frame, frame_area);
+            self.render_overlay_prompt(frame, chrome);
             return;
         }
 
@@ -1907,7 +2032,9 @@ impl Editor {
             drop(keybindings);
             let max_height = prompt_area.y.saturating_sub(1).min(20);
             let popup_area = ratatui::layout::Rect {
-                x: 0,
+                // Anchor to the prompt line's x (right of a left dock,
+                // if any) so the picker never overlaps the dock column.
+                x: prompt_area.x,
                 y: prompt_area.y.saturating_sub(max_height),
                 width,
                 height: max_height,
@@ -1937,7 +2064,7 @@ impl Editor {
         let height = suggestion_count as u16 + 2 + hints_height;
 
         let suggestions_area = ratatui::layout::Rect {
-            x: 0,
+            x: prompt_area.x,
             y: prompt_area.y.saturating_sub(height),
             width,
             height: height - hints_height,
@@ -1970,7 +2097,13 @@ impl Editor {
 
         if is_quick_open {
             let hints_area = ratatui::layout::Rect {
-                x: 0,
+                // Align with the prompt / suggestions box, which sit in the
+                // chrome area to the right of a left dock (`prompt_area.x`).
+                // Hardcoding `x: 0` here drew the hints starting at the very
+                // left edge — under the dock column — so the bar was
+                // partially obscured by the dock and visibly misaligned with
+                // the suggestions box stacked directly above it.
+                x: prompt_area.x,
                 y: prompt_area.y.saturating_sub(hints_height),
                 width,
                 height: hints_height,
@@ -2371,6 +2504,7 @@ impl Editor {
                 self.active_window()
                     .resolve_wrap_column_for_buffer(buffer_id),
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
             let mut loaded_buffers = std::collections::HashSet::new();
             // Whether this *first* preview buffer was newly loaded.
@@ -3759,26 +3893,84 @@ impl Editor {
     /// caret at the focused TextInput. Stores the inner rect on the
     /// `FloatingWidgetState` so the click hit-test can recover the
     /// geometry on the next mouse event.
+    /// Split `size` into an optional full-height left dock column and
+    /// the remaining chrome area. Returns `(None, size)` unless a
+    /// floating panel is currently placed as a `LeftDock`. The dock
+    /// width is clamped so it can never crowd out the chrome.
+    pub(super) fn compute_dock_split(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> (Option<ratatui::layout::Rect>, ratatui::layout::Rect) {
+        // The editor is the priority. Reserve at least EDITOR_MIN columns
+        // for the buffer, and once the terminal is too narrow to fit a
+        // worthwhile dock alongside that editor, hide the dock entirely
+        // (it reappears when the terminal grows). Previously the dock kept
+        // ALL but 4 columns, squishing the editor to a useless sliver on a
+        // narrow terminal.
+        const EDITOR_MIN: u16 = 20;
+        const DOCK_MIN: u16 = 24;
+        let requested = match self.dock.as_ref().map(|f| f.placement) {
+            Some(super::PanelPlacement::LeftDock { width_cols }) => width_cols,
+            _ => return (None, size),
+        };
+        // Widest the dock may be while leaving the editor its minimum.
+        let max_dock = size.width.saturating_sub(EDITOR_MIN);
+        if max_dock < DOCK_MIN {
+            // Not enough room for a usable dock + editor — give the editor
+            // the whole frame this render.
+            return (None, size);
+        }
+        // Honor the requested (drag-set) width, but never crowd the editor
+        // below EDITOR_MIN. In the shrink band the dock narrows from its
+        // requested width down to DOCK_MIN before it hides.
+        let width = requested.min(max_dock).max(1);
+        let dock = ratatui::layout::Rect {
+            x: size.x,
+            y: size.y,
+            width,
+            height: size.height,
+        };
+        let chrome = ratatui::layout::Rect {
+            x: size.x.saturating_add(width),
+            y: size.y,
+            width: size.width.saturating_sub(width),
+            height: size.height,
+        };
+        (Some(dock), chrome)
+    }
+
     pub(super) fn render_floating_widget_panel(
         &mut self,
         frame: &mut Frame,
         area: ratatui::layout::Rect,
+        slot: super::PanelSlot,
     ) {
         use ratatui::widgets::{Block, Borders, Clear};
 
-        let (width_pct, height_pct, entries, focus_cursor, embeds, overlays, scroll_regions) =
-            match self.floating_widget_panel.as_ref() {
-                Some(fwp) => (
-                    fwp.width_pct,
-                    fwp.height_pct,
-                    fwp.entries.clone(),
-                    fwp.focus_cursor,
-                    fwp.embeds.clone(),
-                    fwp.overlays.clone(),
-                    fwp.scroll_regions.clone(),
-                ),
-                None => return,
-            };
+        let (
+            width_pct,
+            height_pct,
+            entries,
+            focus_cursor,
+            embeds,
+            overlays,
+            scroll_regions,
+            placement,
+            panel_focused,
+        ) = match self.panel(slot) {
+            Some(fwp) => (
+                fwp.width_pct,
+                fwp.height_pct,
+                fwp.entries.clone(),
+                fwp.focus_cursor,
+                fwp.embeds.clone(),
+                fwp.overlays.clone(),
+                fwp.scroll_regions.clone(),
+                fwp.placement,
+                fwp.focused,
+            ),
+            None => return,
+        };
         let theme = self.theme.read().unwrap().clone();
         // Compute the requested rect from width%/height%, then
         // shrink the height to fit the rendered content (Bug 7).
@@ -3795,7 +3987,15 @@ impl Editor {
         // contributes N blank entries plus an EmbedRect that paints
         // over them at draw time). So `entries.len() + 2` (top
         // border + content + bottom border) is the natural fit.
-        let overlay_rect = {
+        // A left-dock panel fills its carved column (`area` is already
+        // the dock rect) at full height and does NOT dim the chrome —
+        // it's a persistent, non-modal companion to the editor, not a
+        // modal overlay. The centered placement keeps the historical
+        // fit-to-content + background-dim behaviour.
+        let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
+        let overlay_rect = if is_dock {
+            area
+        } else {
             let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
             let needed_h = (entries.len() as u16).saturating_add(2);
             let effective_h = needed_h.min(requested.height).max(3);
@@ -3807,17 +4007,38 @@ impl Editor {
             }
         };
 
-        crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
+        if !is_dock {
+            crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
+        }
         frame.render_widget(Clear, overlay_rect);
+        // The dock draws ONLY a right border (a thin draggable divider) —
+        // no top/left/bottom — so it reclaims those rows/cols for content
+        // and reads as a panel attached to the left edge. The centered
+        // modal keeps a full box.
+        //
+        // A focused dock lights its divider with the accent `theme.cursor`
+        // (the same colour the file explorer uses for its focused border),
+        // so exactly one chrome region wears the accent at a time. A blurred
+        // dock falls back to the muted `popup_border_fg`, matching every
+        // other unfocused panel and making "who has the keyboard" obvious.
+        let dock_border_fg = if is_dock && panel_focused {
+            theme.cursor
+        } else {
+            theme.popup_border_fg
+        };
         let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
+            .borders(if is_dock {
+                Borders::RIGHT
+            } else {
+                Borders::ALL
+            })
+            .border_style(ratatui::style::Style::default().fg(dock_border_fg))
             .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);
         frame.render_widget(block, overlay_rect);
 
         if inner.width == 0 || inner.height == 0 {
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
+            if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
             }
             return;
@@ -3958,20 +4179,20 @@ impl Editor {
             if cx < inner.x + inner.width && cy < inner.y + inner.height {
                 frame.set_cursor_position((cx, cy));
             }
-        } else {
-            // No focused text input — the underlying editor's
-            // `set_cursor_position` (called earlier in this frame)
-            // would otherwise leave a hardware caret blinking
-            // inside the dimmed buffer behind the panel. Park the
-            // cursor on the floating panel's bottom-right corner
-            // so it's hidden under the panel chrome instead of
-            // bleeding through.
+        } else if panel_focused {
+            // No focused text input, and the panel owns the keyboard —
+            // the underlying editor's `set_cursor_position` (called
+            // earlier this frame) would otherwise leave a hardware
+            // caret blinking inside the dimmed buffer behind the panel.
+            // Park it on the panel's bottom-right corner so it hides
+            // under the panel chrome. A *blurred* dock skips this: the
+            // editor beside it is focused and must keep its caret.
             let cx = inner.x + inner.width.saturating_sub(1);
             let cy = inner.y + inner.height.saturating_sub(1);
             frame.set_cursor_position((cx, cy));
         }
 
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
             fwp.scrollbar_tracks = scrollbar_tracks;
         }
@@ -4080,13 +4301,28 @@ fn paint_text_property_entry(
     // resulting span carries one consistent style. The overlays are
     // produced in declaration order by the widget renderer; later
     // overlays override earlier ones for any cells they cover.
+    // Snap every boundary to a grapheme-cluster boundary. Overlay
+    // offsets can land mid-codepoint after a row is truncated with a
+    // multi-byte `…` (the overlay end isn't re-clamped to the new
+    // text), and slicing `text[a..b]` on such an index panics. Valid
+    // boundaries are kept as-is; an interior one floors to the previous
+    // grapheme boundary (worst case a span edge shifts by one cluster,
+    // invisible in practice).
+    let snap = |i: usize| {
+        let i = i.min(text.len());
+        if text.is_char_boundary(i) {
+            i
+        } else {
+            crate::primitives::grapheme::prev_grapheme_boundary(&text, i)
+        }
+    };
     let boundaries: std::collections::BTreeSet<usize> = std::iter::once(0)
         .chain(std::iter::once(text.len()))
         .chain(
             normalized
                 .inline_overlays
                 .iter()
-                .flat_map(|o| [o.start.min(text.len()), o.end.min(text.len())]),
+                .flat_map(|o| [snap(o.start), snap(o.end)]),
         )
         .collect();
     let bounds: Vec<usize> = boundaries.into_iter().collect();

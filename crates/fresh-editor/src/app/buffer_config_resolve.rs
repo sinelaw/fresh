@@ -23,7 +23,10 @@ pub(crate) fn line_wrap(language: &str, config: &Config) -> bool {
 /// Effective `wrap_column` for a buffer with the given language.
 ///
 /// Returns the language-specific `wrap_column` if explicitly set, otherwise
-/// the global `editor.wrap_column`.
+/// the global `editor.wrap_column`. Zero-as-unset normalization happens at
+/// config resolution (`Config::normalize_zero_sentinels`), so a language-level
+/// `0` has already been cleared to `None` (inherits global) and a global `0`
+/// to `None` (wrap at the viewport edge) by the time we get here.
 pub(crate) fn wrap_column(language: &str, config: &Config) -> Option<usize> {
     if let Some(lang_config) = config.languages.get(language) {
         if lang_config.wrap_column.is_some() {

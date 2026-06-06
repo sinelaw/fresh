@@ -646,3 +646,102 @@ fn completion_popup_scrolls_with_mouse_wheel() {
         screen,
     );
 }
+
+/// A terminal bracketed paste (`Event::Paste`, the single-event path
+/// a real terminal emits for clipboard paste — distinct from typed
+/// keys and from `Ctrl+V`) must land in the focused Project Path
+/// field, NOT in the buffer obscured by the modal.
+///
+/// Regression for the reported bug: with the New-Session dialog open,
+/// pasting via the terminal dumped the text into the underlying file
+/// buffer instead of the focused dialog field. Bracketed paste arrives
+/// as one `Event::Paste` that never passes through the floating-panel
+/// key dispatcher, so it fell straight through to the buffer paste
+/// path. Without the fix the Project Path field stays unchanged (the
+/// text went to the buffer) and this assertion fails.
+#[test]
+fn bracketed_paste_routes_to_focused_dialog_field() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+
+    // The Project Path text field is focused on open. Paste a marker
+    // through the real bracketed-paste event path.
+    harness.send_paste("PASTEDMARKER").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("PASTEDMARKER"))
+        .unwrap();
+
+    assert!(
+        project_path_field_value(&harness.screen_to_string()).contains("PASTEDMARKER"),
+        "bracketed paste should land in the focused Project Path field. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And it must not have leaked into the buffer underneath: close
+    // the dialog (Esc cancels) and confirm the marker is nowhere on
+    // the now-revealed buffer.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("PASTEDMARKER"),
+        "bracketed paste must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// When the dialog is open but focus rests on a non-text widget (a
+/// button / backend tab), a terminal bracketed paste must be ignored
+/// — neither inserted into any field nor leaked into the obscured
+/// buffer.
+///
+/// The form's tab cycle always starts with the "Run in:" backend
+/// tabs (`[local, ssh, kubernetes, devcontainer, project_path, …]`)
+/// and opens with `project_path` focused, so a single Shift+Tab walks
+/// focus back onto the `devcontainer` backend tab — a non-text Button,
+/// regardless of git / worktree state. Pasting there must be
+/// swallowed. Without the fix the paste falls through to the buffer;
+/// revealing the buffer after Esc shows the marker and this fails.
+#[test]
+fn bracketed_paste_ignored_when_non_text_widget_focused() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+
+    // Walk focus off the Project Path text field onto a backend tab
+    // (a non-text Button) — the tabbable immediately before it.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+
+    harness.send_paste("IGNORED_PASTE").unwrap();
+    harness.tick_and_render().unwrap();
+
+    // No field absorbed it (it would render inside the dialog).
+    assert!(
+        !harness.screen_to_string().contains("IGNORED_PASTE"),
+        "paste onto a non-text widget must not appear in any field. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And — the load-bearing check — it must not have leaked into the
+    // buffer underneath. Without the fix the paste falls through to
+    // the hidden buffer; revealing it after Esc surfaces the marker.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("IGNORED_PASTE"),
+        "an ignored paste must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}

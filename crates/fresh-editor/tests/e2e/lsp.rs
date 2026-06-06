@@ -7245,6 +7245,98 @@ fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Regression (#2244): while the status-bar LSP status popup is open, moving the
+/// mouse over a symbol must NOT show the LSP hover card on top of it.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_hover_suppressed_while_lsp_status_popup_open() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+    use std::time::Duration;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "use std;\n\nfn foo() {}\n\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // `fn foo() {}` is line 3 -> display row 4 after the tab bar; `foo` sits
+    // around column 10. Sanity-check that hover works normally first, so the
+    // suppression assertion below can't pass for the wrong reason.
+    let symbol_row = 4u16;
+    let symbol_col = 10u16;
+    harness.mouse_move(symbol_col, symbol_row)?;
+    harness.render()?;
+    harness.sleep(Duration::from_millis(600));
+    harness.editor_mut().force_check_mouse_hover();
+    harness.wait_until(|h| h.screen_to_string().contains("Test hover content"))?;
+
+    // Dismiss the hover by moving away.
+    harness.mouse_move(0, 0)?;
+    harness.render()?;
+    harness.sleep(Duration::from_millis(100));
+    harness.editor_mut().force_check_mouse_hover();
+    harness.wait_until(|h| !h.screen_to_string().contains("Test hover content"))?;
+
+    // Open the LSP status popup (same entry point as clicking the indicator).
+    harness.editor_mut().show_lsp_status_popup();
+    harness.render()?;
+    harness.wait_until(|h| h.screen_to_string().contains("LSP Servers (rust)"))?;
+
+    // Now hover over the symbol again. The hover card must NOT appear.
+    harness.mouse_move(symbol_col, symbol_row)?;
+    harness.render()?;
+    harness.sleep(Duration::from_millis(600));
+    harness.editor_mut().force_check_mouse_hover();
+    for _ in 0..10 {
+        harness.process_async_and_render()?;
+        harness.sleep(Duration::from_millis(100));
+    }
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Test hover content"),
+        "Hover card must not show while the LSP status popup is open. Screen:\n{}",
+        screen
+    );
+    // The LSP status popup itself should still be on screen.
+    assert!(
+        screen.contains("LSP Servers (rust)"),
+        "LSP status popup should remain open. Screen:\n{}",
+        screen
+    );
+
+    Ok(())
+}
+
 /// Test that moving mouse within symbol during hover request does not create duplicate popups
 ///
 /// This reproduces a race condition:

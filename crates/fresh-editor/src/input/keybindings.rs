@@ -233,6 +233,11 @@ pub enum KeyContext {
     Completion,
     /// File explorer has focus
     FileExplorer,
+    /// The editor-global orchestrator dock has focus. Like
+    /// `FileExplorer` it is a persistent, non-modal chrome region, but
+    /// it is owned by the `Editor` (not per-window) — it shows all
+    /// sessions and survives session switches.
+    Dock,
     /// Menu bar is active
     Menu,
     /// Terminal has focus
@@ -271,7 +276,7 @@ impl KeyContext {
     /// which a sensible plugin mode would want to suppress. See §18 of
     /// `docs/internal/search-replace-scope-replan-on-widgets.md`.
     pub fn allows_ui_fallthrough(&self) -> bool {
-        matches!(self, Self::FileExplorer | Self::Mode(_))
+        matches!(self, Self::FileExplorer | Self::Dock | Self::Mode(_))
     }
 
     /// Check if a context should allow input
@@ -291,6 +296,7 @@ impl KeyContext {
             "popup" => Self::Popup,
             "completion" => Self::Completion,
             "fileExplorer" | "file_explorer" => Self::FileExplorer,
+            "dock" => Self::Dock,
             "normal" => Self::Normal,
             "menu" => Self::Menu,
             "terminal" => Self::Terminal,
@@ -309,6 +315,7 @@ impl KeyContext {
             Self::Popup => "popup".to_string(),
             Self::Completion => "completion".to_string(),
             Self::FileExplorer => "fileExplorer".to_string(),
+            Self::Dock => "dock".to_string(),
             Self::Menu => "menu".to_string(),
             Self::Terminal => "terminal".to_string(),
             Self::Settings => "settings".to_string(),
@@ -625,6 +632,10 @@ pub enum Action {
     ToggleHorizontalScrollbar,
     FocusFileExplorer,
     FocusEditor,
+    /// Toggle keyboard focus between the editor/explorer area and the
+    /// persistent orchestrator dock (the left session column). When the
+    /// dock is hidden, this opens and focuses it.
+    ToggleDockFocus,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -1085,6 +1096,7 @@ impl Action {
             "toggle_horizontal_scrollbar" => ToggleHorizontalScrollbar,
             "focus_file_explorer" => FocusFileExplorer,
             "focus_editor" => FocusEditor,
+            "toggle_dock_focus" => ToggleDockFocus,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -1694,6 +1706,7 @@ impl KeybindingResolver {
                 | Action::ResumeLiveGrep
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
+                | Action::ToggleDockFocus
                 | Action::CycleLiveGrepProvider
                 | Action::OpenSettings
                 | Action::MenuActivate
@@ -2487,6 +2500,7 @@ impl KeybindingResolver {
             Action::ToggleHorizontalScrollbar => t!("action.toggle_horizontal_scrollbar"),
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
+            Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),

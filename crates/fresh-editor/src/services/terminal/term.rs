@@ -48,24 +48,50 @@ const SCROLLBACK_LINES: usize = 200_000;
 struct PtyWriteListener {
     /// Queue of data to write back to the PTY
     write_queue: Arc<Mutex<Vec<String>>>,
+    /// Latest title requested by the program via OSC 0/1/2 (or a reset
+    /// via the OSC reset sequence). `Some` means a change is pending;
+    /// the inner string is the new title (empty string for a reset).
+    /// `process_output` drains this after parsing to update the
+    /// terminal's stored title.
+    pending_title: Arc<Mutex<Option<String>>>,
 }
 
 impl PtyWriteListener {
     fn new() -> Self {
         Self {
             write_queue: Arc::new(Mutex::new(Vec::new())),
+            pending_title: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl EventListener for PtyWriteListener {
     fn send_event(&self, event: Event) {
-        if let Event::PtyWrite(text) = event {
-            if let Ok(mut queue) = self.write_queue.lock() {
-                queue.push(text);
+        match event {
+            Event::PtyWrite(text) => {
+                if let Ok(mut queue) = self.write_queue.lock() {
+                    queue.push(text);
+                }
             }
+            // OSC 0 (icon + window title), OSC 1 (icon title), and OSC 2
+            // (window title) all surface as `Title`. Record the latest;
+            // `process_output` propagates it to `terminal_title` so the
+            // buffer's tab auto-adjusts to whatever the running program set.
+            Event::Title(title) => {
+                if let Ok(mut pending) = self.pending_title.lock() {
+                    *pending = Some(title);
+                }
+            }
+            // Title reset (OSC with empty payload) — clear back to the
+            // buffer's default name by recording an empty title.
+            Event::ResetTitle => {
+                if let Ok(mut pending) = self.pending_title.lock() {
+                    *pending = Some(String::new());
+                }
+            }
+            // Other events (ClipboardStore, etc.) are ignored for now.
+            _ => {}
         }
-        // Other events (Title, ClipboardStore, etc.) are ignored for now
     }
 }
 
@@ -82,12 +108,29 @@ pub struct TerminalState {
     dirty: bool,
     /// Terminal title (set via escape sequences)
     terminal_title: String,
-    /// Number of scrollback lines already written to backing file
+    /// Number of grid history *rows* already streamed to the backing file in the
+    /// current epoch (an epoch resets when the scrollback is cleared). Only ever
+    /// advances past complete logical lines (rows that don't continue via
+    /// `WRAPLINE`), so the file always ends on a logical-line boundary. Flush
+    /// only ever advances this past lines it *wrote*, so nothing is skipped —
+    /// scrollback is never lost (a grow may re-write a bounded few lines instead).
     synced_history_lines: usize,
+    /// Count of complete logical lines streamed this epoch. Invariant under
+    /// width reflow (a logical line keeps its identity when re-wrapped), so it's
+    /// the anchor used to rebuild `synced_history_lines` after a resize re-wraps
+    /// the grid and invalidates the physical row count.
+    synced_logical_lines: usize,
+    /// A width resize happened while the alternate screen was active, so the
+    /// primary grid's history was reflowed but couldn't be re-anchored yet
+    /// (the grid in view was the alt grid). Deferred until alt-screen exit.
+    pending_reflow_resync: bool,
     /// Byte offset in backing file where scrollback ends (for truncation)
     backing_file_history_end: u64,
     /// Queue of data to write back to the PTY (for DSR responses, etc.)
     pty_write_queue: Arc<Mutex<Vec<String>>>,
+    /// Pending title set by the program via OSC 0/1/2 (shared with the
+    /// event listener). Drained in `process_output` into `terminal_title`.
+    pending_title: Arc<Mutex<Option<String>>>,
 }
 
 impl TerminalState {
@@ -100,6 +143,7 @@ impl TerminalState {
         };
         let listener = PtyWriteListener::new();
         let pty_write_queue = listener.write_queue.clone();
+        let pending_title = listener.pending_title.clone();
         let term = Term::new(config, &size, listener);
 
         Self {
@@ -110,8 +154,11 @@ impl TerminalState {
             dirty: true,
             terminal_title: String::new(),
             synced_history_lines: 0,
+            synced_logical_lines: 0,
+            pending_reflow_resync: false,
             backing_file_history_end: 0,
             pty_write_queue,
+            pending_title,
         }
     }
 
@@ -129,19 +176,118 @@ impl TerminalState {
 
     /// Process output from the PTY
     pub fn process_output(&mut self, data: &[u8]) {
+        use alacritty_terminal::grid::Dimensions;
+
+        let history_before = self.term.grid().history_size();
+        let alt_before = self.term.mode().contains(TermMode::ALT_SCREEN);
         self.parser.advance(&mut self.term, data);
+        // The parser may have emitted OSC title events (0/1/2) into the
+        // listener's pending slot during `advance`. Apply the latest so
+        // the stored title reflects what the program requested.
+        if let Ok(mut pending) = self.pending_title.lock() {
+            if let Some(title) = pending.take() {
+                self.terminal_title = title;
+            }
+        }
+
+        let alt_after = self.term.mode().contains(TermMode::ALT_SCREEN);
+        if alt_before && !alt_after && self.pending_reflow_resync {
+            // Returned from the alternate screen after a width resize happened
+            // while it was active: the primary grid (now back in view) was
+            // reflowed, so re-anchor against it now.
+            self.resync_after_reflow();
+            self.pending_reflow_resync = false;
+        }
+
+        // Output never shrinks scrollback during normal printing — only a
+        // scrollback clear (`ESC[3J`) or terminal reset (`RIS`, `ESC c`) does.
+        // (The alternate screen also reports zero history, but that's transient
+        // and restored on exit, so exclude it.) When it happens, the grid
+        // history we were tracking is gone; the backing file keeps everything
+        // already streamed, so start a fresh epoch — subsequent output is
+        // appended after the existing scrollback in the file.
+        if !alt_after {
+            let history_after = self.term.grid().history_size();
+            if history_after < history_before {
+                self.synced_history_lines = 0;
+                self.synced_logical_lines = 0;
+            }
+        }
+
         self.dirty = true;
     }
 
-    /// Resize the terminal
+    /// Resize the terminal.
+    ///
+    /// Scrollback is streamed to the backing file as complete *logical* lines.
+    /// A resize perturbs the visible/history boundary and — on a width change —
+    /// re-wraps already-persisted content, changing its physical row count.
+    /// Reconciliation depends on *why* history changed:
+    ///
+    /// * Pure height change (no reflow): physical rows are still valid, so leave
+    ///   `synced_history_lines` alone. A shrink pushes the top rows into
+    ///   scrollback — new content the next flush writes (no loss). A grow pulls
+    ///   rows back onto the screen; the `current <= synced` flush guard suppresses
+    ///   them until genuinely new lines scroll off (no duplicates).
+    ///
+    /// * Width change (reflow): the physical count is meaningless now, but the
+    ///   logical line count is invariant under re-wrapping. Re-derive
+    ///   `synced_history_lines` from `synced_logical_lines` by walking the
+    ///   reflowed history (a cheap flag-only scan, no I/O) so the next flush
+    ///   appends exactly the logical lines not yet persisted — width spill
+    ///   included, re-wraps excluded. (Deferred if the alternate screen is up,
+    ///   since the primary grid isn't the one in view.)
     pub fn resize(&mut self, cols: u16, rows: u16) {
         if cols != self.cols || rows != self.rows {
+            let cols_changed = cols != self.cols;
             self.cols = cols;
             self.rows = rows;
             let size = TermSize::new(cols as usize, rows as usize);
             self.term.resize(size);
+
+            if cols_changed {
+                if self.term.mode().contains(TermMode::ALT_SCREEN) {
+                    // The grid in view is the alt screen (no scrollback); the
+                    // primary grid reflowed underneath. Re-anchor on alt exit.
+                    self.pending_reflow_resync = true;
+                } else {
+                    self.resync_after_reflow();
+                }
+            }
+
             self.dirty = true;
         }
+    }
+
+    /// Rebuild `synced_history_lines` (physical rows) after a width reflow
+    /// invalidated the physical row count.
+    ///
+    /// The logical-line position the pointer sat at (`synced_logical_lines`) is
+    /// invariant under re-wrapping, so we walk the reflowed history oldest→newest
+    /// counting complete logical lines until we've re-reached that position, and
+    /// set the physical pointer to the rows consumed. A flag-only scan (no
+    /// allocation, no I/O). If a simultaneous grow pulled rows back onto the
+    /// screen so history now holds fewer logical lines, the pointer lands at the
+    /// end of what remains; those lines may then be re-written (a bounded
+    /// duplicate) when they scroll off again — never lost.
+    fn resync_after_reflow(&mut self) {
+        use alacritty_terminal::grid::Dimensions;
+
+        let history = self.term.grid().history_size();
+        let target = self.synced_logical_lines;
+        let mut logical_seen = 0usize;
+        let mut synced = 0usize;
+        let mut k = 0usize;
+        while k < history && logical_seen < target {
+            let line_idx = -((history - k) as i32);
+            if !self.row_wraps(Line(line_idx)) {
+                logical_seen += 1;
+                synced = k + 1;
+            }
+            k += 1;
+        }
+        self.synced_history_lines = synced;
+        self.synced_logical_lines = logical_seen;
     }
 
     /// Get current dimensions
@@ -379,87 +525,150 @@ impl TerminalState {
     // Incremental scrollback streaming
     // =========================================================================
 
-    /// Flush any new scrollback lines to the writer.
+    /// Flush newly scrolled-off scrollback to the writer as complete logical
+    /// lines, returning the number of logical lines written.
     ///
-    /// Call this after `process_output()` to incrementally stream scrollback
-    /// to the backing file. Returns the number of new lines written.
-    ///
-    /// This is the core of the incremental streaming architecture: scrollback
-    /// lines are written once as they scroll off the screen, avoiding O(n)
-    /// work on mode switches.
+    /// Call after `process_output()` (and before reading the backing file) to
+    /// incrementally persist scrollback. Rows that alacritty wrapped (`WRAPLINE`)
+    /// are joined into one unwrapped logical line, so the backing file stores
+    /// logical lines — the editor then soft-wraps them to whatever width the
+    /// scroll-back view happens to be, instead of being frozen at the width they
+    /// were captured. Only logical lines that have *fully* scrolled into history
+    /// are written; a trailing line still continuing into the visible screen is
+    /// left for a later flush, keeping the file on a logical-line boundary.
     pub fn flush_new_scrollback<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         use alacritty_terminal::grid::Dimensions;
 
-        let grid = self.term.grid();
-        let current_history = grid.history_size();
-
-        if current_history <= self.synced_history_lines {
+        let history = self.term.grid().history_size();
+        if history <= self.synced_history_lines {
             return Ok(0);
         }
 
-        let new_count = current_history - self.synced_history_lines;
-
-        // New scrollback lines are at indices -new_count down to -1
-        // When history grows, new lines are always added at the "bottom" of history
-        // (closest to visible screen), and old lines shift to larger negative indices.
-        //
-        // Example: if synced=6 and current=16:
-        // - Old lines (already flushed) are now at -16 to -11
-        // - New lines are at -10 to -1
-        // We write oldest-first: -10, -9, ..., -1
-        for i in 0..new_count {
-            // Line index: oldest new line first
-            // i=0 -> -new_count = -10 (oldest new line)
-            // i=9 -> -1 (newest new line, just scrolled off)
-            let line_idx = -((new_count - i) as i32);
-            self.write_grid_line(writer, Line(line_idx))?;
+        // History rows oldest→newest map to k = 0..history via line index
+        // -(history - k); -history is oldest, -1 is newest (just above visible).
+        // Write every complete logical line past the pointer, advancing the
+        // pointer only past lines actually written — so a line is never skipped,
+        // i.e. never lost. (A grow that rewinds the boundary may re-write a
+        // bounded handful of lines; duplication is the accepted trade-off.)
+        let mut written = 0usize;
+        let mut line_start = self.synced_history_lines;
+        let mut k = self.synced_history_lines;
+        while k < history {
+            let line_idx = -((history - k) as i32);
+            if self.row_wraps(Line(line_idx)) {
+                // Logical line continues onto the next row.
+                k += 1;
+                continue;
+            }
+            // Row k ends a logical line spanning rows [line_start ..= k].
+            self.write_logical_line(writer, line_start, k, history)?;
+            written += 1;
+            self.synced_logical_lines += 1;
+            k += 1;
+            self.synced_history_lines = k;
+            line_start = k;
         }
-
-        self.synced_history_lines = current_history;
-        // Update the byte offset where scrollback ends
-        // The writer should be positioned at end, so we can query position
-        // For simplicity, we track this separately when we know the file position
-
-        Ok(new_count)
+        // Any rows past `synced_history_lines` form an incomplete logical line
+        // (its final row wraps into the visible screen); leave them uncommitted.
+        Ok(written)
     }
 
-    /// Append the visible screen content to the writer.
+    /// Append the visible screen content to the writer as logical lines.
     ///
-    /// Call this when exiting terminal mode to add the current screen
-    /// to the backing file. The visible screen is the "rewritable tail"
-    /// that gets overwritten each time we exit terminal mode.
-    ///
-    /// Writes every visible row (including trailing blank rows). The
-    /// scroll-back viewport anchors to the start of this appended block,
-    /// so keeping the row count exact is what makes the post-exit frame
-    /// line up with the live PTY frame even when most of the screen is
-    /// blank (e.g. after `clear` / `reset`). The blanks are temporary —
-    /// re-entering terminal mode truncates the file back to
-    /// `backing_file_history_end`.
+    /// Call this when exiting terminal mode (or saving a session) to add the
+    /// current screen to the backing file. Wrapped rows are joined like
+    /// `flush_new_scrollback`, but every visible row is emitted (including the
+    /// trailing logical line and blank rows) so the scroll-back viewport can
+    /// anchor to the start of this block and line up with the live PTY frame.
+    /// The block is temporary — re-entering terminal mode truncates the file
+    /// back to `backing_file_history_end`.
     pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        for row in 0..self.rows as i32 {
-            self.write_grid_line(writer, Line(row))?;
+        let rows = self.rows as i32;
+        let mut start = 0i32;
+        let mut row = 0i32;
+        while row < rows {
+            if self.row_wraps(Line(row)) && row + 1 < rows {
+                row += 1;
+                continue;
+            }
+            // `write_logical_line` indexes via the history convention, so pass
+            // visible rows through directly (offset 0 == oldest here is just row).
+            self.write_visible_logical_line(writer, start, row)?;
+            row += 1;
+            start = row;
         }
         Ok(())
     }
 
-    /// Write a single grid line to the writer with ANSI color codes, trimming trailing whitespace.
-    ///
-    /// Note: The ANSI codes enable terminal scrollback colors to be preserved in the backing file.
-    /// For colors to display correctly in scrollback mode, the buffer renderer must interpret
-    /// these ANSI escape sequences. See src/view/buffer.rs for rendering logic.
-    fn write_grid_line<W: Write>(&self, writer: &mut W, line: Line) -> io::Result<()> {
+    /// True if the last cell of `line` carries the `WRAPLINE` flag, i.e. the row
+    /// is a soft-wrap continuation point (the logical line continues on the next
+    /// physical row).
+    fn row_wraps(&self, line: Line) -> bool {
+        use alacritty_terminal::term::cell::Flags;
+        if self.cols == 0 {
+            return false;
+        }
+        let grid = self.term.grid();
+        grid[line][Column(self.cols as usize - 1)]
+            .flags
+            .contains(Flags::WRAPLINE)
+    }
+
+    /// Write history rows `line_start..=line_end` (oldest-relative `k` indices,
+    /// with `history` the current history size) as one joined logical line.
+    fn write_logical_line<W: Write>(
+        &self,
+        writer: &mut W,
+        line_start: usize,
+        line_end: usize,
+        history: usize,
+    ) -> io::Result<()> {
+        let mut sgr = SgrState::default();
+        let mut out = String::with_capacity((line_end - line_start + 1) * self.cols as usize * 2);
+        for k in line_start..=line_end {
+            let line_idx = -((history - k) as i32);
+            self.append_row_cells(Line(line_idx), &mut sgr, &mut out);
+        }
+        Self::finish_logical_line(&mut out, &sgr);
+        writeln!(writer, "{}", out)
+    }
+
+    /// Write visible rows `line_start..=line_end` (0-based screen rows) as one
+    /// joined logical line.
+    fn write_visible_logical_line<W: Write>(
+        &self,
+        writer: &mut W,
+        line_start: i32,
+        line_end: i32,
+    ) -> io::Result<()> {
+        let mut sgr = SgrState::default();
+        let mut out = String::with_capacity(self.cols as usize * 2);
+        for row in line_start..=line_end {
+            self.append_row_cells(Line(row), &mut sgr, &mut out);
+        }
+        Self::finish_logical_line(&mut out, &sgr);
+        writeln!(writer, "{}", out)
+    }
+
+    /// Close out an in-progress logical line: emit a final SGR reset if any
+    /// style is active, then trim trailing blanks (color codes are preserved).
+    fn finish_logical_line(out: &mut String, sgr: &SgrState) {
+        if sgr.has_style() {
+            out.push_str("\x1b[0m");
+        }
+        let trimmed_len = out.trim_end_matches([' ', '\0']).len();
+        out.truncate(trimmed_len);
+    }
+
+    /// Append all cells of one grid row to `out`, threading the SGR state so a
+    /// joined logical line carries continuous colors across wrapped rows and
+    /// only resets once at the end. Color codes are emitted as truecolor; the
+    /// buffer renderer interprets these (see `src/primitives/ansi.rs`).
+    fn append_row_cells(&self, line: Line, sgr: &mut SgrState, out: &mut String) {
         use alacritty_terminal::term::cell::Flags;
 
         let grid = self.term.grid();
         let row_data = &grid[line];
-
-        let mut line_str = String::with_capacity(self.cols as usize * 2);
-        let mut current_fg: Option<(u8, u8, u8)> = None;
-        let mut current_bg: Option<(u8, u8, u8)> = None;
-        let mut current_bold = false;
-        let mut current_italic = false;
-        let mut current_underline = false;
 
         for col in 0..self.cols as usize {
             let cell = &row_data[Column(col)];
@@ -470,24 +679,18 @@ impl TerminalState {
             let italic = flags.contains(Flags::ITALIC);
             let underline = flags.contains(Flags::UNDERLINE);
 
-            // Check if we need to emit style codes
-            let fg_changed = fg != current_fg;
-            let bg_changed = bg != current_bg;
-            let bold_changed = bold != current_bold;
-            let italic_changed = italic != current_italic;
-            let underline_changed = underline != current_underline;
+            let fg_changed = fg != sgr.fg;
+            let bg_changed = bg != sgr.bg;
+            let bold_changed = bold != sgr.bold;
+            let italic_changed = italic != sgr.italic;
+            let underline_changed = underline != sgr.underline;
 
             if fg_changed || bg_changed || bold_changed || italic_changed || underline_changed {
-                // Build SGR (Select Graphic Rendition) sequence
                 let mut codes: Vec<String> = Vec::new();
 
-                // Reset first if we're turning off attributes
-                if (current_bold && !bold)
-                    || (current_italic && !italic)
-                    || (current_underline && !underline)
-                {
+                // A turned-off attribute requires a full reset + reapply.
+                if (sgr.bold && !bold) || (sgr.italic && !italic) || (sgr.underline && !underline) {
                     codes.push("0".to_string());
-                    // After reset, we need to reapply colors and active attributes
                     if bold {
                         codes.push("1".to_string());
                     }
@@ -504,7 +707,6 @@ impl TerminalState {
                         codes.push(format!("48;2;{};{};{}", r, g, b));
                     }
                 } else {
-                    // Apply incremental changes
                     if bold_changed && bold {
                         codes.push("1".to_string());
                     }
@@ -518,45 +720,31 @@ impl TerminalState {
                         if let Some((r, g, b)) = fg {
                             codes.push(format!("38;2;{};{};{}", r, g, b));
                         } else {
-                            codes.push("39".to_string()); // Default foreground
+                            codes.push("39".to_string());
                         }
                     }
                     if bg_changed {
                         if let Some((r, g, b)) = bg {
                             codes.push(format!("48;2;{};{};{}", r, g, b));
                         } else {
-                            codes.push("49".to_string()); // Default background
+                            codes.push("49".to_string());
                         }
                     }
                 }
 
                 if !codes.is_empty() {
-                    line_str.push_str(&format!("\x1b[{}m", codes.join(";")));
+                    out.push_str(&format!("\x1b[{}m", codes.join(";")));
                 }
 
-                current_fg = fg;
-                current_bg = bg;
-                current_bold = bold;
-                current_italic = italic;
-                current_underline = underline;
+                sgr.fg = fg;
+                sgr.bg = bg;
+                sgr.bold = bold;
+                sgr.italic = italic;
+                sgr.underline = underline;
             }
 
-            line_str.push(cell.c);
+            out.push(cell.c);
         }
-
-        // Reset at end of line if we have any active styles
-        if current_fg.is_some()
-            || current_bg.is_some()
-            || current_bold
-            || current_italic
-            || current_underline
-        {
-            line_str.push_str("\x1b[0m");
-        }
-
-        // Trim trailing whitespace but preserve color codes
-        let trimmed = line_str.trim_end_matches([' ', '\0']);
-        writeln!(writer, "{}", trimmed)
     }
 
     /// Get the byte offset where scrollback history ends in the backing file.
@@ -582,6 +770,8 @@ impl TerminalState {
     /// Reset sync state (e.g., when starting fresh or after truncation).
     pub fn reset_sync_state(&mut self) {
         self.synced_history_lines = 0;
+        self.synced_logical_lines = 0;
+        self.pending_reflow_resync = false;
         self.backing_file_history_end = 0;
     }
 }
@@ -616,6 +806,23 @@ impl Default for TerminalCell {
             underline: false,
             inverse: false,
         }
+    }
+}
+
+/// Running SGR (color/attribute) state while serializing a logical line, so a
+/// joined line carries continuous styling across wrapped rows and resets once.
+#[derive(Default)]
+struct SgrState {
+    fg: Option<(u8, u8, u8)>,
+    bg: Option<(u8, u8, u8)>,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+}
+
+impl SgrState {
+    fn has_style(&self) -> bool {
+        self.fg.is_some() || self.bg.is_some() || self.bold || self.italic || self.underline
     }
 }
 
@@ -721,6 +928,275 @@ mod tests {
         state.resize(100, 30);
         assert_eq!(state.size(), (100, 30));
         assert!(state.is_dirty());
+    }
+
+    /// Resize re-anchors `synced_history_lines` to the reflowed grid so the
+    /// incremental streamer can't lose/duplicate lines afterwards.
+    #[test]
+    fn test_resize_reanchors_synced_history() {
+        let mut state = TerminalState::new(80, 24);
+        for i in 0..200 {
+            state.process_output(format!("line {i}\r\n").as_bytes());
+        }
+        // Drain into the backing-file mirror (a Vec sink).
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        assert_eq!(state.synced_history_lines(), state.history_size());
+
+        // Widen: reflow shrinks history; counter must follow, not stay stale.
+        state.resize(200, 24);
+        assert_eq!(state.synced_history_lines(), state.history_size());
+        // No phantom "new" lines to flush right after a resize.
+        let mut after: Vec<u8> = Vec::new();
+        assert_eq!(state.flush_new_scrollback(&mut after).unwrap(), 0);
+    }
+
+    /// A pure height *shrink* (cols unchanged) pushes the top visible rows into
+    /// scrollback. Those rows are genuinely new history, so the counter must
+    /// stay low enough that the next flush writes them — they must not be
+    /// dropped. Guards against re-anchoring `synced` on every resize.
+    #[test]
+    fn test_height_shrink_streams_spilled_rows() {
+        let mut state = TerminalState::new(80, 24);
+        // Fill the screen (no scroll-off yet) with identifiable rows.
+        for i in 0..24 {
+            state.process_output(format!("row{i:02}\r\n").as_bytes());
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let before = state.synced_history_lines();
+
+        // Shrink height only — alacritty pushes the top rows into history.
+        state.resize(80, 10);
+        assert!(
+            state.history_size() > before,
+            "shrink should push rows into history"
+        );
+        // The spilled rows are new content and must be flushed (not skipped).
+        let mut spill: Vec<u8> = Vec::new();
+        let written = state.flush_new_scrollback(&mut spill).unwrap();
+        assert!(written > 0, "spilled rows must be streamed, got {written}");
+    }
+
+    /// A pure height *grow* (cols unchanged) pulls rows from scrollback back
+    /// onto the screen. Those rows are already in the backing file, so when
+    /// they later scroll off again they must not be streamed a second time.
+    #[test]
+    fn test_height_grow_does_not_reflow_duplicate() {
+        let mut state = TerminalState::new(80, 24);
+        for i in 0..100 {
+            state.process_output(format!("line {i}\r\n").as_bytes());
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let synced_before = state.synced_history_lines();
+
+        // Grow height only: pulls rows from history back onto the screen.
+        state.resize(80, 40);
+        // Counter is left untouched; the flush guard suppresses the pulled rows.
+        assert_eq!(state.synced_history_lines(), synced_before);
+        let mut after: Vec<u8> = Vec::new();
+        assert_eq!(
+            state.flush_new_scrollback(&mut after).unwrap(),
+            0,
+            "growing height must not re-stream rows already in the backing file"
+        );
+    }
+
+    // ---- #5 logical-line capture -------------------------------------------
+
+    /// Min/max occurrences of each marker `L{i:05}#` for i in 0..n across the
+    /// full captured record `text` (everything streamed plus the final screen).
+    fn marker_counts(text: &str, n: usize) -> (usize, usize) {
+        let mut min = usize::MAX;
+        let mut max = 0;
+        for i in 0..n {
+            let c = text.matches(&format!("L{i:05}#")).count();
+            min = min.min(c);
+            max = max.max(c);
+        }
+        (min, max)
+    }
+
+    /// A wrapped line is stored as ONE unwrapped logical line in the backing
+    /// file (not hard-split at the capture width), so the editor can re-wrap it.
+    #[test]
+    fn test_wrapped_line_stored_as_single_logical_line() {
+        let mut state = TerminalState::new(40, 24);
+        // ~100 chars at width 40 → wraps to 3 physical rows.
+        let long = "X".repeat(100);
+        state.process_output(format!("{long}\r\n").as_bytes());
+        // Scroll it off the screen.
+        for _ in 0..24 {
+            state.process_output(b"y\r\n");
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        let text = String::from_utf8_lossy(&sink);
+        let xline = text.lines().find(|l| l.contains("XXXX")).unwrap();
+        assert_eq!(
+            xline.chars().filter(|&c| c == 'X').count(),
+            100,
+            "the wrapped line must be rejoined into one 100-char logical line"
+        );
+    }
+
+    /// The headline scenario: lots of scrollback, then MANY resizes (including
+    /// simultaneous width+height changes) with no viewing in between, then a
+    /// final capture. Not a single logical line may be lost.
+    #[test]
+    fn test_no_scrollback_lost_across_many_mixed_resizes() {
+        let mut state = TerminalState::new(80, 24);
+        let n = 500;
+        let mut sink: Vec<u8> = Vec::new();
+        // Emit in batches, flushing after each (as the PTY read loop would),
+        // and resize between batches — width, height, and both at once.
+        let sizes = [
+            (120u16, 24u16),
+            (60, 30),
+            (200, 18),
+            (90, 40),
+            (50, 22),
+            (160, 50),
+            (70, 20),
+        ];
+        for b in 0..n / 20 {
+            for i in 0..20 {
+                let idx = b * 20 + i;
+                // Mix in lines long enough to wrap at the narrow widths.
+                let pad = "=".repeat((idx % 90) + 5);
+                state.process_output(format!("L{idx:05}# {pad}\r\n").as_bytes());
+            }
+            state.flush_new_scrollback(&mut sink).unwrap();
+            let (w, h) = sizes[b % sizes.len()];
+            state.resize(w, h);
+        }
+        // Capture the residual scrollback + visible screen into the same stream
+        // a viewer/session-save would read.
+        state.flush_new_scrollback(&mut sink).unwrap();
+        state.append_visible_screen(&mut sink).unwrap();
+        let text = String::from_utf8_lossy(&sink);
+
+        let (min, max) = marker_counts(&text, n);
+        // PRIMARY GOAL: never lose a scrollback line, no matter the resizes.
+        assert!(
+            min >= 1,
+            "lost scrollback line(s): some marker missing (min={min})"
+        );
+        // Duplication is a tolerated last resort (a grow can overlap the visible
+        // tail with committed history) but must stay bounded by the screen height,
+        // never unbounded growth.
+        assert!(max <= 3, "excessive duplication (max={max})");
+    }
+
+    /// `clear` (ESC[3J clears scrollback) must not stall capture: lines printed
+    /// afterwards have to keep landing in the backing file, appended after the
+    /// scrollback that was already committed.
+    #[test]
+    fn test_clear_scrollback_resumes_capture() {
+        let mut state = TerminalState::new(80, 24);
+        let mut sink: Vec<u8> = Vec::new();
+        for i in 0..100 {
+            state.process_output(format!("OLD{i:04}#\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+        assert!(state.synced_logical_lines > 0);
+
+        // Clear scrollback (what `clear` emits), then print more.
+        state.process_output(b"\x1b[3J\x1b[H\x1b[2J");
+        for i in 0..100 {
+            state.process_output(format!("NEW{i:04}#\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+        state.append_visible_screen(&mut sink).unwrap();
+
+        let text = String::from_utf8_lossy(&sink);
+        // Old scrollback preserved, AND post-clear output captured (the bug was
+        // post-clear output being silently dropped).
+        assert!(text.contains("OLD0000#"), "pre-clear scrollback lost");
+        assert!(text.contains("NEW0000#"), "post-clear output dropped");
+        assert!(text.contains("NEW0090#"), "later post-clear output dropped");
+    }
+
+    /// Entering/leaving the alternate screen (vim, less, htop) reports zero
+    /// history transiently; it must not be mistaken for a clear, nor cause the
+    /// pre-alt-screen scrollback to be re-emitted on exit.
+    #[test]
+    fn test_alt_screen_roundtrip_no_duplicate() {
+        let mut state = TerminalState::new(80, 24);
+        let mut sink: Vec<u8> = Vec::new();
+        for i in 0..100 {
+            state.process_output(format!("BASE{i:04}#\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+
+        // Enter alt screen, draw, leave alt screen.
+        state.process_output(b"\x1b[?1049h");
+        state.process_output(b"full screen app drawing\r\nmore\r\n");
+        state.process_output(b"\x1b[?1049l");
+        // A couple of new real lines after returning.
+        for i in 0..5 {
+            state.process_output(format!("AFTER{i:04}#\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+        state.append_visible_screen(&mut sink).unwrap();
+
+        let text = String::from_utf8_lossy(&sink);
+        // No base line duplicated by the alt-screen round trip.
+        for i in 0..100 {
+            assert!(
+                text.matches(&format!("BASE{i:04}#")).count() <= 1,
+                "alt-screen round trip duplicated BASE{i:04}"
+            );
+        }
+        assert!(
+            text.contains("AFTER0000#"),
+            "post-alt-screen output dropped"
+        );
+    }
+
+    /// Resizing the width *while* the alternate screen is up reflows the hidden
+    /// primary grid; the re-anchor is deferred to alt-screen exit. Afterwards,
+    /// new output must still be captured (no loss) and the pre-alt scrollback
+    /// must not be wholesale re-written.
+    #[test]
+    fn test_resize_during_alt_screen_then_capture() {
+        let mut state = TerminalState::new(80, 24);
+        let mut sink: Vec<u8> = Vec::new();
+        for i in 0..150 {
+            // Lines long enough to wrap differently across the resize.
+            let pad = "=".repeat(60);
+            state.process_output(format!("PRE{i:04}# {pad}\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+
+        // Enter alt screen, resize width (reflows primary underneath), exit.
+        state.process_output(b"\x1b[?1049h");
+        state.resize(40, 24);
+        state.resize(120, 24);
+        state.process_output(b"\x1b[?1049l");
+        for i in 0..150 {
+            state.process_output(format!("POST{i:04}# x\r\n").as_bytes());
+        }
+        state.flush_new_scrollback(&mut sink).unwrap();
+        state.append_visible_screen(&mut sink).unwrap();
+
+        let text = String::from_utf8_lossy(&sink);
+        // Post-alt output fully captured (the deferred re-anchor must not skip).
+        for i in 0..150 {
+            assert!(
+                text.contains(&format!("POST{i:04}#")),
+                "post-alt output lost POST{i:04}"
+            );
+        }
+        // Pre-alt scrollback preserved and not duplicated en masse.
+        for i in 0..150 {
+            assert!(
+                text.matches(&format!("PRE{i:04}#")).count() <= 2,
+                "pre-alt scrollback duplicated PRE{i:04}"
+            );
+        }
+        assert!(text.contains("PRE0000#"), "pre-alt scrollback lost");
     }
 
     /// `last_visible_line` returns the text on the cursor row, with
@@ -1019,5 +1495,38 @@ mod tests {
         let response = &responses[0];
         // Should report position as row 5, col 10
         assert_eq!(response, "\x1b[5;10R", "Response should be \\x1b[5;10R");
+    }
+
+    /// OSC 2 ("set window title") drives the stored terminal title so the
+    /// buffer's tab can auto-adjust to whatever the program requested.
+    #[test]
+    fn test_osc_set_window_title() {
+        let mut state = TerminalState::new(80, 24);
+        assert_eq!(state.title(), "");
+        // ESC ] 2 ; <title> BEL
+        state.process_output(b"\x1b]2;my-shell: ~/project\x07");
+        assert_eq!(state.title(), "my-shell: ~/project");
+    }
+
+    /// OSC 0 sets both the icon name and the window title; we treat it the
+    /// same as OSC 2 for the buffer title.
+    #[test]
+    fn test_osc_set_icon_and_window_title() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]0;vim README.md\x07");
+        assert_eq!(state.title(), "vim README.md");
+    }
+
+    /// A later OSC title overrides an earlier one, and the title can arrive
+    /// in the same chunk as other output.
+    #[test]
+    fn test_osc_title_updates_and_mixes_with_output() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]2;first\x07hello");
+        assert_eq!(state.title(), "first");
+        state.process_output(b"world\x1b]2;second\x07");
+        assert_eq!(state.title(), "second");
+        // The printable bytes still landed on the grid.
+        assert!(state.content_string().contains("helloworld"));
     }
 }

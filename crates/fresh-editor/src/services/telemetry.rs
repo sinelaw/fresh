@@ -7,8 +7,6 @@ use std::fs;
 use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
-use std::thread;
-use std::time::Duration;
 
 const TELEMETRY_URL: &str = "https://t.getfresh.dev";
 const STAMP_FILE_NAME: &str = "telemetry_stamp";
@@ -142,24 +140,14 @@ pub fn track_open(unique_id: &str) {
 }
 
 fn send(event: Event) {
-    // Serialize to JSON string to own the data for the thread
+    // Serialize to JSON string to own the data for the worker thread.
     let Ok(body) = serde_json::to_string(&event) else {
         return;
     };
 
-    // Best-effort fire-and-forget telemetry -- if the request fails, we silently ignore it.
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = thread::spawn(move || {
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .new_agent();
-        #[allow(clippy::let_underscore_must_use)]
-        let _ = agent
-            .post(TELEMETRY_URL)
-            .header("Content-Type", "application/json")
-            .send(body.as_bytes());
-    });
+    // Best-effort, fire-and-forget. All HTTP/TLS lives in `services::http`,
+    // which compiles to a no-op without the `http` feature.
+    super::http::post_telemetry(TELEMETRY_URL, body);
 }
 
 #[cfg(test)]

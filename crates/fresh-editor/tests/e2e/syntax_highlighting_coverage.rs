@@ -142,6 +142,7 @@ test_highlighting_works!(test_highlight_batch, "hello.bat", 2);
 test_highlighting_works!(test_highlight_toml, "hello.toml", 2);
 test_highlighting_works!(test_highlight_zig, "hello.zig", 2);
 test_highlighting_works!(test_highlight_odin, "hello.odin", 2);
+test_highlighting_works!(test_highlight_gdscript, "hello.gd", 2);
 test_highlighting_works!(test_highlight_typst, "hello.typ", 2);
 test_highlighting_works!(test_highlight_gitconfig, "hello.gitconfig", 2);
 

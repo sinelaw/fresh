@@ -237,27 +237,12 @@ pub fn start_update_check(
 }
 
 /// Fetches release information from the provided URL.
+///
+/// The HTTP/TLS transport lives in `services::http`; without the `http`
+/// feature that call returns an error and we surface it here unchanged.
 pub fn fetch_latest_version(url: &str) -> Result<String, String> {
     tracing::debug!("Fetching latest version from {}", url);
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
-        .build()
-        .new_agent();
-    let response = agent
-        .get(url)
-        .header("User-Agent", "fresh-editor-update-checker")
-        .header("Accept", "application/vnd.github.v3+json")
-        .call()
-        .map_err(|e| {
-            tracing::debug!("HTTP request failed: {}", e);
-            format!("HTTP request failed: {}", e)
-        })?;
-
-    let body = response
-        .into_body()
-        .read_to_string()
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
-
+    let body = super::http::get_release_json(url)?;
     let version = parse_version_from_json(&body)?;
     tracing::debug!("Latest version: {}", version);
     Ok(version)

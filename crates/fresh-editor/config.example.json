@@ -128,6 +128,19 @@
       "show_whitespace_tabs": true,
       "use_tabs": false
     },
+    "gdscript": {
+      "extensions": [
+        "gd"
+      ],
+      "filenames": [],
+      "grammar": "gdscript",
+      "comment_prefix": "#",
+      "auto_indent": true,
+      "highlighter": "auto",
+      "textmate_grammar": null,
+      "show_whitespace_tabs": true,
+      "use_tabs": false
+    },
     "go": {
       "extensions": [
         "go"
@@ -468,6 +481,21 @@
       "command": "pylsp",
       "args": [],
       "enabled": true,
+      "auto_start": false,
+      "process_limits": {
+        "max_memory_percent": 50,
+        "max_cpu_percent": 90,
+        "enabled": true
+      },
+      "initialization_options": null
+    },
+    "gdscript": {
+      "command": "nc",
+      "args": [
+        "127.0.0.1",
+        "6005"
+      ],
+      "enabled": false,
       "auto_start": false,
       "process_limits": {
         "max_memory_percent": 50,

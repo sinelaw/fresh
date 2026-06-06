@@ -63,7 +63,10 @@ impl FileBrowserRenderer {
                     truncated_path.prefix.clone(),
                     Style::default().fg(theme.popup_border_fg),
                 ),
-                Span::styled("/[...]", Style::default().fg(theme.menu_highlight_fg)),
+                Span::styled(
+                    format!("{}[...]", truncated_path.sep),
+                    Style::default().fg(theme.menu_highlight_fg),
+                ),
                 Span::styled(
                     truncated_path.suffix.clone(),
                     Style::default().fg(theme.popup_border_fg),

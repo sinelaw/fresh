@@ -60,9 +60,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let face = OverlayFace::from_options(options.clone());
             let event = Event::AddOverlay {
@@ -92,9 +91,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let event = Event::RemoveOverlay { handle };
             state.apply(&mut Cursors::default(), &event);
@@ -107,9 +105,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             // Use the OverlayManager's clear method
             state.overlays.clear(&mut state.marker_list);
@@ -129,9 +126,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .overlays
@@ -150,9 +146,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .overlays
@@ -172,9 +167,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state.overlays.remove_in_range_for_namespace(
                 &(start..end),
@@ -202,9 +196,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             use crate::view::virtual_text::VirtualTextPosition;
             use ratatui::style::{Color, Style};
@@ -260,9 +253,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             use crate::view::virtual_text::VirtualTextPosition;
             use fresh_core::api::OverlayColorSpec;
@@ -333,9 +325,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .virtual_texts
@@ -352,9 +343,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .virtual_texts
@@ -367,9 +357,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state.virtual_texts.clear(&mut state.marker_list);
         }
@@ -442,9 +431,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let placement = if above {
                 VirtualTextPosition::LineAbove
@@ -479,9 +467,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             use crate::view::virtual_text::VirtualTextNamespace;
             let ns = VirtualTextNamespace::from_string(namespace);
@@ -505,9 +492,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .conceals
@@ -528,9 +514,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .conceals
@@ -548,9 +533,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .conceals
@@ -623,9 +607,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .soft_breaks
@@ -646,9 +629,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .soft_breaks
@@ -666,9 +648,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .soft_breaks
@@ -893,32 +874,6 @@ impl Editor {
         }
     }
 
-    /// Handle CloseSplit command
-    pub(super) fn handle_close_split(&mut self, split_id: SplitId) {
-        // Plugin sends arbitrary SplitId — convert to LeafId at the boundary
-        let leaf_id = LeafId(split_id);
-        match self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .close_split(leaf_id)
-        {
-            Ok(()) => {
-                // Clean up the view state for the closed split
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .remove(&leaf_id);
-                tracing::info!("Closed split {:?}", split_id);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to close split {:?}: {}", split_id, e);
-            }
-        }
-    }
-
     /// Handle SetSplitRatio command
     pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) {
         // Plugin sends arbitrary SplitId — convert to ContainerId at the boundary
@@ -1049,15 +1004,14 @@ impl Editor {
         let spans = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let spans = state.highlighter.highlight_viewport(
                 &state.buffer,
                 range.start,
                 range.end,
-                &*self.theme.read().unwrap(),
+                &self.theme.read().unwrap(),
                 self.config.editor.highlight_context_bytes,
             );
 
@@ -1097,9 +1051,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let event = Event::Insert {
                 position,
@@ -1144,9 +1097,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let deleted_text = state.get_text_range(range.start, range.end);
             let event = Event::Delete {
@@ -1538,7 +1490,6 @@ impl Editor {
                     if current_idx > 0 {
                         view_state.open_buffers.swap(current_idx, current_idx - 1);
                         tracing::info!("Moved tab left in split {:?}", split_id);
-                        return;
                     }
                 }
             }
@@ -1559,7 +1510,6 @@ impl Editor {
                     if current_idx < view_state.open_buffers.len() - 1 {
                         view_state.open_buffers.swap(current_idx, current_idx + 1);
                         tracing::info!("Moved tab right in split {:?}", split_id);
-                        return;
                     }
                 }
             }
@@ -1844,19 +1794,6 @@ impl Editor {
         }
     }
 
-    /// Handle RefreshLines command
-    pub(super) fn handle_refresh_lines(&mut self, buffer_id: BufferId) {
-        // Clear seen_byte_ranges for this buffer so all visible lines will be re-processed
-        // on the next render. This is useful when a plugin is enabled and needs to
-        // process lines that were already marked as seen.
-        self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
-        // Request a render so the lines_changed hook fires
-        #[cfg(feature = "plugins")]
-        {
-            self.plugin_render_requested = true;
-        }
-    }
-
     /// Handle SetLineIndicator command
     pub(super) fn handle_set_line_indicator(
         &mut self,
@@ -1870,9 +1807,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             // Convert line number to byte offset for marker-based tracking
             let byte_offset = state.buffer.line_start_offset(line).unwrap_or(0);
@@ -1900,9 +1836,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let indicator = crate::view::margin::LineIndicator::new(
                 symbol,
@@ -1923,9 +1858,8 @@ impl Editor {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             state
                 .margins
@@ -2078,6 +2012,7 @@ impl Editor {
                 EditorSuggestion {
                     text: s.text,
                     description: s.description,
+                    description_spans: s.description_spans,
                     value: s.value,
                     disabled: s.disabled.unwrap_or(false),
                     keybinding: s.keybinding,
@@ -2275,11 +2210,7 @@ impl Editor {
             method
         );
         let __active_id = self.active_window;
-        let error = if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        let error = if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             // Respect auto_start setting for plugin requests
             use crate::services::lsp::manager::LspSpawnResult;
             if lsp.try_spawn(&language, None) != LspSpawnResult::Spawned {
@@ -2389,11 +2320,7 @@ impl Editor {
         };
         // Update LSP manager if available
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.set_language_config(language.clone(), lsp_config.clone());
         }
         // Also update runtime config
@@ -2416,201 +2343,6 @@ impl Editor {
         self.grammar_reload_pending = true;
         self.pending_grammar_callbacks.push(callback_id);
     }
-
-    /// Flush pending grammars: spawn a background rebuild if any ReloadGrammars
-    /// commands were received during this command batch.
-    ///
-    /// Called after processing all plugin commands in a batch, so that multiple
-    /// RegisterGrammar+ReloadGrammars pairs result in only one rebuild.
-    /// The rebuild happens on a background thread; when complete, a
-    /// `GrammarRegistryBuilt` message swaps in the new registry.
-    ///
-    /// On the first call, this triggers the deferred full grammar build
-    /// (user grammars + language packs + any plugin grammars accumulated so far).
-    pub(super) fn flush_pending_grammars(&mut self) {
-        // On the first call, start the deferred full grammar build.
-        // This includes any plugin grammars that were registered during init,
-        // so we get everything in a single builder.build() pass.
-        if self.needs_full_grammar_build {
-            self.needs_full_grammar_build = false;
-            self.grammar_reload_pending = false;
-
-            // Drain all pending grammars to include in the initial build
-            let additional: Vec<_> = self
-                .pending_grammars
-                .drain(..)
-                .map(|g| crate::primitives::grammar::GrammarSpec {
-                    language: g.language.clone(),
-                    path: std::path::PathBuf::from(g.grammar_path),
-                    extensions: g.extensions.clone(),
-                })
-                .collect();
-
-            // Update config.languages with the extensions so detect_language() works
-            for crate::primitives::grammar::GrammarSpec {
-                language,
-                extensions,
-                ..
-            } in &additional
-            {
-                let lang_config = self
-                    .config_mut()
-                    .languages
-                    .entry(language.clone())
-                    .or_default();
-                for ext in extensions {
-                    if !lang_config.extensions.contains(ext) {
-                        lang_config.extensions.push(ext.clone());
-                    }
-                }
-            }
-
-            let callback_ids: Vec<_> = self.pending_grammar_callbacks.drain(..).collect();
-            self.start_background_grammar_build(additional, callback_ids);
-            return;
-        }
-
-        if !self.grammar_reload_pending {
-            return;
-        }
-        self.grammar_reload_pending = false;
-
-        // If a background build is already in progress, it will call
-        // flush_pending_grammars() again when it completes — so just
-        // re-arm the flag and return.
-        if self.grammar_build_in_progress {
-            self.grammar_reload_pending = true;
-            tracing::debug!("Grammar build in progress, deferring flush");
-            return;
-        }
-
-        use std::path::PathBuf;
-
-        if self.pending_grammars.is_empty() {
-            tracing::debug!("Grammar reload requested but no pending grammars");
-            return;
-        }
-
-        // Deduplicate: skip grammars whose extensions are all already mapped
-        // in the current registry (meaning the grammar was already loaded by
-        // for_editor or a previous build).
-        let pending_before = self.pending_grammars.len();
-        self.pending_grammars.retain(|g| {
-            // Check if ALL extensions for this grammar are already mapped
-            let all_mapped = !g.extensions.is_empty()
-                && g.extensions
-                    .iter()
-                    .all(|ext| self.grammar_registry.find_by_extension(ext).is_some());
-            if all_mapped {
-                tracing::debug!(
-                    "Skipping already-loaded grammar '{}' (extensions {:?} already mapped)",
-                    g.language,
-                    g.extensions
-                );
-                false
-            } else {
-                true
-            }
-        });
-        if pending_before != self.pending_grammars.len() {
-            tracing::info!(
-                "Deduplicated pending grammars: {} -> {}",
-                pending_before,
-                self.pending_grammars.len()
-            );
-        }
-
-        if self.pending_grammars.is_empty() {
-            tracing::info!(
-                "All pending grammars already loaded, resolving callbacks without rebuild"
-            );
-            // Resolve callbacks immediately — no rebuild needed
-            #[cfg(feature = "plugins")]
-            for cb_id in self.pending_grammar_callbacks.drain(..) {
-                self.plugin_manager
-                    .read()
-                    .unwrap()
-                    .resolve_callback(cb_id, "null".to_string());
-            }
-            #[cfg(not(feature = "plugins"))]
-            self.pending_grammar_callbacks.clear();
-            return;
-        }
-
-        tracing::info!(
-            "Flushing {} pending grammars via background rebuild",
-            self.pending_grammars.len()
-        );
-
-        // Collect pending grammars
-        let additional: Vec<crate::primitives::grammar::GrammarSpec> = self
-            .pending_grammars
-            .drain(..)
-            .map(|g| crate::primitives::grammar::GrammarSpec {
-                language: g.language.clone(),
-                path: PathBuf::from(g.grammar_path),
-                extensions: g.extensions.clone(),
-            })
-            .collect();
-
-        // Update config.languages with the extensions so detect_language() works
-        for crate::primitives::grammar::GrammarSpec {
-            language,
-            extensions,
-            ..
-        } in &additional
-        {
-            let lang_config = self
-                .config_mut()
-                .languages
-                .entry(language.clone())
-                .or_default();
-            for ext in extensions {
-                if !lang_config.extensions.contains(ext) {
-                    lang_config.extensions.push(ext.clone());
-                }
-            }
-        }
-
-        // Collect pending callback IDs to resolve when build completes
-        let callback_ids: Vec<_> = self.pending_grammar_callbacks.drain(..).collect();
-
-        // Spawn background rebuild
-        let base_registry = std::sync::Arc::clone(&self.grammar_registry);
-        if let Some(bridge) = &self.async_bridge {
-            let sender = bridge.sender();
-            self.grammar_build_in_progress = true;
-            std::thread::Builder::new()
-                .name("grammar-rebuild".to_string())
-                .spawn(move || {
-                    use crate::primitives::grammar::GrammarRegistry;
-                    match GrammarRegistry::with_additional_grammars(&base_registry, &additional) {
-                        Some(new_registry) => {
-                            // Ok to ignore: receiver may be gone if app is shutting down.
-                            drop(sender.send(
-                                crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
-                                    registry: std::sync::Arc::new(new_registry),
-                                    callback_ids,
-                                },
-                            ));
-                        }
-                        None => {
-                            tracing::error!("Failed to rebuild grammar registry in background");
-                            // Still send the message so callbacks get resolved (even on failure)
-                            drop(sender.send(
-                                crate::services::async_bridge::AsyncMessage::GrammarRegistryBuilt {
-                                    registry: base_registry,
-                                    callback_ids,
-                                },
-                            ));
-                        }
-                    }
-                })
-                .ok();
-        }
-    }
-
-    // ==================== Project Grep ====================
 
     /// Handle GrepProject command: walk files, search buffers/disk, collect matches
     pub(super) fn handle_grep_project(
@@ -2692,9 +2424,8 @@ impl Editor {
                 if let Some(state) = self
                     .windows
                     .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
                     .expect("active window present")
-                    .get_mut(&bid)
+                    .buffer_state_mut(bid)
                 {
                     let matches = match state.buffer.search_hybrid(
                         &pattern,
@@ -3170,7 +2901,7 @@ impl Editor {
         // are addressed. Otherwise fall back to matching the open buffer by
         // path, opening the file when none is open.
         let explicit_buffer = (buffer_id != 0)
-            .then(|| BufferId(buffer_id))
+            .then_some(BufferId(buffer_id))
             .filter(|bid| self.buffers().contains_key(bid));
         let buffer_id = if let Some(bid) = explicit_buffer {
             bid
@@ -3221,7 +2952,7 @@ impl Editor {
         // Sort matches by byte offset descending — editing from end backwards
         // prevents earlier edits from shifting later offsets
         let mut sorted_matches = matches;
-        sorted_matches.sort_by(|a, b| b.0.cmp(&a.0));
+        sorted_matches.sort_by_key(|a| std::cmp::Reverse(a.0));
 
         // Build bulk edits: (start, del_len, replacement)
         let edits: Vec<(usize, usize, &str)> = sorted_matches
@@ -3261,9 +2992,8 @@ impl Editor {
         let bulk_edit_event = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .buffer_state_mut(buffer_id)
         {
             let old_snapshot = state.buffer.snapshot_buffer_state();
             let displaced_markers = state.capture_displaced_markers_bulk(&edits_owned);
@@ -3406,7 +3136,7 @@ impl Editor {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let animation_kind = translate_plugin_animation_kind(kind);
+        let animation_kind = super::widget_runtime::translate_plugin_animation_kind(kind);
         self.active_window_mut().animations.start_with_id(
             crate::view::animation::AnimationId::from_raw(id),
             area,
@@ -3431,7 +3161,7 @@ impl Editor {
         }
         match self.virtual_buffer_screen_rect(buffer_id) {
             Some(area) => {
-                let animation_kind = translate_plugin_animation_kind(kind);
+                let animation_kind = super::widget_runtime::translate_plugin_animation_kind(kind);
                 self.active_window_mut().animations.start_with_id(
                     crate::view::animation::AnimationId::from_raw(id),
                     area,
@@ -3446,72 +3176,6 @@ impl Editor {
                 self.pending_vb_animations.push((id, buffer_id, kind));
             }
         }
-    }
-
-    /// Retry deferred virtual-buffer animations now that split_areas has
-    /// been recomputed. Called from render() after layout but before
-    /// animations.apply_all so the first frame of the effect lands in
-    /// the same render pass.
-    pub(crate) fn drain_pending_vb_animations(&mut self) {
-        if self.pending_vb_animations.is_empty() {
-            return;
-        }
-        let pending = std::mem::take(&mut self.pending_vb_animations);
-        for (id, buffer_id, kind) in pending {
-            match self.virtual_buffer_screen_rect(buffer_id) {
-                Some(area) => {
-                    let animation_kind = translate_plugin_animation_kind(kind);
-                    self.active_window_mut().animations.start_with_id(
-                        crate::view::animation::AnimationId::from_raw(id),
-                        area,
-                        animation_kind,
-                    );
-                }
-                None => {
-                    // Still not visible; keep pending for next frame.
-                    self.pending_vb_animations.push((id, buffer_id, kind));
-                }
-            }
-        }
-    }
-
-    /// Look up the on-screen Rect currently occupied by `buffer_id`, if any.
-    /// Reads from the cached split layout captured in the last render pass.
-    pub(crate) fn virtual_buffer_screen_rect(
-        &self,
-        buffer_id: BufferId,
-    ) -> Option<ratatui::layout::Rect> {
-        self.active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, bid, _, _, _, _)| *bid == buffer_id)
-            .map(|(_, _, content_rect, _, _, _)| *content_rect)
-    }
-}
-
-/// Translate the plugin-facing animation description to the internal
-/// `AnimationKind` the runner consumes.
-fn translate_plugin_animation_kind(
-    kind: fresh_core::api::PluginAnimationKind,
-) -> crate::view::animation::AnimationKind {
-    use crate::view::animation::{AnimationKind, Edge};
-    use fresh_core::api::{PluginAnimationEdge, PluginAnimationKind};
-    use std::time::Duration;
-    match kind {
-        PluginAnimationKind::SlideIn {
-            from,
-            duration_ms,
-            delay_ms,
-        } => AnimationKind::SlideIn {
-            from: match from {
-                PluginAnimationEdge::Top => Edge::Top,
-                PluginAnimationEdge::Bottom => Edge::Bottom,
-                PluginAnimationEdge::Left => Edge::Left,
-                PluginAnimationEdge::Right => Edge::Right,
-            },
-            duration: Duration::from_millis(duration_ms as u64),
-            delay: Duration::from_millis(delay_ms as u64),
-        },
     }
 }
 

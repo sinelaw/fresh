@@ -3697,6 +3697,38 @@ fn test_file_explorer_copy_relative_path() {
     );
 }
 
+/// Locate the first rendered file-explorer row containing `name` and return its
+/// `(row, column)` in screen cells. Columns are counted in characters (not
+/// bytes) so the multi-byte tree connectors (`│`) don't skew the result.
+/// Requires a tree marker on the line so we match a tree row, not a tab/status
+/// echo of the same name.
+fn find_explorer_row_cell(harness: &EditorTestHarness, name: &str) -> (u16, u16) {
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(name) && (l.contains('│') || l.contains('>') || l.contains('▼')))
+        .unwrap_or_else(|| panic!("explorer row for {name:?} not found:\n{screen}"));
+    let byte_idx = line.find(name).expect("name must be on its row");
+    let col = line[..byte_idx].chars().count() as u16;
+    (row as u16, col)
+}
+
+/// Locate the first rendered line containing `needle` and return the
+/// `(row, column)` of its first character in screen cells. Columns are counted
+/// in characters (not bytes) so multi-byte glyphs don't skew the result.
+fn find_screen_cell(harness: &EditorTestHarness, needle: &str) -> (u16, u16) {
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} not found on screen:\n{screen}"));
+    let byte_idx = line.find(needle).expect("needle must be on its row");
+    let col = line[..byte_idx].chars().count() as u16;
+    (row as u16, col)
+}
+
 /// Regression: duplicating a tracked file inside a git repo must fire the
 /// `after_file_explorer_change` plugin hook so git_explorer rescans and the
 /// new file picks up its `U` (untracked) badge — without the hook, the
@@ -3717,35 +3749,21 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
     harness.wait_for_screen_contains("File Explorer").unwrap();
     harness.wait_for_file_explorer_item("alpha.txt").unwrap();
 
-    // Walk Down past the auto-created plugins/ directory (setup_git_explorer_plugin
-    // installs the plugin under <repo>/plugins/, which sorts before files in the
-    // default Type sort) until alpha.txt is selected, then bail out.
-    let mut steps = 0;
-    loop {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
-        let name = harness
-            .editor()
-            .file_explorer()
-            .and_then(|fe| fe.get_selected_entry())
-            .and_then(|e| {
-                e.path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_owned)
-            });
-        if name.as_deref() == Some("alpha.txt") {
-            break;
-        }
-        steps += 1;
-        assert!(
-            steps < 10,
-            "could not reach alpha.txt by pressing Down (got {:?})",
-            name
-        );
-    }
+    // Drive the duplicate entirely through the mouse and observe only rendered
+    // output (CONTRIBUTING.md "E2E Tests Observe, Not Inspect"). Right-clicking
+    // the alpha.txt row both selects that entry and opens the file-explorer
+    // context menu, so there's no need to Down-walk past the auto-created
+    // plugins/ directory (setup_git_explorer_plugin installs the plugin under
+    // <repo>/plugins/, which sorts before files in the default Type sort) or to
+    // read model state to find the selection.
+    let (alpha_row, alpha_col) = find_explorer_row_cell(&harness, "alpha.txt");
+    harness.mouse_right_click(alpha_col, alpha_row).unwrap();
 
-    harness.editor_mut().file_explorer_duplicate();
+    // The context menu must offer "Duplicate"; wait for it to render, then
+    // click it — again, all through observed screen text and the mouse.
+    harness.wait_for_screen_contains("Duplicate").unwrap();
+    let (dup_row, dup_col) = find_screen_cell(&harness, "Duplicate");
+    harness.mouse_click(dup_col, dup_row).unwrap();
 
     // The duplicate lands as `alpha copy.txt`. The git_explorer plugin
     // refreshes asynchronously off `after_file_explorer_change`; wait for

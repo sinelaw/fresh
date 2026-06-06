@@ -195,13 +195,12 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
         || scope_lower.starts_with("entity.name.trait")
         || scope_lower.starts_with("support.type")
         || scope_lower.starts_with("support.class")
-        || scope_lower.starts_with("storage.type")
     {
         return Some(HighlightCategory::Type);
     }
 
-    // Storage modifiers (pub, static, const as keywords)
-    if scope_lower.starts_with("storage.modifier") {
+    // Storage keywords (class, def, function, var, let, const, etc.) and modifiers
+    if scope_lower.starts_with("storage.type") || scope_lower.starts_with("storage.modifier") {
         return Some(HighlightCategory::Keyword);
     }
 
@@ -216,10 +215,10 @@ fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
     }
 
     // Variables
-    if scope_lower.starts_with("variable.parameter")
-        || scope_lower.starts_with("variable.other")
-        || scope_lower.starts_with("variable.language")
-    {
+    if scope_lower.starts_with("variable.language") {
+        return Some(HighlightCategory::VariableBuiltin);
+    }
+    if scope_lower.starts_with("variable.parameter") || scope_lower.starts_with("variable.other") {
         return Some(HighlightCategory::Variable);
     }
 
@@ -1942,6 +1941,18 @@ mod tests {
     }
 
     #[test]
+    fn test_variable_builtin_category() {
+        assert_eq!(
+            scope_to_category("variable.language.this"),
+            Some(HighlightCategory::VariableBuiltin)
+        );
+        assert_eq!(
+            scope_to_category("variable.language.super"),
+            Some(HighlightCategory::VariableBuiltin)
+        );
+    }
+
+    #[test]
     fn test_string_delimiter_uses_string_color() {
         // String delimiters (", ', `) should use string color, not operator
         assert_eq!(
@@ -2005,6 +2016,22 @@ mod tests {
         assert_eq!(
             scope_to_category("punctuation.accessor"),
             Some(HighlightCategory::PunctuationDelimiter)
+        );
+    }
+
+    #[test]
+    fn test_storage_type_keyword() {
+        assert_eq!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            scope_to_category("storage.type.class"),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_ne!(
+            scope_to_category("storage.type"),
+            Some(HighlightCategory::Type)
         );
     }
 

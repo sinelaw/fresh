@@ -191,7 +191,7 @@ impl TerminalModes {
         if keyboard_config.any_enabled() {
             let flags = keyboard_config.to_flags();
             if let Err(e) = stdout().execute(PushKeyboardEnhancementFlags(flags)) {
-                tracing::warn!("Failed to push keyboard enhancement flags: {}", e);
+                tracing::info!("Failed to push keyboard enhancement flags: {}", e);
                 // Non-fatal, continue without it
             } else {
                 modes.keyboard_enhancement = true;

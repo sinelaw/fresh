@@ -133,7 +133,6 @@ pub(super) struct EditorParts {
     // Async / IO
     pub(super) tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
     pub(super) async_bridge: AsyncBridge,
-    pub(super) fs_manager: Arc<FsManager>,
     pub(super) authority: crate::services::authority::Authority,
     pub(super) local_filesystem: Arc<dyn FileSystem + Send + Sync>,
 
@@ -203,13 +202,20 @@ impl Editor {
             keybindings: parts.keybindings,
             terminal_width: parts.terminal_width,
             terminal_height: parts.terminal_height,
+            last_layout_signature: None,
             tokio_runtime: parts.tokio_runtime,
             async_bridge: Some(parts.async_bridge),
-            fs_manager: parts.fs_manager,
+            paste_pending: std::collections::HashMap::new(),
+            paste_slow_path_just_armed: false,
+            paste_render_suppress_until: None,
             authority: parts.authority,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
+            session_keepalives: HashMap::new(),
+            remote_attach_inflight: std::collections::HashSet::new(),
+            remote_attach_cancelled: std::collections::HashSet::new(),
+            remote_attach_cancels: std::collections::HashMap::new(),
             active_window: parts.active_window,
             next_window_id: parts.next_window_id,
             command_registry: parts.command_registry,
@@ -244,6 +250,7 @@ impl Editor {
             last_window_title: None,
             mode_registry: ModeRegistry::new(),
             pending_authority: None,
+            pending_keepalive: None,
             remote_indicator_override: None,
             menus: crate::config::MenuConfig::translated(),
             background_process_handles: HashMap::new(),
@@ -260,6 +267,7 @@ impl Editor {
             plugin_global_state: parts.plugin_global_state,
             warning_log: None,
             status_log_path: None,
+            #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             last_path_change_for_test: None,
             last_watch_response_for_test: None,
@@ -275,6 +283,9 @@ impl Editor {
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
+            dock: None,
+            dock_width: None,
+            dock_resizing: false,
         }
     }
 
@@ -313,6 +324,13 @@ impl Editor {
         color_capability: crate::view::color_support::ColorCapability,
         filesystem: Arc<dyn FileSystem + Send + Sync>,
     ) -> AnyhowResult<Self> {
+        // Convenience constructor (tests, and any caller that only has a
+        // filesystem to inject): the editor's real authority *is* a local one
+        // backed by that filesystem. Build it here so the editor is still
+        // constructed with the authority it runs under — production callers
+        // that own a non-local authority pass it straight to
+        // `with_working_dir_opts` instead.
+        let authority = Self::local_authority_with_filesystem(filesystem);
         Self::with_working_dir_opts(
             config,
             width,
@@ -321,7 +339,7 @@ impl Editor {
             dir_context,
             plugins_enabled,
             color_capability,
-            filesystem,
+            authority,
             false,
         )
     }
@@ -342,7 +360,7 @@ impl Editor {
         dir_context: DirectoryContext,
         plugins_enabled: bool,
         color_capability: crate::view::color_support::ColorCapability,
-        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        authority: crate::services::authority::Authority,
         defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
         tracing::info!("Building default grammar registry...");
@@ -365,7 +383,7 @@ impl Editor {
             width,
             height,
             working_dir,
-            filesystem,
+            authority,
             plugins_enabled,
             true, // enable_embedded_plugins (production: always allow embedded fallback)
             dir_context,
@@ -411,12 +429,13 @@ impl Editor {
         std::sync::Arc::get_mut(&mut grammar_registry)
             .expect("grammar registry Arc must be uniquely owned at for_test entry")
             .apply_language_config(&config.languages);
+        let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(
             config,
             width,
             height,
             working_dir,
-            filesystem,
+            authority,
             enable_plugins,
             enable_embedded_plugins,
             dir_context,
@@ -431,6 +450,27 @@ impl Editor {
         Ok(editor)
     }
 
+    /// Build a local authority whose filesystem is the supplied one.
+    ///
+    /// The bridge for callers that only have a `FileSystem` to inject (the
+    /// `new` / `with_working_dir` / `for_test` convenience constructors): a
+    /// local-backed authority *is* the real authority such an editor runs
+    /// under, so this is construction with the true authority, not a
+    /// placeholder destined to be replaced. Carries a permissive trust and an
+    /// inactive env provider — the defaults `Authority::local` uses for the
+    /// host backend.
+    fn local_authority_with_filesystem(
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+    ) -> crate::services::authority::Authority {
+        crate::services::authority::Authority {
+            filesystem,
+            ..crate::services::authority::Authority::local(
+                Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
+                Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+            )
+        }
+    }
+
     /// Create a new editor with custom options
     /// This is primarily used for testing with slow or mock backends
     /// to verify editor behavior under various I/O conditions
@@ -440,7 +480,7 @@ impl Editor {
         width: u16,
         height: u16,
         working_dir: Option<PathBuf>,
-        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        authority: crate::services::authority::Authority,
         enable_plugins: bool,
         #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
         enable_embedded_plugins: bool,
@@ -451,6 +491,13 @@ impl Editor {
         defer_plugin_load: bool,
     ) -> AnyhowResult<Self> {
         let mut t = InitTimer::start("Editor::with_options");
+        // The editor is constructed with the *real* authority it will run
+        // under — never a local placeholder that gets replaced later (that
+        // left a window where, e.g., quick-open's `git ls-files` ran through
+        // the local spawner while the filesystem was already remote). The
+        // filesystem is derived from it; the spawner/long-running/terminal
+        // ride along on `self.authority`.
+        let filesystem = std::sync::Arc::clone(&authority.filesystem);
         // Use provided time_source or default to RealTimeSource
         let time_source = time_source.unwrap_or_else(RealTimeSource::shared);
         tracing::info!("Editor::new called with width={}, height={}", width, height);
@@ -585,12 +632,9 @@ impl Editor {
             persisted_env.as_ref(),
             &working_dir,
         );
-        let (active_window_id, active_window_root) = picked_active
+        let (active_window_id, _active_window_root) = picked_active
             .map(|w| (fresh_core::WindowId(w.id), w.root.clone()))
             .unwrap_or((fresh_core::WindowId(1), working_dir.clone()));
-
-        // Initialize LSP manager with active window's root.
-        let root_uri = types::file_path_to_lsp_uri(&active_window_root);
 
         t.phase("buffer_state");
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
@@ -611,65 +655,14 @@ impl Editor {
         let async_bridge = AsyncBridge::new();
         let event_broadcaster = crate::model::control_event::EventBroadcaster::default();
 
-        // Create the base window's per-window bridge up front so the
-        // LSP manager (configured below) can receive its responses
-        // through the window's channel rather than the editor-global
-        // one. The same `AsyncBridge` is moved into `base.bridge`
-        // when the base Window is constructed at the end of init.
-        let base_window_bridge = AsyncBridge::new();
-
         if tokio_runtime.is_none() {
             tracing::warn!("Failed to create Tokio runtime - async features disabled");
         }
 
-        // Create LSP manager with async support, scoped to the
-        // active window (matches `active_window_id` + the LSP
-        // root_uri above). LSP responses route through the active
-        // window's per-window bridge.
-        let mut lsp = LspManager::new(active_window_id, root_uri);
-
-        // Configure runtime and bridge if available — the LSP manager
-        // is wired to the base window's bridge, so its async responses
-        // land in `base.bridge` (not the editor-global `async_bridge`).
-        if let Some(ref runtime) = tokio_runtime {
-            lsp.set_runtime(runtime.handle().clone(), base_window_bridge.clone());
-        }
-
-        // Configure LSP servers from config
-        for (language, lsp_configs) in &config.lsp {
-            lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
-        }
-
-        // Configure universal (global) LSP servers — spawned once, shared across languages
-        let universal_servers: Vec<LspServerConfig> = config
-            .universal_lsp
-            .values()
-            .flat_map(|lc| lc.as_slice().to_vec())
-            .filter(|c| c.enabled)
-            .collect();
-        lsp.set_universal_configs(universal_servers);
-
-        // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-        // workspace root, override JS/TS LSP to use `deno lsp` (#1191).
-        // Checked against `active_window_root` so persisted sessions get the
-        // detection their actual project — process cwd would be wrong for a
-        // restored session rooted elsewhere.
-        if active_window_root.join("deno.json").exists()
-            || active_window_root.join("deno.jsonc").exists()
-        {
-            tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
-            let deno_config = LspServerConfig {
-                command: "deno".to_string(),
-                args: vec!["lsp".to_string()],
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: Some(serde_json::json!({"enable": true})),
-                ..Default::default()
-            };
-            lsp.set_language_config("javascript".to_string(), deno_config.clone());
-            lsp.set_language_config("typescript".to_string(), deno_config);
-        }
+        // The base window's LSP manager is built by `Window::new`
+        // (rooted at the window's root, wired to its own bridge), just
+        // like every other window — there is no special boot-time LSP
+        // construction here anymore. See `build_window_lsp`.
 
         t.phase("lsp_setup");
         // Initialize split manager with the initial buffer
@@ -686,6 +679,7 @@ impl Editor {
             config.editor.wrap_indent,
             config.editor.wrap_column,
             config.editor.rulers.clone(),
+            config.editor.scroll_offset,
         );
         split_view_states.insert(initial_split_id, initial_view_state);
 
@@ -695,22 +689,15 @@ impl Editor {
         // Initialize command registry (always available, used by both plugins and core)
         let command_registry = Arc::new(RwLock::new(CommandRegistry::new()));
 
-        // Construct the boot-time authority. Per principle 6, the editor
-        // always boots with a local authority and renders immediately;
-        // SSH startup and plugins replace it via `install_authority`
-        // after their async work is done. The supplied `filesystem`
-        // overrides the local default to support tests that mock IO.
-        // Placeholder authority with a permissive trust; the server installs
-        // the real trust-carrying authority via `set_boot_authority` before
-        // anything spawns. (Trust is mandatory on every authority, so even the
-        // throwaway placeholder carries one.)
-        let authority = crate::services::authority::Authority {
-            filesystem: Arc::clone(&filesystem),
-            ..crate::services::authority::Authority::local(
-                Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
-                Arc::new(crate::services::env_provider::EnvProvider::inactive()),
-            )
-        };
+        // The authority is the *real* one this editor runs under, handed in
+        // by the caller — not a local placeholder swapped out later. Every
+        // backend-derived seam below (quick-open's file provider, the LSP
+        // spawner, each window's `resources.authority`) is wired from it at
+        // construction, so there is no window in which, e.g., quick-open's
+        // `git ls-files` runs through a local spawner while the filesystem is
+        // already remote. Runtime authority transitions still go through the
+        // destructive `install_authority` restart (principle 7), which
+        // rebuilds the editor with the next authority via this same path.
         let process_spawner = Arc::clone(&authority.process_spawner);
 
         // Initialize Quick Open registry with all providers
@@ -773,10 +760,14 @@ impl Editor {
 
         // Load TypeScript plugins from multiple directories:
         // 1. Next to the executable (for cargo-dist installations)
-        // 2. From embedded plugins (for cargo-binstall and `cargo run`,
-        //    when embed-plugins feature is enabled)
-        // 3. User plugins directory (~/.config/fresh/plugins)
-        // 4. Package manager installed plugins (~/.config/fresh/plugins/packages/*)
+        // 1. Embedded plugins (compiled into the binary via the
+        //    embed-plugins feature, default on for every shipped build).
+        // 2. User plugins directory (~/.config/fresh/plugins).
+        // 3. Package manager installed plugins (~/.config/fresh/plugins/packages/*).
+        // No working-directory or exe-dir lookup: a user project with a folder
+        // named `plugins/` (a Vite/Rollup project, a Hugo site) is not a Fresh
+        // plugin source, and packagers no longer ship plugins/ alongside the
+        // binary now that the bundled set is fully embedded.
         // Plugin schemas populated lazily by plugins calling
         // `editor.definePluginConfig(...)` at load time. See
         // `handle_register_plugin_config_schema`.
@@ -784,26 +775,9 @@ impl Editor {
         if plugin_manager.read().unwrap().is_active() {
             let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
-            // Check next to executable first (for cargo-dist installations)
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(exe_dir) = exe_path.parent() {
-                    let exe_plugin_dir = exe_dir.join("plugins");
-                    if exe_plugin_dir.exists() {
-                        plugin_dirs.push(exe_plugin_dir);
-                    }
-                }
-            }
-
-            // No working-directory `plugins/` check: a user project with a
-            // folder named `plugins/` (e.g. a Vite/Rollup project, a Hugo
-            // site) is not a Fresh plugin source. Bundled plugins for the
-            // dev workflow come in via the embedded fallback below; user
-            // plugins live under `<config_dir>/plugins/`. See issue #1722.
-
-            // If no disk plugins found, try embedded plugins (cargo-binstall builds).
-            // `enable_embedded_plugins` lets tests opt out so they get exactly
-            // the plugin set they pre-populated under `<config_dir>/plugins/`,
-            // without the bundled set leaking in.
+            // Embedded plugins. `enable_embedded_plugins` lets tests opt out so
+            // they get exactly the plugin set they pre-populated under
+            // `<config_dir>/plugins/`, without the bundled set leaking in.
             #[cfg(feature = "embed-plugins")]
             if enable_embedded_plugins && plugin_dirs.is_empty() {
                 if let Some(embedded_dir) =
@@ -1128,10 +1102,10 @@ impl Editor {
         // test_hidden_terminal_resyncs_pty_size_when_revealed).
         active_win.terminal_width = width;
         active_win.terminal_height = height;
-        // Hand the eagerly-spawned LSP manager + the initial split
-        // layout off to the active window — that's where they live
-        // now (Step 0b).
-        active_win.lsp = Some(lsp);
+        // Install the initial split layout. The LSP manager and per-
+        // window bridge were already built by `Window::new` (rooted at
+        // this window's root, wired together), so there's nothing to
+        // hand off here — every window owns its manager by construction.
         active_win.buffers = buffers;
         active_win
             .buffers
@@ -1139,12 +1113,6 @@ impl Editor {
         active_win.buffer_metadata = buffer_metadata;
         active_win.event_logs = event_logs;
         active_win.plugin_state = active_plugin_state;
-        // Replace the default bridge created by `Window::new` with
-        // the bridge we already configured the LSP manager against.
-        // Both halves now point at the same channel; LSP responses
-        // arriving on the manager's sender land in
-        // `active_win.bridge`'s receiver.
-        active_win.bridge = base_window_bridge;
         // Load prompt histories from disk for the active window.
         // Each window has its own prompt-history rings.
         for history_name in ["search", "replace", "goto_line"] {
@@ -1278,7 +1246,6 @@ impl Editor {
             color_capability,
             tokio_runtime,
             async_bridge,
-            fs_manager,
             authority,
             local_filesystem: Arc::clone(&local_filesystem),
             windows,

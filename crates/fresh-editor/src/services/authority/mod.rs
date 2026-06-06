@@ -22,8 +22,10 @@
 //! - `Authority::local(trust, env)` — host filesystem + host spawner + host
 //!   shell. Always available; the editor boots with this. Trust + env are
 //!   mandatory shared handles.
-//! - `Authority::ssh(filesystem, spawner, long_running, trust, env)` — used by
-//!   the `fresh user@host:path` startup flow.
+//! - `Authority::ssh(filesystem, spawner, long_running, params, remote_dir,
+//!   trust, env)` — used by the `fresh user@host:path` startup flow. `params`
+//!   and `remote_dir` build the `ssh -t …` terminal wrapper so the integrated
+//!   terminal opens on the remote host.
 //! - `Authority::from_plugin_payload(payload, trust, env)` — built from the
 //!   `editor.setAuthority(...)` plugin op. The payload is a tagged shape
 //!   (filesystem kind + spawner kind + terminal wrapper + label); it stays
@@ -37,7 +39,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
+    build_kube_terminal_args, build_ssh_terminal_args, spawn_kube_reconnect_task,
+    spawn_reconnect_task, ConnectionParams, KubeConnection, KubeTarget, LocalLongRunningSpawner,
+    LocalProcessSpawner, LongRunningSpawner, ProcessSpawner, RemoteFileSystem,
+    RemoteLongRunningSpawner, RemoteProcessSpawner, SshConnection, SshError, TransportError,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -120,6 +125,36 @@ impl TerminalWrapper {
             command: crate::services::terminal::manager::detect_shell(),
             args: Vec::new(),
             manages_cwd: false,
+        }
+    }
+
+    /// Re-parent the integrated terminal onto the remote host over SSH:
+    /// `ssh -t … user@host 'cd <dir>; exec $SHELL -l'`. Like the
+    /// `docker exec -w …` wrapper, this pins cwd through its own args
+    /// (`cd <dir>`), so `manages_cwd` is true and the terminal manager
+    /// must not call `CommandBuilder::cwd()` with a remote path the local
+    /// PTY can't honour. Without this, SSH authorities would fall back to
+    /// the local host shell and the embedded terminal would run on the
+    /// *local* machine instead of the remote host.
+    pub fn ssh(params: &ConnectionParams, remote_dir: Option<&str>) -> Self {
+        Self {
+            command: "ssh".to_string(),
+            args: build_ssh_terminal_args(params, remote_dir),
+            manages_cwd: true,
+        }
+    }
+
+    /// Re-parent the integrated terminal into a K8s pod via
+    /// `kubectl exec -it … -- sh -lc 'cd <ws>; exec $SHELL -l'`. Same
+    /// re-parenting contract as [`Self::ssh`] / the `docker exec -w …`
+    /// wrapper: cwd is pinned through the wrapper's own args, so
+    /// `manages_cwd` is true and the terminal manager must not hand the
+    /// local PTY a pod-side cwd it can't honour.
+    pub fn kube(target: &KubeTarget) -> Self {
+        Self {
+            command: "kubectl".to_string(),
+            args: build_kube_terminal_args(target),
+            manages_cwd: true,
         }
     }
 
@@ -311,10 +346,18 @@ impl Authority {
     /// ([`RemoteLongRunningSpawner`](crate::services::remote::RemoteLongRunningSpawner)),
     /// so LSP servers run on the remote host rather than the host-local
     /// fallback that earlier versions used.
+    ///
+    /// `params` / `remote_dir` build the integrated-terminal wrapper so the
+    /// embedded terminal opens a shell *on the remote host* (`ssh -t …`)
+    /// rooted at the workspace, matching where the filesystem and spawners
+    /// already act. Earlier versions hardcoded the local host shell here,
+    /// so terminals silently ran on the local machine.
     pub fn ssh(
         filesystem: Arc<dyn FileSystem + Send + Sync>,
         process_spawner: Arc<dyn ProcessSpawner>,
         long_running_spawner: Arc<dyn LongRunningSpawner>,
+        params: &ConnectionParams,
+        remote_dir: Option<&str>,
         trust: Arc<WorkspaceTrust>,
         env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Self {
@@ -322,12 +365,86 @@ impl Authority {
             filesystem,
             process_spawner,
             long_running_spawner,
-            terminal_wrapper: TerminalWrapper::host_shell(),
+            terminal_wrapper: TerminalWrapper::ssh(params, remote_dir),
             display_label: String::new(),
             path_translation: None,
             workspace_trust: trust,
             env_provider: env,
         }
+    }
+
+    /// Build a K8s authority: the remote-agent stack (filesystem + spawners,
+    /// already wired to the pod's `kubectl exec` agent channel) plus a
+    /// terminal wrapper that opens a shell *inside the pod*.
+    ///
+    /// Mirrors [`Self::ssh`] — the caller owns the connection and its
+    /// keepalive resources and threads the parts in. Unlike SSH, the label
+    /// is set from the target (there is no filesystem-side
+    /// `remote_connection_info()` that knows about a K8s pod, so identity
+    /// lives in the label per `AUTHORITY_DESIGN.md` principle 9). Path
+    /// translation is unset: the editor operates directly in the pod's path
+    /// space, exactly as SSH does.
+    pub fn kube(
+        filesystem: Arc<dyn FileSystem + Send + Sync>,
+        process_spawner: Arc<dyn ProcessSpawner>,
+        long_running_spawner: Arc<dyn LongRunningSpawner>,
+        target: &KubeTarget,
+        trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
+    ) -> Self {
+        Self {
+            filesystem,
+            process_spawner,
+            long_running_spawner,
+            terminal_wrapper: TerminalWrapper::kube(target),
+            display_label: target.display(),
+            path_translation: None,
+            workspace_trust: trust,
+            env_provider: env,
+        }
+    }
+
+    /// Assemble a full K8s authority from a live [`KubeConnection`].
+    ///
+    /// The high-level counterpart to [`Self::k8s`]: wires the filesystem and
+    /// one-shot spawner onto the connection's agent channel
+    /// ([`RemoteFileSystem`] / [`RemoteProcessSpawner`], reused verbatim from
+    /// the SSH stack) and the long-running (LSP) spawner onto a per-server
+    /// `kubectl exec` ([`KubectlLongRunningSpawner`]). `base_env` is the
+    /// captured in-pod env probe applied to LSP spawns and `command_exists`.
+    ///
+    /// The caller must keep the `KubeConnection` alive (in the session
+    /// keepalive bundle) — dropping it kills the carrier and tears down the
+    /// channel the returned authority rides on, exactly as SSH holds its
+    /// `SshConnection`.
+    pub fn kube_from_connection(
+        connection: &KubeConnection,
+        target: KubeTarget,
+        base_env: Vec<(String, String)>,
+        trust: Arc<WorkspaceTrust>,
+        env: Arc<crate::services::env_provider::EnvProvider>,
+    ) -> Self {
+        let channel = connection.channel();
+        let filesystem: Arc<dyn FileSystem + Send + Sync> = Arc::new(RemoteFileSystem::new(
+            channel.clone(),
+            connection.connection_string().to_string(),
+        ));
+        let process_spawner: Arc<dyn ProcessSpawner> = Arc::new(RemoteProcessSpawner::new(
+            channel,
+            Arc::clone(&env),
+            Arc::clone(&trust),
+        ));
+        let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
+            KubectlLongRunningSpawner::with_env(target.clone(), base_env, Arc::clone(&trust)),
+        );
+        Self::kube(
+            filesystem,
+            process_spawner,
+            long_running_spawner,
+            &target,
+            trust,
+            env,
+        )
     }
 
     /// Build an authority from a plugin payload (the data carried by the
@@ -417,6 +534,338 @@ impl Authority {
     }
 }
 
+/// Plugin payload for `editor.attachRemoteAgent(...)`. Names a transport
+/// that needs a live connection plus the captured in-pod env probe.
+/// Opaque JSON at the fresh-core boundary; parsed here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteAgentSpec {
+    pub transport: RemoteTransportSpec,
+    /// Captured in-pod env (PATH/HOME/LANG/…) applied to LSP spawns and
+    /// `command_exists`. Empty when no probe ran.
+    #[serde(default)]
+    pub base_env: Vec<(String, String)>,
+    /// When true, attach as a **new window** (born-attached, coexisting with
+    /// existing windows) instead of the default global restart. The
+    /// Orchestrator sets this so a cloud session is a real session row rather
+    /// than retargeting the whole editor.
+    #[serde(default)]
+    pub window: bool,
+    /// Window label (used only when `window` is true). Empty falls back to the
+    /// transport's display.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional agent argv for the new window's seed terminal (window mode).
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
+}
+
+/// Transport kind for [`RemoteAgentSpec`]. Tagged + additive so new
+/// carriers slot in without breaking the plugin contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum RemoteTransportSpec {
+    /// Exec into a pod on a K8s (or any kube) cluster.
+    KubectlExec {
+        #[serde(default)]
+        context: Option<String>,
+        namespace: String,
+        pod: String,
+        #[serde(default)]
+        container: Option<String>,
+        #[serde(default)]
+        workspace: Option<String>,
+    },
+    /// SSH into a remote host: the same remote-agent stack as the boot-time
+    /// `fresh user@host:path` flow, exposed at runtime so the Orchestrator can
+    /// open an SSH session as a born-attached window.
+    Ssh {
+        /// Login user. Optional — omit for `host` / `ssh://host`, letting ssh
+        /// resolve the user from its own config or the current local user.
+        #[serde(default)]
+        user: Option<String>,
+        host: String,
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        identity_file: Option<String>,
+        /// Remote directory to root the session at (terminal `cd` target).
+        #[serde(default)]
+        remote_path: Option<String>,
+        /// Extra `ssh` arguments (e.g. `-J jump`, `-o ProxyCommand=…`) applied
+        /// to every ssh invocation for this session.
+        #[serde(default)]
+        extra_args: Vec<String>,
+    },
+}
+
+impl RemoteAgentSpec {
+    /// Resolve a kubectl-exec spec into the pod target and the captured env.
+    /// Only valid for the `KubectlExec` transport (the caller dispatches on
+    /// `transport` first); panics otherwise.
+    pub fn into_kube_target(self) -> (KubeTarget, Vec<(String, String)>) {
+        match self.transport {
+            RemoteTransportSpec::KubectlExec {
+                context,
+                namespace,
+                pod,
+                container,
+                workspace,
+            } => (
+                KubeTarget {
+                    context,
+                    namespace,
+                    pod,
+                    container,
+                    workspace,
+                },
+                self.base_env,
+            ),
+            RemoteTransportSpec::Ssh { .. } => {
+                unreachable!("into_kube_target called on a non-kube transport")
+            }
+        }
+    }
+}
+
+/// Resources that must outlive a K8s [`Authority`]: the carrier
+/// connection (its `kubectl exec` child + heartbeat task) and the
+/// reconnect task. The editor parks this in its session-keepalive slot —
+/// the same one SSH uses for its `SshConnection` — so the agent channel
+/// survives the editor rebuild on attach. Dropping it tears the session
+/// down (reconnect aborted, then the connection's carrier killed).
+pub struct KubeKeepalive {
+    // Drop runs the explicit `Drop` below first (aborting reconnect), then
+    // fields drop in declaration order: the connection (kills the carrier),
+    // then the runtime (shuts down its now-idle workers).
+    reconnect: tokio::task::JoinHandle<()>,
+    _connection: KubeConnection,
+    // The load-bearing field: the dedicated runtime the agent channel +
+    // heartbeat + reconnect tasks run on. Owned here so they survive the editor
+    // restart the attach triggers — the editor's per-instance runtime is
+    // dropped during that rebuild, and if the channel rode *that* runtime its
+    // I/O tasks would die the instant the attach completed ("Channel closed"
+    // on every file op). SSH's `RemoteSession._runtime` does exactly this.
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl Drop for KubeKeepalive {
+    fn drop(&mut self) {
+        self.reconnect.abort();
+    }
+}
+
+/// Connect to a K8s pod and assemble its [`Authority`] plus the
+/// [`KubeKeepalive`] that must be parked to keep it alive.
+///
+/// The K8s counterpart to SSH's `connect_remote`: bootstraps the agent
+/// ([`KubeConnection::connect`]) and the reconnect/heartbeat tasks **on a
+/// dedicated runtime owned by the returned keepalive** — *not* the caller's
+/// runtime. Installing the authority restarts the editor, dropping the
+/// editor's per-instance runtime; binding the channel there would kill it the
+/// moment the attach completes (regression: `agent_channel_survives_dropping_
+/// the_attach_runtime`). `base_env` is the captured in-pod env probe applied to
+/// LSP spawns and `command_exists`.
+///
+/// Stays `async` for callers, but the bootstrap needs `block_on` (which can't
+/// run inside the caller's async context), so it happens on a short-lived
+/// helper thread; the live runtime — with its channel/heartbeat/reconnect
+/// tasks — is handed back and parked in the keepalive.
+pub async fn connect_kube_authority(
+    target: KubeTarget,
+    base_env: Vec<(String, String)>,
+    trust: Arc<WorkspaceTrust>,
+    env: Arc<crate::services::env_provider::EnvProvider>,
+    cancel: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(Authority, KubeKeepalive), TransportError> {
+    type Built = Result<
+        (
+            KubeConnection,
+            tokio::task::JoinHandle<()>,
+            tokio::runtime::Runtime,
+        ),
+        TransportError,
+    >;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
+    let bootstrap_target = target.clone();
+    std::thread::Builder::new()
+        .name("kube-connect".to_string())
+        .spawn(move || {
+            let built: Built = (|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name("kube-agent")
+                    .enable_all()
+                    .build()
+                    .map_err(|e| TransportError::AgentStartFailed(format!("runtime: {e}")))?;
+                // `block_on` drives the bootstrap; the channel/heartbeat/reconnect
+                // tasks it spawns live on `runtime`'s worker threads, which keep
+                // running after `block_on` returns and after this helper thread
+                // exits — until the `runtime` (moved into the keepalive) drops.
+                let (connection, reconnect) = runtime.block_on(async {
+                    // Race the connect against the cancel signal so a slow/hung
+                    // kubectl bootstrap can be aborted; dropping the connect
+                    // future drops the in-flight child. No signal → await it.
+                    let connection = match cancel {
+                        Some(cancel) => tokio::select! {
+                            biased;
+                            _ = cancel => {
+                                return Err(TransportError::AgentStartFailed(
+                                    "cancelled".to_string(),
+                                ));
+                            }
+                            res = KubeConnection::connect(bootstrap_target.clone()) => res?,
+                        },
+                        None => KubeConnection::connect(bootstrap_target.clone()).await?,
+                    };
+                    let reconnect =
+                        spawn_kube_reconnect_task(&connection.channel(), bootstrap_target.clone());
+                    Ok::<_, TransportError>((connection, reconnect))
+                })?;
+                Ok((connection, reconnect, runtime))
+            })();
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(built);
+        })
+        .map_err(|e| TransportError::AgentStartFailed(format!("connect thread: {e}")))?;
+
+    let (connection, reconnect, runtime) = rx
+        .await
+        .map_err(|_| TransportError::AgentStartFailed("connect thread vanished".to_string()))??;
+
+    let authority = Authority::kube_from_connection(&connection, target, base_env, trust, env);
+    Ok((
+        authority,
+        KubeKeepalive {
+            reconnect,
+            _connection: connection,
+            _runtime: runtime,
+        },
+    ))
+}
+
+/// Resources that must outlive an SSH [`Authority`]: the `SshConnection`
+/// (its `ssh …` child), the reconnect task, and the dedicated runtime the
+/// agent channel rides on. The runtime-owned analogue of `main.rs`'s
+/// boot-time `RemoteSession`; parked per-window by the Orchestrator's
+/// born-attached SSH sessions (and droppable on window close).
+pub struct SshKeepalive {
+    reconnect: tokio::task::JoinHandle<()>,
+    _connection: SshConnection,
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl Drop for SshKeepalive {
+    fn drop(&mut self) {
+        self.reconnect.abort();
+    }
+}
+
+/// Connect to a remote host over SSH and assemble its [`Authority`] plus the
+/// [`SshKeepalive`] that must be parked to keep it alive — the runtime-owned,
+/// reusable counterpart to `main.rs`'s boot-time `connect_remote`, mirroring
+/// [`connect_kube_authority`]. The agent channel + reconnect run on a dedicated
+/// runtime returned in the keepalive so they survive editor rebuilds.
+///
+/// `remote_dir` is the directory the integrated terminal roots at (the
+/// `ssh -t … 'cd <dir>; …'` wrapper); filesystem/process ops carry absolute
+/// paths and don't need it.
+pub async fn connect_ssh_authority(
+    params: ConnectionParams,
+    remote_dir: Option<String>,
+    trust: Arc<WorkspaceTrust>,
+    env: Arc<crate::services::env_provider::EnvProvider>,
+    cancel: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<(Authority, SshKeepalive), SshError> {
+    type Built = Result<
+        (
+            SshConnection,
+            tokio::task::JoinHandle<()>,
+            tokio::runtime::Runtime,
+        ),
+        SshError,
+    >;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Built>();
+    let bootstrap_params = params.clone();
+    std::thread::Builder::new()
+        .name("ssh-connect".to_string())
+        .spawn(move || {
+            let built: Built = (|| {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name("ssh-agent")
+                    .enable_all()
+                    .build()
+                    .map_err(|e| SshError::AgentStartFailed(format!("runtime: {e}")))?;
+                // The channel/reconnect tasks spawned here live on `runtime`'s
+                // workers, surviving after this helper thread exits — until the
+                // `runtime` (moved into the keepalive) drops.
+                let (connection, reconnect) = runtime.block_on(async {
+                    // Race the connect against the cancel signal. On cancel the
+                    // connect future is dropped, which drops the in-flight ssh
+                    // child (spawned kill-on-drop) so a hung handshake leaves no
+                    // orphaned process. No cancel signal → just await connect.
+                    let connection = match cancel {
+                        Some(cancel) => tokio::select! {
+                            biased;
+                            _ = cancel => {
+                                return Err(SshError::AgentStartFailed("cancelled".to_string()));
+                            }
+                            res = SshConnection::connect(bootstrap_params.clone()) => res?,
+                        },
+                        None => SshConnection::connect(bootstrap_params.clone()).await?,
+                    };
+                    let reconnect =
+                        spawn_reconnect_task(connection.channel(), connection.params().clone());
+                    Ok::<_, SshError>((connection, reconnect))
+                })?;
+                Ok((connection, reconnect, runtime))
+            })();
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = tx.send(built);
+        })
+        .map_err(|e| SshError::AgentStartFailed(format!("connect thread: {e}")))?;
+
+    let (connection, reconnect, runtime) = rx
+        .await
+        .map_err(|_| SshError::AgentStartFailed("connect thread vanished".to_string()))??;
+
+    let channel = connection.channel();
+    let connection_string = connection.connection_string().to_string();
+    let reconnect_params = connection.params().clone();
+    let filesystem: Arc<dyn FileSystem + Send + Sync> =
+        Arc::new(RemoteFileSystem::new(channel.clone(), connection_string));
+    let process_spawner: Arc<dyn ProcessSpawner> = Arc::new(RemoteProcessSpawner::new(
+        channel.clone(),
+        Arc::clone(&env),
+        Arc::clone(&trust),
+    ));
+    let long_running_spawner: Arc<dyn LongRunningSpawner> =
+        Arc::new(RemoteLongRunningSpawner::new(
+            reconnect_params.clone(),
+            Arc::clone(&env),
+            Arc::clone(&trust),
+        ));
+    let authority = Authority::ssh(
+        filesystem,
+        process_spawner,
+        long_running_spawner,
+        &reconnect_params,
+        remote_dir.as_deref(),
+        trust,
+        env,
+    );
+    Ok((
+        authority,
+        SshKeepalive {
+            reconnect,
+            _connection: connection,
+            _runtime: runtime,
+        },
+    ))
+}
+
 /// Error from translating a plugin payload into a live authority.
 /// Reserved for future kinds that might fail to construct (e.g. invalid
 /// connection parameters); local-only payloads currently never fail.
@@ -427,6 +876,9 @@ pub enum AuthorityPayloadError {
 }
 
 mod docker_spawner;
+mod kube_spawner;
+
+pub(crate) use kube_spawner::KubectlLongRunningSpawner;
 
 #[cfg(test)]
 mod tests {
@@ -442,6 +894,80 @@ mod tests {
         assert!(auth.terminal_wrapper.args.is_empty());
         assert!(!auth.terminal_wrapper.manages_cwd);
         assert_eq!(auth.display_label, "");
+    }
+
+    #[test]
+    fn kube_terminal_wrapper_reparents_into_pod() {
+        let target = KubeTarget {
+            context: Some("prod".into()),
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: Some("/workspace".into()),
+        };
+        let wrapper = TerminalWrapper::kube(&target);
+        assert_eq!(wrapper.command, "kubectl");
+        // Re-parented shell must pin cwd through its own args.
+        assert!(wrapper.manages_cwd);
+        assert_eq!(wrapper.args[0], "--context");
+        assert!(wrapper.args.iter().any(|a| a == "-it"));
+        assert!(wrapper.args.iter().any(|a| a == "pod-1"));
+        // User shell override is a no-op for a cwd-managing wrapper, so the
+        // re-parenting into the pod stays intact.
+        let override_shell = crate::config::TerminalShellConfig {
+            command: "/usr/local/bin/fish".into(),
+            args: vec![],
+        };
+        let after = wrapper
+            .clone()
+            .with_user_shell_override(Some(&override_shell));
+        assert_eq!(after.command, "kubectl");
+    }
+
+    #[test]
+    fn remote_agent_spec_parses_plugin_payload() {
+        // The exact JSON shape `editor.attachRemoteAgent(...)` carries and
+        // `handle_attach_remote_agent` parses (opaque at the fresh-core
+        // boundary). Pins the plugin↔core wire contract.
+        let json = serde_json::json!({
+            "transport": {
+                "kind": "kubectl-exec",
+                "context": "k3d-dev",
+                "namespace": "dev",
+                "pod": "fresh-7c9f",
+                "container": "app",
+                "workspace": "/workspace"
+            },
+            "base_env": [
+                ["PATH", "/home/dev/.local/bin:/usr/bin"],
+                ["LANG", "C.UTF-8"]
+            ]
+        });
+        let spec: RemoteAgentSpec = serde_json::from_value(json).expect("spec parses");
+        let (target, base_env) = spec.into_kube_target();
+        assert_eq!(target.context.as_deref(), Some("k3d-dev"));
+        assert_eq!(target.namespace, "dev");
+        assert_eq!(target.pod, "fresh-7c9f");
+        assert_eq!(target.container.as_deref(), Some("app"));
+        assert_eq!(target.workspace.as_deref(), Some("/workspace"));
+        assert_eq!(base_env.len(), 2);
+        assert_eq!(
+            base_env[0],
+            (
+                "PATH".to_string(),
+                "/home/dev/.local/bin:/usr/bin".to_string()
+            )
+        );
+
+        // Minimal payload (only namespace + pod) parses too: context,
+        // container, workspace, and base_env are all optional.
+        let minimal = serde_json::json!({
+            "transport": { "kind": "kubectl-exec", "namespace": "dev", "pod": "p" }
+        });
+        let spec2: RemoteAgentSpec = serde_json::from_value(minimal).expect("minimal parses");
+        let (t2, env2) = spec2.into_kube_target();
+        assert!(t2.context.is_none() && t2.container.is_none() && t2.workspace.is_none());
+        assert!(env2.is_empty());
     }
 
     #[test]

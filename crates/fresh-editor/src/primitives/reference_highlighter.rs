@@ -21,6 +21,11 @@
 //! - Rust, Python, JavaScript, TypeScript, Go, C, C++
 //! - Other languages fall back to identifier or text matching
 
+// Without the `tree-sitter` feature the locals/identifier queries and the
+// per-language query tables below are never consulted (set_language resets
+// to text-matching mode), so they would otherwise trip dead_code warnings.
+#![cfg_attr(not(feature = "tree-sitter"), allow(dead_code))]
+
 use crate::model::buffer::Buffer;
 use crate::primitives::highlighter::{HighlightSpan, Language};
 use crate::primitives::word_navigation::{find_word_end, find_word_start, is_word_char};
@@ -203,97 +208,112 @@ impl ReferenceHighlighter {
     /// This enables syntax-aware identifier matching for the given language.
     /// If the language is not supported or parsing fails, falls back to text matching.
     pub fn set_language(&mut self, language: &Language) {
-        let ts_language = match language {
-            Language::Rust => fresh_languages::tree_sitter_rust::LANGUAGE.into(),
-            Language::Python => fresh_languages::tree_sitter_python::LANGUAGE.into(),
-            Language::JavaScript => fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
-            Language::TypeScript => {
-                fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
-            }
-            Language::Go => fresh_languages::tree_sitter_go::LANGUAGE.into(),
-            Language::C => fresh_languages::tree_sitter_c::LANGUAGE.into(),
-            Language::Cpp => fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
-            Language::Java => fresh_languages::tree_sitter_java::LANGUAGE.into(),
-            Language::Php => fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
-            Language::Ruby => fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
-            Language::Bash => fresh_languages::tree_sitter_bash::LANGUAGE.into(),
-            Language::Lua => fresh_languages::tree_sitter_lua::LANGUAGE.into(),
-            Language::Pascal => fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
-            Language::Json => fresh_languages::tree_sitter_json::LANGUAGE.into(),
-            Language::Jsonc => fresh_languages::tree_sitter_json::LANGUAGE.into(),
-            Language::HTML => fresh_languages::tree_sitter_html::LANGUAGE.into(),
-            Language::CSS => fresh_languages::tree_sitter_css::LANGUAGE.into(),
-            Language::CSharp => fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
-            Language::Odin => fresh_languages::tree_sitter_odin::LANGUAGE.into(),
-            Language::Templ => fresh_languages::tree_sitter_templ::LANGUAGE.into(),
-        };
-
-        // Create parser
-        let mut parser = Parser::new();
-        if parser.set_language(&ts_language).is_err() {
-            tracing::warn!("Failed to set language for semantic highlighting parser");
+        // Without tree-sitter grammars there is no parser to build; reset to
+        // text-matching mode so reference highlighting still works via the
+        // pure-Rust `TextReferenceHighlighter` fallback path.
+        #[cfg(not(feature = "tree-sitter"))]
+        {
+            let _ = language;
             self.parser = None;
             self.identifier_query = None;
             self.locals_query = None;
             self.locals_captures = LocalsCaptures::default();
             return;
         }
+        #[cfg(feature = "tree-sitter")]
+        {
+            let ts_language = match language {
+                Language::Rust => fresh_languages::tree_sitter_rust::LANGUAGE.into(),
+                Language::Python => fresh_languages::tree_sitter_python::LANGUAGE.into(),
+                Language::JavaScript => fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
+                Language::TypeScript => {
+                    fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+                }
+                Language::Go => fresh_languages::tree_sitter_go::LANGUAGE.into(),
+                Language::C => fresh_languages::tree_sitter_c::LANGUAGE.into(),
+                Language::Cpp => fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
+                Language::Java => fresh_languages::tree_sitter_java::LANGUAGE.into(),
+                Language::Php => fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
+                Language::Ruby => fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
+                Language::Bash => fresh_languages::tree_sitter_bash::LANGUAGE.into(),
+                Language::Lua => fresh_languages::tree_sitter_lua::LANGUAGE.into(),
+                Language::Pascal => fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
+                Language::Json => fresh_languages::tree_sitter_json::LANGUAGE.into(),
+                Language::Jsonc => fresh_languages::tree_sitter_json::LANGUAGE.into(),
+                Language::HTML => fresh_languages::tree_sitter_html::LANGUAGE.into(),
+                Language::CSS => fresh_languages::tree_sitter_css::LANGUAGE.into(),
+                Language::CSharp => fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
+                Language::Odin => fresh_languages::tree_sitter_odin::LANGUAGE.into(),
+                Language::Templ => fresh_languages::tree_sitter_templ::LANGUAGE.into(),
+            };
 
-        // Try to create locals query for scope-aware highlighting
-        if let Some(locals_source) = get_locals_query(language) {
-            match Query::new(&ts_language, locals_source) {
-                Ok(query) => {
-                    // Extract capture indices
-                    let mut captures = LocalsCaptures::default();
-                    for (i, name) in query.capture_names().iter().enumerate() {
-                        match *name {
-                            "local.scope" => captures.scope = Some(i as u32),
-                            "local.definition" => captures.definition = Some(i as u32),
-                            "local.reference" => captures.reference = Some(i as u32),
-                            _ => {}
+            // Create parser
+            let mut parser = Parser::new();
+            if parser.set_language(&ts_language).is_err() {
+                tracing::warn!("Failed to set language for semantic highlighting parser");
+                self.parser = None;
+                self.identifier_query = None;
+                self.locals_query = None;
+                self.locals_captures = LocalsCaptures::default();
+                return;
+            }
+
+            // Try to create locals query for scope-aware highlighting
+            if let Some(locals_source) = get_locals_query(language) {
+                match Query::new(&ts_language, locals_source) {
+                    Ok(query) => {
+                        // Extract capture indices
+                        let mut captures = LocalsCaptures::default();
+                        for (i, name) in query.capture_names().iter().enumerate() {
+                            match *name {
+                                "local.scope" => captures.scope = Some(i as u32),
+                                "local.definition" => captures.definition = Some(i as u32),
+                                "local.reference" => captures.reference = Some(i as u32),
+                                _ => {}
+                            }
                         }
-                    }
 
-                    self.locals_query = Some(query);
-                    self.locals_captures = captures;
+                        self.locals_query = Some(query);
+                        self.locals_captures = captures;
+                        tracing::debug!(
+                            "Locals query enabled for {:?} (scope-aware highlighting)",
+                            language
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            "Locals query failed for {:?}, falling back to identifier matching: {}",
+                            language,
+                            e
+                        );
+                        self.locals_query = None;
+                        self.locals_captures = LocalsCaptures::default();
+                    }
+                }
+            } else {
+                self.locals_query = None;
+                self.locals_captures = LocalsCaptures::default();
+            }
+
+            // Create identifier query as fallback
+            match Query::new(&ts_language, IDENTIFIER_QUERY) {
+                Ok(query) => {
+                    self.parser = Some(parser);
+                    self.identifier_query = Some(query);
                     tracing::debug!(
-                        "Locals query enabled for {:?} (scope-aware highlighting)",
+                        "Tree-sitter semantic highlighting enabled for {:?}",
                         language
                     );
                 }
                 Err(e) => {
                     tracing::debug!(
-                        "Locals query failed for {:?}, falling back to identifier matching: {}",
+                        "Identifier query not supported for {:?}, using text matching: {}",
                         language,
                         e
                     );
-                    self.locals_query = None;
-                    self.locals_captures = LocalsCaptures::default();
+                    self.parser = None;
+                    self.identifier_query = None;
                 }
-            }
-        } else {
-            self.locals_query = None;
-            self.locals_captures = LocalsCaptures::default();
-        }
-
-        // Create identifier query as fallback
-        match Query::new(&ts_language, IDENTIFIER_QUERY) {
-            Ok(query) => {
-                self.parser = Some(parser);
-                self.identifier_query = Some(query);
-                tracing::debug!(
-                    "Tree-sitter semantic highlighting enabled for {:?}",
-                    language
-                );
-            }
-            Err(e) => {
-                tracing::debug!(
-                    "Identifier query not supported for {:?}, using text matching: {}",
-                    language,
-                    e
-                );
-                self.parser = None;
-                self.identifier_query = None;
             }
         }
     }

@@ -124,6 +124,7 @@
     "function": "Blue",
     "type": "Yellow",
     "variable": "Default",
+    "variable_builtin": "Magenta",
     "constant": "Magenta",
     "operator": "Default",
     "punctuation_bracket": "Default",

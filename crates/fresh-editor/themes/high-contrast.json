@@ -14,9 +14,19 @@
     "diff_modify_bg": [60, 55, 0],
     "diff_add_highlight_bg": [0, 110, 0],
     "diff_remove_highlight_bg": [140, 0, 0],
-    "whitespace_indicator_fg": [80, 80, 80]
+    "whitespace_indicator_fg": [80, 80, 80],
+    "bracket_match_fg": "White",
+    "bracket_rainbow_1": "Cyan",
+    "bracket_rainbow_2": "Green",
+    "bracket_rainbow_3": "Yellow",
+    "bracket_rainbow_4": "Magenta",
+    "bracket_rainbow_5": "White",
+    "bracket_rainbow_6": "LightBlue"
   },
   "ui": {
+    "file_status_added_fg": [0, 255, 0],
+    "file_status_modified_fg": [255, 255, 0],
+    "file_status_deleted_fg": [255, 0, 0],
     "tab_active_fg": [0, 0, 0],
     "tab_active_bg": [255, 255, 0],
     "tab_inactive_fg": [255, 255, 255],
@@ -104,6 +114,7 @@
     "function": [255, 255, 0],
     "type": [255, 85, 255],
     "variable": [255, 255, 255],
+    "variable_builtin": [120, 130, 255],
     "constant": [120, 130, 255],
     "operator": [255, 255, 255]
   }

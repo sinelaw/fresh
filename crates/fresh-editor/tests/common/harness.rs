@@ -645,6 +645,11 @@ impl EditorTestHarness {
         // by passing a config, so the override here never gets in their
         // way.
         config.editor.show_prompt_line = true;
+        // Keep terminal tabs on their static `*Terminal N*` names in tests so
+        // assertions don't depend on the host's shell / foreground process.
+        // The tmux-style auto-naming (default on for users) is exercised by
+        // tests that opt back in via `set_config` after construction.
+        config.editor.terminal_auto_title = false;
         // Force "default" keybinding map for consistent test behavior across platforms
         // (Config::default() uses platform-specific keymaps which breaks test assumptions)
         // Skip this if the test explicitly wants to preserve its keymap (e.g., testing emacs bindings)
@@ -1377,6 +1382,20 @@ impl EditorTestHarness {
     /// Apply an event directly to the active buffer
     pub fn apply_event(&mut self, event: fresh::model::event::Event) -> anyhow::Result<()> {
         self.editor.apply_event_to_active_buffer(&event);
+        Ok(())
+    }
+
+    /// Deliver a terminal-initiated bracketed paste, exactly as the
+    /// event loop does for `crossterm::event::Event::Paste` — the
+    /// single-`Event::Paste` path the terminal uses (distinct from the
+    /// per-key `type_text` path and from `Ctrl+V`). Routes through the
+    /// editor's real `handle_input_event` so floating-panel / dock
+    /// paste routing is exercised.
+    pub fn send_paste(&mut self, text: &str) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(crossterm::event::Event::Paste(text.to_string()))?;
+        self.drain_async_work();
+        self.render()?;
         Ok(())
     }
 

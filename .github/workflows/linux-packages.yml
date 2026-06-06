@@ -38,7 +38,11 @@ jobs:
             build-essential \
             binutils \
             pkg-config \
-            libclang-dev
+            libclang-dev \
+            debhelper \
+            dpkg-dev \
+            fakeroot \
+            lintian
 
       - uses: actions/checkout@v6
         with:
@@ -64,9 +68,29 @@ jobs:
             libc6-dev-arm64-cross \
             binutils-aarch64-linux-gnu
 
-      - name: Install cargo-deb and cargo-generate-rpm
+      - name: Install arm64 runtime libraries for shlibdeps
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          cargo install cargo-deb cargo-generate-rpm
+          # dpkg-shlibdeps (run by dh_shlibdeps during the .deb build) resolves
+          # the cross-built binary's library deps against installed dpkg metadata.
+          # libc6-dev-arm64-cross installs into /usr/aarch64-linux-gnu with no
+          # shlibs/symbols files, so dpkg-shlibdeps can neither find the libraries
+          # nor map them to package names. Enable the arm64 architecture and pull
+          # the real runtime libraries from the Ubuntu ports mirror; this both
+          # satisfies the lookup and lets ${shlibs:Depends} resolve to correct,
+          # versioned dependencies (libc6, libgcc-s1).
+          sed -i 's|^deb http|deb [arch=amd64] http|g' /etc/apt/sources.list
+          {
+            echo 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main restricted universe multiverse'
+            echo 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main restricted universe multiverse'
+          } >> /etc/apt/sources.list
+          dpkg --add-architecture arm64
+          apt-get update
+          apt-get install -y --no-install-recommends libc6:arm64 libgcc-s1:arm64
+
+      - name: Install cargo-generate-rpm
+        run: |
+          cargo install cargo-generate-rpm
 
       - name: Build release binary
         run: |
@@ -87,25 +111,35 @@ jobs:
 
       - name: Setup target symlink for packaging
         run: |
-          # cargo-deb/generate-rpm configs use paths relative to crate dir
-          # Create symlink so target/release paths resolve to workspace target
+          # cargo-generate-rpm's asset paths are relative to the crate dir;
+          # symlink so they resolve to the workspace target/.
           ln -s ../../target crates/fresh-editor/target
 
+      - name: Sync debian/changelog with Cargo.toml version
+        run: ./scripts/update-debian-changelog.sh
+
       - name: Build .deb package
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          BINDGEN_EXTRA_CLANG_ARGS: --sysroot=/usr/aarch64-linux-gnu
         run: |
-          cargo deb --no-build --target ${{ matrix.target }}
+          # -b: binary-only, -d: don't check build-deps (rustup provides
+          # rust, not apt), -us -uc: don't sign. debian/rules reuses the
+          # already-built binary at target/${{ matrix.target }}/release/fresh.
+          dpkg-buildpackage -b -d -us -uc --host-arch ${{ matrix.arch }}
 
       - name: Build .rpm package
         working-directory: crates/fresh-editor
         run: |
           cargo generate-rpm --target ${{ matrix.target }}
 
-      - name: Rename packages with architecture suffix
+      - name: Collect packages
         run: |
           mkdir -p packages
-          # Find and copy deb package
-          find target/${{ matrix.target }}/debian -name "*.deb" -exec cp {} packages/ \;
-          # Find and copy rpm package (symlink makes it end up in workspace target)
+          # dpkg-buildpackage drops the .deb in the parent directory of the
+          # source tree by convention.
+          find .. -maxdepth 1 -name "fresh-editor_*_${{ matrix.arch }}.deb" -exec cp {} packages/ \;
+          # RPM lands in workspace target via the symlink set up above.
           find target/${{ matrix.target }}/generate-rpm -name "*.rpm" -exec cp {} packages/ \;
           ls -la packages/
 
@@ -143,6 +177,11 @@ jobs:
 
       - name: Install .deb package
         run: |
+          # Ubuntu's minimal docker images ship /etc/dpkg/dpkg.cfg.d/excludes
+          # which path-excludes /usr/share/man and /usr/share/doc, so man pages
+          # never land on disk even though they're in the package. Remove it so
+          # the man-page verification below reflects a real install.
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get update
           apt-get install -y ./packages/*.deb
 
@@ -156,37 +195,36 @@ jobs:
 
           echo ""
           echo "=== Verifying binary location ==="
-          ls -la /usr/share/fresh-editor/fresh
-          test -x /usr/share/fresh-editor/fresh || { echo "Binary not executable"; exit 1; }
-
-          echo ""
-          echo "=== Verifying symlink ==="
           ls -la /usr/bin/fresh
-          test -L /usr/bin/fresh || { echo "/usr/bin/fresh is not a symlink"; exit 1; }
-          readlink /usr/bin/fresh | grep -q "/usr/share/fresh-editor/fresh" || { echo "Symlink points to wrong location"; exit 1; }
+          test -x /usr/bin/fresh || { echo "Binary not executable"; exit 1; }
+          test -f /usr/bin/fresh || { echo "/usr/bin/fresh is not a regular file"; exit 1; }
+          test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
 
           echo ""
-          echo "=== Testing binary via symlink ==="
+          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
+          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+
+          echo ""
+          echo "=== Testing binary ==="
           fresh --version
           /usr/bin/fresh --version
-          /usr/share/fresh-editor/fresh --version
 
           echo ""
-          echo "=== Checking plugins directory ==="
-          ls -la /usr/share/fresh-editor/plugins/
-          ls -la /usr/share/fresh-editor/plugins/lib/
+          echo "=== Verifying man page installed ==="
+          ls -la /usr/share/man/man1/fresh.1.gz || { echo "Man page missing"; exit 1; }
 
           echo ""
-          echo "=== Verifying binary and plugins are in same directory ==="
-          test -f /usr/share/fresh-editor/fresh && test -d /usr/share/fresh-editor/plugins || { echo "Binary and plugins not in same dir"; exit 1; }
+          echo "=== Verifying desktop entry + icons ==="
+          ls -la /usr/share/applications/fresh.desktop
+          ls /usr/share/icons/hicolor/*/apps/fresh.png | head
 
           echo ""
           echo "=== Testing uninstall ==="
           apt-get remove -y fresh-editor
 
           echo ""
-          echo "=== Verifying symlink removed ==="
-          test ! -e /usr/bin/fresh || { echo "Symlink not removed after uninstall"; exit 1; }
+          echo "=== Verifying binary removed ==="
+          test ! -e /usr/bin/fresh || { echo "Binary not removed after uninstall"; exit 1; }
 
           echo ""
           echo "deb package test PASSED on ${{ matrix.name }}"
@@ -217,7 +255,12 @@ jobs:
 
       - name: Install .rpm package
         run: |
-          dnf install -y packages/*.rpm
+          # Fedora/Rocky minimal images ship neither the `file` utility (used by
+          # the ELF check below) nor, by default, man pages — dnf.conf sets
+          # tsflags=nodocs. Install `file` and override tsflags so docs install
+          # and the verification below reflects a real install.
+          dnf install -y file
+          dnf install -y --setopt=tsflags='' packages/*.rpm
 
       - name: Verify installation
         run: |
@@ -229,37 +272,38 @@ jobs:
 
           echo ""
           echo "=== Verifying binary location ==="
-          ls -la /usr/share/fresh-editor/fresh
-          test -x /usr/share/fresh-editor/fresh || { echo "Binary not executable"; exit 1; }
-
-          echo ""
-          echo "=== Verifying wrapper script ==="
           ls -la /usr/bin/fresh
-          test -x /usr/bin/fresh || { echo "/usr/bin/fresh is not executable"; exit 1; }
-          head -1 /usr/bin/fresh | grep -q "#!/bin/sh" || { echo "/usr/bin/fresh is not a shell script"; exit 1; }
+          test -x /usr/bin/fresh || { echo "Binary not executable"; exit 1; }
+          test -f /usr/bin/fresh || { echo "/usr/bin/fresh is not a regular file"; exit 1; }
+          test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
+          # First bytes are the ELF magic, not "#!/bin/sh" — confirms binary, not wrapper.
+          file /usr/bin/fresh | grep -q ELF || { echo "/usr/bin/fresh is not an ELF binary"; exit 1; }
 
           echo ""
-          echo "=== Testing binary via wrapper ==="
+          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
+          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+
+          echo ""
+          echo "=== Testing binary ==="
           fresh --version
           /usr/bin/fresh --version
-          /usr/share/fresh-editor/fresh --version
 
           echo ""
-          echo "=== Checking plugins directory ==="
-          ls -la /usr/share/fresh-editor/plugins/
-          ls -la /usr/share/fresh-editor/plugins/lib/
+          echo "=== Verifying man page installed ==="
+          ls -la /usr/share/man/man1/fresh.1* || { echo "Man page missing"; exit 1; }
 
           echo ""
-          echo "=== Verifying binary and plugins are in same directory ==="
-          test -f /usr/share/fresh-editor/fresh && test -d /usr/share/fresh-editor/plugins || { echo "Binary and plugins not in same dir"; exit 1; }
+          echo "=== Verifying desktop entry + icons ==="
+          ls -la /usr/share/applications/fresh.desktop
+          ls /usr/share/icons/hicolor/*/apps/fresh.png | head
 
           echo ""
           echo "=== Testing uninstall ==="
           dnf remove -y fresh-editor
 
           echo ""
-          echo "=== Verifying wrapper removed ==="
-          test ! -e /usr/bin/fresh || { echo "Wrapper not removed after uninstall"; exit 1; }
+          echo "=== Verifying binary removed ==="
+          test ! -e /usr/bin/fresh || { echo "Binary not removed after uninstall"; exit 1; }
 
           echo ""
           echo "rpm package test PASSED on ${{ matrix.name }}"
@@ -446,10 +490,136 @@ jobs:
           echo ""
           echo "=== rpm upgrade test PASSED ==="
 
+  # Build the Debian source package (.dsc + .orig.tar.gz + .debian.tar.xz +
+  # _source.changes). Uses the same debian/ tree as the binary build, but
+  # ships cargo-vendored deps inside the orig tarball so the source package
+  # is self-contained and rebuilds offline (what mentors.debian.net / Debian
+  # buildds require).
+  build-deb-source:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libclang-dev \
+            debhelper \
+            dpkg-dev \
+            devscripts \
+            fakeroot \
+            lintian \
+            rsync \
+            xz-utils
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Sync debian/changelog with Cargo.toml version
+        run: ./scripts/update-debian-changelog.sh
+
+      - name: Vendor cargo dependencies
+        run: |
+          mkdir -p .cargo
+          # cargo vendor prints a [source] block to stdout; merge into .cargo/config.toml
+          # so the source package rebuilds with --offline against vendor/.
+          cargo vendor vendor >> .cargo/config.toml
+          echo "vendored $(find vendor -maxdepth 1 -mindepth 1 -type d | wc -l) crates"
+
+      - name: Build source package
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+          test -n "$VERSION"
+
+          # dpkg-source expects a directory named <pkg>-<upstream-ver>/ with
+          # a sibling <pkg>_<upstream-ver>.orig.tar.gz. Stage a copy.
+          STAGE=/tmp/build
+          DIR="fresh-editor-${VERSION}"
+          mkdir -p "$STAGE"
+          # Copy everything except the obvious junk and the staging dir itself.
+          # (cp -a inside the source tree to a target outside; .git is huge and unneeded.)
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='target/' \
+            --exclude='node_modules/' \
+            --exclude='.worktrees/' \
+            --exclude='perf.data*' \
+            --exclude='flamegraph.svg' \
+            ./ "$STAGE/$DIR/"
+
+          # Build the orig tarball from the staged tree (excluding debian/,
+          # which lives in the .debian.tar.xz component).
+          tar --create --gzip \
+              --owner=0 --group=0 \
+              --exclude="$DIR/debian" \
+              --file="$STAGE/fresh-editor_${VERSION}.orig.tar.gz" \
+              -C "$STAGE" "$DIR"
+
+          # Build the source package from inside the staged dir.
+          cd "$STAGE/$DIR"
+          dpkg-buildpackage -S -d -us -uc
+
+          echo "=== source-package artifacts ==="
+          ls -la "$STAGE/"
+
+      - name: Verify source package
+        run: |
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+
+          DSC="/tmp/build/fresh-editor_${VERSION}-1.dsc"
+          test -f "$DSC" || { echo "missing .dsc"; ls /tmp/build; exit 1; }
+
+          # Round-trip: extract and ensure the package metadata parses.
+          mkdir -p /tmp/verify
+          dpkg-source -x "$DSC" /tmp/verify/extracted
+          dpkg-parsechangelog -l /tmp/verify/extracted/debian/changelog
+
+      - name: Collect source package artifacts
+        run: |
+          mkdir -p source-package
+          VERSION="$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/                     { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)"
+          for ext in dsc orig.tar.gz debian.tar.xz; do
+            find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*.${ext}" -exec cp {} source-package/ \;
+          done
+          find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*_source.changes" -exec cp {} source-package/ \;
+          find /tmp/build -maxdepth 1 -name "fresh-editor_${VERSION}*_source.buildinfo" -exec cp {} source-package/ \;
+          ls -la source-package/
+
+      - name: Upload source package
+        uses: actions/upload-artifact@v6
+        with:
+          name: artifacts-deb-source
+          path: source-package/*
+
   # Final job that depends on all tests to ensure failures propagate to caller
   # This job will fail if any dependent job fails, causing the reusable workflow to fail
   linux-packages-complete:
-    needs: [build-linux-packages, test-deb-package, test-rpm-package, test-deb-upgrade, test-rpm-upgrade]
+    needs: [build-linux-packages, build-deb-source, test-deb-package, test-rpm-package, test-deb-upgrade, test-rpm-upgrade]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
@@ -458,6 +628,7 @@ jobs:
         run: |
           echo "One or more jobs failed:"
           echo "  build-linux-packages: ${{ needs.build-linux-packages.result }}"
+          echo "  build-deb-source: ${{ needs.build-deb-source.result }}"
           echo "  test-deb-package: ${{ needs.test-deb-package.result }}"
           echo "  test-rpm-package: ${{ needs.test-rpm-package.result }}"
           echo "  test-deb-upgrade: ${{ needs.test-deb-upgrade.result }}"

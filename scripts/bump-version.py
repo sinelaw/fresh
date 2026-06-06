@@ -43,8 +43,9 @@ def print_usage():
     print("  3. Ask for confirmation")
     print("  4. Update Cargo.toml (workspace.package and workspace.dependencies)")
     print("  5. Update Cargo.lock")
-    print("  6. Optionally generate release notes")
-    print("  7. Ask to commit, tag, and push the changes")
+    print("  6. Regenerate debian/changelog to match the new version")
+    print("  7. Optionally generate release notes")
+    print("  8. Ask to commit, tag, and push the changes")
     print("")
     print("GitHub Actions will then automatically:")
     print("  - Build binaries for all platforms")
@@ -109,6 +110,16 @@ def update_cargo_lock() -> None:
     except subprocess.CalledProcessError as e:
         print(f"{YELLOW}Warning:{NC} cargo build had some output (this might be normal)")
         print(e.stderr)
+
+def update_debian_changelog(repo_root: Path) -> None:
+    """Regenerates debian/changelog so its strict-format top entry matches the
+    new Cargo.toml version. Without this, the committed debian/changelog drifts
+    until CI's scripts/update-debian-changelog.sh runs it before dpkg-buildpackage."""
+    script = repo_root / "scripts" / "update-debian-changelog.sh"
+    if not script.exists():
+        print(f"{YELLOW}Warning:{NC} {script} not found; skipping debian/changelog regen")
+        return
+    run_command([str(script)])
 
 def get_previous_tag() -> Optional[str]:
     """Gets the previous git tag."""
@@ -192,20 +203,25 @@ def main() -> None:
             sys.exit(0)
 
         print("")
-        print(f"{BLUE}Step 1:{NC} Updating Cargo.toml...")
+        print(f"{BLUE}Step: update Cargo.toml{NC}")
         update_cargo_toml(cargo_toml_path, current_version, new_version)
         print(f"{GREEN}✓{NC} Updated Cargo.toml (workspace.package and workspace.dependencies)")
 
         print("")
-        print(f"{BLUE}Step 2:{NC} Updating Cargo.lock (running cargo build)...")
+        print(f"{BLUE}Step: update Cargo.lock (cargo build){NC}")
         update_cargo_lock()
         print(f"{GREEN}✓{NC} Updated Cargo.lock")
 
         print("")
-        print(f"{BLUE}Step 3:{NC} Summary of changes...")
+        print(f"{BLUE}Step: regenerate debian/changelog{NC}")
+        update_debian_changelog(cargo_toml_path.resolve().parent)
+        print(f"{GREEN}✓{NC} Updated debian/changelog")
+
+        print("")
+        print(f"{BLUE}Step: summary of changes{NC}")
         print("")
         try:
-            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock"], capture_output=True)
+            diff_result = run_command(["git", "diff", "Cargo.toml", "Cargo.lock", "debian/changelog"], capture_output=True)
             print("Git diff:")
             print(diff_result.stdout)
         except subprocess.CalledProcessError:
@@ -241,7 +257,7 @@ def main() -> None:
         print("To complete manually:")
         step = 1
         if not skip_bump:
-            print(f"  {step}. Commit changes: {YELLOW}git add Cargo.toml Cargo.lock && git commit -m 'Bump version to {new_version}'{NC}")
+            print(f"  {step}. Commit changes: {YELLOW}git add Cargo.toml Cargo.lock debian/changelog && git commit -m 'Bump version to {new_version}'{NC}")
             step += 1
         if release_notes_content:
             print(f"  {step}. Create tag:     {YELLOW}git tag -a v{new_version} -F CHANGELOG.md{NC}")
@@ -259,19 +275,18 @@ def main() -> None:
 
         if not skip_bump:
             print("")
-            print(f"{BLUE}Step 4:{NC} Committing changes...")
-            run_command(["git", "add", "Cargo.toml", "Cargo.lock"])
+            print(f"{BLUE}Step: commit changes{NC}")
+            run_command(["git", "add", "Cargo.toml", "Cargo.lock", "debian/changelog"])
             run_command(["git", "commit", "-m", f"Bump version to {new_version}"])
             print(f"{GREEN}✓{NC} Committed")
 
         print("")
-        step_num = "Step 1" if skip_bump else "Step 5"
         tag_name = f"v{new_version}"
         if tag_exists_at_head(tag_name):
-            print(f"{BLUE}{step_num}:{NC} Tag {tag_name} already exists at HEAD")
+            print(f"{BLUE}Step: create tag {tag_name}{NC} — already exists at HEAD")
             print(f"{GREEN}✓{NC} Skipped (already tagged)")
         else:
-            print(f"{BLUE}{step_num}:{NC} Creating tag {tag_name}...")
+            print(f"{BLUE}Step: create tag {tag_name}{NC}")
             if release_notes_content:
                 run_command(["git", "tag", "-a", tag_name, "-F", "CHANGELOG.md"])
             else:
@@ -279,8 +294,7 @@ def main() -> None:
             print(f"{GREEN}✓{NC} Tagged")
 
         print("")
-        step_num = "Step 2" if skip_bump else "Step 6"
-        print(f"{BLUE}{step_num}:{NC} Pushing to origin...")
+        print(f"{BLUE}Step: push to origin{NC}")
         run_command(["git", "push", "origin", current_branch])
         run_command(["git", "push", "origin", f"v{new_version}"])
         print(f"{GREEN}✓{NC} Pushed")

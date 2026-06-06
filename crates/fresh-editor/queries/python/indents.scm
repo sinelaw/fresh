@@ -39,3 +39,14 @@
   "]"
   "}"
 ] @dedent
+
+; Dedent the line *after* a statement that ends the block's straight-line
+; flow. Pressing Enter at the end of one of these drops out one level, matching
+; VS Code, PyCharm and neovim.
+[
+  (return_statement)
+  (pass_statement)
+  (raise_statement)
+  (break_statement)
+  (continue_statement)
+] @dedent_after

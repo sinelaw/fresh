@@ -8,8 +8,8 @@ use crate::services::remote::protocol::AgentResponse;
 use crate::services::remote::AGENT_SOURCE;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStderr, Command};
 
 /// Error type for SSH connection
 #[derive(Debug, thiserror::Error)]
@@ -33,15 +33,24 @@ pub enum SshError {
 /// SSH connection parameters
 #[derive(Debug, Clone)]
 pub struct ConnectionParams {
-    pub user: String,
+    /// SSH login user. `None` lets ssh pick the user (its config / the current
+    /// local user), so `host` and `ssh://host` work without a `user@`.
+    pub user: Option<String>,
     pub host: String,
     pub port: Option<u16>,
     pub identity_file: Option<PathBuf>,
+    /// Extra `ssh` arguments inserted verbatim before the target on every ssh
+    /// invocation (agent connect, reconnect, interactive terminal, LSP/probe
+    /// spawns), so options like `-J jump` or `-o ProxyCommand=…` apply end to
+    /// end rather than only to the initial connect.
+    pub extra_args: Vec<String>,
 }
 
 impl ConnectionParams {
-    /// Parse a connection string like "user@host" or "user@host:port"
+    /// Parse a connection string like `host`, `user@host`, or `user@host:port`
+    /// (a leading `ssh://` is tolerated). The user is optional.
     pub fn parse(s: &str) -> Option<Self> {
+        let s = s.strip_prefix("ssh://").unwrap_or(s);
         let (user_host, port) = if let Some((uh, p)) = s.rsplit_once(':') {
             if let Ok(port) = p.parse::<u16>() {
                 (uh, Some(port))
@@ -52,26 +61,38 @@ impl ConnectionParams {
             (s, None)
         };
 
-        let (user, host) = user_host.split_once('@')?;
-        if user.is_empty() || host.is_empty() {
+        let (user, host) = match user_host.split_once('@') {
+            Some((u, h)) => (Some(u.to_string()), h),
+            None => (None, user_host),
+        };
+        if host.is_empty() || user.as_deref() == Some("") {
             return None;
         }
 
         Some(Self {
-            user: user.to_string(),
+            user,
             host: host.to_string(),
             port,
             identity_file: None,
+            extra_args: Vec::new(),
         })
+    }
+
+    /// The ssh target argument: `user@host` when a user is set, else bare
+    /// `host` (ssh then resolves the user itself).
+    pub fn ssh_target(&self) -> String {
+        match &self.user {
+            Some(user) if !user.is_empty() => format!("{user}@{}", self.host),
+            _ => self.host.clone(),
+        }
     }
 }
 
 impl std::fmt::Display for ConnectionParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(port) = self.port {
-            write!(f, "{}@{}:{}", self.user, self.host, port)
-        } else {
-            write!(f, "{}@{}", self.user, self.host)
+        match self.port {
+            Some(port) => write!(f, "{}:{}", self.ssh_target(), port),
+            None => write!(f, "{}", self.ssh_target()),
         }
     }
 }
@@ -93,8 +114,6 @@ impl SshConnection {
 
         // Don't check host key strictly for ease of use
         cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
-        // Allow password prompts - SSH will use the terminal for this
-        // Note: We inherit stderr so SSH can prompt for password if needed
 
         if let Some(port) = params.port {
             cmd.arg("-p").arg(port.to_string());
@@ -104,7 +123,8 @@ impl SshConnection {
             cmd.arg("-i").arg(identity);
         }
 
-        cmd.arg(format!("{}@{}", params.user, params.host));
+        cmd.args(&params.extra_args);
+        cmd.arg(params.ssh_target());
 
         // Bootstrap the agent using Python itself to read the exact byte count.
         // This avoids requiring bash or other shell utilities on the remote.
@@ -123,8 +143,22 @@ impl SshConnection {
 
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
-        // Inherit stderr so SSH can prompt for password on the terminal
-        cmd.stderr(Stdio::inherit());
+        // Capture ssh's stderr instead of inheriting it. The editor runs a
+        // full-screen ratatui UI on the alternate screen; an inherited stderr
+        // lets ssh scribble its diagnostics ("Could not resolve hostname …")
+        // straight over the rendered UI. ratatui has no idea those cells
+        // changed, so the garbage persists until the next full repaint — the
+        // "corrupted window" users see after a bad host. We pipe stderr and
+        // fold its message into the connection error instead (see
+        // `ssh_eof_error`), so a failed connect becomes a clean status line.
+        cmd.stderr(Stdio::piped());
+        // Kill the ssh process if this connect future is dropped before it
+        // finishes (e.g. the New-Session dialog's Cancel aborts the connect
+        // task while the handshake is still hanging). Without this a hung
+        // connect would orphan the ssh child until it timed out on its own.
+        // For an established carrier `SshConnection`'s Drop also kills it; this
+        // covers the window before the connection object exists.
+        cmd.kill_on_drop(true);
         cmd.hide_window();
 
         let mut child = cmd.spawn()?;
@@ -138,11 +172,17 @@ impl SshConnection {
             .stdout
             .take()
             .ok_or_else(|| SshError::AgentStartFailed("failed to get stdout".to_string()))?;
-        // Note: stderr is inherited so SSH can prompt for password on the terminal
+        let stderr = child.stderr.take();
 
-        // Send the agent code (exact byte count)
-        stdin.write_all(AGENT_SOURCE.as_bytes()).await?;
-        stdin.flush().await?;
+        // Send the agent code (exact byte count). If the carrier already died
+        // (a failed connect — e.g. the host was unreachable), this write/flush
+        // races the child's exit and can fail with a broken pipe. That pipe
+        // error isn't the actionable reason; the carrier's own stderr is. Fall
+        // through to the same EOF path so we surface "ssh: …" rather than a bare
+        // `SpawnFailed`, regardless of which side loses the race.
+        if stdin.write_all(AGENT_SOURCE.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+            return Err(ssh_eof_error(&mut child, &params, stderr).await);
+        }
 
         // Create buffered reader for stdout
         let mut reader = BufReader::new(stdout);
@@ -153,10 +193,24 @@ impl SshConnection {
         let mut ready_line = String::new();
         match reader.read_line(&mut ready_line).await {
             Ok(0) => {
-                return Err(ssh_eof_error(&mut child, &params).await);
+                return Err(ssh_eof_error(&mut child, &params, stderr).await);
             }
             Ok(_) => {}
             Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
+        }
+
+        // Connected. Drain ssh's stderr for the life of the connection so the
+        // occasional later diagnostic (host-key warnings, etc.) is discarded
+        // rather than filling the pipe or — if we'd inherited it — landing on
+        // the editor's screen.
+        if let Some(mut stderr) = stderr {
+            tokio::spawn(async move {
+                let mut sink = tokio::io::sink();
+                // Best-effort drain; the byte count / EOF error is irrelevant
+                // since we're discarding ssh's stderr for the session.
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = tokio::io::copy(&mut stderr, &mut sink).await;
+            });
         }
 
         let ready: AgentResponse = serde_json::from_str(&ready_line).map_err(|e| {
@@ -332,13 +386,60 @@ where
     })
 }
 
+/// Default heartbeat interval. Comfortably under the smallest common
+/// load-balancer / NAT idle timeout (~5 min) so an otherwise-idle agent
+/// stream keeps generating traffic and isn't silently dropped.
+pub const DEFAULT_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Spawn a background task that pings the agent periodically so an idle
+/// connection's stream keeps producing traffic.
+///
+/// Long-lived agent streams that sit idle (no edits, no LSP chatter) get
+/// silently dropped by ELB / NAT idle timers after a few minutes — the
+/// client never sees a FIN, so the *next* request just hangs until it
+/// times out and the UI appears frozen. A cheap periodic `info` request
+/// keeps the NAT state-table entry warm. Shared by every agent transport
+/// (SSH and `kubectl exec` alike); `info` is already handled by every
+/// agent version, so no protocol bump is needed.
+///
+/// Holds only a `Weak` reference, so the task terminates on its own once
+/// the last owner of the channel is dropped — no JoinHandle bookkeeping
+/// is required to avoid a leak (callers may still `abort()` it to stop
+/// pinging immediately when the carrier dies). Pinging while disconnected
+/// is skipped; the reconnect task owns re-establishment.
+pub fn spawn_heartbeat_task(
+    channel: &std::sync::Arc<AgentChannel>,
+    interval: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    let weak = std::sync::Arc::downgrade(channel);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            let Some(channel) = weak.upgrade() else {
+                break;
+            };
+            if channel.is_connected() {
+                // Outcome ignored on purpose: a failed/timed-out ping
+                // already marks the channel disconnected (see `request`),
+                // and the reconnect task owns recovery from there. Bound
+                // to a named `_` to satisfy `deny(let_underscore_must_use)`.
+                let _ping = channel.request("info", serde_json::json!({})).await;
+            }
+        }
+    })
+}
+
 /// Establish a new SSH connection and return the raw transport + child process.
 ///
 /// Build a descriptive error when the SSH process closes stdout (EOF) without
 /// sending a ready message. We wait for the SSH process to exit and inspect its
 /// exit code to give the user a more actionable message than a generic
 /// "connection closed".
-async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError {
+async fn ssh_eof_error(
+    child: &mut Child,
+    params: &ConnectionParams,
+    stderr: Option<ChildStderr>,
+) -> SshError {
     // Give SSH a moment to finish so we can read its exit code.
     let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
 
@@ -382,7 +483,35 @@ async fn ssh_eof_error(child: &mut Child, params: &ConnectionParams) -> SshError
         }
     };
 
-    SshError::AgentStartFailed(hint)
+    // ssh writes the actionable reason ("Could not resolve hostname",
+    // "Permission denied", "Connection refused", …) to stderr. We piped it
+    // (rather than letting it corrupt the editor's screen), so fold the most
+    // specific line into the error for the status bar.
+    match read_ssh_stderr(stderr).await {
+        Some(detail) => SshError::AgentStartFailed(format!("{hint}: {detail}")),
+        None => SshError::AgentStartFailed(hint),
+    }
+}
+
+/// Read whatever a failed ssh process wrote to stderr and return its most
+/// specific (last non-empty) line. ssh has closed stdout by the time we call
+/// this and is exiting, so the read is bounded; we still cap the wait so a
+/// wedged pipe can't hang the error path.
+async fn read_ssh_stderr(stderr: Option<ChildStderr>) -> Option<String> {
+    let mut stderr = stderr?;
+    let mut buf = String::new();
+    #[allow(clippy::let_underscore_must_use)]
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        stderr.read_to_string(&mut buf),
+    )
+    .await;
+    buf.trim()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .map(str::to_string)
 }
 
 /// This is the lower-level function used by both `SshConnection::connect` and
@@ -412,7 +541,8 @@ async fn establish_ssh_transport(
         cmd.arg("-i").arg(identity);
     }
 
-    cmd.arg(format!("{}@{}", params.user, params.host));
+    cmd.args(&params.extra_args);
+    cmd.arg(params.ssh_target());
 
     let agent_len = AGENT_SOURCE.len();
     let bootstrap = format!(
@@ -447,7 +577,9 @@ async fn establish_ssh_transport(
     let mut ready_line = String::new();
     match reader.read_line(&mut ready_line).await {
         Ok(0) => {
-            return Err(ssh_eof_error(&mut child, params).await);
+            // Reconnect spawns with `stderr(Stdio::null())`, so there is no
+            // captured stderr to attach here.
+            return Err(ssh_eof_error(&mut child, params, None).await);
         }
         Ok(_) => {}
         Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
@@ -633,36 +765,86 @@ mod tests {
     #[test]
     fn test_parse_connection_params() {
         let params = ConnectionParams::parse("user@host").unwrap();
-        assert_eq!(params.user, "user");
+        assert_eq!(params.user.as_deref(), Some("user"));
         assert_eq!(params.host, "host");
         assert_eq!(params.port, None);
 
         let params = ConnectionParams::parse("user@host:22").unwrap();
-        assert_eq!(params.user, "user");
+        assert_eq!(params.user.as_deref(), Some("user"));
         assert_eq!(params.host, "host");
         assert_eq!(params.port, Some(22));
 
-        assert!(ConnectionParams::parse("hostonly").is_none());
+        // User is optional: bare host and ssh:// both parse, user = None.
+        let params = ConnectionParams::parse("hostonly").unwrap();
+        assert_eq!(params.user, None);
+        assert_eq!(params.host, "hostonly");
+        assert_eq!(params.ssh_target(), "hostonly");
+
+        let params = ConnectionParams::parse("ssh://example.com:2222").unwrap();
+        assert_eq!(params.user, None);
+        assert_eq!(params.host, "example.com");
+        assert_eq!(params.port, Some(2222));
+
+        // Empty user / empty host are still rejected.
         assert!(ConnectionParams::parse("@host").is_none());
         assert!(ConnectionParams::parse("user@").is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn heartbeat_keeps_channel_warm_and_exits_on_drop() {
+        // Real agent over local stdio — no SSH/kubectl, same channel.
+        let channel = spawn_local_agent().await.expect("spawn local agent");
+        let handle = spawn_heartbeat_task(&channel, std::time::Duration::from_millis(30));
+
+        // Let several heartbeats fire; the channel must stay healthy.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            channel.is_connected(),
+            "channel stays connected while heartbeat pings"
+        );
+        assert!(
+            channel.request("info", serde_json::json!({})).await.is_ok(),
+            "agent still answers after heartbeats"
+        );
+
+        // Dropping the last strong ref lets the Weak-based task terminate
+        // on its own — proving it can't leak past the connection's life.
+        drop(channel);
+        tokio::time::timeout(std::time::Duration::from_secs(3), handle)
+            .await
+            .expect("heartbeat task exits after the channel is dropped")
+            .expect("heartbeat task did not panic");
     }
 
     #[test]
     fn test_connection_string() {
         let params = ConnectionParams {
-            user: "alice".to_string(),
+            user: Some("alice".to_string()),
             host: "example.com".to_string(),
             port: None,
             identity_file: None,
+            extra_args: Vec::new(),
         };
         assert_eq!(params.to_string(), "alice@example.com");
 
         let params = ConnectionParams {
-            user: "bob".to_string(),
+            user: Some("bob".to_string()),
             host: "server.local".to_string(),
             port: Some(2222),
             identity_file: None,
+            extra_args: Vec::new(),
         };
         assert_eq!(params.to_string(), "bob@server.local:2222");
+
+        // No user: the target (and display) is the bare host.
+        let params = ConnectionParams {
+            user: None,
+            host: "server.local".to_string(),
+            port: Some(2222),
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        assert_eq!(params.to_string(), "server.local:2222");
+        assert_eq!(params.ssh_target(), "server.local");
     }
 }

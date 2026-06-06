@@ -17,6 +17,40 @@ Thanks for contributing!
 The `gui` feature on `fresh-editor` pulls in `fresh-gui` as an optional dependency.
 When it is disabled (the default), no windowing or GPU crates are compiled.
 
+## Build Profiles & Binary Size
+
+The default `release` build optimizes for size already (`opt-level = "z"`, fat
+LTO, `codegen-units = 1`). Two extra knobs are available for producing a
+**minimal `fresh` binary** without affecting the normal release:
+
+1. **`min-size` profile** (`[profile.min-size]` in the root `Cargo.toml`)
+   inherits `release` and additionally sets `panic = "abort"` (drops unwinding
+   tables) and `strip = true` (strips symbols + debuginfo).
+
+2. **Feature trimming.** The size-relevant features on `fresh-editor` are:
+   - `plugins` / `embed-plugins` — the QuickJS plugin runtime and the plugins
+     embedded into the binary.
+   - `tree-sitter` — the ~19 generated tree-sitter grammar crates plus the
+     AST-based features (precise indentation, scope-aware reference
+     highlighting). When disabled, highlighting falls back to syntect
+     (TextMate) grammars and indentation to pattern-based heuristics. The
+     shared `Language` / `HighlightCategory` types still come from
+     `fresh-languages`, so syntect highlighting is unaffected.
+
+   All three are on by default. To build the smallest binary (syntect-only
+   highlighting, no plugins, no tree-sitter):
+
+   ```sh
+   cargo build --profile min-size --no-default-features --features runtime
+   # -> target/min-size/fresh
+   ```
+
+   The normal release is unchanged:
+
+   ```sh
+   cargo build --release        # default features, full functionality
+   ```
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed

@@ -210,6 +210,79 @@ fn test_theme_syntax_highlighting_colors() {
 }
 
 #[test]
+fn test_bracket_highlight_uses_theme_colors() {
+    let config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Insert a simple bracket pair and place cursor on the closing bracket
+    harness.type_text("()").unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    let theme = harness.editor().theme();
+    let buffer = &harness.editor().active_state().buffer;
+    let gutter_width = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let (content_first_row, _) = harness.content_area_rows();
+
+    // Verify we are looking at the opening bracket cell
+    assert_eq!(
+        harness.get_cell(gutter_width, content_first_row as u16),
+        Some("(".to_string())
+    );
+
+    let open_bracket_style = harness
+        .get_cell_style(gutter_width, content_first_row as u16)
+        .expect("Expected style for opening bracket cell");
+
+    assert_eq!(
+        open_bracket_style.fg,
+        Some(theme.bracket_rainbow_1),
+        "Opening bracket should use theme rainbow color when matching is active"
+    );
+}
+
+#[test]
+fn test_rainbow_bracket_colorization() {
+    let config = Config {
+        theme: "dark".into(),
+        ..Default::default()
+    };
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.type_text("({[]})").unwrap();
+    harness.render().unwrap();
+
+    let theme = harness.editor().theme();
+    let buffer = &harness.editor().active_state().buffer;
+    let gutter_width = harness.editor().active_viewport().gutter_width(buffer) as u16;
+    let (content_first_row, _) = harness.content_area_rows();
+
+    let expected_colors = [
+        theme.bracket_rainbow_1,
+        theme.bracket_rainbow_2,
+        theme.bracket_rainbow_3,
+        theme.bracket_rainbow_3,
+        theme.bracket_rainbow_2,
+        theme.bracket_rainbow_1,
+    ];
+
+    for (col_offset, expected) in expected_colors.into_iter().enumerate() {
+        let x = gutter_width + col_offset as u16;
+        let style = harness
+            .get_cell_style(x, content_first_row as u16)
+            .expect("Expected style for bracket cell");
+        assert_eq!(
+            style.fg,
+            Some(expected),
+            "Bracket at col {col_offset} should use rainbow color"
+        );
+    }
+}
+
+#[test]
 fn test_all_available_themes_can_be_loaded() {
     let themes = vec!["dark", "light", "high-contrast", "terminal"];
 

@@ -40,7 +40,7 @@
 use crate::state::EditorState;
 use crate::view::ui::split_rendering::base_tokens::build_base_tokens;
 use crate::view::ui::split_rendering::transforms::{
-    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform,
+    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, splice_inline_virtual_text,
 };
 use crate::view::ui::view_pipeline::{ViewLine, ViewLineIterator};
 use fresh_core::api::ViewTokenWireKind;
@@ -497,6 +497,15 @@ pub fn compute_line_layout(
         if !cr.is_empty() {
             tokens = apply_conceal_ranges(tokens, &cr);
         }
+    }
+
+    // Step 3.5: splice inline virtual text (inlay hints) so this per-line
+    // layout matches the renderer's — its width must affect wrap boundaries
+    // and visual-column counts identically. `theme` is `None`: this output
+    // feeds scroll-math / coordinate queries (never drawn), so only cell
+    // width matters, not colour.
+    if !state.virtual_texts.is_empty() {
+        tokens = splice_inline_virtual_text(tokens, state, None, line_start, line_end);
     }
 
     // Step 4: wrap (only when line-wrap is actually enabled).  When

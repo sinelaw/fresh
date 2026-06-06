@@ -71,6 +71,7 @@
         "show_tilde": true,
         "use_terminal_bg": false,
         "set_window_title": true,
+        "terminal_auto_title": true,
         "cursor_style": "default",
         "rulers": [],
         "whitespace_show": true,
@@ -338,7 +339,7 @@
           "x-section": "Display"
         },
         "wrap_column": {
-          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
+          "description": "Column at which to wrap lines when line wrapping is enabled.\nIf not specified (`null`), lines wrap at the viewport edge (default behavior).\nA value of `0` is treated the same as `null` (no fixed wrap column).\nExample: `80` wraps at column 80. The actual wrap column is clamped to the\nviewport width (lines can't wrap beyond the visible area).",
           "type": [
             "integer",
             "null"
@@ -349,7 +350,7 @@
           "x-section": "Display"
         },
         "page_width": {
-          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nDefaults to 80. Set to `null` to use the full viewport width.",
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nDefaults to 80. Set to `null` (or `0`) to use the full viewport width.",
           "type": [
             "integer",
             "null"
@@ -449,6 +450,12 @@
           "default": true,
           "x-section": "Display"
         },
+        "terminal_auto_title": {
+          "description": "Auto-name terminal tabs after the running program (tmux-style). When\nenabled, an integrated terminal's tab reflects its foreground process\n(e.g. `python3`, `vim`) combined with any title the program set via\nan OSC escape sequence, instead of the static `*Terminal N*` label.\nDisable to keep the fixed `*Terminal N*` names.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
         "cursor_style": {
           "description": "Cursor style for the terminal cursor.\nOptions: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline\nDefault: blinking_block",
           "$ref": "#/$defs/CursorStyle",
@@ -515,7 +522,7 @@
           "x-section": "Editing"
         },
         "tab_size": {
-          "description": "Number of spaces per tab character",
+          "description": "Number of spaces per tab character\nA value of `0` is treated as unset and falls back to the default (4).",
           "type": "integer",
           "format": "uint",
           "minimum": 0,
@@ -1261,7 +1268,7 @@
           "default": null
         },
         "wrap_column": {
-          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.",
+          "description": "Column at which to wrap lines for this language.\nIf not specified (`null`), falls back to the global `editor.wrap_column` setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"
@@ -1279,7 +1286,7 @@
           "default": null
         },
         "page_width": {
-          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), falls back to the global `editor.page_width` setting.",
+          "description": "Width of the page in page view mode (in columns).\nControls the content width when page view is active, with centering margins.\nIf not specified (`null`), falls back to the global `editor.page_width` setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"
@@ -1297,7 +1304,7 @@
           "default": null
         },
         "tab_size": {
-          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.",
+          "description": "Tab size (number of spaces per tab) for this language.\nIf not specified, falls back to the global editor.tab_size setting.\nA value of `0` is treated as not set at this language level (inherits the global).",
           "type": [
             "integer",
             "null"

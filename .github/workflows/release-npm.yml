@@ -68,8 +68,6 @@ jobs:
               "binary-install.js",
               "install.js",
               "run-fresh.js",
-              "plugins/**/*",
-              "themes/**/*",
               "README.md",
               "LICENSE",
               "CHANGELOG.md"
@@ -226,10 +224,8 @@ jobs:
           child.on('exit', (code) => process.exit(code || 0));
           RUNJS
 
-          # Copy supporting files
+          # Copy supporting files. Plugins/themes are embedded in the binary.
           cp README.md LICENSE CHANGELOG.md npm-package/ 2>/dev/null || true
-          cp -r crates/fresh-editor/plugins npm-package/ 2>/dev/null || true
-          cp -r crates/fresh-editor/themes npm-package/ 2>/dev/null || true
 
           # Create the tarball
           cd npm-package
