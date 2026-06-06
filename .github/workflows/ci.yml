@@ -101,12 +101,15 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      # Install Vulkan + Xvfb for headless GPU testing (Linux only)
+      # Install Vulkan + Xvfb for headless GPU testing (Linux only).
+      # openssh-server/client back the remote-mode SSH terminal integration
+      # test (tests/remote_ssh_terminal.rs), which spins up a throwaway
+      # non-root sshd on localhost; it skips itself if these are absent.
       - name: Install Vulkan and Xvfb
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb libxkbcommon-x11-0
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb libxkbcommon-x11-0 openssh-server openssh-client
       # enable this ci template to run regardless of whether the lockfile is checked in or not
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''

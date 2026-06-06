@@ -378,6 +378,13 @@ impl Server {
                     client.id
                 );
             }
+            ClientControl::OpenWindow { .. } => {
+                // This runner doesn't have an editor, so we can't open windows
+                tracing::warn!(
+                    "Client {} sent OpenWindow but no editor is running",
+                    client.id
+                );
+            }
         }
         Ok(())
     }

@@ -24,9 +24,12 @@ pub fn render_event_debug(frame: &mut Frame, area: Rect, debug: &EventDebug, the
     let dialog_height = DIALOG_HEIGHT.min(area.height.saturating_sub(4));
     let dialog_width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
 
-    // Center the dialog
-    let dialog_x = (area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = (area.height.saturating_sub(dialog_height)) / 2;
+    // Center the dialog within `area`. Offset by `area.x`/`area.y` so the
+    // dialog centres in the area it was handed (the post-dock-split chrome
+    // area beside the orchestrator left dock) rather than relative to
+    // column 0, which would push it left under the dock.
+    let dialog_x = area.x + (area.width.saturating_sub(dialog_width)) / 2;
+    let dialog_y = area.y + (area.height.saturating_sub(dialog_height)) / 2;
 
     let dialog_area = Rect {
         x: dialog_x,

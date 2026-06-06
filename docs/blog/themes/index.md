@@ -1,5 +1,7 @@
 ---
 title: "Customization & Themes"
+date: 2026-02-11
+description: "Color themes, graphical settings editor, and keybinding editor with conflict detection."
 outline: false
 ---
 

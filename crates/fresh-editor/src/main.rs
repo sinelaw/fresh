@@ -6,8 +6,7 @@
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{
-    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEvent, KeyEventKind,
-    MouseEvent,
+    poll as event_poll, read as event_read, Event as CrosstermEvent, KeyEventKind,
 };
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
@@ -1361,10 +1360,11 @@ fn connect_remote(
         .context("Failed to create Tokio runtime for remote connection")?;
 
     let connection_params = remote::ConnectionParams {
-        user: remote.user.clone(),
+        user: Some(remote.user.clone()),
         host: remote.host.clone(),
         port: remote.port,
         identity_file: None,
+        extra_args: Vec::new(),
     };
 
     match remote.port {
@@ -1412,7 +1412,7 @@ fn connect_remote(
     // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
     let reconnect_handle = {
         let _guard = rt.enter();
-        remote::spawn_reconnect_task(channel, reconnect_params)
+        remote::spawn_reconnect_task(channel, reconnect_params.clone())
     };
 
     // SSH authority: leave the display label empty so the status bar
@@ -1423,6 +1423,8 @@ fn connect_remote(
             filesystem,
             process_spawner,
             long_running_spawner,
+            &reconnect_params,
+            Some(remote.path.as_str()),
             trust.clone(),
             env.clone(),
         ),
@@ -2829,9 +2831,7 @@ fn run_open_files_command(
     wait: bool,
 ) -> AnyhowResult<()> {
     use fresh::server::daemon::is_process_running;
-    use fresh::server::protocol::{
-        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
-    };
+    use fresh::server::protocol::{ClientControl, ServerControl};
     use fresh::server::spawn_server_detached;
 
     if files.is_empty() {
@@ -2892,38 +2892,9 @@ fn run_open_files_command(
     // Connect to server
     let conn = fresh::server::ipc::ClientConnection::connect(&socket_paths)?;
 
-    // Perform handshake
-    let hello = ClientHello::new(TermSize::new(80, 24)); // Size doesn't matter, we're not rendering
-    let hello_json = serde_json::to_string(&ClientControl::Hello(hello))?;
-    conn.write_control(&hello_json)?;
-
-    // Read server response
-    let response = conn
-        .read_control()?
-        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
-
-    let server_msg: ServerControl = serde_json::from_str(&response)?;
-
-    match server_msg {
-        ServerControl::Hello(server_hello) => {
-            if server_hello.protocol_version != PROTOCOL_VERSION {
-                eprintln!(
-                    "Version mismatch: server is v{}",
-                    server_hello.server_version
-                );
-                return Ok(());
-            }
-        }
-        ServerControl::VersionMismatch(mismatch) => {
-            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
-            return Ok(());
-        }
-        ServerControl::Error { message } => {
-            return Err(anyhow::anyhow!("Server error: {}", message));
-        }
-        _ => {
-            return Err(anyhow::anyhow!("Unexpected server response"));
-        }
+    // Perform handshake; a version mismatch aborts quietly.
+    if !client_handshake(&conn)? {
+        return Ok(());
     }
 
     // Send OpenFiles command
@@ -2971,6 +2942,162 @@ fn run_open_files_command(
         eprintln!("Opened {} file(s) in session.", file_requests.len());
     }
     Ok(())
+}
+
+/// Perform the client side of the handshake on an established connection.
+///
+/// Sends `Hello` and reads the server's reply. Returns `Ok(true)` when the
+/// server accepted the handshake, `Ok(false)` on a version mismatch (the
+/// caller should abort quietly — a message has already been printed), and
+/// `Err` on a protocol-level error.
+fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult<bool> {
+    use fresh::server::protocol::{
+        ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
+    };
+
+    // Size doesn't matter — these clients never render.
+    let hello = ClientHello::new(TermSize::new(80, 24));
+    conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello))?)?;
+
+    let response = conn
+        .read_control()?
+        .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
+
+    match serde_json::from_str::<ServerControl>(&response)? {
+        ServerControl::Hello(server_hello) => {
+            if server_hello.protocol_version != PROTOCOL_VERSION {
+                eprintln!(
+                    "Version mismatch: server is v{}",
+                    server_hello.server_version
+                );
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        ServerControl::VersionMismatch(mismatch) => {
+            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
+            Ok(false)
+        }
+        ServerControl::Error { message } => Err(anyhow::anyhow!("Server error: {}", message)),
+        _ => Err(anyhow::anyhow!("Unexpected server response")),
+    }
+}
+
+/// When launched from inside Fresh's own embedded terminal, forward the
+/// file/dir arguments to the parent editor (identified by `FRESH_SESSION`)
+/// instead of starting a second editor in the terminal.
+///
+/// Returns:
+/// - `Some(Ok(()))` — forwarded; the caller should exit.
+/// - `None` — not a nested launch, nothing to forward, or the parent
+///   socket is unreachable; the caller should launch inline as usual.
+fn try_forward_nested(args: &Args) -> Option<AnyhowResult<()>> {
+    // Only plain interactive file/dir opens are forwarded. Subcommands,
+    // --server and --attach are already handled before we get here;
+    // --stdin pipes content into a real editor and can't be forwarded.
+    if args.server || args.attach || args.stdin || args.files.is_empty() {
+        return None;
+    }
+
+    let session = std::env::var("FRESH_SESSION").ok()?;
+    if session.trim().is_empty() {
+        return None;
+    }
+
+    match forward_to_session(&session, &args.files) {
+        Ok(true) => Some(Ok(())),
+        Ok(false) => None, // unreachable parent → fall back to inline
+        Err(e) => {
+            // Never fail the launch over a forwarding hiccup: fall back to
+            // opening inline, which is exactly the pre-feature behavior.
+            tracing::warn!("Nested forward failed ({}); opening inline", e);
+            None
+        }
+    }
+}
+
+/// Forward `files` (a mix of files and directories) to the parent session.
+///
+/// Files open in the parent's current window and the call blocks until the
+/// (last) buffer is closed, so `git commit`/`$EDITOR` semantics hold.
+/// Directories pop a new orchestrator window each and don't block.
+///
+/// Returns `Ok(true)` once a connection to the parent was established and
+/// the requests were sent; `Ok(false)` if the parent isn't reachable (the
+/// caller should open inline instead).
+fn forward_to_session(session: &str, files: &[String]) -> AnyhowResult<bool> {
+    use fresh::server::protocol::{ClientControl, ServerControl};
+
+    let socket_paths = resolve_session(Some(session))?;
+    socket_paths.cleanup_if_stale();
+    if !socket_paths.is_server_alive() {
+        return Ok(false);
+    }
+
+    // Partition arguments into directories (→ new windows) and files (→
+    // buffers in the current window). `build_file_requests` already drops
+    // directories, so it yields exactly the file set.
+    let working_dir = std::env::current_dir()?;
+    let mut dir_paths: Vec<PathBuf> = Vec::new();
+    for f in files {
+        let loc = parse_file_location(f);
+        let abs = if loc.path.is_relative() {
+            working_dir.join(&loc.path)
+        } else {
+            loc.path.clone()
+        };
+        let canonical = abs.canonicalize().unwrap_or(abs);
+        if canonical.is_dir() {
+            dir_paths.push(canonical);
+        }
+    }
+    let file_requests = build_file_requests(files, &working_dir);
+
+    // Establishing the connection is the commit point: once we're talking
+    // to the parent we own the request and never fall back (which would
+    // double-open). A failure to connect means "no reachable parent".
+    let conn = match fresh::server::ipc::ClientConnection::connect(&socket_paths) {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+    if !client_handshake(&conn)? {
+        // Version mismatch already reported; don't open inline on top of it.
+        return Ok(true);
+    }
+
+    // Directories first: each becomes a new focused window.
+    for dir in dir_paths {
+        let msg = ClientControl::OpenWindow {
+            path: dir.to_string_lossy().into_owned(),
+        };
+        conn.write_control(&serde_json::to_string(&msg)?)?;
+    }
+
+    // Files: open them and block until the (last) buffer is closed.
+    if !file_requests.is_empty() {
+        let msg = ClientControl::OpenFiles {
+            files: file_requests,
+            wait: true,
+        };
+        conn.write_control(&serde_json::to_string(&msg)?)?;
+
+        loop {
+            match conn.read_control() {
+                Ok(Some(line)) => {
+                    if let Ok(msg) = serde_json::from_str::<ServerControl>(&line) {
+                        match msg {
+                            ServerControl::WaitComplete | ServerControl::Quit { .. } => break,
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(None) => break, // parent closed the connection
+                Err(_) => break,
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 /// Attach to an existing session, starting a server if needed
@@ -3462,6 +3589,18 @@ fn build_localized_after_help() -> String {
     ));
     out.push('\n');
 
+    out.push_str(&format!("{}\n", t("cli.section.remote")));
+    out.push_str(&format!(
+        "  fresh ssh://[user@]host[:port]/path[:line[:col]]   {}\n",
+        t("cli.example.remote_url")
+    ));
+    out.push_str(&format!(
+        "  fresh user@host:path[:line[:col]]                  {}\n",
+        t("cli.example.remote_scp")
+    ));
+    out.push_str(&format!("  {}\n", t("cli.remote.note")));
+    out.push('\n');
+
     out.push_str(&format!("{}\n", t("cli.section.guided")));
     out.push_str(&format!("  {}\n\n", t("cli.guided.wait_intro")));
     out.push_str(&format!("  {}\n\n", t("cli.guided.session_dot")));
@@ -3561,6 +3700,15 @@ fn real_main() -> AnyhowResult<()> {
         return result;
     }
 
+    // If launched from inside Fresh's own embedded terminal (FRESH_SESSION
+    // is set), forward file/dir opens to that parent editor instead of
+    // starting a second editor in the terminal. Returns Some(..) when the
+    // request was forwarded (we're done); None to fall through and launch
+    // inline (no reachable parent, or nothing to forward).
+    if let Some(result) = try_forward_nested(&args) {
+        return result;
+    }
+
     // Save the original console mode BEFORE anything modifies it (raw mode,
     // enable_vt_input, etc.). Restored at the very end after all cleanup.
     #[cfg(windows)]
@@ -3583,7 +3731,7 @@ fn real_main() -> AnyhowResult<()> {
         gpm_client,
         mut terminal_modes,
         authority: startup_authority,
-        _remote_session,
+        _remote_session: remote_session,
     } = initialize_app(&args).context("Failed to initialize application")?;
 
     let mut current_working_dir = initial_working_dir;
@@ -3601,6 +3749,15 @@ fn real_main() -> AnyhowResult<()> {
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
     let mut current_authority = startup_authority;
+
+    // Process-lifetime keepalive for a connection-backed authority.
+    // Seeded from the SSH startup session (if any); replaced when a
+    // plugin attaches a remote agent (K8s) mid-session via
+    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
+    // tears the previous connection down. Boxed opaquely so this loop
+    // never names a backend.
+    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
+        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -3621,6 +3778,14 @@ fn real_main() -> AnyhowResult<()> {
         .take()
         .map(|h| (h.warning.receiver, h.warning.path));
 
+    // Bind this process's local control socket so a `fresh` launched from
+    // inside an embedded terminal forwards opens back here (see
+    // `try_forward_nested` / `server::local_control`). Best-effort: if it
+    // fails, the editor runs normally and nested launches just open inline.
+    if let Err(e) = fresh::server::local_control::start() {
+        tracing::warn!("Local control socket unavailable: {}", e);
+    }
+
     // Main editor loop - supports restarting with a new working directory
     // Returns (loop_result, last_update_result) tuple
     let (result, last_update_result) = loop {
@@ -3630,13 +3795,10 @@ fn real_main() -> AnyhowResult<()> {
         // Detect terminal color capability
         let color_capability = fresh::view::color_support::ColorCapability::detect();
 
-        // The editor constructor still takes a filesystem (tests use
-        // it to inject mocks). The authority we want is installed
-        // immediately after construction via `set_boot_authority`, so
-        // that later init — plugin loading, session restore, the
-        // first event-loop tick — sees the real backend.
-        let fs = current_authority.filesystem.clone();
-
+        // The editor is constructed with the *real* authority it runs
+        // under — local or a connected remote — so that every later step
+        // (plugin loading, session restore, the first event-loop tick) sees
+        // the correct backend from construction. No post-construction swap.
         tracing::info!("Creating editor instance...");
         let mut editor = Editor::with_working_dir_opts(
             config.clone(),
@@ -3646,17 +3808,12 @@ fn real_main() -> AnyhowResult<()> {
             dir_context.clone(),
             !args.no_plugins,
             color_capability,
-            fs,
+            current_authority.clone(),
             true, // defer_plugin_load: TUI startup; plugin loads run on the
                   // plugin thread and arrive via AsyncBridge each tick.
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
-
-        // Install the real authority before any plugin / init.ts code
-        // runs, so everything that loads below sees the correct
-        // backend from the first tick.
-        editor.set_boot_authority(current_authority.clone());
 
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
@@ -3767,6 +3924,20 @@ fn real_main() -> AnyhowResult<()> {
         if let Some(new_authority) = editor.take_pending_authority() {
             tracing::info!("Authority transition queued; restarting editor");
             current_authority = new_authority;
+            // A connection-backed authority (remote agent / K8s) queues
+            // its keepalive alongside the authority. Adopt it here so the
+            // live carrier + reconnect/heartbeat tasks survive into the
+            // next iteration; the previous keepalive drops (tearing down
+            // the old connection). A plain local/docker transition
+            // carries no keepalive, leaving the slot — and any current
+            // remote session — untouched.
+            if let Some(new_keepalive) = editor.take_pending_keepalive() {
+                // Swap in the new session and drop the previous one,
+                // explicitly tearing the old connection down before the
+                // next iteration builds against the new backend.
+                let previous = current_keepalive.replace(new_keepalive);
+                drop(previous);
+            }
         }
 
         // Pluck the warning-log channel back out of the soon-to-be-
@@ -3997,12 +4168,57 @@ fn run_event_loop(
         terminal_modes,
         |timeout| {
             if event_poll(timeout)? {
-                Ok(Some(event_read()?))
+                Ok(safe_event_read()?)
             } else {
                 Ok(None)
             }
         },
     )
+}
+
+/// Read one terminal event, guarding against a panic inside crossterm's input
+/// parser.
+///
+/// A malformed or zero-coordinate SGR mouse sequence can trip an
+/// `attempt to subtract with overflow` inside crossterm's parse path. That
+/// panic would otherwise unwind straight through the event loop and abort the
+/// whole editor over a single bad byte sequence. We catch it and report "no
+/// event" so the loop carries on.
+///
+/// crossterm only clears its internal byte buffer when a parse returns `Err`,
+/// not when it *panics*, so the offending bytes can remain and panic again on
+/// the next read. To avoid spinning forever on a wedged parser we count
+/// consecutive recovered panics and, past a small threshold, surface an error
+/// so the caller shuts the loop down cleanly instead of busy-looping. Any
+/// successful read resets the counter.
+fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const MAX_CONSECUTIVE_PARSE_PANICS: u32 = 8;
+    static CONSECUTIVE_PANICS: AtomicU32 = AtomicU32::new(0);
+
+    match catch_unwind(AssertUnwindSafe(event_read)) {
+        Ok(res) => {
+            CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+            res.map(Some)
+        }
+        Err(_) => {
+            let n = CONSECUTIVE_PANICS.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!(
+                "crossterm event parser panicked on malformed input \
+                 (consecutive: {n}); dropping the event"
+            );
+            if n >= MAX_CONSECUTIVE_PARSE_PANICS {
+                CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
+                Err(std::io::Error::other(
+                    "crossterm input parser repeatedly panicked; aborting read loop",
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 fn run_event_loop_common<F>(
@@ -4024,6 +4240,13 @@ where
     let mut pending_event: Option<CrosstermEvent> = None;
 
     loop {
+        // Apply any nested-forward requests (file/dir opens from a `fresh`
+        // run inside an embedded terminal) before housekeeping, so the
+        // queued opens are drained by `editor_tick` on this same iteration.
+        if fresh::server::local_control::pump(editor) {
+            needs_render = true;
+        }
+
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
         {
             let _span = tracing::info_span!("editor_tick").entered();
@@ -4091,7 +4314,19 @@ where
             needs_render = true;
         }
 
-        if needs_render && last_render.elapsed() >= FRAME_DURATION {
+        // Terminal tabs auto-name from the foreground process (tmux-style);
+        // poll on an interval so a command that starts/exits while the UI is
+        // idle is reflected without waiting for an unrelated event.
+        if editor.terminal_titles_need_poll() {
+            needs_render = true;
+        }
+
+        if needs_render
+            && last_render.elapsed() >= FRAME_DURATION
+            && !editor.should_suppress_render()
+        {
+            let r0 = Instant::now();
+            let was_paste_pending = editor.is_paste_pending();
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
@@ -4099,6 +4334,7 @@ where
                 terminal.draw(|frame| editor.render(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }
+            tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
             needs_render = false;
         }
@@ -4122,7 +4358,6 @@ where
                 let until_deadline = deadline.saturating_duration_since(Instant::now());
                 timeout = timeout.min(until_deadline);
             }
-
             poll_event(timeout)?
         };
 
@@ -4146,37 +4381,24 @@ where
             continue;
         }
 
-        match event {
-            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                let _span = tracing::trace_span!(
+        // All raw-event dispatch now lives on `Editor` so the
+        // paste-pending input queue can intercept keys/mouse/paste
+        // events in exactly one place. The match below only handles
+        // tracing spans + key-translation that depend on
+        // event-loop-local state.
+        let _span = match &event {
+            CrosstermEvent::Key(key_event) if key_event.kind == KeyEventKind::Press => Some(
+                tracing::trace_span!(
                     "handle_key",
                     code = ?key_event.code,
                     modifiers = ?key_event.modifiers,
                 )
-                .entered();
-                // Apply key translation (for input calibration)
-                // Use editor's translator so calibration changes take effect immediately
-                let translated_event = editor.key_translator().translate(key_event);
-                handle_key_event(editor, translated_event)?;
-                needs_render = true;
-            }
-            CrosstermEvent::Mouse(mouse_event) if handle_mouse_event(editor, mouse_event)? => {
-                needs_render = true;
-            }
-            CrosstermEvent::Resize(w, h) => {
-                editor.resize(w, h);
-                needs_render = true;
-            }
-            CrosstermEvent::Paste(text) => {
-                // External paste from terminal (bracketed paste mode)
-                editor.paste_text(text);
-                needs_render = true;
-            }
-            CrosstermEvent::FocusGained => {
-                editor.focus_gained();
-                needs_render = true;
-            }
-            _ => {}
+                .entered(),
+            ),
+            _ => None,
+        };
+        if editor.handle_input_event(event)? {
+            needs_render = true;
         }
     }
 
@@ -4195,7 +4417,7 @@ fn poll_with_gpm(
     // If no GPM client, just use crossterm polling
     let Some(gpm) = gpm_client else {
         return if event_poll(timeout)? {
-            Ok(Some(event_read()?))
+            Ok(safe_event_read()?)
         } else {
             Ok(None)
         };
@@ -4265,52 +4487,13 @@ fn poll_with_gpm(
     if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
         // Use crossterm's read since it handles escape sequence parsing
         if event_poll(Duration::ZERO)? {
-            return Ok(Some(event_read()?));
+            if let Some(ev) = safe_event_read()? {
+                return Ok(Some(ev));
+            }
         }
     }
 
     Ok(None)
-}
-
-/// Handle a keyboard event
-fn handle_key_event(editor: &mut Editor, key_event: KeyEvent) -> AnyhowResult<()> {
-    // Trace the full key event
-    tracing::trace!(
-        "Key event received: code={:?}, modifiers={:?}, kind={:?}, state={:?}",
-        key_event.code,
-        key_event.modifiers,
-        key_event.kind,
-        key_event.state
-    );
-
-    // Log the keystroke
-    let key_code = format!("{:?}", key_event.code);
-    let modifiers = format!("{:?}", key_event.modifiers);
-    editor
-        .active_window_mut()
-        .log_keystroke(&key_code, &modifiers);
-
-    // Delegate to the editor's handle_key method
-    editor.handle_key(key_event.code, key_event.modifiers)?;
-
-    Ok(())
-}
-
-/// Handle a mouse event
-/// Returns true if a re-render is needed
-fn handle_mouse_event(editor: &mut Editor, mouse_event: MouseEvent) -> AnyhowResult<bool> {
-    tracing::trace!(
-        "Mouse event received: kind={:?}, column={}, row={}, modifiers={:?}",
-        mouse_event.kind,
-        mouse_event.column,
-        mouse_event.row,
-        mouse_event.modifiers
-    );
-
-    // Delegate to the editor's handle_mouse method
-    editor
-        .handle_mouse(mouse_event)
-        .context("Failed to handle mouse event")
 }
 
 /// Skip stale mouse move events, return the latest one.
@@ -4327,7 +4510,9 @@ fn coalesce_mouse_moves(
 
     let mut latest = event;
     while event_poll(Duration::ZERO)? {
-        let next = event_read()?;
+        let Some(next) = safe_event_read()? else {
+            continue;
+        };
         if matches!(&next, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
             latest = next; // Newer move, skip the old one
         } else {

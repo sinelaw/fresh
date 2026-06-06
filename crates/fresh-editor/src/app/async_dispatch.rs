@@ -13,6 +13,71 @@ use crate::view::prompt::PromptType;
 use super::Editor;
 
 impl Editor {
+    /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
+    /// session (authority + window) is fully constructed. Resolves with `null`;
+    /// the plugin only needs the success signal to close its dialog. Lives here
+    /// (not in the plugins-gated `plugin_dispatch`) because the non-plugin
+    /// `RemoteAttach*` async handlers call it; the plugin manager is a no-op
+    /// without the `plugins` feature, so this safely does nothing then.
+    pub(crate) fn resolve_remote_attach(&self, request_id: u64) {
+        self.plugin_manager.read().unwrap().resolve_callback(
+            fresh_core::api::JsCallbackId::from(request_id),
+            "null".to_string(),
+        );
+    }
+
+    /// Reject the `attachRemoteAgent` promise behind `request_id` with `error`
+    /// — the connect failed, the spec was bad / the runtime unavailable, or
+    /// window creation failed. The plugin surfaces the reason and creates no
+    /// window.
+    pub(crate) fn reject_remote_attach(&self, request_id: u64, error: String) {
+        tracing::warn!("attachRemoteAgent rejected: {error}");
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .reject_callback(fresh_core::api::JsCallbackId::from(request_id), error);
+    }
+
+    /// Mark every in-flight `attachRemoteAgent` connect as cancelled, signal the
+    /// background connect thread to tear down its in-flight carrier (killing the
+    /// ssh/kubectl child), and reject the awaiting promise now. If a connect
+    /// races past cancellation its eventual `RemoteAttachReady`/`Failed` is
+    /// dropped on arrival (see `remote_attach_was_cancelled`) — so no window is
+    /// ever built. This is the host side of the New-Session dialog's Cancel.
+    pub(crate) fn cancel_remote_attaches(&mut self) {
+        let inflight: Vec<u64> = self.remote_attach_inflight.drain().collect();
+        let any = !inflight.is_empty();
+        for id in inflight {
+            self.remote_attach_cancelled.insert(id);
+            // Signal the background connect thread to abort. Its `select!` drops
+            // the in-flight connect future, which drops the ssh child (spawned
+            // kill-on-drop), so even a host that never completes the handshake
+            // leaves no orphaned process. A connect that already finished (its
+            // result still queued) ignores the signal; the late result is
+            // discarded by `remote_attach_was_cancelled`.
+            if let Some(cancel) = self.remote_attach_cancels.remove(&id) {
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = cancel.send(());
+            }
+            self.reject_remote_attach(id, "cancelled".to_string());
+        }
+        // Clear the lingering "Connecting to …" status the connect set, so the
+        // status line doesn't keep claiming a connection is in progress.
+        if any {
+            self.set_status_message("Connection cancelled".to_string());
+        }
+    }
+
+    /// Consume the in-flight/cancelled tracking for `request_id` as a late
+    /// result arrives. Returns `true` if the connect was cancelled (the result
+    /// should be discarded), `false` for a normal completion (which still
+    /// clears the in-flight entry).
+    pub(crate) fn remote_attach_was_cancelled(&mut self, request_id: u64) -> bool {
+        self.remote_attach_inflight.remove(&request_id);
+        self.remote_attach_cancels.remove(&request_id);
+        self.remote_attach_cancelled.remove(&request_id)
+    }
+
     /// Process pending async messages from the async bridge
     ///
     /// This should be called each frame in the main loop to handle:
@@ -86,11 +151,7 @@ impl Editor {
 
                     // Store capabilities on the specific server handle
                     let __active_id = self.active_window;
-                    if let Some(lsp) = self
-                        .windows
-                        .get_mut(&__active_id)
-                        .and_then(|w| w.lsp.as_mut())
-                    {
+                    if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                         lsp.set_server_capabilities(&language, &server_name, capabilities);
                     }
 
@@ -304,6 +365,25 @@ impl Editor {
                 AsyncMessage::LspDiagnosticRefresh { language } => {
                     self.handle_lsp_diagnostic_refresh(language);
                 }
+                AsyncMessage::LspInlayHintRefresh { language } => {
+                    self.handle_lsp_inlay_hint_refresh(language);
+                }
+                AsyncMessage::LspSemanticTokensRefresh { language } => {
+                    self.handle_lsp_semantic_tokens_refresh(language);
+                }
+                AsyncMessage::LspDynamicCapabilities {
+                    language,
+                    server_name,
+                    register,
+                    registrations,
+                } => {
+                    self.handle_lsp_dynamic_capabilities(
+                        language,
+                        server_name,
+                        register,
+                        registrations,
+                    );
+                }
                 AsyncMessage::FileChanged { path } => {
                     self.handle_async_file_changed(path);
                 }
@@ -311,8 +391,8 @@ impl Editor {
                     tracing::info!("Git status changed: {}", status);
                     // TODO: Handle git status changes
                 }
-                AsyncMessage::FileExplorerInitialized(view) => {
-                    self.handle_file_explorer_initialized(view);
+                AsyncMessage::FileExplorerInitialized { window, view } => {
+                    self.handle_file_explorer_initialized(window, view);
                 }
                 AsyncMessage::FileExplorerToggleNode(node_id) => {
                     self.handle_file_explorer_toggle_node(node_id);
@@ -320,8 +400,8 @@ impl Editor {
                 AsyncMessage::FileExplorerRefreshNode(node_id) => {
                     self.handle_file_explorer_refresh_node(node_id);
                 }
-                AsyncMessage::FileExplorerExpandedToPath(view) => {
-                    self.handle_file_explorer_expanded_to_path(view);
+                AsyncMessage::FileExplorerExpandedToPath { window, view } => {
+                    self.handle_file_explorer_expanded_to_path(window, view);
                 }
                 AsyncMessage::Plugin(plugin_msg) => {
                     use fresh_core::api::{JsCallbackId, PluginAsyncMessage};
@@ -425,9 +505,18 @@ impl Editor {
                 AsyncMessage::FileOpenShortcutsLoaded(shortcuts) => {
                     self.handle_file_open_shortcuts_loaded(shortcuts);
                 }
-                AsyncMessage::TerminalOutput { terminal_id } => {
+                AsyncMessage::ClipboardPasteResult { request_id, text } => {
+                    self.resolve_pending_paste(request_id, text);
+                }
+                AsyncMessage::TerminalOutput { terminal } => {
+                    // The message carries its owning window: terminal ids
+                    // collide across windows, so we trust the tag rather
+                    // than scanning windows for a matching id (which would
+                    // attribute output to the wrong session).
+                    let terminal_id = terminal.terminal;
+                    let owner = terminal.window;
                     // Terminal output received - check if we should auto-jump back to terminal mode
-                    tracing::trace!("Terminal output received for {:?}", terminal_id);
+                    tracing::trace!("Terminal output received for {}", terminal);
 
                     // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
                     // automatically re-enter terminal mode
@@ -456,20 +545,24 @@ impl Editor {
                         }
                     }
 
-                    // Notify plugins. Snapshot the cursor row's text so the
-                    // listener can match prompt patterns without a separate
-                    // readback API. The grid lock is released before
-                    // `run_hook` runs to avoid holding it across plugin code.
+                    // Notify plugins, attributing output to the owning
+                    // *session* even when it's a background one (terminals
+                    // live in their own window's manager, not the active
+                    // window's). Snapshot the cursor row's text from that
+                    // same window so prompt detection works off-focus too.
+                    // The grid lock is released before `run_hook` runs to
+                    // avoid holding it across plugin code.
                     let last_line = self
-                        .active_window()
-                        .terminal_manager
-                        .get(terminal_id)
+                        .windows
+                        .get(&owner)
+                        .and_then(|w| w.terminal_manager.get(terminal_id))
                         .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
                         .unwrap_or_default();
                     self.plugin_manager.read().unwrap().run_hook(
                         "terminal_output",
                         crate::services::plugins::hooks::HookArgs::TerminalOutput {
                             terminal_id: terminal_id.0 as u64,
+                            window_id: owner.0,
                             last_line,
                         },
                     );
@@ -486,10 +579,15 @@ impl Editor {
                     );
                 }
                 AsyncMessage::TerminalExited {
-                    terminal_id,
+                    terminal,
                     exit_code,
                 } => {
-                    tracing::info!("Terminal {:?} exited", terminal_id);
+                    // The message is tagged with its owning window, so the
+                    // plugin hook is attributed correctly even for a
+                    // background session's terminal.
+                    let terminal_id = terminal.terminal;
+                    let exited_window_id = terminal.window;
+                    tracing::info!("Terminal {} exited", terminal);
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
                         .active_window()
@@ -595,6 +693,7 @@ impl Editor {
                         "terminal_exit",
                         crate::services::plugins::hooks::HookArgs::TerminalExited {
                             terminal_id: terminal_id.0 as u64,
+                            window_id: exited_window_id.0,
                             exit_code,
                         },
                     );
@@ -614,6 +713,88 @@ impl Editor {
                     result,
                 } => {
                     self.handle_plugin_lsp_response(request_id, result);
+                }
+                AsyncMessage::RemoteAttachReady(ready) => {
+                    // The background connect succeeded. Install per `mode`:
+                    // Restart rebuilds the whole editor around the backend
+                    // (global), Window spawns a born-attached session beside
+                    // the existing ones.
+                    let crate::services::async_bridge::RemoteAttachReady {
+                        authority,
+                        keepalive,
+                        working_dir,
+                        mode,
+                        request_id,
+                    } = ready;
+                    // If the plugin cancelled this connect while it was
+                    // in flight (the New-Session dialog's Cancel), the result
+                    // arrives too late to matter: drop the authority and its
+                    // keepalive here so the carrier is torn down and no window
+                    // is ever built. The reject was already delivered at cancel
+                    // time, so there's nothing left to resolve.
+                    if self.remote_attach_was_cancelled(request_id) {
+                        tracing::info!(
+                            "Remote attach for request {} arrived after cancellation; discarding",
+                            request_id
+                        );
+                        drop(keepalive);
+                        drop(authority);
+                        continue;
+                    }
+                    // Re-root at the pod's workspace (or its home if the plugin
+                    // didn't supply one) — never the stale local path. The
+                    // filesystem call is safe here: `process_async_messages`
+                    // runs on the main loop, not inside a runtime.
+                    let root = working_dir
+                        .or_else(|| authority.filesystem.home_dir().ok())
+                        .unwrap_or_else(|| std::path::PathBuf::from("/"));
+                    match mode {
+                        crate::services::async_bridge::RemoteAttachMode::Restart => {
+                            tracing::info!(
+                                "Remote attach connected ({}); installing authority (restart), rooting at {}",
+                                authority.display_label,
+                                root.display()
+                            );
+                            // Resolve before the restart tears the plugin
+                            // runtime down, so the awaiting caller observes
+                            // success rather than a vanished promise.
+                            self.resolve_remote_attach(request_id);
+                            self.install_authority_with_keepalive(authority, keepalive, root);
+                        }
+                        crate::services::async_bridge::RemoteAttachMode::Window {
+                            label,
+                            command,
+                        } => {
+                            tracing::info!(
+                                "Remote attach connected ({}); opening born-attached window at {}",
+                                authority.display_label,
+                                root.display()
+                            );
+                            // The session is only "ready" once the window
+                            // exists. Resolve on success; on a window-creation
+                            // failure reject so the plugin keeps its dialog
+                            // open with the reason and no half-built window.
+                            match self.create_remote_session_window(
+                                authority, keepalive, root, label, command,
+                            ) {
+                                Ok(_) => self.resolve_remote_attach(request_id),
+                                Err(e) => self.reject_remote_attach(request_id, e),
+                            }
+                        }
+                    }
+                }
+                AsyncMessage::RemoteAttachFailed { error, request_id } => {
+                    // A cancelled connect was already rejected at cancel time;
+                    // swallow the late failure rather than rejecting twice.
+                    if self.remote_attach_was_cancelled(request_id) {
+                        tracing::info!(
+                            "Remote attach for request {} failed after cancellation; discarding",
+                            request_id
+                        );
+                        continue;
+                    }
+                    tracing::warn!("Remote attach failed: {}", error);
+                    self.reject_remote_attach(request_id, error);
                 }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
@@ -760,6 +941,9 @@ impl Editor {
         }
 
         // Process TypeScript plugin commands
+        #[cfg(not(feature = "plugins"))]
+        let processed_any_commands = false;
+        #[cfg(feature = "plugins")]
         let processed_any_commands = {
             let _s = tracing::info_span!("process_plugin_commands").entered();
             self.process_plugin_commands()

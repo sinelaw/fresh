@@ -4,7 +4,9 @@
 # Usage: ./scripts/build-appimage.sh <binary-dir> <version> [arch]
 #
 # Arguments:
-#   binary-dir  Directory containing 'fresh' binary and 'plugins/' directory
+#   binary-dir  Directory containing the 'fresh' binary. Plugins and themes
+#               are compiled into the binary (embed-plugins feature + build.rs
+#               BUILTIN_THEMES), so no plugins/themes directory is expected.
 #   version     Version string (e.g., "0.1.0")
 #   arch        Target architecture: x86_64 or aarch64 (default: host arch)
 #
@@ -83,31 +85,10 @@ mkdir -p "$APPDIR/usr/bin"
 mkdir -p "$APPDIR/usr/share/applications"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$APPDIR/usr/share/metainfo"
-mkdir -p "$APPDIR/usr/share/fresh-editor/plugins"
-mkdir -p "$APPDIR/usr/share/fresh-editor/themes"
 
-# Copy binary to share directory (next to plugins)
-# This allows fresh to find plugins via current_exe().parent().join("plugins")
-cp "$BINARY_DIR/fresh" "$APPDIR/usr/share/fresh-editor/"
-
-# Create symlink in bin pointing to the actual binary
-ln -s ../share/fresh-editor/fresh "$APPDIR/usr/bin/fresh"
-
-# Copy plugins next to binary
-if [ -d "$BINARY_DIR/plugins" ]; then
-    cp -r "$BINARY_DIR/plugins"/* "$APPDIR/usr/share/fresh-editor/plugins/" 2>/dev/null || true
-    echo "Copied plugins from $BINARY_DIR/plugins"
-else
-    echo "Warning: No plugins directory found at $BINARY_DIR/plugins"
-fi
-
-# Copy themes next to binary
-if [ -d "$BINARY_DIR/themes" ]; then
-    cp -r "$BINARY_DIR/themes"/* "$APPDIR/usr/share/fresh-editor/themes/" 2>/dev/null || true
-    echo "Copied themes from $BINARY_DIR/themes"
-else
-    echo "Warning: No themes directory found at $BINARY_DIR/themes"
-fi
+# Binary goes straight into /usr/bin (plugins/themes are embedded).
+cp "$BINARY_DIR/fresh" "$APPDIR/usr/bin/fresh"
+chmod 755 "$APPDIR/usr/bin/fresh"
 
 # Copy desktop file from source and add AppImage version
 DESKTOP_SRC="$(cd "$REPO_ROOT/../.." && pwd)/crates/fresh-editor/resources/fresh.desktop"
@@ -144,9 +125,6 @@ cat > "$APPDIR/AppRun" << 'EOF'
 #!/bin/bash
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
-
-# Run fresh via the symlink - current_exe() resolves to the real binary
-# in usr/share/fresh-editor/, where plugins/ is located next to it
 exec "${HERE}/usr/bin/fresh" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"

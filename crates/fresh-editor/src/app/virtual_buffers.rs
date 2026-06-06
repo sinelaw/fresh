@@ -145,6 +145,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 wrap_column,
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
         }
 
@@ -397,6 +398,7 @@ impl crate::app::window::Window {
                 cfg.wrap_indent,
                 wrap_column,
                 cfg.rulers.clone(),
+                cfg.scroll_offset,
             );
         } else {
             let mut view_state =
@@ -408,6 +410,7 @@ impl crate::app::window::Window {
                 cfg.wrap_indent,
                 wrap_column,
                 cfg.rulers,
+                cfg.scroll_offset,
             );
             self.split_view_states_mut()
                 .expect("active window must have a populated split layout")

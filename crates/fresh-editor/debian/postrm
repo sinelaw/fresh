@@ -1,9 +1,0 @@
-#!/bin/sh
-set -e
-
-# Remove symlink when package is removed
-if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    rm -f /usr/bin/fresh
-fi
-
-#DEBHELPER#

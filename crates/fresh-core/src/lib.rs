@@ -93,6 +93,35 @@ impl std::fmt::Display for WindowId {
         write!(f, "Window-{}", self.0)
     }
 }
+
+/// A terminal identified across the whole editor.
+///
+/// `TerminalId`s are only unique *within* their owning window's
+/// `TerminalManager` — every window numbers its terminals from 0, so two
+/// windows each have a `Terminal-0`. Any layer that resolves a terminal
+/// without already holding its window — most importantly the async
+/// PTY-output messages routed through the main loop — must carry this
+/// `(window, terminal)` pair. Resolving by bare `TerminalId` across
+/// windows is ambiguous: it silently attributes output to whichever
+/// window happens to hold the same local id first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WindowTerminalId {
+    pub window: WindowId,
+    pub terminal: TerminalId,
+}
+
+impl WindowTerminalId {
+    pub fn new(window: WindowId, terminal: TerminalId) -> Self {
+        Self { window, terminal }
+    }
+}
+
+impl std::fmt::Display for WindowTerminalId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.window, self.terminal)
+    }
+}
+
 pub mod config;
 pub mod file_explorer;
 pub mod file_uri;

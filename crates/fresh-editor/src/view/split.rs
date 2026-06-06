@@ -231,6 +231,7 @@ impl BufferViewState {
         wrap_indent: bool,
         wrap_column: Option<usize>,
         rulers: Vec<usize>,
+        scroll_offset: usize,
     ) {
         self.show_line_numbers = line_numbers;
         self.highlight_current_line = highlight_current_line;
@@ -238,6 +239,7 @@ impl BufferViewState {
         self.viewport.wrap_indent = wrap_indent;
         self.viewport.wrap_column = wrap_column;
         self.rulers = rulers;
+        self.viewport.set_scroll_offset(scroll_offset);
     }
 
     /// Activate page view (compose mode) with an optional page width.
@@ -2172,6 +2174,29 @@ mod tests {
             manager.active_split(),
             first_active,
             "prev_split must actually move to a different split"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_defaults_applies_scroll_offset() {
+        let mut view_state = BufferViewState::new(80, 24);
+        assert_eq!(
+            view_state.viewport.scroll_offset, 3,
+            "default scroll_offset should be 3"
+        );
+
+        view_state.apply_config_defaults(
+            true,   // line_numbers
+            true,   // highlight_current_line
+            false,  // line_wrap
+            false,  // wrap_indent
+            None,   // wrap_column
+            vec![], // rulers
+            7,      // scroll_offset
+        );
+        assert_eq!(
+            view_state.viewport.scroll_offset, 7,
+            "apply_config_defaults should set scroll_offset on the viewport"
         );
     }
 }

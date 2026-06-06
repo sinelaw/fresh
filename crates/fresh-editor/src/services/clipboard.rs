@@ -127,6 +127,20 @@ impl Clipboard {
         self.internal_only = enabled;
     }
 
+    /// True when paste() should bypass the system clipboard entirely
+    /// (test mode). Lets the async paste path short-circuit straight to
+    /// the internal clipboard without spawning a background read.
+    pub fn is_internal_only(&self) -> bool {
+        self.internal_only
+    }
+
+    /// True when the system clipboard is enabled for reads/writes.
+    /// When false, the async paste path skips the background arboard
+    /// thread and uses only the internal clipboard.
+    pub fn uses_system_clipboard(&self) -> bool {
+        self.use_system_clipboard
+    }
+
     /// Enable session mode (server/daemon operation)
     /// When enabled, copy() skips stdout/arboard and queues text for the server
     /// to deliver to clients via control messages

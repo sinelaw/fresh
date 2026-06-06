@@ -49,8 +49,11 @@ mod mouse_input;
 mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;
+mod overlay;
 mod path_utils;
+#[cfg(feature = "plugins")]
 mod plugin_commands;
+#[cfg(feature = "plugins")]
 mod plugin_dispatch;
 mod popup_actions;
 mod popup_dialogs;
@@ -84,6 +87,7 @@ mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
 pub mod warning_domains;
+mod widget_runtime;
 pub mod window;
 mod window_actions;
 pub mod window_resources;
@@ -101,6 +105,14 @@ pub fn editor_tick(
     mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
 ) -> AnyhowResult<bool> {
     let mut needs_render = false;
+
+    // Run the paste-deadline check *before* draining async messages
+    // so a deadline-fired fallback and a real result that came in
+    // the same tick are both handled in a single pass (the first to
+    // touch `paste_pending` wins; the other is silently dropped).
+    if editor.check_paste_deadline() {
+        needs_render = true;
+    }
 
     let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
@@ -184,12 +196,11 @@ use crate::model::event::{Event, EventLog, LeafId, SplitDirection};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::{AsyncBridge, AsyncMessage};
 use crate::services::fs::FsManager;
-use crate::services::lsp::manager::LspManager;
 use crate::services::plugins::PluginManager;
 use crate::services::recovery::{RecoveryConfig, RecoveryService};
 use crate::services::time_source::{RealTimeSource, SharedTimeSource};
 use crate::state::EditorState;
-use crate::types::{LspLanguageConfig, LspServerConfig, ProcessLimits};
+use crate::types::{LspLanguageConfig, LspServerConfig};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
@@ -497,6 +508,16 @@ pub struct Editor {
     terminal_width: u16,
     terminal_height: u16,
 
+    /// Last layout signature the plugin `resize` hook fired for, used
+    /// by `Editor::relayout` to dedupe notifications. The tuple is
+    /// `(terminal_width, terminal_height, dock_cols, file_explorer_cols)`
+    /// — the content geometry plugins observe. Deduping is what keeps
+    /// the orchestrator's resize→`dock_width`→relayout reaction from
+    /// looping: once the dock width settles, the signature stops
+    /// changing and the hook stops re-firing. `None` until the first
+    /// relayout.
+    last_layout_signature: Option<(u16, u16, u16, u16)>,
+
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own
     // LspManager rooted at its project root.
@@ -512,6 +533,36 @@ pub struct Editor {
 
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
+
+    /// In-flight async system-clipboard reads, keyed by `request_id`.
+    /// Each entry owns an anchor (`VirtualText("▍")`) in some buffer
+    /// that floats with edits via the marker tree; when the matching
+    /// `ClipboardPasteResult` arrives, the pasted text is inserted at
+    /// the anchor's *current* position (which may have moved since the
+    /// user pressed Ctrl+V). The editor stays fully interactive while
+    /// pastes are pending — multiple Ctrl+V presses simply add more
+    /// entries, each capturing the OS clipboard contents at the moment
+    /// its own background thread starts.
+    pub(super) paste_pending: std::collections::HashMap<u64, crate::app::clipboard::PendingPaste>,
+
+    /// Set by `paste()` when it took the slow placeholder path. The
+    /// input dispatch reads and clears this to suppress the
+    /// otherwise-automatic render for the Ctrl+V keystroke, and the
+    /// main loop also reads `paste_render_suppress_until` (below)
+    /// to actively veto frame rendering until that deadline.
+    pub(super) paste_slow_path_just_armed: bool,
+
+    /// While `Some` and the instant is in the future, the main loop
+    /// holds off on rendering even when `needs_render` is set. Used
+    /// by the async paste path: when arboard doesn't return inside
+    /// the inline budget we plant a placeholder, but on a slow
+    /// renderer (LSP-active, remote terminal, dense diagnostics)
+    /// each `terminal.draw` is hundreds of ms, so rendering the
+    /// placeholder before the paste itself resolves *doubles* the
+    /// user-visible latency. Setting this suppresses renders until
+    /// the paste deadline; the paste resolve clears it and triggers
+    /// a single render with the final text.
+    pub(super) paste_render_suppress_until: Option<std::time::Instant>,
 
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
@@ -529,9 +580,10 @@ pub struct Editor {
     // Each window has its own preview slot.
 
     // suppress_position_history_once moved onto `Window` (Step 0f).
-    /// Filesystem manager for file explorer
-    fs_manager: Arc<FsManager>,
-
+    // The file explorer and Open File browser ride per-window fs_managers
+    // (`WindowResources::fs_manager`, derived from each window's authority), so
+    // the editor no longer holds a global one that could go stale against the
+    // active authority.
     /// Single backend slot for "where does the editor act?".
     ///
     /// Bundles filesystem, process spawner, terminal wrapper, and
@@ -549,6 +601,14 @@ pub struct Editor {
     /// restart-dir path leave this `None`, and the main loop carries
     /// the authority over through its own channel.
     pending_authority: Option<crate::services::authority::Authority>,
+
+    /// Keepalive bundle queued alongside `pending_authority` for a
+    /// connection-backed authority (remote agent / K8s), parked by the
+    /// restart loop so the live carrier + reconnect/heartbeat tasks
+    /// survive the rebuild. `None` for synchronously-constructible
+    /// authorities (local, docker). See
+    /// [`Editor::install_authority_with_keepalive`].
+    pending_keepalive: Option<Box<dyn std::any::Any + Send>>,
 
     /// Plugin-supplied override for the Remote Indicator. Takes
     /// precedence over the authority-derived state at render time.
@@ -596,6 +656,33 @@ pub struct Editor {
     /// (issue #2056). Holds exactly one session (`WindowId(1)`, the
     /// "base") until the orchestrator adds more.
     pub(crate) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
+
+    /// Connection keepalives for born-attached remote windows, keyed by
+    /// `WindowId`. A remote (Kubernetes / SSH / …) window's carrier process +
+    /// reconnect/heartbeat tasks + dedicated runtime live in this opaque
+    /// bundle; it must outlive the `Editor` rebuilds that *don't* drop the
+    /// window and is torn down when the window is closed (`close_window`).
+    /// Local windows have no entry. This is the per-window analogue of the
+    /// process-level keepalive the restart-based attach parks.
+    pub(crate) session_keepalives: HashMap<fresh_core::WindowId, Box<dyn std::any::Any + Send>>,
+
+    /// Request ids of `attachRemoteAgent` connects currently in flight (added
+    /// when the connect is spawned, removed when it settles). Lets a plugin
+    /// cancel a pending connect (the New-Session dialog's Cancel).
+    pub(crate) remote_attach_inflight: std::collections::HashSet<u64>,
+    /// Request ids of in-flight attaches the plugin asked to cancel. When the
+    /// connect later resolves, the result (authority + carrier keepalive) is
+    /// dropped instead of installed — so no window is created and the carrier
+    /// is torn down — and a failure is ignored.
+    pub(crate) remote_attach_cancelled: std::collections::HashSet<u64>,
+    /// Cancellation senders for the background connect threads, keyed by
+    /// request id. The connect runs on a detached thread (so the carrier's
+    /// runtime outlives it); signalling here makes that thread's `select!` drop
+    /// the in-flight connect future, which drops the ssh child (spawned
+    /// kill-on-drop) — so even a hung handshake leaves no orphaned process. The
+    /// thread then finishes and its result is discarded. Cleared on settle.
+    pub(crate) remote_attach_cancels:
+        std::collections::HashMap<u64, tokio::sync::oneshot::Sender<()>>,
 
     /// Id of the currently active session. Always `WindowId(1)` for
     /// now; multi-session support arrives in a follow-up commit.
@@ -795,6 +882,7 @@ pub struct Editor {
     /// the underlying notify backend spawns a thread, so it's
     /// nicer to defer until the first `watchPath` call). See
     /// `services/file_watcher.rs`.
+    #[cfg(feature = "plugins")]
     file_watcher_manager: crate::services::file_watcher::FileWatcherManager,
 
     /// Test-only sink for `path_changed` plugin events. Captured
@@ -933,7 +1021,26 @@ pub struct Editor {
     /// overlay is modal-ish (input is routed to it) and stacking
     /// floaters would obscure each other without a usable focus
     /// model. Mounting a second one replaces the first.
+    ///
+    /// This is the **centered modal** slot (`PanelSlot::Floating`): the
+    /// orchestrator picker, the new-session form, and other plugin
+    /// modals. The persistent left dock lives in a separate slot
+    /// (`dock`) so the two can coexist (a modal opens *over* the editor
+    /// while the dock stays visible). Routing is by `PanelSlot`.
     pub(crate) floating_widget_panel: Option<FloatingWidgetState>,
+
+    /// The editor-global left **dock** panel (`PanelSlot::Dock`), if
+    /// shown. Independent of `floating_widget_panel` so the dock persists
+    /// while a centered modal is open. Always rendered as a `LeftDock`.
+    pub(crate) dock: Option<FloatingWidgetState>,
+
+    /// Persisted width (columns) of the orchestrator left dock after the
+    /// user drags its right border. `None` until first resized; when set,
+    /// `FloatingPanelControl{op:"dock"}` restores this instead of the
+    /// plugin's default so the width survives toggling the dock off/on.
+    pub(crate) dock_width: Option<u16>,
+    /// True while the user is dragging the dock's right border to resize.
+    pub(crate) dock_resizing: bool,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the
@@ -943,17 +1050,69 @@ pub struct Editor {
 /// rect instead.
 pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 
+/// Sentinel `BufferId` for the editor-global **dock** panel — distinct
+/// from `FLOATING_PANEL_BUFFER_ID` so the dock and a centered modal can
+/// both live in the widget registry (and be hit-tested) at the same
+/// time. See `Editor::dock` and `PanelSlot`.
+pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
+
+/// Selects which of the two coexisting widget-panel slots an operation
+/// targets: the centered modal overlay (`Floating`, the picker /
+/// new-session form / plugin modals) or the persistent editor-global
+/// left `Dock`. They occupy disjoint screen regions and render together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelSlot {
+    Floating,
+    Dock,
+}
+
+impl PanelSlot {
+    pub(crate) fn buffer_id(self) -> BufferId {
+        match self {
+            PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
+            PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+        }
+    }
+}
+
 /// A widget panel rendered as a centered floating overlay rather
 /// than into a virtual buffer. The panel still lives in the shared
 /// `widget_registry` (so the existing reconcile / widget-command /
 /// mutate paths apply), but its rendered entries are painted into
 /// the overlay rect at draw time instead of being written into a
 /// virtual buffer.
+/// Where a floating widget panel is anchored on screen.
+//
+// The variants are only *constructed* by the plugin-gated floating-panel
+// handlers, but they are matched throughout the shared widget runtime and
+// render/input code, so the enum itself stays un-gated. Suppress the
+// "never constructed" lint in plugin-less builds.
+#[cfg_attr(not(any(feature = "plugins", test)), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelPlacement {
+    /// Centered modal overlay sized by `width_pct`/`height_pct`
+    /// (the historical default; dims the background, captures keys).
+    Centered,
+    /// Full-height column pinned to the left of the entire editor
+    /// chrome (left of the menu bar, splits, and status bar). The
+    /// chrome is laid out in the remaining width; no background
+    /// dimming. Non-modal — see `FloatingWidgetState::focused`.
+    LeftDock { width_cols: u16 },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FloatingWidgetState {
     pub panel_id: crate::widgets::PanelId,
     pub width_pct: u8,
     pub height_pct: u8,
+    /// On-screen anchor. Defaults to `Centered` on mount; a plugin
+    /// re-anchors to a dock via `FloatingPanelControl{op:"dock"}`.
+    pub placement: PanelPlacement,
+    /// Whether keys route to this panel. Always true for `Centered`
+    /// (modal). For `LeftDock` a plugin toggles this via
+    /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
+    /// underneath stays keyboard-usable while the dock is visible.
+    pub focused: bool,
     /// Most-recently rendered entries. Refreshed on every spec /
     /// command / mutate; painted into the overlay rect at draw
     /// time.
@@ -990,6 +1149,14 @@ pub(crate) struct FloatingWidgetState {
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
+    /// When true, a `Centered` panel renders over the *entire* frame
+    /// (covering the dimmed left dock) instead of being confined to the
+    /// chrome area beside the dock. Set via `FloatingPanelControl{op:
+    /// "fullscreen"}`. Lets the orchestrator's global modals (the control
+    /// room, the New-Session form) take the full screen over their own
+    /// dock, while other plugins' floating panels keep the default
+    /// coexist-beside-the-dock layout. Ignored for `LeftDock`.
+    pub fullscreen: bool,
 }
 
 /// A list scrollbar's screen rect + scroll state, captured at draw
@@ -1343,6 +1510,7 @@ impl Editor {
 /// - Special keys: "RET", "TAB", "ESC", "SPC", "DEL", "BS"
 /// - Modifiers: "C-" (Control), "M-" (Alt/Meta), "S-" (Shift)
 /// - Combinations: "C-n", "M-x", "C-M-s", etc.
+#[cfg(any(feature = "plugins", test))]
 fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -1471,6 +1639,154 @@ mod tests {
 
         assert_eq!(editor.buffers().len(), 1);
         assert!(!editor.should_quit());
+    }
+
+    fn default_test_editor() -> Editor {
+        let (dir_context, temp) = test_dir_context();
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        Editor::new(
+            Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap()
+    }
+
+    fn test_panel(placement: PanelPlacement, focused: bool) -> FloatingWidgetState {
+        FloatingWidgetState {
+            panel_id: 1,
+            width_pct: 50,
+            height_pct: 50,
+            placement,
+            focused,
+            entries: Vec::new(),
+            focus_cursor: None,
+            embeds: Vec::new(),
+            overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
+            last_inner_rect: None,
+            fullscreen: false,
+        }
+    }
+
+    /// The overlay layer stack always terminates in the editor base layer,
+    /// which owns the keyboard, so a fresh editor resolves to its active
+    /// window's context.
+    #[test]
+    fn overlay_stack_base_layer_owns_keyboard() {
+        use crate::app::overlay::LayerKind;
+        use crate::input::keybindings::KeyContext;
+
+        let editor = default_test_editor();
+        let layers = editor.overlay_layers();
+        let base = layers.last().expect("at least the base layer");
+        assert_eq!(base.kind, LayerKind::Editor);
+        assert!(base.owns_keyboard);
+        assert!(!base.blocks_terminal_input);
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// P1 invariant preserved through the P2 layer walk: a *focused* dock
+    /// owns the keyboard (`KeyContext::Dock`); once blurred it falls
+    /// through to the editor underneath so the buffer stays usable.
+    #[test]
+    fn focused_dock_owns_keyboard_blurred_falls_through() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+
+        editor.dock.as_mut().unwrap().focused = false;
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// A focused centered modal outranks a focused dock — when the
+    /// new-session form opens on top of the dock, the modal owns input.
+    #[test]
+    fn centered_modal_outranks_dock() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
+        // The centered modal resolves as Normal (not Dock).
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// F3: hiding the left dock (Toggle Dock → unmount) must request a
+    /// full clear+redraw so the freed column is repainted unconditionally,
+    /// rather than risking stale glyphs lingering as a left "gutter" until
+    /// an unrelated event. The on-screen reflow is covered by the
+    /// `dock_close_reflows_buffer_to_full_width` e2e test; this asserts the
+    /// redraw *request* the e2e harness can't observe (it drives renders
+    /// unconditionally, so it can't see a missing redraw).
+    ///
+    /// Gated on `plugins`: it drives the unmount through the plugin
+    /// command path (`handle_plugin_command`), which only exists when the
+    /// plugin runtime is compiled in.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn unmounting_left_dock_requests_full_redraw() {
+        use fresh_core::api::PluginCommand;
+
+        let mut editor = default_test_editor();
+        editor.dock = Some(test_panel(
+            PanelPlacement::LeftDock { width_cols: 30 },
+            true,
+        ));
+        // Drop any redraw request left over from construction.
+        let _ = editor.take_full_redraw_request();
+
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget { panel_id: 1 })
+            .unwrap();
+
+        assert!(editor.dock.is_none(), "dock should be unmounted");
+        assert!(
+            editor.take_full_redraw_request(),
+            "hiding the dock must request a full redraw so the freed \
+             column is repainted immediately"
+        );
+    }
+
+    /// The dock-only gate: closing a *centered* modal overlays the
+    /// full-width chrome without carving it, so it must NOT force a
+    /// full-screen clear (that would only flicker).
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn unmounting_centered_modal_does_not_request_full_redraw() {
+        use fresh_core::api::PluginCommand;
+
+        let mut editor = default_test_editor();
+        editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
+        let _ = editor.take_full_redraw_request();
+
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget { panel_id: 1 })
+            .unwrap();
+
+        assert!(
+            editor.floating_widget_panel.is_none(),
+            "centered modal should be unmounted"
+        );
+        assert!(
+            !editor.take_full_redraw_request(),
+            "closing a centered modal must not force a full-screen clear"
+        );
     }
 
     #[test]

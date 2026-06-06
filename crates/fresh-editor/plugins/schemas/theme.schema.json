@@ -419,6 +419,11 @@
           220,
           254
         ],
+        "variable_builtin": [
+          86,
+          156,
+          214
+        ],
         "constant": [
           79,
           193,
@@ -1501,6 +1506,15 @@
             156,
             220,
             254
+          ]
+        },
+        "variable_builtin": {
+          "description": "Built-in language variables (self, this, super, etc.)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            86,
+            156,
+            214
           ]
         },
         "constant": {

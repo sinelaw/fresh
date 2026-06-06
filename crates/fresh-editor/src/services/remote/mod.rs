@@ -8,6 +8,7 @@ mod connection;
 mod filesystem;
 mod protocol;
 mod spawner;
+mod transport;
 
 pub use channel::AgentChannel;
 /// Test-only global: microseconds to sleep per chunk in the consumer loop.
@@ -23,7 +24,10 @@ pub use connection::spawn_local_agent_transport;
 /// Like `spawn_local_agent` but with a custom data channel capacity.
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;
-pub use connection::{spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig};
+pub use connection::{
+    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig,
+    DEFAULT_HEARTBEAT_INTERVAL,
+};
 pub use connection::{ConnectionParams, SshConnection, SshError};
 pub use filesystem::RemoteFileSystem;
 pub use protocol::{
@@ -31,8 +35,16 @@ pub use protocol::{
     write_params, AgentRequest, AgentResponse,
 };
 pub use spawner::{
-    LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner, ProcessSpawner,
-    RemoteLongRunningSpawner, RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
+    build_kube_terminal_args, build_ssh_terminal_args, LocalLongRunningSpawner,
+    LocalProcessSpawner, LongRunningSpawner, ProcessSpawner, RemoteLongRunningSpawner,
+    RemoteProcessSpawner, SpawnError, SpawnResult, StdioChild,
+};
+/// Shared `kubectl exec` argv builder, used by the agent transport, the
+/// terminal wrapper, and the long-running (LSP) spawner. Crate-internal.
+pub(crate) use transport::kubectl_exec_argv;
+pub use transport::{
+    bootstrap_agent, spawn_kube_reconnect_task, KubeConnection, KubeTarget, KubectlExecTransport,
+    RemoteTransport, StderrMode, TransportError,
 };
 
 /// The Python agent source code, embedded at compile time.

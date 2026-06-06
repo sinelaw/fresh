@@ -22,7 +22,64 @@ use crate::services::async_bridge::AsyncMessage;
 use crate::view::split::SplitViewState;
 
 use super::window::Window;
-use super::{Editor, FloatingWidgetState, FLOATING_PANEL_BUFFER_ID};
+use super::{Editor, FloatingWidgetState};
+
+/// Normalize a session path for the plugin API. Sessions reach `WindowInfo`
+/// from two sources — the canonicalized launch session and `create_window_at`'s
+/// raw `PathBuf` — so any byte-level path field (lex sort, equality, …) in a
+/// plugin needs them encoded the same way. On Windows that means resolving
+/// 8.3 short names (`RUNNER~1` → `runneradmin`) and stripping the `\\?\`
+/// verbatim prefix `canonicalize` adds. No-op on non-Windows.
+///
+/// `canonicalize` only works on paths that exist on disk. Worktree session
+/// roots created by the orchestrator often point at directories that haven't
+/// been materialized yet (`<repo>/wt-<name>`), so a naïve canonicalize would
+/// leave them in their original 8.3 short-name form while the launch session
+/// — whose root exists — gets the long-name form, and lex compare inverts
+/// on case (`R` 0x52 < `r` 0x72). Walk up to the deepest existing ancestor,
+/// canonicalize that, then re-attach the missing tail so siblings share the
+/// same prefix encoding regardless of which exist.
+fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let canonical = canonicalize_deepest_existing(&path);
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(stripped);
+        }
+        return canonical;
+    }
+    #[cfg(not(windows))]
+    path
+}
+
+#[cfg(windows)]
+fn canonicalize_deepest_existing(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    // Walk up to the deepest ancestor that does canonicalize, then re-attach
+    // the components we walked past. Falls back to the raw path if no
+    // ancestor canonicalizes (drive root missing, etc).
+    let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
+    let mut ancestor = path;
+    loop {
+        let Some(parent) = ancestor.parent() else {
+            return path.to_path_buf();
+        };
+        if let Some(name) = ancestor.file_name() {
+            tail.push(name);
+        }
+        if let Ok(c) = parent.canonicalize() {
+            let mut out = c;
+            for name in tail.iter().rev() {
+                out.push(name);
+            }
+            return out;
+        }
+        ancestor = parent;
+    }
+}
 
 /// Returns the byte offset of the start (want_end=false) or end (want_end=true)
 /// of `line` (0-indexed) within `content`. Returns `None` when `line` is out of
@@ -54,50 +111,6 @@ fn buffer_line_byte_offset(
     } else {
         None
     }
-}
-
-/// Walk a `Tree`'s flat `nodes` and return the absolute indices of
-/// nodes that are currently visible — i.e. every ancestor is in
-/// `expanded`. Mirrors the renderer's filter so dispatcher and
-/// renderer agree on what's selectable.
-/// First `Tree` or `List` widget key in `spec`, scanning in
-/// declaration order. Used by mouse-wheel routing to pick which
-/// widget inside a panel absorbs the scroll.
-fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
-    use fresh_core::api::WidgetSpec;
-    match spec {
-        WidgetSpec::Tree { key: Some(k), .. } | WidgetSpec::List { key: Some(k), .. }
-            if !k.is_empty() =>
-        {
-            return Some(k.clone());
-        }
-        _ => {}
-    }
-    spec.children().find_map(find_scrollable_widget_key)
-}
-
-fn collect_visible_tree_indices(
-    nodes: &[fresh_core::api::TreeNode],
-    item_keys: &[String],
-    expanded: &std::collections::HashSet<String>,
-) -> Vec<usize> {
-    let mut ancestor_open: Vec<bool> = Vec::new();
-    let mut visible: Vec<usize> = Vec::with_capacity(nodes.len());
-    for (i, node) in nodes.iter().enumerate() {
-        let depth = node.depth as usize;
-        ancestor_open.truncate(depth);
-        if ancestor_open.iter().all(|open| *open) {
-            visible.push(i);
-        }
-        let key = item_keys.get(i).cloned().unwrap_or_default();
-        let is_open = if node.has_children {
-            !key.is_empty() && expanded.contains(&key)
-        } else {
-            true
-        };
-        ancestor_open.push(is_open);
-    }
-    visible
 }
 
 impl Editor {
@@ -156,10 +169,18 @@ impl Editor {
             .values()
             .map(|s| {
                 let slot = s.plugin_state.get("orchestrator");
+                // Normalise project_path at the API boundary: explicit
+                // non-empty value if the orchestrator recorded one,
+                // otherwise the session's root. Filtering empty strings
+                // is the same guard the plugin used to apply via
+                // `?? root` / `|| root` — now centralised so plugins
+                // can treat `project_path` as an always-set `string`.
                 let project_path = slot
                     .and_then(|m| m.get("project_path"))
                     .and_then(|v| v.as_str())
-                    .map(std::path::PathBuf::from);
+                    .filter(|p| !p.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| s.root.clone());
                 let shared_worktree = slot
                     .and_then(|m| m.get("shared_worktree"))
                     .and_then(|v| v.as_bool())
@@ -167,8 +188,8 @@ impl Editor {
                 fresh_core::api::WindowInfo {
                     id: s.id,
                     label: s.label.clone(),
-                    root: s.root.clone(),
-                    project_path,
+                    root: normalize_plugin_path(s.root.clone()),
+                    project_path: normalize_plugin_path(project_path),
                     shared_worktree,
                 }
             })
@@ -466,18 +487,10 @@ impl Editor {
                 self.handle_set_split_ratio(split_id, ratio);
             }
             PluginCommand::SetSplitLabel { split_id, label } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_label(LeafId(split_id), label);
+                self.handle_set_split_label(split_id, label);
             }
             PluginCommand::ClearSplitLabel { split_id } => {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .clear_label(split_id);
+                self.handle_clear_split_label(split_id);
             }
             PluginCommand::GetSplitByLabel { label, request_id } => {
                 self.handle_get_split_by_label(label, request_id);
@@ -624,10 +637,7 @@ impl Editor {
                 self.handle_add_plugin_config_field(plugin_name, field_name, field_schema);
             }
             PluginCommand::ReloadThemes { apply_theme } => {
-                self.reload_themes();
-                if let Some(theme_name) = apply_theme {
-                    self.apply_theme(&theme_name);
-                }
+                self.handle_reload_themes(apply_theme);
             }
             PluginCommand::RegisterGrammar {
                 language,
@@ -679,13 +689,7 @@ impl Editor {
                 self.handle_await_next_key(callback_id);
             }
             PluginCommand::SetKeyCaptureActive { active } => {
-                self.active_window_mut().key_capture_active = active;
-                if !active {
-                    // Capture window closed; any leftover queued keys
-                    // were intended for the plugin and should not now
-                    // leak into the editor's normal dispatch.
-                    self.active_window_mut().pending_key_capture_buffer.clear();
-                }
+                self.handle_set_key_capture_active(active);
             }
             PluginCommand::SetPromptSuggestions {
                 suggestions,
@@ -694,54 +698,31 @@ impl Editor {
                 self.handle_set_prompt_suggestions(suggestions, selected_index);
             }
             PluginCommand::SetPromptInputSync { sync } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.sync_input_on_navigate = sync;
-                }
+                self.handle_set_prompt_input_sync(sync);
             }
             PluginCommand::SetPromptTitle { title } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.title = title;
-                }
+                self.handle_set_prompt_title(title);
             }
             PluginCommand::SetPromptFooter { footer } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.footer = footer;
-                }
+                self.handle_set_prompt_footer(footer);
             }
             PluginCommand::SetPromptToolbar { spec } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.toolbar_widget = spec;
-                }
+                self.handle_set_prompt_toolbar(spec);
             }
             PluginCommand::ToggleOverlayToolbarWidget { key } => {
                 self.toggle_overlay_toolbar_widget(&key);
             }
             PluginCommand::SetPromptStatus { status } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    prompt.status = status;
-                }
+                self.handle_set_prompt_status(status);
             }
             PluginCommand::SetPromptSelectedIndex { index } => {
-                if let Some(prompt) = &mut self.active_window_mut().prompt {
-                    let len = prompt.suggestions.len();
-                    if len > 0 {
-                        let clamped = (index as usize).min(len - 1);
-                        prompt.selected_suggestion = Some(clamped);
-                    }
-                }
+                self.handle_set_prompt_selected_index(index);
             }
 
             // ==================== Session lifecycle ====================
             // See docs/internal/orchestrator-sessions-design.md.
             PluginCommand::CreateWindow { root, label } => {
-                if !root.is_absolute() {
-                    tracing::warn!(
-                        "CreateWindow rejected: root must be absolute, got {:?}",
-                        root
-                    );
-                } else {
-                    let _ = self.create_window_at(root, label);
-                }
+                self.handle_create_window(root, label);
             }
             PluginCommand::CreateWindowWithTerminal {
                 root,
@@ -758,6 +739,9 @@ impl Editor {
             PluginCommand::SetActiveWindow { id } => {
                 self.set_active_window(id);
             }
+            PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
+                self.set_active_window_animated(id, &from_edge);
+            }
             PluginCommand::CloseWindow { id } => {
                 let _ = self.close_window(id);
             }
@@ -771,34 +755,14 @@ impl Editor {
                 recursive,
                 request_id,
             } => {
-                let result = if let Some(ref bridge) = self.async_bridge {
-                    self.file_watcher_manager.watch(bridge, &path, recursive)
-                } else {
-                    Err(
-                        "watchPath: no async bridge — file watching is unavailable in this build"
-                            .to_string(),
-                    )
-                };
-                self.last_watch_response_for_test = Some((request_id, result.clone()));
-                self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
-                    request_id,
-                    result,
-                });
+                self.handle_watch_path(path, recursive, request_id);
             }
             PluginCommand::UnwatchPath { handle } => {
                 self.file_watcher_manager.unwatch(handle);
             }
 
             PluginCommand::PreviewWindowInRect { id } => {
-                // Validate: only honour if the session exists and
-                // is not the active one (no point previewing the
-                // session whose UI is already on screen).
-                self.preview_window_id = match id {
-                    Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => {
-                        Some(sid)
-                    }
-                    _ => None,
-                };
+                self.handle_preview_window_in_rect(id);
             }
 
             // ==================== Command/Mode Registration ====================
@@ -810,26 +774,14 @@ impl Editor {
                 token_name,
                 title,
             } => {
-                if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title)
-                {
-                    tracing::warn!("Failed to register statusbar element: {}", e);
-                }
+                self.handle_register_status_bar_element(plugin_name, token_name, title);
             }
             PluginCommand::SetStatusBarValue {
                 buffer_id,
                 key,
                 value,
             } => {
-                if let Err(e) =
-                    self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
-                {
-                    // Plugins compute the value asynchronously off a lagging
-                    // state snapshot, then publish to the buffer that was
-                    // active when they started. If that buffer closed in the
-                    // meantime the value is simply discarded — an expected,
-                    // benign race, not a misuse worth warning about.
-                    tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
-                }
+                self.handle_set_status_bar_value(buffer_id, key, value);
             }
             PluginCommand::UnregisterCommand { name } => {
                 self.handle_unregister_command(name);
@@ -854,17 +806,7 @@ impl Editor {
 
             // ==================== File/Navigation Commands ====================
             PluginCommand::OpenFileInBackground { path, window_id } => {
-                let route_to_inactive = match window_id {
-                    Some(id) if id != self.active_window && self.windows.contains_key(&id) => {
-                        Some(id)
-                    }
-                    _ => None,
-                };
-                if let Some(target) = route_to_inactive {
-                    self.handle_open_file_in_inactive_session(target, path);
-                } else {
-                    self.handle_open_file_in_background(path);
-                }
+                self.handle_open_file_in_background_routed(path, window_id);
             }
             PluginCommand::OpenFileAtLocation { path, line, column } => {
                 return self.handle_open_file_at_location(path, line, column);
@@ -924,9 +866,7 @@ impl Editor {
                 self.handle_start_animation_virtual_buffer(id, buffer_id, kind);
             }
             PluginCommand::CancelAnimation { id } => {
-                self.active_window_mut()
-                    .animations
-                    .cancel(crate::view::animation::AnimationId::from_raw(id));
+                self.handle_cancel_animation(id);
             }
 
             // ==================== LSP Commands ====================
@@ -972,34 +912,27 @@ impl Editor {
                 self.handle_set_authority(payload);
             }
 
+            PluginCommand::AttachRemoteAgent {
+                payload,
+                request_id,
+            } => {
+                self.handle_attach_remote_agent(payload, request_id);
+            }
+
+            PluginCommand::CancelRemoteAttach => {
+                self.cancel_remote_attaches();
+            }
+
             PluginCommand::ClearAuthority => {
-                tracing::info!("Plugin cleared authority; restoring local");
-                self.clear_authority();
+                self.handle_clear_authority();
             }
 
             PluginCommand::SetEnv { snippet, dir } => {
-                // Activation runs repo-controlled code, so it's only honored in
-                // a Trusted workspace — defense in depth even though the plugin
-                // already gates on `workspaceTrustLevel()`.
-                use crate::services::workspace_trust::TrustLevel;
-                if self.authority.workspace_trust.level() == TrustLevel::Trusted {
-                    self.authority
-                        .env_provider
-                        .set(snippet, dir.map(std::path::PathBuf::from));
-                    // Re-evaluate already-running tooling under the new env.
-                    self.request_restart(self.working_dir().to_path_buf());
-                } else {
-                    self.active_window_mut().status_message =
-                        Some("Workspace not trusted — cannot activate environment".to_string());
-                }
+                self.handle_set_env(snippet, dir);
             }
 
             PluginCommand::ClearEnv => {
-                let was_active = self.authority.env_provider.is_active();
-                self.authority.env_provider.clear();
-                if was_active {
-                    self.request_restart(self.working_dir().to_path_buf());
-                }
+                self.handle_clear_env();
             }
 
             PluginCommand::SetRemoteIndicatorState { state } => {
@@ -1149,11 +1082,7 @@ impl Editor {
 
             // ==================== Review Diff Commands ====================
             PluginCommand::SetReviewDiffHunks { hunks } => {
-                self.active_window_mut().review_hunks = hunks;
-                tracing::debug!(
-                    "Set {} review hunks",
-                    self.active_window_mut().review_hunks.len()
-                );
+                self.handle_set_review_diff_hunks(hunks);
             }
 
             // ==================== Vi Mode Commands ====================
@@ -1190,6 +1119,9 @@ impl Editor {
                 request_id,
             } => {
                 self.handle_get_buffer_line_count(buffer_id, request_id);
+            }
+            PluginCommand::GetCompositeCursorInfo { request_id } => {
+                self.handle_get_composite_cursor_info(request_id);
             }
             PluginCommand::OpenFileStreaming { path, request_id } => {
                 self.handle_open_file_streaming(path, request_id);
@@ -1299,26 +1231,10 @@ impl Editor {
                 self.flush_layout();
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                self.active_window_mut()
-                    .composite_next_hunk(split_id, buffer_id);
+                self.handle_composite_next_hunk(buffer_id);
             }
             PluginCommand::CompositePrevHunk { buffer_id } => {
-                let split_id = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                self.active_window_mut()
-                    .composite_prev_hunk(split_id, buffer_id);
+                self.handle_composite_prev_hunk(buffer_id);
             }
 
             // ==================== Buffer Groups ====================
@@ -1490,8 +1406,9 @@ impl Editor {
                 spec,
                 width_pct,
                 height_pct,
+                as_dock,
             } => {
-                self.handle_mount_floating_widget(panel_id, spec, width_pct, height_pct);
+                self.handle_mount_floating_widget(panel_id, spec, width_pct, height_pct, as_dock);
             }
 
             PluginCommand::UpdateFloatingWidget { panel_id, spec } => {
@@ -1501,8 +1418,366 @@ impl Editor {
             PluginCommand::UnmountFloatingWidget { panel_id } => {
                 self.handle_unmount_floating_widget(panel_id);
             }
+
+            PluginCommand::FloatingPanelControl { panel_id, op, arg } => {
+                self.handle_floating_panel_control(panel_id, &op, arg);
+            }
         }
         Ok(())
+    }
+
+    // ── Delegated handlers extracted from the dispatch match ─────────────
+
+    fn handle_watch_path(&mut self, path: std::path::PathBuf, recursive: bool, request_id: u64) {
+        let result = if let Some(ref bridge) = self.async_bridge {
+            self.file_watcher_manager.watch(bridge, &path, recursive)
+        } else {
+            Err(
+                "watchPath: no async bridge — file watching is unavailable in this build"
+                    .to_string(),
+            )
+        };
+        self.last_watch_response_for_test = Some((request_id, result.clone()));
+        self.send_plugin_response(fresh_core::api::PluginResponse::WatchPathRegistered {
+            request_id,
+            result,
+        });
+    }
+
+    fn handle_set_env(&mut self, snippet: String, dir: Option<String>) {
+        // Activation runs repo-controlled code, so it's only honored in
+        // a Trusted workspace — defense in depth even though the plugin
+        // already gates on `workspaceTrustLevel()`.
+        use crate::services::workspace_trust::TrustLevel;
+        if self.authority.workspace_trust.level() == TrustLevel::Trusted {
+            self.authority
+                .env_provider
+                .set(snippet, dir.map(std::path::PathBuf::from));
+            // Re-evaluate already-running tooling under the new env.
+            self.request_restart(self.working_dir().to_path_buf());
+        } else {
+            self.active_window_mut().status_message =
+                Some("Workspace not trusted — cannot activate environment".to_string());
+        }
+    }
+
+    fn handle_clear_env(&mut self) {
+        let was_active = self.authority.env_provider.is_active();
+        self.authority.env_provider.clear();
+        if was_active {
+            self.request_restart(self.working_dir().to_path_buf());
+        }
+    }
+
+    fn handle_open_file_in_background_routed(
+        &mut self,
+        path: std::path::PathBuf,
+        window_id: Option<fresh_core::WindowId>,
+    ) {
+        let route_to_inactive =
+            window_id.filter(|&id| id != self.active_window && self.windows.contains_key(&id));
+        if let Some(target) = route_to_inactive {
+            self.handle_open_file_in_inactive_session(target, path);
+        } else {
+            self.handle_open_file_in_background(path);
+        }
+    }
+
+    // ── Handlers extracted from the dispatch match ───────────────────────
+
+    fn handle_set_split_label(&mut self, split_id: SplitId, label: String) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_label(LeafId(split_id), label);
+    }
+
+    fn handle_clear_split_label(&mut self, split_id: SplitId) {
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .clear_label(split_id);
+    }
+
+    fn handle_reload_themes(&mut self, apply_theme: Option<String>) {
+        self.reload_themes();
+        if let Some(theme_name) = apply_theme {
+            self.apply_theme(&theme_name);
+        }
+    }
+
+    fn handle_set_key_capture_active(&mut self, active: bool) {
+        self.active_window_mut().key_capture_active = active;
+        if !active {
+            // Capture window closed; any leftover queued keys were intended
+            // for the plugin and should not leak into normal dispatch.
+            self.active_window_mut().pending_key_capture_buffer.clear();
+        }
+    }
+
+    fn handle_set_prompt_input_sync(&mut self, sync: bool) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.sync_input_on_navigate = sync;
+        }
+    }
+
+    fn handle_set_prompt_title(&mut self, title: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.title = title;
+        }
+    }
+
+    fn handle_set_prompt_footer(&mut self, footer: Vec<fresh_core::api::StyledText>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.footer = footer;
+        }
+    }
+
+    fn handle_set_prompt_toolbar(&mut self, spec: Option<fresh_core::api::WidgetSpec>) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.toolbar_widget = spec;
+        }
+    }
+
+    fn handle_set_prompt_status(&mut self, status: String) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            prompt.status = status;
+        }
+    }
+
+    fn handle_set_prompt_selected_index(&mut self, index: u32) {
+        if let Some(prompt) = &mut self.active_window_mut().prompt {
+            let len = prompt.suggestions.len();
+            if len > 0 {
+                prompt.selected_suggestion = Some((index as usize).min(len - 1));
+            }
+        }
+    }
+
+    fn handle_create_window(&mut self, root: std::path::PathBuf, label: String) {
+        if !root.is_absolute() {
+            tracing::warn!(
+                "CreateWindow rejected: root must be absolute, got {:?}",
+                root
+            );
+        } else {
+            let _ = self.create_window_at(root, label);
+        }
+    }
+
+    fn handle_preview_window_in_rect(&mut self, id: Option<fresh_core::WindowId>) {
+        // Only honour if the session exists and is not the active one
+        // (no point previewing the session whose UI is already on screen).
+        self.preview_window_id = match id {
+            Some(sid) if sid != self.active_window && self.windows.contains_key(&sid) => Some(sid),
+            _ => None,
+        };
+    }
+
+    fn handle_register_status_bar_element(
+        &mut self,
+        plugin_name: String,
+        token_name: String,
+        title: String,
+    ) {
+        if let Err(e) = self.register_status_bar_element(&plugin_name, &token_name, &title) {
+            tracing::warn!("Failed to register statusbar element: {}", e);
+        }
+    }
+
+    fn handle_set_status_bar_value(&mut self, buffer_id: u64, key: String, value: String) {
+        if let Err(e) =
+            self.set_status_bar_value(fresh_core::BufferId(buffer_id as usize), &key, value)
+        {
+            // Plugins compute asynchronously off a lagging state snapshot, so
+            // the target buffer may have closed — an expected, benign race.
+            tracing::debug!("Skipped statusbar value for stale buffer: {}", e);
+        }
+    }
+
+    fn handle_cancel_animation(&mut self, id: u64) {
+        self.active_window_mut()
+            .animations
+            .cancel(crate::view::animation::AnimationId::from_raw(id));
+    }
+
+    fn handle_clear_authority(&mut self) {
+        tracing::info!("Plugin cleared authority; restoring local");
+        self.clear_authority();
+    }
+
+    fn handle_set_review_diff_hunks(&mut self, hunks: Vec<fresh_core::api::ReviewHunk>) {
+        self.active_window_mut().review_hunks = hunks;
+        tracing::debug!(
+            "Set {} review hunks",
+            self.active_window_mut().review_hunks.len()
+        );
+    }
+
+    fn handle_composite_next_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_next_hunk(split_id, buffer_id);
+    }
+
+    fn handle_composite_prev_hunk(&mut self, buffer_id: fresh_core::BufferId) {
+        let split_id = self.split_manager().active_split();
+        self.active_window_mut()
+            .composite_prev_hunk(split_id, buffer_id);
+    }
+
+    // ── Virtual-buffer display configuration ────────────────────────────
+
+    /// Apply the three display flags (line numbers, cursor visibility,
+    /// editing lock) that every `create_virtual_buffer_*` command sets
+    /// on the newly-created buffer's state.
+    fn configure_vbuf_display(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.margins.configure_for_line_numbers(show_line_numbers);
+            state.show_cursors = show_cursors;
+            state.editing_disabled = editing_disabled;
+        }
+    }
+
+    // ── Virtual-buffer-in-split sub-paths ───────────────────────────────
+
+    /// Utility-dock fast path: a leaf with `dock_leaf`'s role already exists,
+    /// so attach the new virtual buffer there instead of spawning a new split.
+    #[allow(clippy::too_many_arguments)]
+    fn route_vbuf_to_existing_dock(
+        &mut self,
+        dock_leaf: crate::model::event::LeafId,
+        name: String,
+        mode: String,
+        read_only: bool,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        panel_id: Option<&str>,
+        show_line_numbers: bool,
+        show_cursors: bool,
+        editing_disabled: bool,
+        request_id: Option<u64>,
+    ) {
+        // Capture the source split *before* create_virtual_buffer tabs the
+        // new buffer into it; we drop that phantom tab after the dock attach.
+        let source_split_before_create = self.split_manager().active_split();
+        let buffer_id =
+            self.active_window_mut()
+                .create_virtual_buffer(name.clone(), mode, read_only);
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        if let Some(pid) = panel_id {
+            self.panel_ids_mut().insert(pid.to_string(), buffer_id);
+        }
+        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
+            tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
+            return;
+        }
+        // Swap the dock leaf's active buffer to the new one and add it as a tab.
+        self.split_manager_mut().set_active_split(dock_leaf);
+        self.active_window_mut()
+            .set_pane_buffer(dock_leaf, buffer_id);
+        // Drop the phantom tab from the source split.
+        if dock_leaf != source_split_before_create {
+            if let Some(source_view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&source_split_before_create)
+            {
+                source_view_state.remove_buffer(buffer_id);
+            }
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: buffer_id.0 as u64,
+                split_id: Some(dock_leaf.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+        tracing::info!(
+            "Routed virtual buffer '{}' into existing utility dock {:?}",
+            name,
+            dock_leaf
+        );
+    }
+
+    /// Idempotent panel update: `panel_name` already maps to a live buffer,
+    /// so just refresh its content and focus the split it lives in.
+    fn update_existing_vbuf_panel(
+        &mut self,
+        existing_buffer_id: crate::model::event::BufferId,
+        entries: Vec<fresh_core::text_property::TextPropertyEntry>,
+        request_id: Option<u64>,
+        panel_name: &str,
+    ) {
+        match self.set_virtual_buffer_content(existing_buffer_id, entries) {
+            Ok(()) => tracing::info!("Updated existing panel '{}' content", panel_name),
+            Err(e) => tracing::error!("Failed to update panel content: {}", e),
+        }
+        let splits = self.split_manager().splits_for_buffer(existing_buffer_id);
+        if let Some(&split_id) = splits.first() {
+            self.split_manager_mut().set_active_split(split_id);
+            // Route through set_pane_buffer so tree + SVS stay consistent.
+            self.active_window_mut()
+                .set_pane_buffer(split_id, existing_buffer_id);
+            tracing::debug!("Focused split {:?} containing panel buffer", split_id);
+        }
+        if let Some(req_id) = request_id {
+            let result = fresh_core::api::VirtualBufferResult {
+                buffer_id: existing_buffer_id.0 as u64,
+                split_id: splits.first().map(|s| s.0 .0 as u64),
+            };
+            self.plugin_manager.read().unwrap().resolve_callback(
+                fresh_core::api::JsCallbackId::from(req_id),
+                serde_json::to_string(&result).unwrap_or_default(),
+            );
+        }
+    }
+
+    // ── Line-position shared implementation ─────────────────────────────
+
+    /// Shared implementation for `handle_get_line_start_position` and
+    /// `handle_get_line_end_position`. When `want_end` is false the byte
+    /// offset of the line's first character is returned; when true, the
+    /// byte offset of its terminating newline (or `buffer_len` for the
+    /// last line without a trailing newline).
+    fn handle_get_line_position(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        line: u32,
+        request_id: u64,
+        want_end: bool,
+    ) {
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let len = state.buffer.len();
+                let content = state.get_text_range(0, len);
+                buffer_line_byte_offset(&content, len, line as usize, want_end)
+            });
+        self.resolve_json_callback(request_id, result);
     }
 
     /// Save a buffer to a specific file path (for :w filename)
@@ -1761,39 +2036,15 @@ impl Editor {
             .resolve_callback(callback_id, json);
     }
 
-    /// Get the byte offset of the start of a line in the active buffer
+    /// Get the byte offset of the start of a line in the active buffer.
     fn handle_get_line_start_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, false)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, false);
     }
 
     /// Get the byte offset of the end of a line (position of its terminating newline,
     /// or `buffer_len` for the last line without a trailing newline).
     fn handle_get_line_end_position(&mut self, buffer_id: BufferId, line: u32, request_id: u64) {
-        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
-        let result = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&actual_buffer_id)
-            .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, true)
-            });
-        self.resolve_json_callback(request_id, result);
+        self.handle_get_line_position(buffer_id, line, request_id, true);
     }
 
     /// Get the total number of lines in a buffer
@@ -1809,25 +2060,34 @@ impl Editor {
         {
             let buffer_len = state.buffer.len();
             let content = state.get_text_range(0, buffer_len);
-
-            // Count lines (number of newlines + 1, unless empty)
-            if content.is_empty() {
-                Some(1) // Empty buffer has 1 line
+            let newlines = content.bytes().filter(|&b| b == b'\n').count();
+            Some(if content.is_empty() {
+                1
             } else {
-                let newline_count = content.chars().filter(|&c| c == '\n').count();
-                // If file ends with newline, don't count extra line
-                let ends_with_newline = content.ends_with('\n');
-                if ends_with_newline {
-                    Some(newline_count)
-                } else {
-                    Some(newline_count + 1)
-                }
-            }
+                newlines + usize::from(!content.ends_with('\n'))
+            })
         } else {
             None
         };
 
         self.resolve_json_callback(request_id, result);
+    }
+
+    /// Resolve cursor info for the active composite (side-by-side diff)
+    /// buffer. Returns `null` to the plugin when the active buffer isn't a
+    /// composite buffer; otherwise an object with the focused pane index,
+    /// pane count, and the 0-indexed source line shown in each pane on the
+    /// cursor's aligned row (`null` per-pane where that side is blank).
+    fn handle_get_composite_cursor_info(&mut self, request_id: u64) {
+        let info = self.active_window().active_composite_cursor_info();
+        let value = info.map(|(focused_pane, pane_count, lines)| {
+            serde_json::json!({
+                "focusedPane": focused_pane,
+                "paneCount": pane_count,
+                "lines": lines,
+            })
+        });
+        self.resolve_json_callback(request_id, value);
     }
 
     /// Open `path` as a regular buffer for plugin-driven streaming
@@ -2369,6 +2629,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_with_content(
         &mut self,
         name: String,
@@ -2391,37 +2652,13 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
         // TODO: show_line_numbers is duplicated between EditorState.margins and
         // BufferViewState. The renderer reads BufferViewState and overwrites
         // margins each frame via configure_for_line_numbers(), making the margin
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        let active_split = self.split_manager().active_split();
         if let Some(view_state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2475,6 +2712,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_split(
         &mut self,
         name: String,
@@ -2499,178 +2737,58 @@ impl Editor {
             _ => None,
         };
 
-        // Utility-dock fast path (issue #1796 / Section 2 of the design):
-        // if a leaf with this role already exists, swap its active
-        // buffer instead of spawning a fresh split. The buffer is
-        // created normally, registered in `panel_ids`, and added as a
-        // tab in the dock leaf.
-        if let Some(target_role) = split_role {
-            if let Some(dock_leaf) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .find_leaf_by_role(target_role)
-            {
-                // Capture the source split *before* create_virtual_buffer
-                // tabs the new buffer into it; we drop that phantom tab
-                // after the dock attach so the buffer only shows in the
-                // dock.
-                let source_split_before_create = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                let buffer_id = self.active_window_mut().create_virtual_buffer(
-                    name.clone(),
-                    mode.clone(),
-                    read_only,
-                );
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
-                    .expect("active window present")
-                    .get_mut(&buffer_id)
-                {
-                    state.margins.configure_for_line_numbers(show_line_numbers);
-                    state.show_cursors = show_cursors;
-                    state.editing_disabled = editing_disabled;
-                }
-                if let Some(pid) = &panel_id {
-                    self.panel_ids_mut().insert(pid.clone(), buffer_id);
-                }
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
-                    tracing::error!("Failed to set virtual buffer content (dock route): {}", e);
-                    return;
-                }
-
-                // Swap the dock leaf's active buffer to the new one and
-                // add it as a tab so the user can flip between
-                // dock-resident utilities (Diagnostics ↔ Quickfix etc.).
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_active_split(dock_leaf);
-                self.active_window_mut()
-                    .set_pane_buffer(dock_leaf, buffer_id);
-
-                // Drop the phantom tab from the source split.
-                if dock_leaf != source_split_before_create {
-                    if let Some(source_view_state) = self
-                        .windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_view_states_mut())
-                        .expect("active window must have a populated split layout")
-                        .get_mut(&source_split_before_create)
-                    {
-                        source_view_state.remove_buffer(buffer_id);
-                    }
-                }
-
-                if let Some(req_id) = request_id {
-                    let result = fresh_core::api::VirtualBufferResult {
-                        buffer_id: buffer_id.0 as u64,
-                        split_id: Some(dock_leaf.0 .0 as u64),
-                    };
-                    self.plugin_manager.read().unwrap().resolve_callback(
-                        fresh_core::api::JsCallbackId::from(req_id),
-                        serde_json::to_string(&result).unwrap_or_default(),
-                    );
-                }
-                tracing::info!(
-                    "Routed virtual buffer '{}' into existing utility dock {:?}",
-                    name,
-                    dock_leaf
-                );
-                return;
-            }
+        // Path 1 — Utility-dock fast path (issue #1796 / Section 2 of the design):
+        // if a leaf with this role already exists, attach the new buffer there
+        // instead of spawning a fresh split.
+        if let Some(dock_leaf) = split_role.and_then(|r| self.split_manager().find_leaf_by_role(r))
+        {
+            return self.route_vbuf_to_existing_dock(
+                dock_leaf,
+                name,
+                mode,
+                read_only,
+                entries,
+                panel_id.as_deref(),
+                show_line_numbers,
+                show_cursors,
+                editing_disabled,
+                request_id,
+            );
             // No dock yet — fall through to normal split creation,
             // then tag the new leaf with the requested role at the end.
         }
 
-        // Check if this panel already exists (for idempotent operations)
-        if let Some(pid) = &panel_id {
-            if let Some(&existing_buffer_id) = self.panel_ids().get(pid) {
-                // Verify the buffer actually exists (defensive check for stale entries)
-                if self
+        // Path 2 — Idempotent panel update: if this panel_id already maps to a
+        // live buffer, refresh its content and re-focus it.
+        if let Some(pid) = panel_id.as_deref() {
+            let maybe_existing = self.panel_ids().get(pid).copied();
+            if let Some(existing_id) = maybe_existing {
+                let buffer_alive = self
                     .windows
                     .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .contains_key(&existing_buffer_id)
-                {
-                    // Panel exists, just update its content
-                    if let Err(e) = self.set_virtual_buffer_content(existing_buffer_id, entries) {
-                        tracing::error!("Failed to update panel content: {}", e);
-                    } else {
-                        tracing::info!("Updated existing panel '{}' content", pid);
-                    }
-
-                    // Find and focus the split that contains this buffer
-                    let splits = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(mgr, _)| mgr)
-                        .expect("active window must have a populated split layout")
-                        .splits_for_buffer(existing_buffer_id);
-                    if let Some(&split_id) = splits.first() {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_active_split(split_id);
-                        // Route through set_pane_buffer so tree + SVS
-                        // stay consistent (issue #1620 invariant).
-                        self.active_window_mut()
-                            .set_pane_buffer(split_id, existing_buffer_id);
-                        tracing::debug!("Focused split {:?} containing panel buffer", split_id);
-                    }
-
-                    // Send response with existing buffer ID and split ID via callback resolution
-                    if let Some(req_id) = request_id {
-                        let result = fresh_core::api::VirtualBufferResult {
-                            buffer_id: existing_buffer_id.0 as u64,
-                            split_id: splits.first().map(|s| s.0 .0 as u64),
-                        };
-                        self.plugin_manager.read().unwrap().resolve_callback(
-                            fresh_core::api::JsCallbackId::from(req_id),
-                            serde_json::to_string(&result).unwrap_or_default(),
-                        );
-                    }
-                    return;
-                } else {
-                    // Buffer no longer exists, remove stale panel_id entry
-                    tracing::warn!(
-                        "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
-                        pid,
-                        existing_buffer_id
-                    );
-                    self.panel_ids_mut().remove(pid);
-                    // Fall through to create a new buffer
+                    .map(|w| w.buffers.contains_key(&existing_id))
+                    .unwrap_or(false);
+                if buffer_alive {
+                    return self.update_existing_vbuf_panel(existing_id, entries, request_id, pid);
                 }
+                // Buffer no longer exists — remove the stale entry and fall through.
+                tracing::warn!(
+                    "Removing stale panel_id '{}' pointing to non-existent buffer {:?}",
+                    pid,
+                    existing_id
+                );
+                self.panel_ids_mut().remove(pid);
             }
         }
 
+        // Path 3 — Fresh split creation.
+        //
         // Capture the source split before creating the buffer —
-        // `create_virtual_buffer` unconditionally adds the new buffer
-        // as a tab to the currently active split, which is the wrong
-        // thing for a panel that lives in its own dedicated split
-        // (it would show up as a tab in BOTH splits — see bug #3).
-        let source_split_before_create = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        // `create_virtual_buffer` unconditionally adds the new buffer as a tab
+        // to the currently active split, which is wrong for a panel that lives
+        // in its own dedicated split (it would appear in BOTH splits — bug #3).
+        let source_split_before_create = self.split_manager().active_split();
 
-        // Create the virtual buffer first
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode.clone(), read_only);
@@ -2681,154 +2799,113 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-            tracing::debug!(
-                        "Set buffer {:?} view options: show_line_numbers={}, show_cursors={}, editing_disabled={}",
-                        buffer_id,
-                        show_line_numbers,
-                        show_cursors,
-                        editing_disabled
-                    );
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Store the panel ID mapping if provided
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid, buffer_id);
         }
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
         }
 
-        // Determine split direction
         let split_dir = match direction.as_deref() {
             Some("vertical") => crate::model::event::SplitDirection::Vertical,
             _ => crate::model::event::SplitDirection::Horizontal,
         };
 
-        // Create a split with the new buffer. When the caller asked
-        // for `role = "utility_dock"` and no dock leaf exists yet,
-        // split at the *root* so the dock spans the full width below
-        // any pre-existing side-by-side panes — splitting the active
-        // leaf would nest the dock under whichever pane was focused.
-        let created_split_id =
-            match if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_root_positioned(split_dir, buffer_id, ratio, before)
-            } else {
-                self.windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .split_active_positioned(split_dir, buffer_id, ratio, before)
-            } {
-                Ok(new_split_id) => {
-                    // The buffer now lives in its own split, so drop its
-                    // tab from the source split (see bug #3).  Only do
-                    // this when the new split actually differs from the
-                    // source split — otherwise we'd leave no split
-                    // displaying the buffer.
-                    if new_split_id != source_split_before_create {
-                        if let Some(source_view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&source_split_before_create)
-                        {
-                            source_view_state.remove_buffer(buffer_id);
-                        }
-                    }
-                    // Create independent view state for the new split with the buffer in tabs
-                    let mut view_state = SplitViewState::with_buffer(
-                        self.terminal_width,
-                        self.terminal_height,
-                        buffer_id,
-                    );
-                    view_state.apply_config_defaults(
-                        self.config.editor.line_numbers,
-                        self.config.editor.highlight_current_line,
-                        line_wrap.unwrap_or_else(|| {
-                            self.active_window().resolve_line_wrap_for_buffer(buffer_id)
-                        }),
-                        self.config.editor.wrap_indent,
-                        self.active_window()
-                            .resolve_wrap_column_for_buffer(buffer_id),
-                        self.config.editor.rulers.clone(),
-                    );
-                    // Override with plugin-requested show_line_numbers
-                    view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-                    self.windows
+        // When the caller requested `role = "utility_dock"` but no dock leaf
+        // existed yet (we fell through the fast path above), split at the
+        // *root* so the dock spans the full width — splitting the active leaf
+        // would nest it under whichever pane was focused.
+        let split_result = if split_role == Some(crate::view::split::SplitRole::UtilityDock) {
+            self.split_manager_mut()
+                .split_root_positioned(split_dir, buffer_id, ratio, before)
+        } else {
+            self.split_manager_mut()
+                .split_active_positioned(split_dir, buffer_id, ratio, before)
+        };
+
+        let created_split_id = match split_result {
+            Ok(new_split_id) => {
+                // The buffer now lives in its own split — drop its phantom tab
+                // from the source split (bug #3). Only when the splits differ;
+                // otherwise we'd leave the buffer with no display.
+                if new_split_id != source_split_before_create {
+                    if let Some(src_vs) = self
+                        .windows
                         .get_mut(&self.active_window)
                         .and_then(|w| w.split_view_states_mut())
                         .expect("active window must have a populated split layout")
-                        .insert(new_split_id, view_state);
-
-                    // Focus the new split (the diagnostics panel)
-                    self.windows
-                        .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
-                        .expect("active window must have a populated split layout")
-                        .set_active_split(new_split_id);
-                    // NOTE: split tree was updated by split_active, active_buffer derives from it
-
-                    // If a role was requested but no dock existed (we fell
-                    // through the fast-path above), tag the freshly created
-                    // leaf so the next utility lands here. Clear any stale
-                    // role from elsewhere first to preserve the
-                    // one-leaf-per-role invariant.
-                    if let Some(target_role) = split_role {
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .clear_role(target_role);
-                        self.windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_manager_mut())
-                            .expect("active window must have a populated split layout")
-                            .set_leaf_role(new_split_id, Some(target_role));
-                        tracing::info!(
-                            "Tagged new dock leaf {:?} with role {:?}",
-                            new_split_id,
-                            target_role
-                        );
+                        .get_mut(&source_split_before_create)
+                    {
+                        src_vs.remove_buffer(buffer_id);
                     }
+                }
 
+                let mut view_state = SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_state.apply_config_defaults(
+                    self.config.editor.line_numbers,
+                    self.config.editor.highlight_current_line,
+                    line_wrap.unwrap_or_else(|| {
+                        self.active_window().resolve_line_wrap_for_buffer(buffer_id)
+                    }),
+                    self.config.editor.wrap_indent,
+                    self.active_window()
+                        .resolve_wrap_column_for_buffer(buffer_id),
+                    self.config.editor.rulers.clone(),
+                    self.config.editor.scroll_offset,
+                );
+                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+                self.windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .insert(new_split_id, view_state);
+
+                self.split_manager_mut().set_active_split(new_split_id);
+
+                // Tag the new leaf with the requested role so the next
+                // utility-dock open lands here. Clear any stale role first
+                // to maintain the one-leaf-per-role invariant.
+                if let Some(target_role) = split_role {
+                    self.split_manager_mut().clear_role(target_role);
+                    self.split_manager_mut()
+                        .set_leaf_role(new_split_id, Some(target_role));
                     tracing::info!(
-                        "Created {:?} split with virtual buffer {:?}",
-                        split_dir,
-                        buffer_id
+                        "Tagged new dock leaf {:?} with role {:?}",
+                        new_split_id,
+                        target_role
                     );
-                    Some(new_split_id)
                 }
-                Err(e) => {
-                    tracing::error!("Failed to create split: {}", e);
-                    // Fall back to just switching to the buffer
-                    self.set_active_buffer(buffer_id);
-                    None
-                }
-            };
 
-        // Send response with buffer ID and split ID via callback resolution
-        // NOTE: Using VirtualBufferResult type for type-safe JSON serialization
+                tracing::info!(
+                    "Created {:?} split with virtual buffer {:?}",
+                    split_dir,
+                    buffer_id
+                );
+                Some(new_split_id)
+            }
+            Err(e) => {
+                tracing::error!("Failed to create split: {}", e);
+                self.set_active_buffer(buffer_id);
+                None
+            }
+        };
+
         if let Some(req_id) = request_id {
-            tracing::trace!("CreateVirtualBufferInSplit: resolving callback for request_id={}, buffer_id={:?}, split_id={:?}", req_id, buffer_id, created_split_id);
+            tracing::trace!(
+                "CreateVirtualBufferInSplit: resolving callback for request_id={}, \
+                 buffer_id={:?}, split_id={:?}",
+                req_id,
+                buffer_id,
+                created_split_id
+            );
             let result = fresh_core::api::VirtualBufferResult {
                 buffer_id: buffer_id.0 as u64,
                 split_id: created_split_id.map(|s| s.0 .0 as u64),
@@ -2840,6 +2917,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_virtual_buffer_in_existing_split(
         &mut self,
         name: String,
@@ -2865,20 +2943,8 @@ impl Editor {
             buffer_id
         );
 
-        // Apply view options to the buffer
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.margins.configure_for_line_numbers(show_line_numbers);
-            state.show_cursors = show_cursors;
-            state.editing_disabled = editing_disabled;
-        }
+        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
 
-        // Set the content
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);
             return;
@@ -3126,6 +3192,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_terminal(
         &mut self,
         cwd: Option<String>,
@@ -3400,6 +3467,156 @@ impl Editor {
         }
     }
 
+    fn handle_attach_remote_agent(&mut self, payload: serde_json::Value, request_id: u64) {
+        // Opaque at the fresh-core boundary; the concrete schema lives in
+        // services::authority so core stays backend-agnostic.
+        let spec =
+            match serde_json::from_value::<crate::services::authority::RemoteAgentSpec>(payload) {
+                Ok(spec) => spec,
+                Err(e) => {
+                    tracing::warn!("attachRemoteAgent: invalid payload: {}", e);
+                    self.reject_remote_attach(request_id, format!("invalid attach spec: {e}"));
+                    return;
+                }
+            };
+
+        // Take owned handles up front so the immutable borrows of `self`
+        // end before the mutable `set_status_message` / spawn below.
+        let runtime = self.tokio_runtime.clone();
+        let sender = self.async_bridge.as_ref().map(|b| b.sender());
+        let (Some(runtime), Some(sender)) = (runtime, sender) else {
+            self.reject_remote_attach(request_id, "async runtime not available".to_string());
+            return;
+        };
+
+        // Track this connect as in-flight so a plugin can cancel it (the
+        // New-Session dialog's Cancel) before it resolves. The cancel sender is
+        // handed to the connect via its `select!`; signalling it tears down the
+        // in-flight carrier child.
+        self.remote_attach_inflight.insert(request_id);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        self.remote_attach_cancels.insert(request_id, cancel_tx);
+
+        // Window-mode opts captured before `spec` is consumed — when `window`
+        // is set the main loop spawns a born-attached new window instead of
+        // restarting the whole editor.
+        let window_mode = spec.window;
+        let window_label = spec.label.clone();
+        let window_command = spec.command.clone();
+        let trust = std::sync::Arc::clone(&self.authority.workspace_trust);
+        let env = std::sync::Arc::clone(&self.authority.env_provider);
+
+        // The connect (spawn the carrier, bootstrap the agent, await `ready`)
+        // is async and can take seconds, so run it on the runtime and report
+        // back via the bridge instead of blocking the event loop. On success
+        // the main loop installs the authority + keepalive (restart or new
+        // window); on failure it surfaces the error. Both transports converge
+        // on the same `RemoteAttachReady`; only the connect future differs.
+        use crate::services::authority::RemoteTransportSpec;
+        let base_env = spec.base_env.clone();
+        let mode_for = |label: &str| {
+            if window_mode {
+                crate::services::async_bridge::RemoteAttachMode::Window {
+                    label: window_label.clone().unwrap_or_else(|| label.to_string()),
+                    command: window_command.clone(),
+                }
+            } else {
+                crate::services::async_bridge::RemoteAttachMode::Restart
+            }
+        };
+
+        match spec.transport {
+            RemoteTransportSpec::KubectlExec { .. } => {
+                let (target, base_env) = spec.into_kube_target();
+                let label = target.display();
+                // Pod-side workspace to re-root at (e.g. `/workspace`).
+                let workspace = target.workspace.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_kube_authority(
+                        target,
+                        base_env,
+                        trust,
+                        env,
+                        Some(cancel_rx),
+                    )
+                    .await;
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                                request_id,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                            request_id,
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
+            }
+            RemoteTransportSpec::Ssh {
+                user,
+                host,
+                port,
+                identity_file,
+                remote_path,
+                extra_args,
+            } => {
+                let _ = base_env; // SSH probes its own env on the remote host.
+                let params = crate::services::remote::ConnectionParams {
+                    user: user.clone().filter(|u| !u.is_empty()),
+                    host: host.clone(),
+                    port,
+                    identity_file: identity_file.map(std::path::PathBuf::from),
+                    extra_args,
+                };
+                // Label: `user@host` when a user was given, else bare `host`.
+                let target = params.ssh_target();
+                let label = match port {
+                    Some(p) => format!("ssh:{target}:{p}"),
+                    None => format!("ssh:{target}"),
+                };
+                let workspace = remote_path.clone().map(std::path::PathBuf::from);
+                let mode = mode_for(&label);
+                self.set_status_message(format!("Connecting to {label}…"));
+                runtime.spawn(async move {
+                    let outcome = crate::services::authority::connect_ssh_authority(
+                        params,
+                        remote_path,
+                        trust,
+                        env,
+                        Some(cancel_rx),
+                    )
+                    .await;
+                    let msg = match outcome {
+                        Ok((authority, keepalive)) => AsyncMessage::RemoteAttachReady(
+                            crate::services::async_bridge::RemoteAttachReady {
+                                authority,
+                                keepalive: Box::new(keepalive),
+                                working_dir: workspace,
+                                mode,
+                                request_id,
+                            },
+                        ),
+                        Err(e) => AsyncMessage::RemoteAttachFailed {
+                            error: e.to_string(),
+                            request_id,
+                        },
+                    };
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(msg);
+                });
+            }
+        }
+    }
+
     fn handle_set_remote_indicator_state(&mut self, state: serde_json::Value) {
         // Opaque JSON at the fresh-core boundary; the concrete schema
         // (RemoteIndicatorOverride) lives in the view crate.
@@ -3466,9 +3683,10 @@ impl Editor {
             let process_id = callback_id.as_u64();
 
             runtime.spawn(async move {
-                let fetch =
-                    tokio::task::spawn_blocking(move || fetch_url_to_file(&url, &target_path))
-                        .await;
+                let fetch = tokio::task::spawn_blocking(move || {
+                    crate::services::http::download_to_file(&url, &target_path)
+                })
+                .await;
 
                 let (stdout, stderr, exit_code) = match fetch {
                     Ok(Ok(status)) => {
@@ -3623,169 +3841,6 @@ impl Editor {
         }
     }
 
-    /// Apply a `RenderOutput`'s focus-cursor position to the panel
-    /// buffer + every split rendering it. When a `TextInput` is
-    /// focused, the dispatcher flips `show_cursors=true` and moves
-    /// the primary cursor to the right byte. When no TextInput is
-    /// focused, the cursor is hidden (`show_cursors=false`) — the
-    /// focused widget's own bg overlay shows where focus is.
-    ///
-    /// Must be called *after* `set_virtual_buffer_content` so the
-    /// buffer's text matches the row/byte coordinates the renderer
-    /// produced.
-    fn apply_widget_focus_cursor(
-        &mut self,
-        buffer_id: BufferId,
-        entries: &[fresh_core::text_property::TextPropertyEntry],
-        focus_cursor: Option<crate::widgets::FocusCursor>,
-    ) {
-        // If the plugin has taken explicit control of this buffer's cursor
-        // (via `setBufferShowCursors`), the widget runtime must not touch
-        // its visibility or position — the plugin owns it. This lets a
-        // widget-panel pane be cursor-driven (e.g. git log's commit list)
-        // without each repaint clearing the cursor.
-        let locked = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.get(&buffer_id))
-            .map(|s| s.cursor_visibility_locked)
-            .unwrap_or(false);
-        if locked {
-            return;
-        }
-
-        let absolute_byte = focus_cursor.map(|fc| {
-            let row = fc.buffer_row as usize;
-            let prefix: usize = entries.iter().take(row).map(|e| e.text.len()).sum();
-            prefix + fc.byte_in_row as usize
-        });
-
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.show_cursors = absolute_byte.is_some();
-        }
-
-        if let Some(byte) = absolute_byte {
-            for vs in self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .values_mut()
-            {
-                if vs.buffer_state(buffer_id).is_some() {
-                    let cursor = vs.cursors.primary_mut();
-                    cursor.position = byte;
-                }
-            }
-        }
-    }
-
-    /// Best-effort width for a buffer's containing split. Returns
-    /// the most recent `SplitViewState::viewport.width` for any
-    /// split rendering this buffer; falls back to terminal width
-    /// when the buffer hasn't been rendered yet (e.g. mid-mount).
-    /// Subtracts 2 columns to account for gutter/scrollbar/border
-    /// padding the renderer adds — leaving the right edge clear
-    /// instead of pushing content into the chrome. This is what
-    /// flex `Spacer`s inside `Row` use to size their fill.
-    fn widget_panel_width(&self, buffer_id: BufferId) -> u32 {
-        let raw = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .values()
-            .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
-            .map(|vs| vs.viewport.width as u32)
-            .unwrap_or_else(|| self.terminal_width.max(1) as u32);
-        // Reserve 2 cols for gutter/scrollbar/border. Saturate to
-        // avoid 0 width on tiny panels.
-        raw.saturating_sub(2).max(10)
-    }
-
-    /// Re-render an existing widget panel after an in-host state
-    /// change (focus advance, scroll move, etc.) without the plugin
-    /// re-emitting the spec. Reads the panel's current spec from
-    /// the registry, runs `render_spec` against the (possibly
-    /// updated) prev state / focus key, writes the result back.
-    pub(super) fn rerender_widget_panel(&mut self, panel_id: u64) {
-        // The spec already lives in the registry — mutations (e.g.
-        // `append_tree_nodes_in_spec`) edit it in place. Borrow it for
-        // render, then write back only the side-effects (hits, instance
-        // states, focus key, tabbable). The previous shape cloned the
-        // whole spec out, rendered, then moved it back — for a Tree
-        // with 5 000 nodes that's a multi-MB deep clone per IPC, which
-        // dominates the host's per-mutation cost during a streaming
-        // search.
-        let (buffer_id, is_floating, panel_width, out_pieces) = {
-            let (buffer_id, spec) = match self.widget_registry.buffer_and_spec_ref(panel_id) {
-                Some(s) => s,
-                None => return,
-            };
-            let prev = self
-                .widget_registry
-                .instance_states(panel_id)
-                .cloned()
-                .unwrap_or_default();
-            let prev_focus = self
-                .widget_registry
-                .focus_key(panel_id)
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            let is_floating = buffer_id == FLOATING_PANEL_BUFFER_ID;
-            let panel_width = if is_floating {
-                self.floating_panel_inner_width()
-            } else {
-                self.widget_panel_width(buffer_id)
-            };
-            let out = crate::widgets::render_spec(spec, &prev, &prev_focus, panel_width);
-            (buffer_id, is_floating, panel_width, out)
-        };
-        let _ = panel_width;
-        let focus_cursor = out_pieces.focus_cursor;
-        let entries = out_pieces.entries;
-        let embeds = out_pieces.embeds;
-        let overlays = out_pieces.overlays;
-        let scroll_regions = out_pieces.scroll_regions;
-        if self
-            .widget_registry
-            .update_side_effects(
-                panel_id,
-                out_pieces.hits,
-                out_pieces.instance_states,
-                out_pieces.focus_key,
-                out_pieces.tabbable,
-            )
-            .is_err()
-        {
-            tracing::warn!("rerender_widget_panel({}) lost panel mid-call", panel_id);
-            return;
-        }
-        if is_floating {
-            if let Some(fwp) = self.floating_widget_panel.as_mut() {
-                if fwp.panel_id == panel_id {
-                    fwp.entries = entries;
-                    fwp.focus_cursor = focus_cursor;
-                    fwp.embeds = embeds;
-                    fwp.overlays = overlays;
-                    fwp.scroll_regions = scroll_regions;
-                }
-            }
-            return;
-        }
-        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-            tracing::error!("rerender_widget_panel({}) failed: {}", panel_id, e);
-        }
-        self.apply_widget_focus_cursor(buffer_id, &entries, focus_cursor);
-    }
-
     /// Apply a `WidgetMutation` in place, then re-render the panel.
     /// This is the IPC fast path: the plugin doesn't re-transmit
     /// the full spec; it sends one targeted change. The host
@@ -3880,17 +3935,34 @@ impl Editor {
             WidgetMutation::SetSelectedIndex { widget_key, index } => {
                 // List selected_index lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-                    let prev_scroll = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::List {
-                            scroll_offset, ..
-                        }) => *scroll_offset,
-                        _ => 0,
-                    };
+                    let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::List {
+                                scroll_offset,
+                                selected_index,
+                                item_height,
+                                user_scrolled,
+                            }) => (
+                                *scroll_offset,
+                                *selected_index,
+                                *item_height,
+                                *user_scrolled,
+                            ),
+                            _ => (0, -1, 1, false),
+                        };
+                    // Re-pinning the *same* index (which `refreshOpenDialog`
+                    // does on every repaint) must preserve a user scroll —
+                    // otherwise a probe-poll refresh would snap the view back
+                    // to the selection a beat after a mouse scroll. Only an
+                    // actual selection change re-arms scroll-follows-selection.
+                    let user_scrolled = prev_user_scrolled && index == prev_index;
                     panel.instance_states.insert(
                         widget_key,
                         crate::widgets::WidgetInstanceState::List {
                             scroll_offset: prev_scroll,
                             selected_index: index,
+                            item_height: prev_item_height,
+                            user_scrolled,
                         },
                     );
                 }
@@ -4013,1600 +4085,6 @@ impl Editor {
         self.rerender_widget_panel(panel_id);
     }
 
-    pub(super) fn handle_widget_command(
-        &mut self,
-        panel_id: u64,
-        action: fresh_core::api::WidgetAction,
-    ) {
-        use fresh_core::api::WidgetAction;
-        match action {
-            WidgetAction::FocusAdvance { delta } => {
-                self.handle_widget_focus_advance(panel_id, delta);
-            }
-            WidgetAction::Activate => {
-                self.handle_widget_activate(panel_id);
-            }
-            WidgetAction::SelectMove { delta } => {
-                self.handle_widget_select_move(panel_id, delta);
-            }
-            WidgetAction::TextInputKey { key } => {
-                self.handle_widget_text_key(panel_id, &key);
-            }
-            WidgetAction::TextInputChar { text } => {
-                self.handle_widget_text_char(panel_id, &text);
-            }
-            WidgetAction::Key { key } => {
-                self.handle_widget_key(panel_id, &key);
-            }
-        }
-    }
-
-    fn handle_widget_key(&mut self, panel_id: u64, key: &str) {
-        // Smart key dispatch — route to the right specialized
-        // handler based on focused widget kind. See WidgetAction::Key
-        // doc for the dispatch table.
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        let widget = if focus_key.is_empty() {
-            None
-        } else {
-            crate::widgets::find_widget_by_key(&panel.spec, &focus_key)
-        };
-        // Completion-popup short-circuit: when the focused Text
-        // widget has an open completion popup, intercept Tab /
-        // Up / Down / Enter / Esc so they drive the popup instead
-        // of falling through to the widget's default key
-        // behaviour. Tab fires `completion_accept`, Enter/Esc
-        // dismiss, Up/Down move the host-managed selection. Any
-        // other key (printable, Backspace, etc.) still goes to
-        // the text editor, which lets the user keep typing to
-        // refine the candidate list.
-        let completions_open = matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
-            && self.focused_text_completions_open(panel_id);
-        if completions_open {
-            match key {
-                "Tab" => {
-                    self.fire_completion_accept(panel_id);
-                    // The plugin's accept handler typically calls
-                    // setValue + (maybe) setCompletions — those
-                    // mutations re-render on their own, so we
-                    // don't force a render here.
-                    return;
-                }
-                "Up" => {
-                    self.move_focused_text_completion_index(panel_id, -1);
-                    // Selection moved host-side; force a repaint
-                    // so the highlight + scroll-into-view shift
-                    // is visible without waiting for the next
-                    // unrelated mutation.
-                    self.rerender_widget_panel(panel_id);
-                    return;
-                }
-                "Down" => {
-                    self.move_focused_text_completion_index(panel_id, 1);
-                    self.rerender_widget_panel(panel_id);
-                    return;
-                }
-                "Enter" | "Escape" => {
-                    self.dismiss_focused_text_completions(panel_id);
-                    self.rerender_widget_panel(panel_id);
-                    return;
-                }
-                _ => {}
-            }
-        }
-        match key {
-            "Tab" => self.handle_widget_focus_advance(panel_id, 1),
-            "Shift+Tab" => self.handle_widget_focus_advance(panel_id, -1),
-            "Up" | "Down" => {
-                let delta = if key == "Up" { -1 } else { 1 };
-                match widget {
-                    Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                        self.handle_widget_select_move(panel_id, delta);
-                    }
-                    Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                        self.handle_widget_tree_select_move(panel_id, delta);
-                    }
-                    Some(fresh_core::api::WidgetSpec::Text { rows, .. }) if *rows > 1 => {
-                        // Multi-line Text: line nav. Single-line
-                        // is filtered out — TextEdit::move_up /
-                        // move_down would no-op on the single
-                        // line, but skipping the dispatch keeps
-                        // the change-event quiet.
-                        self.handle_widget_text_key(panel_id, key);
-                    }
-                    _ => {
-                        // Picker-style nav: when the focused widget
-                        // doesn't have a meaningful Up/Down (single-
-                        // line Text, Button, Toggle, or no focus),
-                        // route the arrow to the first scrollable
-                        // widget in the panel. Lets a filter input
-                        // stay focused for typing while arrows
-                        // navigate the adjacent list.
-                        let scrollable = self
-                            .widget_registry
-                            .get(panel_id)
-                            .and_then(|p| find_scrollable_widget_key(&p.spec));
-                        if let Some(target_key) = scrollable {
-                            let target_kind = self.widget_registry.get(panel_id).and_then(|p| {
-                                crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
-                            });
-                            match target_kind {
-                                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                                    self.handle_widget_select_move_for_key(
-                                        panel_id,
-                                        &target_key,
-                                        delta,
-                                    );
-                                }
-                                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                                    self.handle_widget_tree_select_move_for_key(
-                                        panel_id,
-                                        &target_key,
-                                        delta,
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-            "PageUp" | "PageDown" => {
-                // Page step = visible_rows - 1 (one row of overlap so
-                // the user keeps a visual anchor across pages). Ignored
-                // for non-scrollable widgets.
-                let page = match widget {
-                    Some(fresh_core::api::WidgetSpec::List { visible_rows, .. })
-                    | Some(fresh_core::api::WidgetSpec::Tree { visible_rows, .. }) => {
-                        visible_rows.saturating_sub(1).max(1) as i32
-                    }
-                    _ => 0,
-                };
-                if page == 0 {
-                    return;
-                }
-                let delta = if key == "PageUp" { -page } else { page };
-                match widget {
-                    Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                        self.handle_widget_select_move(panel_id, delta);
-                    }
-                    Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                        self.handle_widget_tree_select_move(panel_id, delta);
-                    }
-                    _ => {}
-                }
-            }
-            "Left" | "Right" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
-                    self.handle_widget_text_key(panel_id, key);
-                }
-                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    self.handle_widget_tree_lateral(panel_id, key == "Right");
-                }
-                _ => {}
-            },
-            "Backspace" | "Delete" | "Home" | "End" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
-                    self.handle_widget_text_key(panel_id, key);
-                }
-                _ => {}
-            },
-            "Enter" => match widget {
-                Some(fresh_core::api::WidgetSpec::Button { .. })
-                | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
-                    self.handle_widget_activate(panel_id);
-                }
-                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                    self.fire_list_activate(panel_id, &focus_key);
-                }
-                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    self.fire_tree_activate(panel_id, &focus_key);
-                }
-                Some(fresh_core::api::WidgetSpec::Text { rows, .. }) => {
-                    if *rows > 1 {
-                        // Multi-line: Enter inserts a newline at the
-                        // cursor. Plugins that want Enter to submit
-                        // can intercept it in their mode binding
-                        // before dispatching through the smart-key
-                        // router.
-                        self.handle_widget_text_key(panel_id, "Enter");
-                    } else if let Some(target_key) = self
-                        .widget_registry
-                        .get(panel_id)
-                        .and_then(|p| find_scrollable_widget_key(&p.spec))
-                    {
-                        // Picker-style activate: a single-line filter
-                        // input paired with a List/Tree fires that
-                        // scrollable's activate event on Enter, so the
-                        // user can type-then-Enter without tabbing
-                        // focus to the list.
-                        let kind = self.widget_registry.get(panel_id).and_then(|p| {
-                            crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
-                        });
-                        match kind {
-                            Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                                self.fire_list_activate(panel_id, &target_key);
-                            }
-                            Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                                self.fire_tree_activate(panel_id, &target_key);
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        // Form-like UX: Enter commits the field and
-                        // moves to the next tabbable widget.
-                        self.handle_widget_focus_advance(panel_id, 1);
-                    }
-                }
-                _ => {}
-            },
-            "Space" => match widget {
-                Some(fresh_core::api::WidgetSpec::Button { .. })
-                | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
-                    self.handle_widget_activate(panel_id);
-                }
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
-                    self.handle_widget_text_char(panel_id, " ");
-                }
-                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                    self.fire_list_activate(panel_id, &focus_key);
-                }
-                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    // On a checkable Tree, Space is the conventional
-                    // checkbox key — fire `toggle` for the focused row
-                    // (matching what a click on its `[v]`/`[ ]` glyph
-                    // would do). Falls back to `activate` for trees
-                    // that aren't checkable, or rows that don't have
-                    // a checkbox glyph (`checked: None`).
-                    if !self.fire_tree_toggle_if_checkable(panel_id, &focus_key) {
-                        self.fire_tree_activate(panel_id, &focus_key);
-                    }
-                }
-                _ => {}
-            },
-            _ => {} // unrecognised key — quietly ignore
-        }
-    }
-
-    fn handle_widget_focus_advance(&mut self, panel_id: u64, delta: i32) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        if panel.tabbable.is_empty() {
-            return;
-        }
-        let cur_idx = panel
-            .tabbable
-            .iter()
-            .position(|k| k == &panel.focus_key)
-            .unwrap_or(0) as i32;
-        let n = panel.tabbable.len() as i32;
-        let new_idx = ((cur_idx + delta) % n + n) % n;
-        let new_key = panel.tabbable[new_idx as usize].clone();
-        self.set_panel_focus_and_notify(panel_id, new_key);
-        self.rerender_widget_panel(panel_id);
-    }
-
-    /// Update the panel's focused widget AND fire a
-    /// `widget_event { event_type: "focus" }` so plugins can
-    /// react. Used by every host-driven focus move — key-driven
-    /// Tab / Shift-Tab / Enter focus-advance, click-driven
-    /// focus moves, etc. — so plugins never have to predict the
-    /// host's focus rules to keep a local mirror in sync.
-    ///
-    /// No-op when the key isn't actually changing (avoids
-    /// spurious events on every render that touches focus).
-    pub(crate) fn set_panel_focus_and_notify(&mut self, panel_id: u64, new_key: String) {
-        let old_key = self
-            .widget_registry
-            .focus_key(panel_id)
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        if old_key == new_key {
-            return;
-        }
-        self.widget_registry
-            .set_focus_key(panel_id, new_key.clone());
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: new_key,
-                    event_type: "focus".to_string(),
-                    payload: serde_json::json!({ "previous": old_key }),
-                },
-            );
-        }
-    }
-
-    fn handle_widget_activate(&mut self, panel_id: u64) {
-        // Fire `widget_event` based on the focused widget's kind.
-        // Button → "activate"; Toggle → "toggle" (with the
-        // computed-new payload); other kinds: no-op.
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key);
-        let (event_type, payload) = match widget {
-            // Disabled buttons don't fire activate. The renderer
-            // already excludes them from the tab cycle and skips
-            // their hit area, so the only way `focus_key` could
-            // still point at a disabled button is a stale focus
-            // from before the disable transition — drop the event
-            // in that race.
-            Some(fresh_core::api::WidgetSpec::Button { disabled: true, .. }) => return,
-            Some(fresh_core::api::WidgetSpec::Button { .. }) => ("activate", serde_json::json!({})),
-            Some(fresh_core::api::WidgetSpec::Toggle { checked, .. }) => {
-                ("toggle", serde_json::json!({ "checked": !checked }))
-            }
-            _ => return,
-        };
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key,
-                    event_type: event_type.to_string(),
-                    payload,
-                },
-            );
-        }
-    }
-
-    /// Fire a `widget_event { event_type: "activate", payload: {
-    /// index, key } }` for the focused List, using its instance-state
-    /// selection (or spec selection on first render). The plugin's
-    /// activate handler does the actual user-visible thing — open
-    /// the matched file, expand/collapse a tree node, etc.
-    /// True when the focused widget on `panel_id` is a Text input
-    /// whose host-managed completion popup is currently open
-    /// (instance state has at least one candidate). Lets the
-    /// smart-key dispatcher route Tab/Enter/Up/Down/Esc to the
-    /// popup-specific paths before falling through to the
-    /// widget's default key behaviour.
-    fn focused_text_completions_open(&self, panel_id: u64) -> bool {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return false,
-        };
-        if panel.focus_key.is_empty() {
-            return false;
-        }
-        matches!(
-            panel.instance_states.get(&panel.focus_key),
-            Some(crate::widgets::WidgetInstanceState::Text { completions, .. })
-                if !completions.is_empty()
-        )
-    }
-
-    /// Move the selected-index cursor of the focused Text widget's
-    /// completion popup by `delta` (Up = -1, Down = +1). Clamps
-    /// at the ends rather than wrapping — Down past the last
-    /// candidate stays on the last candidate, Up past the first
-    /// stays on the first. Wraparound on a popup-style picker
-    /// reads as "I scrolled past the bottom and now I'm at the
-    /// top" which is jarring when the user is actively comparing
-    /// items they expect to be in monotonic positions. No-op
-    /// when the focused widget isn't a Text-with-open-
-    /// completions.
-    fn move_focused_text_completion_index(&mut self, panel_id: u64, delta: i32) {
-        // First read the spec's visible-rows cap so we can pull
-        // scroll back into view if the new selection lands above
-        // the current scroll offset. (The renderer only does
-        // forward-pull — it would otherwise fight the mouse-
-        // wheel handler which deliberately diverges scroll from
-        // selection.)
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
-            Some(fresh_core::api::WidgetSpec::Text {
-                completions_visible_rows,
-                ..
-            }) => *completions_visible_rows,
-            _ => 0,
-        };
-        let visible = if spec_visible_rows == 0 {
-            5u32
-        } else {
-            spec_visible_rows
-        };
-        let panel = match self.widget_registry.get_mut(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        if let Some(crate::widgets::WidgetInstanceState::Text {
-            completions,
-            completion_selected_index,
-            completion_scroll_offset,
-            ..
-        }) = panel.instance_states.get_mut(&focus_key)
-        {
-            if completions.is_empty() {
-                return;
-            }
-            let max = (completions.len() - 1) as i32;
-            let cur = *completion_selected_index as i32;
-            let next = (cur + delta).clamp(0, max);
-            *completion_selected_index = next as usize;
-            // Keyboard-driven selection move: if the new
-            // selection sits above the current scroll window,
-            // pull the scroll back so the selection stays
-            // visible. Forward-pull is handled by the renderer.
-            let next_u = next as u32;
-            if next_u < *completion_scroll_offset {
-                *completion_scroll_offset = next_u;
-            } else if next_u >= *completion_scroll_offset + visible {
-                *completion_scroll_offset = next_u + 1 - visible;
-            }
-        }
-    }
-
-    /// Clear the focused Text widget's completion popup (close it)
-    /// and fire a `completion_dismiss` event so the plugin can
-    /// sync its own state (e.g. invalidate any in-flight fetch
-    /// token, so a late-arriving result doesn't re-open the
-    /// popup the user just closed). Used by Enter and Escape on
-    /// a Text-with-open-completions.
-    fn dismiss_focused_text_completions(&mut self, panel_id: u64) {
-        let focus_key = {
-            let panel = match self.widget_registry.get_mut(panel_id) {
-                Some(p) => p,
-                None => return,
-            };
-            let focus_key = panel.focus_key.clone();
-            if focus_key.is_empty() {
-                return;
-            }
-            if let Some(crate::widgets::WidgetInstanceState::Text {
-                completions,
-                completion_selected_index,
-                ..
-            }) = panel.instance_states.get_mut(&focus_key)
-            {
-                if completions.is_empty() {
-                    return;
-                }
-                completions.clear();
-                *completion_selected_index = 0;
-            } else {
-                return;
-            }
-            focus_key
-        };
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key,
-                    event_type: "completion_dismiss".into(),
-                    payload: serde_json::json!({}),
-                },
-            );
-        }
-    }
-
-    /// Fire `completion_accept` on the focused Text widget's
-    /// currently-selected candidate. Used by Tab on a Text-with-
-    /// open-completions — the plugin's handler is expected to
-    /// apply the accepted value to the field (typically via
-    /// `WidgetMutation::SetValue`). The host does NOT close the
-    /// popup automatically: directory-descent style flows (the
-    /// orchestrator's Project Path acceptance of `/foo/` re-
-    /// fetches children for the new path) want the popup to
-    /// stay alive so the user can keep Tab-ing. Plugins that
-    /// want a one-shot accept close the popup themselves with
-    /// `setCompletions(key, [])`.
-    fn fire_completion_accept(&mut self, panel_id: u64) {
-        let (focus_key, value) = {
-            let panel = match self.widget_registry.get(panel_id) {
-                Some(p) => p,
-                None => return,
-            };
-            let focus_key = panel.focus_key.clone();
-            if focus_key.is_empty() {
-                return;
-            }
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text {
-                    completions,
-                    completion_selected_index,
-                    ..
-                }) if !completions.is_empty() => {
-                    let idx = (*completion_selected_index).min(completions.len() - 1);
-                    (focus_key, completions[idx].value.clone())
-                }
-                _ => return,
-            }
-        };
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key,
-                    event_type: "completion_accept".into(),
-                    payload: serde_json::json!({ "value": value }),
-                },
-            );
-        }
-    }
-
-    fn fire_list_activate(&mut self, panel_id: u64, focus_key: &str) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
-        let (spec_sel, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::List {
-                selected_index,
-                item_keys,
-                ..
-            }) => (*selected_index, item_keys.clone()),
-            _ => return,
-        };
-        let sel = match panel.instance_states.get(focus_key) {
-            Some(crate::widgets::WidgetInstanceState::List { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => spec_sel,
-        };
-        if sel < 0 {
-            return;
-        }
-        let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key.to_string(),
-                    event_type: "activate".into(),
-                    payload: serde_json::json!({
-                        "index": sel,
-                        "key": item_key,
-                    }),
-                },
-            );
-        }
-    }
-
-    fn handle_widget_select_move(&mut self, panel_id: u64, delta: i32) {
-        let focus_key = match self.widget_registry.get(panel_id) {
-            Some(p) => p.focus_key.clone(),
-            None => return,
-        };
-        if focus_key.is_empty() {
-            return;
-        }
-        self.handle_widget_select_move_for_key(panel_id, &focus_key, delta);
-    }
-
-    /// Set a `List` widget's selected index to an absolute item index,
-    /// preserving its scroll offset, and repaint. Used by the click
-    /// path: a row click only produces a `select` hit and — unlike
-    /// keyboard nav via [`handle_widget_select_move_for_key`] — does
-    /// not move the host-owned selection. Without this the highlight
-    /// would not follow a click and a subsequent Up/Down would resume
-    /// from the stale index.
-    pub(super) fn set_widget_list_selected_index(
-        &mut self,
-        panel_id: u64,
-        widget_key: &str,
-        index: i32,
-    ) {
-        if let Some(panel) = self.widget_registry.get_mut(panel_id) {
-            let prev_scroll = match panel.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
-                    *scroll_offset
-                }
-                _ => 0,
-            };
-            panel.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    scroll_offset: prev_scroll,
-                    selected_index: index,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-    }
-
-    /// Same as [`handle_widget_select_move`] but targets an explicit
-    /// `List` widget key instead of the panel's focused widget. Used
-    /// by the picker-style smart-key dispatch — `Up`/`Down` on a
-    /// focused filter input route to the first scrollable widget in
-    /// the panel without changing focus.
-    fn handle_widget_select_move_for_key(&mut self, panel_id: u64, widget_key: &str, delta: i32) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (spec_sel, total, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::List {
-                selected_index,
-                items,
-                item_keys,
-                ..
-            }) => (*selected_index, items.len() as i32, item_keys.clone()),
-            _ => return,
-        };
-        if total == 0 {
-            return;
-        }
-        let cur_sel = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::List { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => spec_sel,
-        };
-        let raw = if cur_sel < 0 { 0 } else { cur_sel + delta };
-        let new_sel = raw.clamp(0, total - 1);
-        let new_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            let cur_scroll = match panel_mut.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::List { scroll_offset, .. }) => {
-                    *scroll_offset
-                }
-                _ => 0,
-            };
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    scroll_offset: cur_scroll,
-                    selected_index: new_sel,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: widget_key.to_string(),
-                    event_type: "select".into(),
-                    payload: serde_json::json!({ "index": new_sel, "key": new_key }),
-                },
-            );
-        }
-    }
-
-    /// Move the focused Tree's selection up/down, skipping
-    /// descendants of collapsed nodes. Selection is the *absolute*
-    /// `nodes` index; we walk the visible-flat order to find the
-    /// neighbour. Mirrors the List handler shape but tree-aware.
-    fn handle_widget_tree_select_move(&mut self, panel_id: u64, delta: i32) {
-        let focus_key = match self.widget_registry.get(panel_id) {
-            Some(p) => p.focus_key.clone(),
-            None => return,
-        };
-        if focus_key.is_empty() {
-            return;
-        }
-        self.handle_widget_tree_select_move_for_key(panel_id, &focus_key, delta);
-    }
-
-    /// Tree counterpart of [`handle_widget_select_move_for_key`].
-    fn handle_widget_tree_select_move_for_key(
-        &mut self,
-        panel_id: u64,
-        widget_key: &str,
-        delta: i32,
-    ) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (spec_sel, nodes, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                selected_index,
-                nodes,
-                item_keys,
-                ..
-            }) => (*selected_index, nodes.clone(), item_keys.clone()),
-            _ => return,
-        };
-        if nodes.is_empty() {
-            return;
-        }
-        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (spec_sel, 0u32, std::collections::HashSet::<String>::new()),
-        };
-        let visible_indices = collect_visible_tree_indices(&nodes, &item_keys, &expanded);
-        if visible_indices.is_empty() {
-            return;
-        }
-        let cur_pos = if cur_sel < 0 {
-            if delta > 0 {
-                -1
-            } else {
-                visible_indices.len() as i32
-            }
-        } else {
-            visible_indices
-                .iter()
-                .position(|&v| v as i32 == cur_sel)
-                .map(|p| p as i32)
-                .unwrap_or(-1)
-        };
-        let new_pos = (cur_pos + delta).clamp(0, (visible_indices.len() as i32) - 1);
-        let new_abs = visible_indices[new_pos as usize];
-        let new_key = item_keys.get(new_abs).cloned().unwrap_or_default();
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset: cur_scroll,
-                    selected_index: new_abs as i32,
-                    expanded_keys: expanded,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: widget_key.to_string(),
-                    event_type: "select".into(),
-                    payload: serde_json::json!({ "index": new_abs as i64, "key": new_key }),
-                },
-            );
-        }
-    }
-
-    /// Mouse-wheel scroll over a widget panel buffer. Finds the
-    /// first `Tree`/`List` in any panel rendering into `buffer_id`
-    /// and shifts its viewport by `delta` rows. Drags the selection
-    /// to stay inside the new visible window so the renderer's
-    /// auto-scroll doesn't snap the offset back. No focus change,
-    /// no `widget_event` fires — wheel is viewport navigation, not
-    /// selection.
-    ///
-    /// Returns `true` if any panel consumed the scroll.
-    pub(super) fn handle_widget_panel_wheel(
-        &mut self,
-        buffer_id: crate::model::event::BufferId,
-        delta: i32,
-    ) -> bool {
-        let panels = self.widget_registry.panels_for_buffer(buffer_id);
-        let mut consumed = false;
-        for panel_id in panels {
-            // First chance: a focused Text widget with an open
-            // completion popup absorbs the wheel — scrolling the
-            // candidate list when the popup is what the user is
-            // pointing at takes priority over scrolling a
-            // sibling List/Tree elsewhere on the panel.
-            if self.focused_text_completions_open(panel_id) {
-                self.scroll_focused_text_completions(panel_id, delta);
-                // The renderer reads `completion_scroll_offset`
-                // out of the Text widget's instance state on
-                // each paint, so flushing a rerender here is
-                // what actually puts the new scroll on screen
-                // — without this, the cached overlay rows on
-                // the floating panel stay pinned to the old
-                // offset until the user's next keystroke
-                // happens to re-render for some other reason.
-                self.rerender_widget_panel(panel_id);
-                consumed = true;
-                continue;
-            }
-            let spec = match self.widget_registry.get(panel_id) {
-                Some(p) => p.spec.clone(),
-                None => continue,
-            };
-            let Some(widget_key) = find_scrollable_widget_key(&spec) else {
-                continue;
-            };
-            let widget = crate::widgets::find_widget_by_key(&spec, &widget_key);
-            match widget {
-                Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                    // Only claim the wheel if the widget actually scrolled.
-                    // A List/Tree that declares `visible_rows >= total`
-                    // (e.g. Git Log, which renders every row and relies on
-                    // its scrollable region's buffer scroll instead) has
-                    // nothing to scroll here; swallowing the event would
-                    // leave the wheel dead. Falling through lets the
-                    // underlying buffer scroll handle it.
-                    consumed |= self.handle_widget_tree_wheel(panel_id, &widget_key, delta);
-                }
-                Some(fresh_core::api::WidgetSpec::List { .. }) => {
-                    consumed |= self.handle_widget_list_wheel(panel_id, &widget_key, delta);
-                }
-                _ => {}
-            }
-        }
-        consumed
-    }
-
-    /// Shift the focused Text widget's completion popup scroll
-    /// offset by `delta` rows. The renderer reads the visible-
-    /// rows cap from the Text spec; we approximate it here as
-    /// "5 if zero / unset" to mirror the renderer's default —
-    /// the cap matters for clamping the max scroll so the
-    /// thumb doesn't drift past the end.
-    fn scroll_focused_text_completions(&mut self, panel_id: u64, delta: i32) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let spec_visible_rows = match crate::widgets::find_widget_by_key(&panel.spec, &focus_key) {
-            Some(fresh_core::api::WidgetSpec::Text {
-                completions_visible_rows,
-                ..
-            }) => *completions_visible_rows,
-            _ => 0,
-        };
-        let visible = if spec_visible_rows == 0 {
-            5u32
-        } else {
-            spec_visible_rows
-        };
-        let panel = match self.widget_registry.get_mut(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        if let Some(crate::widgets::WidgetInstanceState::Text {
-            completions,
-            completion_scroll_offset,
-            ..
-        }) = panel.instance_states.get_mut(&focus_key)
-        {
-            if completions.is_empty() {
-                return;
-            }
-            let total = completions.len() as u32;
-            let max_scroll = total.saturating_sub(visible.min(total));
-            let next = (*completion_scroll_offset as i32 + delta).clamp(0, max_scroll as i32);
-            *completion_scroll_offset = next as u32;
-        }
-    }
-
-    /// Shift a Tree's `scroll_offset` by `delta` rows. If the
-    /// selection would fall outside the new viewport, drag it to
-    /// the edge so the renderer's keep-selection-visible logic
-    /// doesn't snap the offset back.
-    fn handle_widget_tree_wheel(&mut self, panel_id: u64, widget_key: &str, delta: i32) -> bool {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return false,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, nodes, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                visible_rows,
-                nodes,
-                item_keys,
-                ..
-            }) => (*visible_rows, nodes.clone(), item_keys.clone()),
-            _ => return false,
-        };
-        if nodes.is_empty() {
-            return false;
-        }
-        let (cur_sel, cur_scroll, expanded) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (-1, 0, std::collections::HashSet::<String>::new()),
-        };
-        let visible_indices = collect_visible_tree_indices(&nodes, &item_keys, &expanded);
-        if visible_indices.is_empty() {
-            return false;
-        }
-        let visible = visible_rows.max(1);
-        let total_visible = visible_indices.len() as u32;
-        let max_scroll = total_visible.saturating_sub(visible);
-        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        // Drag selection to stay inside the new viewport.
-        let cur_pos: Option<u32> = if cur_sel >= 0 {
-            visible_indices
-                .iter()
-                .position(|&v| v as i32 == cur_sel)
-                .map(|p| p as u32)
-        } else {
-            None
-        };
-        let new_sel_abs = match cur_pos {
-            Some(pos) if pos < new_scroll => visible_indices[new_scroll as usize] as i32,
-            Some(pos) if pos >= new_scroll + visible => {
-                visible_indices[(new_scroll + visible - 1) as usize] as i32
-            }
-            _ => cur_sel,
-        };
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset: new_scroll,
-                    selected_index: new_sel_abs,
-                    expanded_keys: expanded,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-        true
-    }
-
-    /// List counterpart of `handle_widget_tree_wheel`. Returns true if the
-    /// list's scroll offset actually changed (the wheel was consumed).
-    fn handle_widget_list_wheel(&mut self, panel_id: u64, widget_key: &str, delta: i32) -> bool {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return false,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, total) = match widget {
-            Some(fresh_core::api::WidgetSpec::List {
-                visible_rows,
-                items,
-                ..
-            }) => (*visible_rows, items.len() as u32),
-            _ => return false,
-        };
-        if total == 0 {
-            return false;
-        }
-        let (cur_sel, cur_scroll) = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::List {
-                selected_index,
-                scroll_offset,
-            }) => (*selected_index, *scroll_offset),
-            _ => (-1, 0),
-        };
-        let visible = visible_rows.max(1);
-        let max_scroll = total.saturating_sub(visible);
-        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        let new_sel = if cur_sel < 0 {
-            cur_sel
-        } else if (cur_sel as u32) < new_scroll {
-            new_scroll as i32
-        } else if (cur_sel as u32) >= new_scroll + visible {
-            (new_scroll + visible - 1) as i32
-        } else {
-            cur_sel
-        };
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            panel_mut.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::List {
-                    scroll_offset: new_scroll,
-                    selected_index: new_sel,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-        true
-    }
-
-    /// Right/Left arrow on a focused Tree.
-    ///
-    /// * Right: if the selected node has children and is collapsed,
-    ///   expand it. Else no-op.
-    /// * Left: if the selected node has children and is expanded,
-    ///   collapse it. Else move selection up to the parent.
-    ///
-    /// Both update host instance state, re-render, and (when a
-    /// change happened) fire `widget_event { event_type: "expand" }`.
-    fn handle_widget_tree_lateral(&mut self, panel_id: u64, is_right: bool) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key);
-        let (spec_sel, nodes, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                selected_index,
-                nodes,
-                item_keys,
-                ..
-            }) => (*selected_index, nodes.clone(), item_keys.clone()),
-            _ => return,
-        };
-        if nodes.is_empty() {
-            return;
-        }
-        let (cur_sel, cur_scroll, mut expanded) = match panel.instance_states.get(&focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (spec_sel, 0u32, std::collections::HashSet::<String>::new()),
-        };
-        if cur_sel < 0 {
-            return;
-        }
-        let sel_idx = cur_sel as usize;
-        let node = match nodes.get(sel_idx) {
-            Some(n) => n,
-            None => return,
-        };
-        let key = item_keys.get(sel_idx).cloned().unwrap_or_default();
-        let was_expanded = !key.is_empty() && expanded.contains(&key);
-
-        let mut new_sel = cur_sel;
-        let mut expansion_changed: Option<bool> = None; // Some(new_state)
-        if is_right {
-            if node.has_children && !was_expanded && !key.is_empty() {
-                expanded.insert(key.clone());
-                expansion_changed = Some(true);
-            }
-        } else if node.has_children && was_expanded && !key.is_empty() {
-            expanded.remove(&key);
-            expansion_changed = Some(false);
-        } else if let Some(parent_idx) = crate::widgets::tree_parent_index(&nodes, sel_idx) {
-            new_sel = parent_idx as i32;
-        }
-        // No change → bail (don't fire spurious select/expand).
-        if expansion_changed.is_none() && new_sel == cur_sel {
-            return;
-        }
-        let final_key = item_keys.get(new_sel as usize).cloned().unwrap_or_default();
-        if let Some(panel_mut) = self.widget_registry.get_mut(panel_id) {
-            panel_mut.instance_states.insert(
-                focus_key.clone(),
-                crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset: cur_scroll,
-                    selected_index: new_sel,
-                    expanded_keys: expanded,
-                },
-            );
-        }
-        self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            if let Some(now_expanded) = expansion_changed {
-                self.plugin_manager.read().unwrap().run_hook(
-                    "widget_event",
-                    fresh_core::hooks::HookArgs::WidgetEvent {
-                        panel_id,
-                        widget_key: focus_key.clone(),
-                        event_type: "expand".into(),
-                        payload: serde_json::json!({
-                            "index": cur_sel as i64,
-                            "key": key,
-                            "expanded": now_expanded,
-                        }),
-                    },
-                );
-            } else if new_sel != cur_sel {
-                self.plugin_manager.read().unwrap().run_hook(
-                    "widget_event",
-                    fresh_core::hooks::HookArgs::WidgetEvent {
-                        panel_id,
-                        widget_key: focus_key,
-                        event_type: "select".into(),
-                        payload: serde_json::json!({
-                            "index": new_sel as i64,
-                            "key": final_key,
-                        }),
-                    },
-                );
-            }
-        }
-    }
-
-    /// Toggle a Tree node's expansion state, re-render, and fire
-    /// `widget_event { event_type: "expand" }`. Used by the click
-    /// handler when the user clicks the disclosure column.
-    pub(crate) fn handle_widget_tree_expand_toggle(
-        &mut self,
-        panel_id: u64,
-        widget_key: &str,
-        item_key: &str,
-    ) {
-        if widget_key.is_empty() || item_key.is_empty() {
-            return;
-        }
-        let now_expanded = {
-            let panel = match self.widget_registry.get_mut(panel_id) {
-                Some(p) => p,
-                None => return,
-            };
-            let (cur_scroll, cur_sel, mut expanded) = match panel.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset,
-                    selected_index,
-                    expanded_keys,
-                }) => (*scroll_offset, *selected_index, expanded_keys.clone()),
-                _ => (0u32, -1i32, std::collections::HashSet::<String>::new()),
-            };
-            let next = if expanded.contains(item_key) {
-                expanded.remove(item_key);
-                false
-            } else {
-                expanded.insert(item_key.to_string());
-                true
-            };
-            panel.instance_states.insert(
-                widget_key.to_string(),
-                crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset: cur_scroll,
-                    selected_index: cur_sel,
-                    expanded_keys: expanded,
-                },
-            );
-            next
-        };
-        self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: widget_key.to_string(),
-                    event_type: "expand".into(),
-                    payload: serde_json::json!({
-                        "key": item_key,
-                        "expanded": now_expanded,
-                    }),
-                },
-            );
-        }
-    }
-
-    /// Fire `widget_event { event_type: "activate" }` for the focused
-    /// Tree's currently-selected node. Mirrors `fire_list_activate`
-    /// — the plugin's handler decides what "activate" means
-    /// (open the file, run an action, etc.).
-    /// If the focused Tree row is checkable (parent tree has
-    /// `checkable: true` *and* the row's `checked` is `Some(_)`),
-    /// fire `widget_event { event_type: "toggle" }` with the
-    /// inverted value and return `true`. Otherwise return `false`
-    /// so the caller falls back to `activate`.
-    ///
-    /// Mirrors what a click on the row's `[v]`/`[ ]` glyph would
-    /// do — Space is the conventional checkbox key, so on a
-    /// checkable tree Space toggles instead of activating.
-    fn fire_tree_toggle_if_checkable(&mut self, panel_id: u64, focus_key: &str) -> bool {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return false,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
-        let (spec_sel, nodes, item_keys, checkable) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                selected_index,
-                nodes,
-                item_keys,
-                checkable,
-                ..
-            }) => (*selected_index, nodes, item_keys.clone(), *checkable),
-            _ => return false,
-        };
-        if !checkable {
-            return false;
-        }
-        let sel = match panel.instance_states.get(focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => spec_sel,
-        };
-        if sel < 0 {
-            return false;
-        }
-        let cur_checked = match nodes.get(sel as usize).and_then(|n| n.checked) {
-            Some(b) => b,
-            None => return false, // No checkbox glyph on this row — let activate fire.
-        };
-        let new_checked = !cur_checked;
-        let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key.to_string(),
-                    event_type: "toggle".into(),
-                    payload: serde_json::json!({
-                        "index": sel,
-                        "key": item_key,
-                        "checked": new_checked,
-                    }),
-                },
-            );
-        }
-        true
-    }
-
-    fn fire_tree_activate(&mut self, panel_id: u64, focus_key: &str) {
-        let panel = match self.widget_registry.get(panel_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
-        let (spec_sel, item_keys) = match widget {
-            Some(fresh_core::api::WidgetSpec::Tree {
-                selected_index,
-                item_keys,
-                ..
-            }) => (*selected_index, item_keys.clone()),
-            _ => return,
-        };
-        let sel = match panel.instance_states.get(focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => spec_sel,
-        };
-        if sel < 0 {
-            return;
-        }
-        let item_key = item_keys.get(sel as usize).cloned().unwrap_or_default();
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key.to_string(),
-                    event_type: "activate".into(),
-                    payload: serde_json::json!({
-                        "index": sel,
-                        "key": item_key,
-                    }),
-                },
-            );
-        }
-    }
-
-    /// Walk every panel rendering into `buffer_id` and return the
-    /// first one whose currently-focused widget is a `Text`.
-    /// Returns `None` when no such panel exists (e.g. when the
-    /// buffer is a regular text buffer, or the panel has focus on
-    /// a `Button` / `List` / etc.).
-    ///
-    /// This is the universal hook the clipboard ops use to route
-    /// Paste / Copy / Cut / Select-All to a focused widget text
-    /// field instead of the underlying buffer. Same idea as the
-    /// existing Prompt and FileExplorer branches in the clipboard
-    /// path, generalised: any plugin-mounted Text widget that has
-    /// focus wins over the underlying buffer.
-    pub(super) fn focused_text_widget_panel_for_buffer(
-        &self,
-        buffer_id: crate::model::event::BufferId,
-    ) -> Option<u64> {
-        for panel_id in self.widget_registry.panels_for_buffer(buffer_id) {
-            let panel = self.widget_registry.get(panel_id)?;
-            if panel.focus_key.is_empty() {
-                continue;
-            }
-            let widget = crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key);
-            if matches!(widget, Some(fresh_core::api::WidgetSpec::Text { .. })) {
-                return Some(panel_id);
-            }
-        }
-        None
-    }
-
-    /// Read the currently-selected text from the focused `Text`
-    /// widget on the given panel, or `None` when nothing is
-    /// selected (no anchor, or anchor == cursor). Used by the
-    /// host-side Copy / Cut routing path.
-    pub(super) fn focused_widget_selected_text(&self, panel_id: u64) -> Option<String> {
-        let panel = self.widget_registry.get(panel_id)?;
-        if panel.focus_key.is_empty() {
-            return None;
-        }
-        match panel.instance_states.get(&panel.focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                editor.selected_text()
-            }
-            _ => None,
-        }
-    }
-
-    /// Select-all in the focused widget Text. Returns true when
-    /// applied (focus was a Text widget). The op fires a `change`
-    /// event only if the selection range actually changed; an
-    /// already-fully-selected widget is a no-op.
-    pub(super) fn handle_widget_select_all(&mut self, panel_id: u64) -> bool {
-        // SelectAll moves the cursor to end-of-value and sets anchor
-        // at start — `with_focused_text_editor` will skip re-render
-        // when nothing changed, which is fine.
-        self.with_focused_text_editor(panel_id, |editor| editor.select_all())
-    }
-
-    /// Copy the focused widget Text's current selection to the
-    /// internal clipboard. Returns true when copy ran (even when
-    /// the selection was empty — the action is consumed either way
-    /// so it doesn't fall through to the buffer's copy path).
-    pub(super) fn handle_widget_copy(&mut self, panel_id: u64) -> bool {
-        if self.widget_registry.get(panel_id).is_none() {
-            return false;
-        }
-        if let Some(text) = self.focused_widget_selected_text(panel_id) {
-            self.clipboard.copy(text);
-        }
-        true
-    }
-
-    /// Cut the focused widget Text's current selection — copy then
-    /// delete. With no selection, this is a no-op consume.
-    pub(super) fn handle_widget_cut(&mut self, panel_id: u64) -> bool {
-        if self.widget_registry.get(panel_id).is_none() {
-            return false;
-        }
-        if let Some(text) = self.focused_widget_selected_text(panel_id) {
-            self.clipboard.copy(text);
-            self.with_focused_text_editor(panel_id, |editor| {
-                editor.delete_selection();
-            });
-        }
-        true
-    }
-
-    /// Insert `text` at the focused widget Text's cursor (replacing
-    /// any active selection). Used by the host-side Paste routing
-    /// path; `text` is already line-ending-normalised by the
-    /// caller (CRLF / CR → LF). `TextEdit::insert_str` strips
-    /// embedded newlines when the editor is single-line.
-    pub(super) fn handle_widget_insert_str(&mut self, panel_id: u64, text: &str) -> bool {
-        if self.widget_registry.get(panel_id).is_none() {
-            return false;
-        }
-        let owned = text.to_string();
-        self.with_focused_text_editor(panel_id, move |editor| {
-            editor.insert_str(&owned);
-        });
-        true
-    }
-
-    /// Ensure `panel.instance_states[focus_key]` is a seeded
-    /// `Text { editor, .. }` for the focused widget. If instance
-    /// state already has the entry, no-op. If not, seeds from the
-    /// spec's `value` / `cursor_byte` / `rows`. Returns true on
-    /// success (focus is a Text widget that's now in instance state),
-    /// false otherwise.
-    fn ensure_focused_text_seeded(&mut self, panel_id: u64, focus_key: &str) -> bool {
-        let panel = match self.widget_registry.get_mut(panel_id) {
-            Some(p) => p,
-            None => return false,
-        };
-        if matches!(
-            panel.instance_states.get(focus_key),
-            Some(crate::widgets::WidgetInstanceState::Text { .. })
-        ) {
-            return true;
-        }
-        let widget = crate::widgets::find_widget_by_key(&panel.spec, focus_key);
-        let (value, cursor_byte, multiline) = match widget {
-            Some(fresh_core::api::WidgetSpec::Text {
-                value,
-                cursor_byte,
-                rows,
-                ..
-            }) => (value.clone(), *cursor_byte, *rows > 1),
-            _ => return false,
-        };
-        let mut editor = if multiline {
-            crate::primitives::text_edit::TextEdit::with_text(&value)
-        } else {
-            crate::primitives::text_edit::TextEdit::single_line_with_text(&value)
-        };
-        let seed = if cursor_byte < 0 {
-            value.len()
-        } else {
-            (cursor_byte as usize).min(value.len())
-        };
-        editor.set_cursor_from_flat(seed);
-        panel.instance_states.insert(
-            focus_key.to_string(),
-            crate::widgets::WidgetInstanceState::Text {
-                editor,
-                scroll: 0,
-                completions: Vec::new(),
-                completion_selected_index: 0,
-                completion_scroll_offset: 0,
-            },
-        );
-        true
-    }
-
-    /// Apply a mutating operation to the focused `Text` widget's
-    /// `TextEdit`. Handles seeding the editor from the spec on first
-    /// touch, no-op detection (skips rerender + change event), and
-    /// firing the `widget_event` "change" hook with the post-state.
-    ///
-    /// Returns true when the op ran *and* produced a visible change.
-    pub(super) fn with_focused_text_editor<F>(&mut self, panel_id: u64, op: F) -> bool
-    where
-        F: FnOnce(&mut crate::primitives::text_edit::TextEdit),
-    {
-        let focus_key = match self.widget_registry.get(panel_id) {
-            Some(p) if !p.focus_key.is_empty() => p.focus_key.clone(),
-            _ => return false,
-        };
-        if !self.ensure_focused_text_seeded(panel_id, &focus_key) {
-            return false;
-        }
-        let (before_value, before_cursor) = {
-            let panel = self.widget_registry.get(panel_id).unwrap();
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                    (editor.value(), editor.flat_cursor_byte())
-                }
-                _ => return false,
-            }
-        };
-        {
-            let panel = self.widget_registry.get_mut(panel_id).unwrap();
-            match panel.instance_states.get_mut(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => op(editor),
-                _ => return false,
-            }
-        }
-        let (after_value, after_cursor) = {
-            let panel = self.widget_registry.get(panel_id).unwrap();
-            match panel.instance_states.get(&focus_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
-                    (editor.value(), editor.flat_cursor_byte())
-                }
-                _ => return false,
-            }
-        };
-        if after_value == before_value && after_cursor == before_cursor {
-            return false;
-        }
-        self.rerender_widget_panel(panel_id);
-        if self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            self.plugin_manager.read().unwrap().run_hook(
-                "widget_event",
-                fresh_core::hooks::HookArgs::WidgetEvent {
-                    panel_id,
-                    widget_key: focus_key.clone(),
-                    event_type: "change".into(),
-                    payload: serde_json::json!({
-                        "value": after_value,
-                        "cursorByte": after_cursor as i64,
-                    }),
-                },
-            );
-        }
-        true
-    }
-
-    /// Apply a non-printable editing key to the focused text widget
-    /// by dispatching to the corresponding `TextEdit` method. The
-    /// single/multi-line discriminator is carried by `TextEdit`'s
-    /// `multiline` field, so the same set of methods serves both
-    /// kinds — single-line just no-ops on Up/Down/Enter.
-    fn handle_widget_text_key(&mut self, panel_id: u64, key: &str) {
-        self.with_focused_text_editor(panel_id, |editor| match key {
-            "Backspace" => editor.backspace(),
-            "Delete" => editor.delete(),
-            "Left" => editor.move_left(),
-            "Right" => editor.move_right(),
-            "Up" => editor.move_up(),
-            "Down" => editor.move_down(),
-            "Home" => editor.move_home(),
-            "End" => editor.move_end(),
-            "Enter" => editor.insert_char('\n'),
-            _ => { /* unknown key — no-op */ }
-        });
-    }
-
-    /// Insert printable / IME-committed text at the focused text
-    /// widget's cursor. Same path for single-line and multi-line —
-    /// `TextEdit::insert_str` strips `\n` automatically when the
-    /// editor was constructed single-line. `text` may be a single
-    /// codepoint, a grapheme cluster, or a multi-codepoint IME
-    /// commit; `insert_str` handles each identically.
-    fn handle_widget_text_char(&mut self, panel_id: u64, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let text = text.to_string();
-        self.with_focused_text_editor(panel_id, move |editor| {
-            editor.insert_str(&text);
-        });
-    }
-
     fn handle_unmount_widget_panel(&mut self, panel_id: u64) {
         match self.widget_registry.unmount(panel_id) {
             Some(buffer_id) => {
@@ -5632,18 +4110,47 @@ impl Editor {
         spec: fresh_core::api::WidgetSpec,
         width_pct: u8,
         height_pct: u8,
+        as_dock: bool,
     ) {
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
-        if let Some(existing) = self.floating_widget_panel.take() {
+        // The dock mounts into its own slot so it coexists with a
+        // centered modal; everything else is a centered overlay.
+        let slot = if as_dock {
+            super::PanelSlot::Dock
+        } else {
+            super::PanelSlot::Floating
+        };
+        let buffer_id = slot.buffer_id();
+        // A centered modal owns the keyboard: blur a focused dock so the
+        // two slots never both claim input. Without this, a dock key
+        // handler (e.g. its Esc→blur) would greedily consume keys the
+        // modal deferred to its own mode bindings, stranding the modal
+        // open. Fires the dock's `blur` widget_event so the owning plugin
+        // can mirror the state. Does nothing when the dock isn't focused.
+        if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
+            self.blur_floating_panel(super::PanelSlot::Dock);
+        }
+        let placement = if as_dock {
+            let width = self
+                .dock_width
+                .unwrap_or(32)
+                .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
+            super::PanelPlacement::LeftDock { width_cols: width }
+        } else {
+            super::PanelPlacement::Centered
+        };
+        if let Some(existing) = self.panel_opt_mut(slot).take() {
             if existing.panel_id != panel_id {
                 let _ = self.widget_registry.unmount(existing.panel_id);
             }
         }
-        self.floating_widget_panel = Some(FloatingWidgetState {
+        *self.panel_opt_mut(slot) = Some(FloatingWidgetState {
             panel_id,
             width_pct,
             height_pct,
+            placement,
+            focused: true,
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),
@@ -5653,10 +4160,11 @@ impl Editor {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
+            fullscreen: false,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width();
+        let panel_width = self.floating_panel_inner_width(slot);
         let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
@@ -5665,14 +4173,14 @@ impl Editor {
         let scroll_regions = out.scroll_regions;
         self.widget_registry.mount(
             panel_id,
-            FLOATING_PANEL_BUFFER_ID,
+            buffer_id,
             spec,
             out.hits,
             out.instance_states,
             out.focus_key,
             out.tabbable,
         );
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
@@ -5685,19 +4193,24 @@ impl Editor {
             width_pct,
             height_pct
         );
+
+        // Mounting a panel as the left dock carves a full-height column out
+        // of the chrome. Run the single layout funnel so terminals and
+        // viewports reflow to the post-dock width right away (a centered
+        // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
+        if as_dock {
+            self.relayout();
+        }
     }
 
     fn handle_update_floating_widget(&mut self, panel_id: u64, spec: fresh_core::api::WidgetSpec) {
-        match self.floating_widget_panel.as_ref() {
-            Some(fwp) if fwp.panel_id == panel_id => {}
-            _ => {
-                tracing::debug!(
-                    "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
-                    panel_id
-                );
-                return;
-            }
-        }
+        let Some(slot) = self.slot_of_panel(panel_id) else {
+            tracing::debug!(
+                "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
+                panel_id
+            );
+            return;
+        };
         let prev = self
             .widget_registry
             .instance_states(panel_id)
@@ -5708,7 +4221,7 @@ impl Editor {
             .focus_key(panel_id)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let panel_width = self.floating_panel_inner_width();
+        let panel_width = self.floating_panel_inner_width(slot);
         let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
@@ -5733,7 +4246,7 @@ impl Editor {
             );
             return;
         }
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
             fwp.focus_cursor = focus_cursor;
             fwp.embeds = embeds;
@@ -5743,18 +4256,28 @@ impl Editor {
     }
 
     fn handle_unmount_floating_widget(&mut self, panel_id: u64) {
-        match self.floating_widget_panel.as_ref() {
-            Some(fwp) if fwp.panel_id == panel_id => {}
-            _ => {
-                tracing::debug!(
-                    "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
-                    panel_id
-                );
-                return;
-            }
-        }
-        self.floating_widget_panel = None;
+        let Some(slot) = self.slot_of_panel(panel_id) else {
+            tracing::debug!(
+                "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
+                panel_id
+            );
+            return;
+        };
+        *self.panel_opt_mut(slot) = None;
         let _ = self.widget_registry.unmount(panel_id);
+        // Hiding the left dock frees its full-height column. The next
+        // frame's `compute_dock_split` already lays the chrome back out
+        // full-width (and the early command drain in `render` makes that
+        // happen in the *same* frame as the unmount), so the layout is
+        // correct — but the freed strip can still show stale glyphs from
+        // the old dock until something repaints those cells. Force a full
+        // clear+redraw so the reclaim is unconditional on every terminal,
+        // mirroring how a resize relayout clears. Gated to the dock slot:
+        // a centered modal overlays the full-width chrome without carving
+        // it, so clearing on its close would only cause a visible flicker.
+        if slot == super::PanelSlot::Dock {
+            self.request_full_redraw();
+        }
         // Restore the active window's visible terminal PTYs to their
         // dive-view split rects. The orchestrator picker's preview
         // pane shrinks PTYs to the embed size on every frame while
@@ -5766,25 +4289,90 @@ impl Editor {
         // rows. Resizing here on every panel unmount restores the
         // full dive-view dimensions; for panels that didn't preview
         // anything (the new-session form, plugin overlays) this is a
-        // cheap no-op because the PTY sizes already match.
-        self.active_window_mut().resize_visible_terminals();
+        // cheap no-op because the PTY sizes already match. Unmounting the
+        // dock also frees its column, so route through the single layout
+        // funnel: it re-derives `dock_cols` (now 0 for a dock unmount) and
+        // reflows every window's terminals + viewports to the reclaimed width.
+        self.relayout();
         tracing::debug!("Unmounted floating widget panel {}", panel_id);
     }
 
-    /// Inner-rect column budget for a floating panel render — the
-    /// terminal width × `width_pct`, minus 2 cols for the frame
-    /// border. Mirrors the `widget_panel_width` reservation; never
-    /// goes below 10 cols so flex spacers don't collapse to zero on
-    /// narrow terminals.
-    pub(super) fn floating_panel_inner_width(&self) -> u32 {
-        let term_w = self.terminal_width.max(1) as u32;
-        let pct = self
-            .floating_widget_panel
-            .as_ref()
-            .map(|f| f.width_pct.clamp(1, 100) as u32)
-            .unwrap_or(80);
-        let w = (term_w * pct) / 100;
-        w.saturating_sub(2).max(10)
+    /// Apply a `FloatingPanelControl` op. No-op if the panel id
+    /// doesn't match the mounted floating panel.
+    fn handle_floating_panel_control(&mut self, panel_id: u64, op: &str, arg: f64) {
+        let Some(slot) = self.slot_of_panel(panel_id) else {
+            tracing::warn!("FloatingPanelControl for unknown/mismatched panel {panel_id} ignored");
+            return;
+        };
+        // `blur` fires a widget_event, so handle it before borrowing the
+        // panel — it reborrows `self` via the shared helper.
+        if op == "blur" {
+            self.blur_floating_panel(slot);
+            return;
+        }
+        // Clamp the dock width relative to the terminal so it can never
+        // swallow the whole chrome. Read before the &mut borrow below.
+        // A user-dragged width (`dock_width`) overrides the plugin's
+        // default so the resize survives toggling the dock off/on.
+        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
+        let persisted = self.dock_width;
+        let Some(fwp) = self.panel_mut(slot) else {
+            return;
+        };
+        // Whether this op changed the chrome geometry (dock width/placement),
+        // so we know to re-derive the layout once the `fwp` borrow ends.
+        let geometry_changed = match op {
+            "dock" => {
+                let requested = persisted.unwrap_or(arg as u16);
+                let width_cols = requested.clamp(10, max_cols);
+                fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                fwp.focused = true;
+                true
+            }
+            // Update the dock's width WITHOUT touching focus — used by the
+            // plugin to make the dock responsive (re-issued on terminal
+            // resize). Unlike "dock" this never steals keyboard focus back
+            // from the editor, and it's a no-op unless the panel is already
+            // docked. A user-dragged width still wins (persisted override).
+            "dock_width" => {
+                if let super::PanelPlacement::LeftDock { .. } = fwp.placement {
+                    let requested = persisted.unwrap_or(arg as u16);
+                    let width_cols = requested.clamp(10, max_cols);
+                    fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                    true
+                } else {
+                    false
+                }
+            }
+            "center" => {
+                fwp.placement = super::PanelPlacement::Centered;
+                fwp.focused = true;
+                true
+            }
+            "focus" => {
+                fwp.focused = true;
+                false
+            }
+            // Render a centered panel over the whole frame (covering the
+            // dimmed dock) instead of beside the dock in `chrome_area`.
+            // `arg != 0` enables it. No chrome-geometry change (the dock
+            // and editor layout are untouched — only where the modal
+            // paints), so no relayout; the next frame reads the flag.
+            "fullscreen" => {
+                fwp.fullscreen = arg != 0.0;
+                false
+            }
+            other => {
+                tracing::warn!("FloatingPanelControl: unknown op {other:?}");
+                false
+            }
+        };
+        // The `fwp` mutable borrow ends above; now that the dock's
+        // placement/width is settled, run the single layout funnel so
+        // terminals, viewports and panels all reflow to the new chrome.
+        if geometry_changed {
+            self.relayout();
+        }
     }
 
     fn handle_get_text_properties_at_cursor(&self, buffer_id: BufferId) {
@@ -5832,11 +4420,7 @@ impl Editor {
     fn handle_disable_lsp_for_language(&mut self, language: String) {
         tracing::info!("Disabling LSP for language: {}", language);
         let __active_id = self.active_window;
-        if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             lsp.shutdown_server(&language);
             tracing::info!("Stopped LSP server for {}", language);
         }
@@ -5868,11 +4452,7 @@ impl Editor {
             .get(&self.active_buffer())
             .and_then(|meta| meta.file_path().cloned());
         let __active_id = self.active_window;
-        let success = if let Some(lsp) = self
-            .windows
-            .get_mut(&__active_id)
-            .and_then(|w| w.lsp.as_mut())
-        {
+        let success = if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             let (ok, msg) = lsp.manual_restart(&language, file_path.as_deref());
             self.active_window_mut().status_message = Some(msg);
             ok
@@ -5890,11 +4470,7 @@ impl Editor {
         match uri.parse::<lsp_types::Uri>() {
             Ok(parsed_uri) => {
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     let restarted = lsp.set_language_root_uri(&language, parsed_uri);
                     if restarted {
                         self.active_window_mut().status_message = Some(format!(
@@ -6579,53 +5155,5 @@ impl Window {
     }
 }
 
-/// Maximum size of a body downloaded via `editor.httpFetch`. 64 MB is well
-/// above any reasonable theme/plugin asset (themes are tens of KB) while
-/// still capping a misbehaving server's blast radius.
-const HTTP_FETCH_MAX_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Fetch a URL over HTTP(S) and stream the response body into `target`.
-///
-/// Returns the HTTP status code on success. Non-2xx responses are returned
-/// as their status code without writing to the target file. Transport
-/// errors (DNS, TLS, timeout, …) are returned as `Err`.
-fn fetch_url_to_file(url: &str, target: &std::path::Path) -> Result<u16, String> {
-    // Use the platform's native certificate verifier so requests work in
-    // environments with TLS-intercepting proxies or custom enterprise root
-    // CAs that aren't in Mozilla's bundled webpki-roots.
-    let tls_config = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .build();
-
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .tls_config(tls_config)
-        .build()
-        .new_agent();
-
-    let response = agent
-        .get(url)
-        .header("User-Agent", "fresh-editor")
-        .call()
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status().as_u16();
-    if !(200..300).contains(&status) {
-        return Ok(status);
-    }
-
-    let mut file = std::fs::File::create(target)
-        .map_err(|e| format!("failed to create {}: {}", target.display(), e))?;
-
-    let mut reader = response
-        .into_body()
-        .into_with_config()
-        .limit(HTTP_FETCH_MAX_BYTES)
-        .reader();
-
-    std::io::copy(&mut reader, &mut file)
-        .map_err(|e| format!("failed to write response body: {}", e))?;
-
-    Ok(status)
-}
+// `editor.httpFetch` downloads stream through `services::http::download_to_file`,
+// which keeps all ureq/TLS usage in one place (gated by the `http` feature).

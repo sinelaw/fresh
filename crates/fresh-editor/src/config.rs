@@ -801,6 +801,7 @@ pub struct EditorConfig {
 
     /// Column at which to wrap lines when line wrapping is enabled.
     /// If not specified (`null`), lines wrap at the viewport edge (default behavior).
+    /// A value of `0` is treated the same as `null` (no fixed wrap column).
     /// Example: `80` wraps at column 80. The actual wrap column is clamped to the
     /// viewport width (lines can't wrap beyond the visible area).
     #[serde(default)]
@@ -809,7 +810,7 @@ pub struct EditorConfig {
 
     /// Width of the page in page view mode (in columns).
     /// Controls the content width when page view is active, with centering margins.
-    /// Defaults to 80. Set to `null` to use the full viewport width.
+    /// Defaults to 80. Set to `null` (or `0`) to use the full viewport width.
     #[serde(default = "default_page_width")]
     #[schemars(extend("x-section" = "Display"))]
     pub page_width: Option<usize>,
@@ -906,6 +907,16 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub set_window_title: bool,
 
+    /// Auto-name terminal tabs after the running program (tmux-style). When
+    /// enabled, an integrated terminal's tab reflects its foreground process
+    /// (e.g. `python3`, `vim`) combined with any title the program set via
+    /// an OSC escape sequence, instead of the static `*Terminal N*` label.
+    /// Disable to keep the fixed `*Terminal N*` names.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub terminal_auto_title: bool,
+
     /// Cursor style for the terminal cursor.
     /// Options: blinking_block, steady_block, blinking_bar, steady_bar, blinking_underline, steady_underline
     /// Default: blinking_block
@@ -982,6 +993,7 @@ pub struct EditorConfig {
     pub use_tabs: bool,
 
     /// Number of spaces per tab character
+    /// A value of `0` is treated as unset and falls back to the default (4).
     #[serde(default = "default_tab_size")]
     #[schemars(extend("x-section" = "Editing"))]
     pub tab_size: usize,
@@ -1475,6 +1487,7 @@ impl Default for EditorConfig {
             show_tilde: true,
             use_terminal_bg: false,
             set_window_title: true,
+            terminal_auto_title: true,
             rulers: Vec::new(),
             whitespace_show: true,
             whitespace_spaces_leading: false,
@@ -2138,6 +2151,7 @@ pub struct LanguageConfig {
 
     /// Column at which to wrap lines for this language.
     /// If not specified (`null`), falls back to the global `editor.wrap_column` setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub wrap_column: Option<usize>,
 
@@ -2151,6 +2165,7 @@ pub struct LanguageConfig {
     /// Width of the page in page view mode (in columns).
     /// Controls the content width when page view is active, with centering margins.
     /// If not specified (`null`), falls back to the global `editor.page_width` setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub page_width: Option<usize>,
 
@@ -2162,6 +2177,7 @@ pub struct LanguageConfig {
 
     /// Tab size (number of spaces per tab) for this language.
     /// If not specified, falls back to the global editor.tab_size setting.
+    /// A value of `0` is treated as not set at this language level (inherits the global).
     #[serde(default)]
     pub tab_size: Option<usize>,
 
@@ -3291,6 +3307,42 @@ impl Config {
     /// The config filename used throughout the application
     pub(crate) const FILENAME: &'static str = "config.json";
 
+    /// Normalize "0 means not set" sentinels left over from user config.
+    ///
+    /// For these numeric settings a `0` is treated as "not set" rather than a
+    /// literal zero (which would otherwise produce nonsense — e.g. a wrap
+    /// column of 0 wraps every character, a tab size of 0 divides by zero):
+    /// - At the **global** (`editor`) level, `0` falls back to the built-in
+    ///   default behavior: `wrap_column`/`page_width` become `None` (viewport
+    ///   edge / full viewport width) and `tab_size` becomes the default (4).
+    /// - At the **language** level, `0` clears the override to `None` so it
+    ///   inherits the global value, exactly as if the key were omitted.
+    ///
+    /// Called once when the layered config is resolved, so every downstream
+    /// `lang.or(global)` / `lang.unwrap_or(global)` resolver sees clean values.
+    pub(crate) fn normalize_zero_sentinels(&mut self) {
+        if self.editor.wrap_column == Some(0) {
+            self.editor.wrap_column = None;
+        }
+        if self.editor.page_width == Some(0) {
+            self.editor.page_width = None;
+        }
+        if self.editor.tab_size == 0 {
+            self.editor.tab_size = default_tab_size();
+        }
+        for lang in self.languages.values_mut() {
+            if lang.wrap_column == Some(0) {
+                lang.wrap_column = None;
+            }
+            if lang.page_width == Some(0) {
+                lang.page_width = None;
+            }
+            if lang.tab_size == Some(0) {
+                lang.tab_size = None;
+            }
+        }
+    }
+
     /// Push config values into process-wide flags that need to be readable
     /// from contexts which don't carry a `Config` handle (e.g. the
     /// parameter-less `services::terminal::detect_shell`). Idempotent —
@@ -3513,6 +3565,31 @@ impl Config {
                     stdin: true,
                     timeout_ms: 10000,
                 }),
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+            },
+        );
+
+        languages.insert(
+            "gdscript".to_string(),
+            LanguageConfig {
+                extensions: vec!["gd".to_string()],
+                filenames: vec![],
+                grammar: "gdscript".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
@@ -5526,6 +5603,27 @@ impl Config {
             }]),
         );
 
+        // Godot's built-in GDScript language server listens on TCP port 6005
+        // when enabled in a running editor. Disabled by default to avoid
+        // warnings when Godot or netcat is unavailable.
+        lsp.insert(
+            "gdscript".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "nc".to_string(),
+                args: vec!["127.0.0.1".to_string(), "6005".to_string()],
+                enabled: false,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: Some("Godot GDScript".to_string()),
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["project.godot".to_string(), ".git".to_string()],
+            }]),
+        );
+
         // typescript-language-server (installed via npm)
         // Alternative: use "deno lsp" with initialization_options: {"enable": true}
         lsp.insert(
@@ -6914,6 +7012,8 @@ mod tests {
         assert_eq!(config.editor.tab_size, 4);
         assert!(config.editor.line_numbers);
         assert!(config.editor.syntax_highlighting);
+        assert!(config.languages.contains_key("gdscript"));
+        assert_eq!(config.languages["gdscript"].extensions, vec!["gd"]);
         // keybindings is empty by design - it's for user customizations only
         // The actual keybindings come from resolve_keymap(active_keybinding_map)
         assert!(config.keybindings.is_empty());
@@ -7263,6 +7363,54 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_zero_sentinels_global() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(0);
+        config.editor.page_width = Some(0);
+        config.editor.tab_size = 0;
+
+        config.normalize_zero_sentinels();
+
+        // Global 0 -> default behavior.
+        assert_eq!(config.editor.wrap_column, None);
+        assert_eq!(config.editor.page_width, None);
+        assert_eq!(config.editor.tab_size, default_tab_size());
+    }
+
+    #[test]
+    fn test_normalize_zero_sentinels_language_inherits_global() {
+        let mut config = Config::default();
+        config.editor.wrap_column = Some(120);
+        config.editor.page_width = Some(80);
+        config.editor.tab_size = 8;
+
+        // A language that sets everything to 0 — should clear to None so it
+        // inherits the (non-zero) global values, NOT become the default.
+        config.languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                extensions: vec!["md".to_string()],
+                wrap_column: Some(0),
+                page_width: Some(0),
+                tab_size: Some(0),
+                ..Default::default()
+            },
+        );
+
+        config.normalize_zero_sentinels();
+
+        let lang = &config.languages["markdown"];
+        assert_eq!(lang.wrap_column, None);
+        assert_eq!(lang.page_width, None);
+        assert_eq!(lang.tab_size, None);
+
+        // Resolved buffer config inherits the global values.
+        let md = BufferConfig::resolve(&config, Some("markdown"));
+        assert_eq!(md.wrap_column, Some(120));
+        assert_eq!(md.tab_size, 8);
+    }
+
+    #[test]
     fn test_buffer_config_indent_string() {
         let config = Config::default();
 
@@ -7344,6 +7492,17 @@ mod tests {
                 lsp_key
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn test_gdscript_lsp_disabled_by_default() {
+        let config = Config::default();
+        let server = &config.lsp["gdscript"].as_slice()[0];
+        assert_eq!(server.command, "nc");
+        assert_eq!(server.args, vec!["127.0.0.1", "6005"]);
+        assert!(!server.enabled);
+        assert_eq!(server.name.as_deref(), Some("Godot GDScript"));
     }
 
     #[test]

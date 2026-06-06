@@ -384,12 +384,43 @@ impl ServerConnection {
     }
 
     /// Write a control message
+    ///
+    /// Control messages MUST be delivered atomically: the client frames them
+    /// by reading up to a trailing newline, so a partial write (message body
+    /// with no terminating `\n`) wedges the client's blocking `read_control()`
+    /// forever, waiting for a newline that never arrives.
+    ///
+    /// The server keeps the control socket in non-blocking mode for its
+    /// polling reads in `process_clients()`. On a non-blocking socket a large
+    /// message (e.g. a `SetClipboard` carrying a big selection) overflows the
+    /// kernel send buffer: `write_all` writes part of it, hits `WouldBlock`,
+    /// and returns an error — leaving a truncated, newline-less message on the
+    /// wire. To guarantee the whole message (and its newline) is delivered we
+    /// force blocking mode for the duration of the write, then restore
+    /// non-blocking mode for the next polling read.
     pub fn write_control(&self, msg: &str) -> io::Result<()> {
-        self.control.write_all(msg.as_bytes())?;
-        if !msg.ends_with('\n') {
-            self.control.write_all(b"\n")?;
+        // Force blocking so write_all cannot leave a partial message on the
+        // wire. Only the server's main thread touches the control stream, so
+        // toggling the mode here is race-free.
+        #[cfg(not(windows))]
+        let restore_nonblocking = self.control.set_nonblocking(false).is_ok();
+
+        let result = (|| {
+            self.control.write_all(msg.as_bytes())?;
+            if !msg.ends_with('\n') {
+                self.control.write_all(b"\n")?;
+            }
+            self.control.flush()
+        })();
+
+        // Restore non-blocking mode for the polling read in process_clients().
+        #[cfg(not(windows))]
+        if restore_nonblocking {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = self.control.set_nonblocking(true);
         }
-        self.control.flush()
+
+        result
     }
 }
 
@@ -577,5 +608,108 @@ mod tests {
 
         // No sockets exist, should return false (nothing to clean)
         assert!(!paths.cleanup_if_stale());
+    }
+
+    /// Regression test for the embedded-terminal copy hang.
+    ///
+    /// When the server's control socket is left non-blocking (as it is between
+    /// polling reads in `process_clients()`), a large control message — e.g. a
+    /// `SetClipboard` carrying a big selection copied from a large terminal
+    /// scrollback — used to overflow the kernel send buffer: `write_all` wrote
+    /// part of it, hit `WouldBlock`, and dropped the rest. The truncated,
+    /// newline-less message then wedged the client's blocking `read_control()`
+    /// forever, freezing the whole client.
+    ///
+    /// `write_control()` must deliver the entire message (including its
+    /// trailing newline) regardless of the socket's non-blocking mode. Here a
+    /// strict reader (the same blocking `read_control()` framing the client
+    /// relied on) delays briefly before draining, forcing the send buffer to
+    /// fill mid-write; the full message must still arrive.
+    ///
+    /// Without the fix, the non-blocking `write_all` drops the tail of the
+    /// message and the reader blocks forever waiting for a newline — the test
+    /// then hangs and is killed by the external runner (no in-test timeout, per
+    /// the project's testing guidelines). With the fix it completes promptly.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_control_delivers_large_message_when_nonblocking() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("ctrl-large-write", temp_dir.path());
+        let mut listener = ServerListener::bind(paths.clone()).unwrap();
+
+        // 4 MiB easily exceeds any local-socket send/receive buffer, so a
+        // non-blocking write_all is guaranteed to hit WouldBlock part-way.
+        let big_text = "X".repeat(4 * 1024 * 1024);
+        let msg = serde_json::to_string(&crate::server::protocol::ServerControl::SetClipboard {
+            text: big_text.clone(),
+            use_osc52: true,
+            use_system_clipboard: true,
+        })
+        .unwrap();
+
+        let (connected_tx, connected_rx) = mpsc::channel::<()>();
+        let (result_tx, result_rx) = mpsc::channel::<io::Result<Option<String>>>();
+        let paths_client = paths.clone();
+        let reader = thread::spawn(move || {
+            let conn = ClientConnection::connect(&paths_client).unwrap();
+            // Signal connected, then delay before reading so the server writes
+            // while nothing is draining the socket — recreating the buffer
+            // pressure that triggered the partial-write bug. The delay only
+            // affects how reliably the *bug* reproduces; the fixed code passes
+            // regardless of its duration.
+            connected_tx.send(()).unwrap();
+            thread::sleep(Duration::from_millis(300));
+            let received = conn.read_control();
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = result_tx.send(received);
+        });
+
+        // Accept the client's connection.
+        let server_conn = loop {
+            if let Some(c) = listener.accept().unwrap() {
+                break c;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+
+        // Mimic the server's steady state: control socket left non-blocking.
+        server_conn.control.set_nonblocking(true).unwrap();
+
+        // Write while the client is still sleeping (not draining). The buggy
+        // implementation returns Err(WouldBlock) after a partial write (which
+        // the real server ignores too); the fixed one blocks until the client
+        // drains the whole message. We assert on what the client *receives*, so
+        // the write result itself is intentionally ignored.
+        connected_rx.recv().unwrap();
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = server_conn.write_control(&msg);
+
+        // The client must receive a complete, parseable message. Wait
+        // indefinitely: with the bug this never arrives and the external runner
+        // times the test out.
+        let received = result_rx
+            .recv()
+            .expect("reader thread dropped the channel")
+            .expect("control read failed")
+            .expect("control stream closed unexpectedly");
+
+        match serde_json::from_str::<crate::server::protocol::ServerControl>(received.trim())
+            .expect("received control message should be valid JSON")
+        {
+            crate::server::protocol::ServerControl::SetClipboard { text, .. } => {
+                assert_eq!(
+                    text.len(),
+                    big_text.len(),
+                    "the full clipboard payload must be delivered intact"
+                );
+            }
+            other => panic!("unexpected control message: {:?}", other),
+        }
+
+        reader.join().unwrap();
     }
 }

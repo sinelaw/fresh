@@ -66,8 +66,7 @@ jobs:
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/" 2>/dev/null || true
-          cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/" 2>/dev/null || true
+          # Plugins/themes are embedded in the binary; no on-disk copy needed.
           cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
           cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 

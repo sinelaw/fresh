@@ -31,7 +31,15 @@ impl crate::app::Editor {
             theme_cache: std::sync::Arc::clone(&self.theme_cache),
             keybindings: std::sync::Arc::clone(&self.keybindings),
             command_registry: std::sync::Arc::clone(&self.command_registry),
-            fs_manager: std::sync::Arc::clone(&self.fs_manager),
+            // Derive the window's fs_manager from the *same* authority we hand
+            // it below, so directory listings (the file explorer) ride the
+            // window's filesystem — local or remote — instead of a stale,
+            // boot-time local one. A born-attached SSH/k8s window otherwise
+            // showed the local machine in the explorer while its terminal ran
+            // remote, because the cached fs_manager never tracked the authority.
+            fs_manager: std::sync::Arc::new(crate::services::fs::FsManager::new(
+                std::sync::Arc::clone(&self.authority.filesystem),
+            )),
             local_filesystem: std::sync::Arc::clone(&self.local_filesystem),
             buffer_id_alloc: self.buffer_id_alloc.clone(),
             authority: self.authority.clone(),
@@ -201,6 +209,16 @@ impl crate::app::Editor {
             }
         };
 
+        // The switch has now committed (the spawn succeeded and the active
+        // pointer stays on the new window). This path wrote `active_window`
+        // directly above, bypassing `set_active_window` — so mirror its
+        // guard here, or a panel-scoped mode set on the window we switched
+        // away from (e.g. the New-Session form's `orchestrator-new-form`,
+        // still mounted during a born-attached SSH/K8s attach) is left
+        // stranded and silently swallows all of that window's buffer input.
+        // See #2237 / #2234 item 4.
+        self.clear_panel_scoped_mode_on_switch_away(previous_id);
+
         // Register the leader pid with the new window's
         // process_groups so window-level signal operations reach
         // the spawned group. Mirrors `create_plugin_terminal`'s
@@ -219,13 +237,15 @@ impl crate::app::Editor {
             }
         }
 
-        // Resize the newly-active window's PTYs (mirrors
-        // `set_active_window`'s post-dive resize so the seeded
-        // terminal renders into the right cell rect on its first
-        // frame).
-        if let Some(win) = self.windows.get_mut(&id) {
-            win.resize_visible_terminals();
-        }
+        // Size the newly-created window's PTYs (mirrors
+        // `set_active_window`'s post-dive resize so the seeded terminal
+        // renders into the right cell rect on its first frame). Route
+        // through the funnel rather than `win.resize_visible_terminals()`
+        // directly: a brand-new window's `dock_cols` cache is still 0, and
+        // `relayout` pushes the current editor-global dock width into every
+        // window before sizing, so the seeded terminal accounts for a dock
+        // that's already showing.
+        self.relayout();
 
         // Plugin lifecycle: fire `window_created` first, then
         // `active_window_changed`. Order mirrors the
@@ -260,6 +280,40 @@ impl crate::app::Editor {
         Ok((id, terminal_id, buffer_id))
     }
 
+    /// Clear a floating-panel-scoped editor mode on the window we are
+    /// switching *away* from.
+    ///
+    /// A plugin-defined editor mode (`editor.setEditorMode`) tied to a mounted
+    /// floating widget panel — the Orchestrator picker (`orchestrator-open`) or
+    /// new-session form (`orchestrator-new-form`) — is transient UI state that
+    /// belongs to the *panel*, not to the window it was opened over.
+    /// `setEditorMode` writes to whatever window is active when the plugin
+    /// calls it, so a plugin that switches the active window while its panel is
+    /// still mounted (the orchestrator "dive": `setActiveWindow(target)` first,
+    /// then `closeOpenDialog()` / `closeForm()` which runs
+    /// `setEditorMode(null)`) lands the clear on the *incoming* window and
+    /// leaves the *outgoing* one stuck in the panel's mode. That stuck mode
+    /// stays masked while the window sits in terminal mode, then silently
+    /// swallows every printable key the moment the user leaves terminal mode
+    /// (e.g. opens a file via quick-open) — the buffer ignores all keyboard
+    /// input until the user switches sessions.
+    ///
+    /// Both window-switch paths must call this before moving the active
+    /// pointer: the ordinary `set_active_window` dive *and* the born-attached
+    /// remote session creation (`create_window_with_terminal`), which writes
+    /// the active pointer directly and so never reaches `set_active_window`'s
+    /// own guard. See #2237 / #2234 item 4.
+    ///
+    /// vi-mode and other persistent per-window modes are unaffected: they never
+    /// have a floating panel mounted during a window switch.
+    fn clear_panel_scoped_mode_on_switch_away(&mut self, previous_id: WindowId) {
+        if self.floating_widget_panel.is_some() {
+            if let Some(win) = self.windows.get_mut(&previous_id) {
+                win.editor_mode = None;
+            }
+        }
+    }
+
     /// Switch the active window to `id`.
     ///
     /// Pointer write: every per-window field
@@ -283,6 +337,17 @@ impl crate::app::Editor {
         }
 
         let previous_id = self.active_window;
+        // Capture the outgoing backend label so we can tell, after the
+        // switch, whether the active *authority* actually changed (most
+        // window switches are between same-authority local sessions, where
+        // it doesn't). Only then do we re-point editor-wide caches + fire
+        // the `authority_changed` hook.
+        let previous_authority_label = self.authority.display_label.clone();
+
+        // Clear any panel-scoped editor mode on the window we're leaving so
+        // it can never outlive the switch (see
+        // `clear_panel_scoped_mode_on_switch_away`).
+        self.clear_panel_scoped_mode_on_switch_away(previous_id);
 
         // Lazy materialization: if this window's saved workspace hasn't
         // been restored yet, restore it now (before seeding) so the
@@ -313,6 +378,19 @@ impl crate::app::Editor {
             }
         }
 
+        // Authority follows the active window. Each `Window` owns its
+        // `resources.authority`; the editor-wide `self.authority` cache (read
+        // by the 100+ filesystem/spawn/terminal call sites) must now reflect
+        // the window we just switched to, or a per-session remote/cloud
+        // backend would silently keep acting through the previous window's
+        // authority. This is the switch-time counterpart to
+        // `set_session_authority` (which mirrors on swap of the *active*
+        // window) — see `AUTHORITY_DESIGN.md` §"Evolution: per-session
+        // authority". Cheap for the common case: same-authority local windows
+        // share `Arc`s and the label is unchanged, so the hook below is
+        // skipped.
+        self.adopt_active_window_authority(&previous_authority_label);
+
         // Refresh the plugin state snapshot so `getCwd()` (and every
         // other snapshot field) reflects the window we just switched
         // to *before* the `active_window_changed` hook runs. Without
@@ -330,7 +408,7 @@ impl crate::app::Editor {
             },
         );
 
-        // Resize the newly-active window's visible terminal PTYs to
+        // Reflow the newly-active window's visible terminal PTYs to
         // match their dive-view split rects. Without this, a session
         // that was just previewed in the orchestrator picker
         // (`render_session_preview_into_rect` resizes PTYs to the
@@ -339,10 +417,56 @@ impl crate::app::Editor {
         // bottom of the dive view blank until something else triggers
         // a resize. Same applies for the inverse: dive away while a
         // session has a small split, dive back when the window is
-        // bigger — the terminal needs the new dimensions.
-        if let Some(win) = self.windows.get_mut(&id) {
-            win.resize_visible_terminals();
+        // bigger — the terminal needs the new dimensions. Route through
+        // the funnel so the dive-target window also picks up the current
+        // editor-global dock width (its `dock_cols` cache may be stale).
+        self.relayout();
+    }
+
+    /// Switch the active window and play a directional wipe over the
+    /// editor content as the incoming window appears. The editor
+    /// content geometry is layout-driven (identical for any session),
+    /// so the outgoing window's last content rect is the right area to
+    /// animate. `capture_before_all` snapshots the previous frame (the
+    /// outgoing window) and `SlideIn` slides the new content in over it.
+    pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
+        let animate = self.active_window != id
+            && self.windows.contains_key(&id)
+            && self.config().editor.animations;
+        // Wipe the ENTIRE window — menu bar, explorer, tabs, splits, and
+        // status bar — i.e. everything to the right of the dock. That's
+        // the chrome area from the dock split, not just the buffer's
+        // content rect. The dock column itself stays put.
+        let full = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.terminal_width,
+            height: self.terminal_height,
+        };
+        let (_dock, area) = self.compute_dock_split(full);
+        self.set_active_window(id);
+        if !animate {
+            return;
         }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        use crate::view::animation::{AnimationKind, Edge};
+        let from = match from_edge {
+            "top" => Edge::Top,
+            "bottom" => Edge::Bottom,
+            "left" => Edge::Left,
+            "right" => Edge::Right,
+            _ => Edge::Bottom,
+        };
+        self.active_window_mut().animations.start(
+            area,
+            AnimationKind::SlideIn {
+                from,
+                duration: std::time::Duration::from_millis(180),
+                delay: std::time::Duration::ZERO,
+            },
+        );
     }
 
     /// Cycle to the next open window in the workspace.
@@ -502,6 +626,12 @@ impl crate::app::Editor {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
         }
+        // Tear down a born-attached remote session's connection (carrier +
+        // reconnect/heartbeat + runtime) when its window closes. No-op for
+        // local windows, which never have an entry.
+        if self.session_keepalives.remove(&id).is_some() {
+            tracing::info!("close_window: dropped remote session keepalive for window {id}");
+        }
 
         self.plugin_manager
             .read()
@@ -509,5 +639,53 @@ impl crate::app::Editor {
             .run_hook("window_closed", HookArgs::WindowClosed { id: id.0 });
 
         true
+    }
+
+    /// Born-attached remote session: create a **new window** whose authority is
+    /// the already-connected remote backend (Kubernetes / SSH / …), seed its
+    /// terminal *inside* that backend, and park the connection `keepalive`
+    /// keyed by the window so it outlives editor rebuilds and is torn down on
+    /// close.
+    ///
+    /// Unlike the global `install_authority_with_keepalive` restart, existing
+    /// windows are left untouched — the remote session coexists with them, and
+    /// `set_active_window` (Gap A) retargets the active authority when the user
+    /// switches. The mechanism is simply that `create_window_with_terminal`
+    /// builds the window from `window_resources()`, which clones `self.authority`;
+    /// installing the remote authority first means the new window's filesystem,
+    /// LSP spawner, and terminal wrapper all act in the backend from birth (so
+    /// there are no stale local handles to invalidate — the caveat that gates
+    /// hot-swapping an *existing* window's authority doesn't apply here).
+    pub(crate) fn create_remote_session_window(
+        &mut self,
+        authority: crate::services::authority::Authority,
+        keepalive: Box<dyn std::any::Any + Send>,
+        root: PathBuf,
+        label: String,
+        command: Option<Vec<String>>,
+    ) -> Result<WindowId, String> {
+        let prev_label = self.authority.display_label.clone();
+        // Install the remote authority so the new window is born under it.
+        // The previous (local / other-remote) window keeps its own
+        // `resources.authority`; Gap A restores it on switch-back.
+        let saved_authority = std::mem::replace(&mut self.authority, authority);
+        match self.create_window_with_terminal(root.clone(), label, Some(root), command, None) {
+            Ok((window_id, _terminal, _buffer)) => {
+                self.session_keepalives.insert(window_id, keepalive);
+                // `create_window_with_terminal` writes the active pointer
+                // directly (bypassing `set_active_window`), so re-point
+                // quick-open at the remote filesystem + fire `authority_changed`.
+                self.adopt_active_window_authority(&prev_label);
+                Ok(window_id)
+            }
+            Err(e) => {
+                // The connect succeeded but the window couldn't be seeded
+                // (e.g. the backend has no python3 / the pod died): restore the
+                // prior authority and drop the keepalive (tears down the carrier).
+                self.authority = saved_authority;
+                drop(keepalive);
+                Err(e)
+            }
+        }
     }
 }

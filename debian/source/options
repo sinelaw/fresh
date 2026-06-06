@@ -1,0 +1,2 @@
+# Exclude generated artifacts and large caches from the .debian.tar.xz delta.
+extend-diff-ignore = "(?:^|/)(?:target|node_modules|perf\.data.*|flamegraph\.svg|\.cargo-home)(?:/|$)"

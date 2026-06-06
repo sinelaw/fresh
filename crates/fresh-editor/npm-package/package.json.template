@@ -18,8 +18,6 @@
     "binary-install.js",
     "install.js",
     "run-fresh.js",
-    "plugins/**/*",
-    "themes/**/*",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

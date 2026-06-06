@@ -1,5 +1,7 @@
 ---
 title: "What's New in Fresh (0.3.0)"
+date: 2026-04-21
+description: "Startup script (init.ts), dashboard, devcontainers, review diff rewrite, git log, preview tabs, customizable status bar, and more."
 outline: false
 ---
 

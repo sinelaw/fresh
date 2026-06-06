@@ -928,10 +928,14 @@ fn test_switch_project_double_click_parent_navigates_up() {
     let root = temp_dir.path().to_path_buf();
 
     // Create a parent/child structure. Start the editor inside the child so the
-    // ".." entry is meaningful, and place a unique marker in the parent.
+    // ".." entry is meaningful, and place a marker in the parent that the
+    // post-navigation wait keys off. The marker name is kept short on
+    // purpose: a long filename can itself be truncated with an ellipsis in
+    // a narrow browser column, so waiting on it would be sensitive to
+    // rendering width. "upok" can't truncate and appears nowhere else.
     let child = root.join("child");
     fs::create_dir(&child).unwrap();
-    fs::write(root.join("parent_marker.txt"), "marker").unwrap();
+    fs::create_dir(root.join("upok")).unwrap();
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), child.clone())
@@ -945,6 +949,14 @@ fn test_switch_project_double_click_parent_navigates_up() {
         .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
     harness.type_text("switch project").unwrap();
+    // Wait for the palette to finish filtering and render the "Switch Project"
+    // command (title-cased, so it can't match the lowercase input echo) before
+    // confirming. Pressing Enter before the async filter settles would commit a
+    // stale/empty selection, so the folder browser would never open and the
+    // wait below would run to nextest's external timeout.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Switch Project"))
+        .expect("Command palette should list the Switch Project command");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -957,18 +969,28 @@ fn test_switch_project_double_click_parent_navigates_up() {
         })
         .expect("Folder browser should appear with parent entry");
 
-    // Locate the row with the ".." entry. We look for a row whose content
-    // contains a standalone ".." token to avoid matching status strings.
+    // Locate the row with the ".." entry by *position*, not by dot-matching.
+    // The ".." entry is the first list row, which sits below the
+    // "Navigation:" header. The current-path title is on the modal's top
+    // border, above that header — and when the path is too long it renders
+    // a truncation ellipsis that also contains dots ("prefix/[...]/suffix"
+    // on Linux; a plain "..." on Windows, whose "\" separators defeat
+    // truncate_path's '/'-split). Searching the whole screen for ".."
+    // matched that title first, so the click landed on the border and
+    // nothing navigated — the test timed out on Windows (its temp paths
+    // are long enough to truncate; Linux's short /tmp paths were not).
+    // Anchoring to the row *after* the header skips the title entirely.
     let screen = harness.screen_to_string();
+    let nav_row = screen
+        .lines()
+        .position(|l| l.contains("Navigation:"))
+        .expect("Folder browser should have a Navigation header");
     let (row_idx, line) = screen
         .lines()
         .enumerate()
-        .find(|(_, l)| {
-            // Filter to lines that look like file-list rows (contain "..")
-            // and are not the path/status lines.
-            l.contains("..") && !l.contains("Navigation:") && !l.contains("Path:")
-        })
-        .expect("Should find row containing '..' entry");
+        .skip(nav_row + 1)
+        .find(|(_, l)| l.contains(".."))
+        .expect("Should find the '..' entry row below the Navigation header");
     let col = line.find("..").expect("'..' must be on its row") as u16 + 1;
 
     double_click_at(&mut harness, col, row_idx as u16);
@@ -977,7 +999,7 @@ fn test_switch_project_double_click_parent_navigates_up() {
     // distinguishes "navigated up" from "selected parent as new
     // project root" is: the Switch Project browser is still open
     // (so its "Navigation:" header is on screen) AND the parent
-    // directory's marker file is now listed. The bug version
+    // directory's "upok" marker is now listed. The bug version
     // closes the browser to commit the selection; with the fix,
     // the browser stays open at the new path. We wait for both
     // conditions in one semantic wait so the test settles to a
@@ -986,10 +1008,10 @@ fn test_switch_project_double_click_parent_navigates_up() {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Navigation:") && screen.contains("parent_marker.txt")
+            screen.contains("Navigation:") && screen.contains("upok")
         })
         .expect(
             "Folder browser must remain open and show the parent directory's contents \
-             after double-clicking '..'",
+             (the 'upok' marker) after double-clicking '..'",
         );
 }

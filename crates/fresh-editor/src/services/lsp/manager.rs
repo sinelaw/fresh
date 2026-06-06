@@ -218,6 +218,127 @@ pub struct ServerCapabilitySummary {
     pub diagnostics: bool,
 }
 
+impl ServerCapabilitySummary {
+    /// Apply a single dynamic capability registration
+    /// (`client/registerCapability`) or unregistration
+    /// (`client/unregisterCapability`) by toggling the matching capability
+    /// flag. `register == false` clears the flag (and any derived state such
+    /// as completion trigger characters or the semantic-tokens legend).
+    ///
+    /// Many servers advertise little or nothing in their `initialize` result
+    /// and register providers dynamically afterwards; without this the feature
+    /// stays gated off (`has_capability` → false) for the whole session.
+    ///
+    /// Returns `true` if `method` is one we recognize and gate a feature on,
+    /// so the caller knows whether to re-issue requests for already-open
+    /// buffers. Unknown methods (e.g. `workspace/didChangeWatchedFiles`, which
+    /// is handled separately) return `false`.
+    pub fn apply_dynamic_registration(
+        &mut self,
+        method: &str,
+        register_options: Option<&serde_json::Value>,
+        register: bool,
+    ) -> bool {
+        use lsp_types::SemanticTokensFullOptions;
+
+        match method {
+            "textDocument/hover" => self.hover = register,
+            "textDocument/completion" => {
+                self.completion = register;
+                if register {
+                    if let Some(opts) = register_options {
+                        if let Some(chars) =
+                            opts.get("triggerCharacters").and_then(|v| v.as_array())
+                        {
+                            self.completion_trigger_characters = chars
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect();
+                        }
+                        if let Some(resolve) = opts
+                            .get("resolveProvider")
+                            .and_then(serde_json::Value::as_bool)
+                        {
+                            self.completion_resolve = resolve;
+                        }
+                    }
+                } else {
+                    self.completion_trigger_characters.clear();
+                    self.completion_resolve = false;
+                }
+            }
+            "textDocument/definition" => self.definition = register,
+            "textDocument/references" => self.references = register,
+            "textDocument/formatting" => self.document_formatting = register,
+            "textDocument/rangeFormatting" => self.document_range_formatting = register,
+            "textDocument/rename" => self.rename = register,
+            "textDocument/signatureHelp" => self.signature_help = register,
+            "textDocument/inlayHint" => self.inlay_hints = register,
+            "textDocument/foldingRange" => self.folding_ranges = register,
+            "textDocument/documentHighlight" => self.document_highlight = register,
+            "textDocument/codeAction" => {
+                self.code_action = register;
+                if register {
+                    if let Some(resolve) = register_options
+                        .and_then(|opts| opts.get("resolveProvider"))
+                        .and_then(serde_json::Value::as_bool)
+                    {
+                        self.code_action_resolve = resolve;
+                    }
+                } else {
+                    self.code_action_resolve = false;
+                }
+            }
+            "textDocument/documentSymbol" => self.document_symbols = register,
+            "workspace/symbol" => self.workspace_symbols = register,
+            "textDocument/diagnostic" => self.diagnostics = register,
+            "textDocument/semanticTokens" => {
+                if register {
+                    // Registration options carry the legend and full/range
+                    // flags. They are `SemanticTokensRegistrationOptions`, but
+                    // its extra fields (documentSelector, id) are ignored by
+                    // serde, so parsing the embedded `SemanticTokensOptions`
+                    // succeeds.
+                    match register_options.and_then(|opts| {
+                        serde_json::from_value::<lsp_types::SemanticTokensOptions>(opts.clone())
+                            .ok()
+                    }) {
+                        Some(opts) => {
+                            self.semantic_tokens_legend = Some(opts.legend);
+                            match opts.full {
+                                Some(SemanticTokensFullOptions::Bool(v)) => {
+                                    self.semantic_tokens_full = v;
+                                    self.semantic_tokens_full_delta = false;
+                                }
+                                Some(SemanticTokensFullOptions::Delta { delta }) => {
+                                    self.semantic_tokens_full = true;
+                                    self.semantic_tokens_full_delta = delta.unwrap_or(false);
+                                }
+                                None => {
+                                    self.semantic_tokens_full = false;
+                                    self.semantic_tokens_full_delta = false;
+                                }
+                            }
+                            self.semantic_tokens_range = opts.range.unwrap_or(false);
+                        }
+                        // No parseable options: assume full support so the
+                        // feature isn't silently dropped, but a legend is
+                        // required to decode tokens, so leave it as-is.
+                        None => self.semantic_tokens_full = true,
+                    }
+                } else {
+                    self.semantic_tokens_full = false;
+                    self.semantic_tokens_full_delta = false;
+                    self.semantic_tokens_range = false;
+                    self.semantic_tokens_legend = None;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
 /// A named LSP handle with feature filter metadata and per-server capabilities.
 /// Wraps an LspHandle with the server's display name, feature routing filter,
 /// and the capabilities reported by this specific server during initialization.
@@ -476,6 +597,36 @@ impl LspManager {
         if let Some(sh) = self.handles.iter_mut().find(|sh| sh.name == server_name) {
             sh.capabilities = capabilities;
         }
+    }
+
+    /// Apply dynamic capability (un)registrations to the named server's stored
+    /// capabilities. Each entry is `(method, register_options)`. Returns `true`
+    /// if any recognized feature flag changed, so the caller can re-issue
+    /// requests for buffers that opened before the registration arrived.
+    ///
+    /// Per the LSP spec a server only sends `client/registerCapability` after
+    /// it has received our `initialized` notification — i.e. after the
+    /// `initialize` result was processed and `set_server_capabilities` ran — so
+    /// these merge on top of the static summary rather than racing it.
+    pub fn apply_dynamic_capabilities(
+        &mut self,
+        server_name: &str,
+        register: bool,
+        registrations: &[(String, Option<serde_json::Value>)],
+    ) -> bool {
+        let Some(sh) = self.handles.iter_mut().find(|sh| sh.name == server_name) else {
+            return false;
+        };
+        let mut changed = false;
+        for (method, options) in registrations {
+            if sh
+                .capabilities
+                .apply_dynamic_registration(method, options.as_ref(), register)
+            {
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Get the semantic token legend for a language from the first eligible server.
@@ -2554,5 +2705,100 @@ mod tests {
     fn test_path_to_uri_with_spaces() {
         let uri = path_to_uri(Path::new("/tmp/my project/src")).unwrap();
         assert_eq!(uri.as_str(), "file:///tmp/my%20project/src");
+    }
+
+    #[test]
+    fn dynamic_registration_enables_then_disables_inlay_hints() {
+        // A server that advertised no static inlayHintProvider but registers it
+        // dynamically must end up with the capability enabled — and unregister
+        // must turn it back off (sinelaw/fresh#2195 §1).
+        let mut caps = ServerCapabilitySummary::default();
+        assert!(!caps.inlay_hints);
+
+        let recognized = caps.apply_dynamic_registration("textDocument/inlayHint", None, true);
+        assert!(
+            recognized,
+            "inlayHint must be a recognized capability method"
+        );
+        assert!(
+            caps.inlay_hints,
+            "dynamic registration must enable inlay hints"
+        );
+
+        let recognized = caps.apply_dynamic_registration("textDocument/inlayHint", None, false);
+        assert!(recognized);
+        assert!(!caps.inlay_hints, "unregister must disable inlay hints");
+    }
+
+    #[test]
+    fn dynamic_registration_ignores_unknown_methods() {
+        // Methods we don't gate a feature on (e.g. file watching, handled
+        // elsewhere) must report "not recognized" so the caller doesn't
+        // needlessly re-issue feature requests.
+        let mut caps = ServerCapabilitySummary::default();
+        let recognized =
+            caps.apply_dynamic_registration("workspace/didChangeWatchedFiles", None, true);
+        assert!(!recognized);
+    }
+
+    #[test]
+    fn dynamic_registration_parses_completion_options() {
+        let mut caps = ServerCapabilitySummary::default();
+        let opts = serde_json::json!({
+            "triggerCharacters": [".", "::"],
+            "resolveProvider": true,
+        });
+        let recognized =
+            caps.apply_dynamic_registration("textDocument/completion", Some(&opts), true);
+        assert!(recognized);
+        assert!(caps.completion);
+        assert!(caps.completion_resolve);
+        assert_eq!(caps.completion_trigger_characters, vec![".", "::"]);
+
+        // Unregister clears the derived state too.
+        caps.apply_dynamic_registration("textDocument/completion", None, false);
+        assert!(!caps.completion);
+        assert!(!caps.completion_resolve);
+        assert!(caps.completion_trigger_characters.is_empty());
+    }
+
+    #[test]
+    fn dynamic_registration_parses_semantic_tokens_legend() {
+        let mut caps = ServerCapabilitySummary::default();
+        let opts = serde_json::json!({
+            "legend": {
+                "tokenTypes": ["namespace", "type"],
+                "tokenModifiers": ["declaration"],
+            },
+            "full": { "delta": true },
+            "range": true,
+        });
+        let recognized =
+            caps.apply_dynamic_registration("textDocument/semanticTokens", Some(&opts), true);
+        assert!(recognized);
+        assert!(caps.semantic_tokens_full);
+        assert!(caps.semantic_tokens_full_delta);
+        assert!(caps.semantic_tokens_range);
+        let legend = caps
+            .semantic_tokens_legend
+            .as_ref()
+            .expect("legend must be parsed from registration options");
+        assert_eq!(legend.token_types.len(), 2);
+
+        caps.apply_dynamic_registration("textDocument/semanticTokens", None, false);
+        assert!(!caps.semantic_tokens_full);
+        assert!(caps.semantic_tokens_legend.is_none());
+    }
+
+    #[test]
+    fn apply_dynamic_capabilities_reports_change_only_for_known_methods() {
+        // The manager-level entry point returns whether any recognized feature
+        // flag changed, which gates whether the dispatcher re-issues requests.
+        let mut caps = ServerCapabilitySummary::default();
+        let known = caps.apply_dynamic_registration("textDocument/hover", None, true);
+        let unknown = caps.apply_dynamic_registration("some/unknownMethod", None, true);
+        assert!(known);
+        assert!(!unknown);
+        assert!(caps.hover);
     }
 }

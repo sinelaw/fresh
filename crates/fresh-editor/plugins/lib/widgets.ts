@@ -191,6 +191,25 @@ export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
 }
 
+/** Full-width horizontal rule. The host draws `ch` (default `─`)
+ * across the panel's inner content width, so the separator always
+ * matches the rendered width — including a user-dragged dock —
+ * without the plugin computing the width itself. This is the
+ * declarative analogue of `flexSpacer()`: express "a rule here",
+ * let the host (which owns the width) size it. Optional `style`
+ * picks the colour (e.g. a dim `fg` for a quiet separator). */
+export function divider(
+  options?: { ch?: string; style?: Partial<OverlayOptions>; key?: string },
+): WidgetSpec {
+  // Omit unset keys rather than passing `undefined`: the plugin bridge
+  // turns a present `undefined` into JSON `null`, which fails to
+  // deserialize as the host's `Option<…>` fields (see `styledRow`).
+  const spec: WidgetSpec = { kind: "divider", ch: options?.ch ?? "─" };
+  if (options?.style !== undefined) spec.style = options.style;
+  if (options?.key !== undefined) spec.key = options.key;
+  return spec;
+}
+
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
  * the full dataset of items + a `visibleRows` count; the widget
@@ -206,6 +225,14 @@ export function flexSpacer(key?: string): WidgetSpec {
  * re-renders. Lists without a key reset to scroll=0 each render. */
 export function list(options: {
   items: TextPropertyEntry[];
+  /** Optional per-item widget specs. When provided (non-empty) they
+   * override `items`: each renders as a multi-row "card" (e.g. a
+   * `labeledSection` for a rounded pill) and the list selects,
+   * scrolls, and routes clicks in item units — one card per item.
+   * Pass `items: []` alongside. All cards share a uniform height; a
+   * click anywhere on a card fires the same `select` event a classic
+   * row would. Interactive widgets nested in a card aren't routed. */
+  itemSpecs?: WidgetSpec[];
   itemKeys?: string[];
   selectedIndex?: number;
   visibleRows: number;
@@ -221,6 +248,7 @@ export function list(options: {
   return {
     kind: "list",
     items: options.items,
+    itemSpecs: options.itemSpecs ?? [],
     itemKeys: options.itemKeys ?? [],
     selectedIndex: options.selectedIndex ?? -1,
     visibleRows: options.visibleRows,
@@ -755,14 +783,20 @@ export class FloatingWidgetPanel {
    * existing panel. */
   mount(
     spec: WidgetSpec,
-    options: { widthPct?: number; heightPct?: number } = {},
+    options: { widthPct?: number; heightPct?: number; asDock?: boolean } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
     const editor = (globalThis as any).editor;
     const wp = options.widthPct ?? 60;
     const hp = options.heightPct ?? 40;
     this.mounted = true;
-    return editor.mountFloatingWidget(this.panelId, spec, wp, hp);
+    return editor.mountFloatingWidget(
+      this.panelId,
+      spec,
+      wp,
+      hp,
+      options.asDock ?? false,
+    );
   }
 
   /** Re-render the panel against the given spec; instance state on

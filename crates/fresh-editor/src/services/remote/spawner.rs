@@ -858,9 +858,92 @@ fn build_ssh_args(
         a.push("-i".to_string());
         a.push(identity.to_string_lossy().into_owned());
     }
-    a.push(format!("{}@{}", params.user, params.host));
+    a.extend(params.extra_args.iter().cloned());
+    a.push(params.ssh_target());
     a.push(remote_cmd.to_string());
     a
+}
+
+/// Assemble the `ssh` argv for an *interactive terminal* under a remote
+/// authority. Unlike [`build_ssh_args`] (one-shot, non-interactive LSP /
+/// probe spawns) this:
+///
+/// * forces remote PTY allocation with `-t` so the remote shell behaves
+///   interactively (job control, line editing, a real prompt);
+/// * omits `BatchMode=yes` so auth prompts (key passphrase, password,
+///   2FA) can surface *inside* the embedded terminal rather than failing;
+/// * runs an interactive login shell (`exec ${SHELL:-/bin/sh} -l`) after
+///   `cd`-ing into the workspace, so the user lands where the editor is
+///   rooted with their normal remote environment.
+///
+/// Returned as the argv *after* the leading `ssh` program name; the caller
+/// (the SSH terminal wrapper) sets `command = "ssh"` and these as `args`.
+pub fn build_ssh_terminal_args(
+    params: &crate::services::remote::ConnectionParams,
+    remote_dir: Option<&str>,
+) -> Vec<String> {
+    let mut a = vec![
+        "-t".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+    ];
+    if let Some(port) = params.port {
+        a.push("-p".to_string());
+        a.push(port.to_string());
+    }
+    if let Some(ref identity) = params.identity_file {
+        a.push("-i".to_string());
+        a.push(identity.to_string_lossy().into_owned());
+    }
+    a.extend(params.extra_args.iter().cloned());
+    a.push(params.ssh_target());
+
+    // Land in the workspace (when known), then hand control to the user's
+    // login shell. `remote_dir` is whatever path the URL pointed at, which
+    // may be a *file* (`fresh ssh://host/proj/main.rs`) — so fall back to
+    // its parent dir, and treat a failed `cd` as non-fatal so the shell
+    // always starts. `exec` replaces the ssh-side shell so closing the
+    // terminal tears the session down cleanly.
+    let mut remote_cmd = String::new();
+    if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
+        let quoted = shell_quote(dir);
+        remote_cmd.push_str(&format!(
+            "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
+        ));
+    }
+    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    a.push(remote_cmd);
+    a
+}
+
+/// Build the `kubectl` argv that opens the integrated terminal as an
+/// interactive login shell *inside the pod*:
+///
+/// ```text
+/// [--context CTX] exec -it -n NS [-c C] POD -- sh -lc 'cd WS; exec "$SHELL" -l'
+/// ```
+///
+/// The K8s analogue of [`build_ssh_terminal_args`]. `-it` allocates a TTY (so
+/// resize / curses apps work — `kubectl` itself implements the resize
+/// protocol), and the `sh -lc` wrapper pins cwd, so the authority's terminal
+/// wrapper sets `manages_cwd = true`. A failed `cd` is non-fatal so the shell
+/// always starts; `exec` replaces the wrapper shell so closing the terminal
+/// tears the exec session down cleanly.
+pub fn build_kube_terminal_args(target: &crate::services::remote::KubeTarget) -> Vec<String> {
+    let mut remote_cmd = String::new();
+    if let Some(dir) = target.workspace.as_deref().filter(|d| !d.is_empty()) {
+        let quoted = shell_quote(dir);
+        remote_cmd.push_str(&format!(
+            "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
+        ));
+    }
+    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    crate::services::remote::transport::kubectl_exec_argv(
+        target,
+        &["-it"],
+        "sh",
+        &["-lc".to_string(), remote_cmd],
+    )
 }
 
 /// Long-running spawner over SSH: each LSP server (or tool agent) gets its own
@@ -1185,10 +1268,11 @@ mod tests {
     #[test]
     fn build_ssh_args_full() {
         let params = crate::services::remote::ConnectionParams {
-            user: "u".into(),
+            user: Some("u".into()),
             host: "h".into(),
             port: Some(2222),
             identity_file: Some(std::path::PathBuf::from("/k")),
+            extra_args: Vec::new(),
         };
         let a = build_ssh_args(&params, "echo hi");
         let expected: Vec<String> = [
@@ -1207,5 +1291,142 @@ mod tests {
         .map(String::from)
         .collect();
         assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn build_ssh_args_omits_user_and_threads_extra_args() {
+        // No user → bare host target; extra args land verbatim before it.
+        let params = crate::services::remote::ConnectionParams {
+            user: None,
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: vec!["-J".into(), "jump".into()],
+        };
+        let a = build_ssh_args(&params, "echo hi");
+        let expected: Vec<String> = [
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            "-J",
+            "jump",
+            "h",
+            "echo hi",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn build_ssh_terminal_args_forces_tty_and_login_shell() {
+        let params = crate::services::remote::ConnectionParams {
+            user: Some("u".into()),
+            host: "h".into(),
+            port: Some(2222),
+            identity_file: Some(std::path::PathBuf::from("/k")),
+            extra_args: Vec::new(),
+        };
+        let a = build_ssh_terminal_args(&params, Some("/proj dir"));
+        let expected: Vec<String> = [
+            "-t",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-p",
+            "2222",
+            "-i",
+            "/k",
+            "u@h",
+            "d='/proj dir'; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+        // No BatchMode — interactive auth must be able to prompt in the PTY.
+        assert!(!a.iter().any(|s| s == "BatchMode=yes"));
+    }
+
+    #[test]
+    fn build_ssh_terminal_args_without_dir_skips_cd() {
+        let params = crate::services::remote::ConnectionParams {
+            user: Some("u".into()),
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        let a = build_ssh_terminal_args(&params, None);
+        assert_eq!(
+            a,
+            vec![
+                "-t",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "u@h",
+                "exec ${SHELL:-/bin/sh} -l",
+            ]
+        );
+        // Empty dir is treated the same as no dir.
+        assert_eq!(build_ssh_terminal_args(&params, Some("")), a);
+    }
+
+    #[test]
+    fn build_kube_terminal_args_allocates_tty_and_pins_cwd() {
+        let target = crate::services::remote::KubeTarget {
+            context: Some("prod".into()),
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: Some("app".into()),
+            workspace: Some("/workspace".into()),
+        };
+        let a = build_kube_terminal_args(&target);
+        let expected: Vec<String> = [
+            "--context",
+            "prod",
+            "exec",
+            "-it",
+            "-n",
+            "dev",
+            "-c",
+            "app",
+            "pod-1",
+            "--",
+            "sh",
+            "-lc",
+            "d='/workspace'; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(a, expected);
+    }
+
+    #[test]
+    fn build_kube_terminal_args_without_workspace_skips_cd() {
+        let target = crate::services::remote::KubeTarget {
+            context: None,
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: None,
+        };
+        let a = build_kube_terminal_args(&target);
+        assert_eq!(
+            a,
+            vec![
+                "exec",
+                "-it",
+                "-n",
+                "dev",
+                "pod-1",
+                "--",
+                "sh",
+                "-lc",
+                "exec ${SHELL:-/bin/sh} -l",
+            ]
+        );
     }
 }

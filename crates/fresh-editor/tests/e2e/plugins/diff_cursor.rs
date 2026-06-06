@@ -2090,3 +2090,221 @@ fn test_diff_copy_preserves_selection() {
         prompt_line
     );
 }
+
+// =============================================================================
+// OPEN-FILE-FROM-DIFF TESTS
+//
+// The side-by-side diff view lets the user jump from a diff line to the real
+// file on disk:
+//   * Enter on the NEW (working) pane opens the editable working-tree file at
+//     that line.
+//   * Enter on the OLD (HEAD) pane opens that historical version read-only.
+//   * Alt+O always opens the editable working-tree file, regardless of pane.
+// These fail without the Enter / Alt+O bindings (Enter was a no-op in the
+// read-only composite; Alt+O was unbound).
+// =============================================================================
+
+/// Open the unified (magit-style) Review Diff view via the command palette.
+fn open_review_diff(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            if screen.contains("TypeError") || screen.contains("Error:") {
+                panic!("Error loading review diff. Screen:\n{}", screen);
+            }
+            screen.contains("*Review Diff*") || screen.contains("Review Diff —")
+        })
+        .unwrap();
+}
+
+/// Enter on the NEW (working) pane opens the editable working-tree file at the
+/// line under the cursor — leaving the read-only diff view behind.
+#[test]
+fn test_diff_enter_new_pane_opens_working_file() {
+    let repo = GitTestRepo::new();
+    create_repo_short_file(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("short.rs");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // Switch to the NEW (working) pane and land on the first line.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Open the file under the cursor.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Left the composite view: neither pane header is rendered.
+            !s.contains("OLD (HEAD)") && !s.contains("NEW (Working)")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("line 1 modified"),
+        "Working-tree (modified) content should be visible. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("*HEAD:"),
+        "Should open the working file, not a read-only HEAD buffer. Screen:\n{}",
+        screen
+    );
+}
+
+/// Enter on the OLD (HEAD) pane opens that historical version read-only — the
+/// content matches HEAD, not the working tree.
+#[test]
+fn test_diff_enter_old_pane_opens_head_readonly() {
+    let repo = GitTestRepo::new();
+    create_repo_short_file(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("short.rs");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // OLD pane is focused by default; open the version under the cursor.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*HEAD:"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    // HEAD content: the original lines, NOT the working-tree modifications.
+    assert!(
+        screen.contains("line 3") && !screen.contains("line 3 changed"),
+        "HEAD version should show original content, not working changes. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("line 1 modified"),
+        "HEAD version must not contain working-tree modifications. Screen:\n{}",
+        screen
+    );
+}
+
+/// Alt+O in the side-by-side view always opens the editable working-tree file,
+/// even when the OLD (HEAD) pane is focused.
+#[test]
+fn test_diff_alt_o_opens_working_file_from_old_pane() {
+    let repo = GitTestRepo::new();
+    create_repo_short_file(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let file_path = repo.path.join("short.rs");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_side_by_side_diff(&mut harness);
+
+    // OLD pane focused; Alt+O still opens the working file.
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("OLD (HEAD)") && !s.contains("NEW (Working)")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("line 1 modified") && !screen.contains("*HEAD:"),
+        "Alt+O should open the editable working file. Screen:\n{}",
+        screen
+    );
+}
+
+/// Alt+O in the unified Review Diff stream opens the editable working-tree
+/// file at the line under the cursor.
+#[test]
+fn test_review_diff_alt_o_opens_working_file() {
+    let repo = GitTestRepo::new();
+    create_repo_short_file(&repo);
+    setup_audit_mode_plugin(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    // Open from within the repo (no specific file needed for the unified view).
+    let file_path = repo.path.join("short.rs");
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    open_review_diff(&mut harness);
+
+    // Move into the diff body (past section + file + hunk headers) onto a
+    // content row, then open the working file.
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Left the review group: the diff toolbar / panel header is gone.
+            !s.contains("OLD (HEAD)")
+                && !s.contains("Review Diff —")
+                && s.contains("line 1 modified")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("line 1 modified"),
+        "Unified Alt+O should open the editable working file. Screen:\n{}",
+        screen
+    );
+}

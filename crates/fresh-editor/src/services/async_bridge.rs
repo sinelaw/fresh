@@ -10,7 +10,6 @@
 //! - Computation should be sync (editing, rendering)
 //! - Main loop remains responsive and simple
 
-use crate::services::terminal::TerminalId;
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
     CodeActionOrCommand, CompletionItem, Diagnostic, FoldingRange, InlayHint, Location,
@@ -27,9 +26,65 @@ pub enum LspSemanticTokensResponse {
     Range(Result<Option<SemanticTokensRangeResult>, String>),
 }
 
+/// How a completed remote attach is installed.
+pub enum RemoteAttachMode {
+    /// Global: replace the editor's single authority and restart the whole
+    /// editor around the remote backend (the original `setAuthority`-style
+    /// destructive transition). Every window becomes remote.
+    Restart,
+    /// Born-attached: spawn a *new window* whose authority is the remote
+    /// backend, leaving existing (local / other-remote) windows untouched.
+    /// The session coexists warm beside them; switching windows retargets the
+    /// active authority (see `set_active_window` / Gap A). `command` is the
+    /// optional agent argv for the window's seed terminal.
+    Window {
+        label: String,
+        command: Option<Vec<String>>,
+    },
+}
+
+/// A completed remote-agent attach: the assembled authority plus the
+/// keepalive that must outlive it. Carried back from the async connect
+/// task to the main loop, which installs it per `mode`. Manual `Debug`
+/// because the fields are not `Debug`.
+pub struct RemoteAttachReady {
+    pub authority: crate::services::authority::Authority,
+    pub keepalive: Box<dyn std::any::Any + Send>,
+    /// Pod-side root to re-open the editor at (the remote workspace, e.g.
+    /// `/workspace`). Without this the editor keeps the *local* working
+    /// directory after attach, so the explorer / quick-open / open-file all
+    /// look at a host path that doesn't exist in the pod. `None` falls back to
+    /// the remote home directory.
+    pub working_dir: Option<std::path::PathBuf>,
+    /// Restart (global) vs. born-attached new window.
+    pub mode: RemoteAttachMode,
+    /// JS callback id of the `attachRemoteAgent` promise to settle once the
+    /// session (authority + window) is fully constructed. The main loop
+    /// resolves it on success and rejects it if window creation fails, so the
+    /// plugin's dialog only closes when there is a real session to show.
+    pub request_id: u64,
+}
+
+impl std::fmt::Debug for RemoteAttachReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteAttachReady")
+            .field("label", &self.authority.display_label)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Messages sent from async tasks to the synchronous main loop
 #[derive(Debug)]
 pub enum AsyncMessage {
+    /// An async `attachRemoteAgent` connect succeeded — install the
+    /// authority + keepalive and restart.
+    RemoteAttachReady(RemoteAttachReady),
+
+    /// An async `attachRemoteAgent` connect failed — reject the plugin's
+    /// promise with `error` (the plugin shows it and creates no window); the
+    /// editor stays on its current authority.
+    RemoteAttachFailed { error: String, request_id: u64 },
+
     /// LSP diagnostics received for a file
     LspDiagnostics {
         uri: String,
@@ -164,14 +219,45 @@ pub enum AsyncMessage {
     /// Client should re-pull diagnostics for all open documents
     LspDiagnosticRefresh { language: String },
 
+    /// LSP server requests an inlay-hint refresh (workspace/inlayHint/refresh).
+    /// Client should re-pull inlay hints for all open documents — used when the
+    /// server learns more later (e.g. a change in file A alters inferred types
+    /// in file B, which the user never edited so was never otherwise re-pulled).
+    LspInlayHintRefresh { language: String },
+
+    /// LSP server requests a semantic-tokens refresh
+    /// (workspace/semanticTokens/refresh). Client should re-pull semantic
+    /// tokens for all open documents.
+    LspSemanticTokensRefresh { language: String },
+
+    /// LSP server registered (`client/registerCapability`) or unregistered
+    /// (`client/unregisterCapability`) one or more capabilities dynamically.
+    /// Many servers advertise little or nothing statically in their
+    /// `initialize` result and instead register providers afterwards, so these
+    /// must update the stored `ServerCapabilities` or the features stay gated
+    /// off for the whole session. `register == false` means unregister.
+    /// Each entry is `(method, register_options)`.
+    LspDynamicCapabilities {
+        language: String,
+        server_name: String,
+        register: bool,
+        registrations: Vec<(String, Option<Value>)>,
+    },
+
     /// File changed externally (future: file watching)
     FileChanged { path: String },
 
     /// Git status updated (future: git integration)
     GitStatusChanged { status: String },
 
-    /// File explorer initialized with tree view
-    FileExplorerInitialized(FileTreeView),
+    /// File explorer initialized with tree view. Carries the id of the window
+    /// that requested it: a background preview/materialize can init a
+    /// *non-active* window's explorer, so the view must land on that window —
+    /// applying it to whatever is active would clobber an unrelated explorer.
+    FileExplorerInitialized {
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    },
 
     /// File explorer node toggle completed
     FileExplorerToggleNode(NodeId),
@@ -179,9 +265,13 @@ pub enum AsyncMessage {
     /// File explorer node refresh completed
     FileExplorerRefreshNode(NodeId),
 
-    /// File explorer expand to path completed
-    /// Contains the updated FileTreeView with the path expanded and selected
-    FileExplorerExpandedToPath(FileTreeView),
+    /// File explorer expand to path completed. Carries the requesting window id
+    /// (see `FileExplorerInitialized`) so the expanded view returns to its own
+    /// window rather than the active one.
+    FileExplorerExpandedToPath {
+        window: fresh_core::WindowId,
+        view: FileTreeView,
+    },
 
     /// Plugin-related async messages
     Plugin(fresh_core::api::PluginAsyncMessage),
@@ -192,8 +282,23 @@ pub enum AsyncMessage {
     /// File open dialog: async shortcuts (Windows drive letters) loaded
     FileOpenShortcutsLoaded(Vec<crate::app::file_open::NavigationShortcut>),
 
-    /// Terminal output received (triggers redraw)
-    TerminalOutput { terminal_id: TerminalId },
+    /// Terminal output received (triggers redraw). Tagged with the
+    /// owning window: terminal ids are only unique within a window, so a
+    /// bare id can't be attributed to a session without guessing.
+    TerminalOutput {
+        terminal: fresh_core::WindowTerminalId,
+    },
+
+    /// Result of an asynchronous system-clipboard read. The main loop
+    /// blocks input dispatch while a paste is in flight; the matching
+    /// `request_id` ensures a late result that arrived after the
+    /// timeout fallback fired is discarded as stale. `text` is `None`
+    /// when the read errored, returned empty, or was cancelled by the
+    /// deadline.
+    ClipboardPasteResult {
+        request_id: u64,
+        text: Option<String>,
+    },
 
     /// File watcher delivered an event for a path under a
     /// `WatchPath`-registered watcher. Routed to the
@@ -215,7 +320,7 @@ pub enum AsyncMessage {
     /// initial wiring sends `None` so plugin handlers see the variant
     /// shape that matches `HookArgs::TerminalExited`.
     TerminalExited {
-        terminal_id: TerminalId,
+        terminal: fresh_core::WindowTerminalId,
         exit_code: Option<i32>,
     },
 

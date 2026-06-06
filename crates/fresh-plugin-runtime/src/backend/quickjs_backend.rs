@@ -1652,6 +1652,27 @@ impl JsEditorApi {
         id
     }
 
+    /// Cursor info for the active composite (side-by-side diff) buffer.
+    ///
+    /// Resolves with `null` when the active buffer is not a composite
+    /// buffer, otherwise an object describing the focused pane and the
+    /// 0-indexed source line shown in each pane on the cursor's aligned
+    /// row (`null` where a pane has no content on that row). Lets a plugin
+    /// map a side-by-side cursor back to a concrete file version + line.
+    #[plugin_api(
+        async_promise,
+        js_name = "getCompositeCursorInfo",
+        ts_return = "{ focusedPane: number, paneCount: number, lines: Array<number | null> } | null"
+    )]
+    #[qjs(rename = "_getCompositeCursorInfoStart")]
+    pub fn get_composite_cursor_info_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetCompositeCursorInfo { request_id: id });
+        id
+    }
+
     /// Scroll a split to center a specific line in the viewport
     /// Line is 0-indexed (0 = first line)
     pub fn scroll_to_line_center(&self, split_id: u32, buffer_id: u32, line: u32) -> bool {
@@ -4407,6 +4428,19 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Switch the active window with a directional wipe on the
+    /// incoming content. `from_edge`: "top" | "bottom" | "left" |
+    /// "right". See `PluginCommand::SetActiveWindowAnimated`.
+    #[qjs(rename = "setActiveWindowAnimated")]
+    pub fn set_active_window_animated(&self, id: u64, from_edge: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetActiveWindowAnimated {
+                id: fresh_core::WindowId(id),
+                from_edge,
+            })
+            .is_ok()
+    }
+
     /// Close session `id`. Refuses to close the active session or
     /// the base session (id 1). Logs and no-ops on failure.
     pub fn close_window(&self, id: u64) -> bool {
@@ -5529,6 +5563,7 @@ impl JsEditorApi {
         spec_obj: rquickjs::Value<'js>,
         width_pct: f64,
         height_pct: f64,
+        as_dock: rquickjs::function::Opt<bool>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -5547,6 +5582,7 @@ impl JsEditorApi {
                 spec,
                 width_pct,
                 height_pct,
+                as_dock: as_dock.0.unwrap_or(false),
             })
             .is_ok())
     }
@@ -5582,6 +5618,22 @@ impl JsEditorApi {
         self.command_sender
             .send(PluginCommand::UnmountFloatingWidget {
                 panel_id: panel_id as u64,
+            })
+            .is_ok()
+    }
+
+    /// Control a mounted floating panel's placement / focus without
+    /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
+    /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
+    /// centered panel cover the whole frame over the dock). See
+    /// `PluginCommand::FloatingPanelControl`.
+    #[qjs(rename = "floatingPanelControl")]
+    pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
+        self.command_sender
+            .send(PluginCommand::FloatingPanelControl {
+                panel_id: panel_id as u64,
+                op,
+                arg,
             })
             .is_ok()
     }
@@ -5716,6 +5768,46 @@ impl JsEditorApi {
     #[plugin_api(js_name = "clearAuthority")]
     pub fn clear_authority(&self) {
         let _ = self.command_sender.send(PluginCommand::ClearAuthority);
+    }
+
+    /// Attach to a remote agent that needs a live connection (an SSH host or a
+    /// `kubectl exec` agent in a Kubernetes pod). The connect is asynchronous —
+    /// the editor spawns the carrier, bootstraps the agent and builds the
+    /// session in the background — and this returns a promise that settles on
+    /// the real outcome:
+    ///
+    ///   * resolves once the session (authority + window) is fully
+    ///     constructed, so a caller can keep its dialog open until there is a
+    ///     real session to show;
+    ///   * rejects with the failure reason (e.g. ssh "Could not resolve
+    ///     hostname") if the connect or window creation fails — in which case
+    ///     no window is created and the editor stays on its current authority.
+    ///
+    /// The payload schema (`RemoteAgentSpec`) lives in `fresh-editor`;
+    /// plugins hand-build an object matching it.
+    #[plugin_api(async_promise, js_name = "attachRemoteAgent", ts_return = "void")]
+    #[qjs(rename = "_attachRemoteAgentStart")]
+    pub fn attach_remote_agent(
+        &self,
+        ctx: rquickjs::Ctx<'_>,
+        #[plugin_api(ts_type = "RemoteAgentSpec")] payload: rquickjs::Value<'_>,
+    ) -> u64 {
+        let json = js_to_json(&ctx, payload);
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::AttachRemoteAgent {
+            payload: json,
+            request_id: id,
+        });
+        id
+    }
+
+    /// Cancel any in-flight `attachRemoteAgent` connect — the New-Session
+    /// dialog's Cancel. The pending promise rejects with "cancelled" and the
+    /// background connect's late result is discarded, so no window is built.
+    /// A no-op when nothing is connecting.
+    #[plugin_api(js_name = "cancelRemoteAgent")]
+    pub fn cancel_remote_agent(&self) {
+        let _ = self.command_sender.send(PluginCommand::CancelRemoteAttach);
     }
 
     /// Activate an environment: set the live env recipe (`snippet` run in
@@ -6913,6 +7005,7 @@ impl QuickJsBackend {
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
+                editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");
                 editor.loadPlugin = _wrapAsync("_loadPluginStart", "loadPlugin");
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
@@ -6930,6 +7023,7 @@ impl QuickJsBackend {
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
                 editor.refreshBufferFromDisk = _wrapAsync("_refreshBufferFromDiskStart", "refreshBufferFromDisk");
                 editor.setBufferGroupPanelBuffer = _wrapAsync("_setBufferGroupPanelBufferStart", "setBufferGroupPanelBuffer");
+                editor.attachRemoteAgent = _wrapAsync("_attachRemoteAgentStart", "attachRemoteAgent");
 
                 // Pull-based streaming search. Producers (host searcher tasks)
                 // write into shared state at full speed; the consumer drains
@@ -9637,14 +9731,14 @@ mod tests {
                     id: fresh_core::WindowId(1),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
-                    project_path: None,
+                    project_path: std::path::PathBuf::from("/repo"),
                     shared_worktree: false,
                 },
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(2),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
-                    project_path: None,
+                    project_path: std::path::PathBuf::from("/wt/feat-auth"),
                     shared_worktree: false,
                 },
             ];

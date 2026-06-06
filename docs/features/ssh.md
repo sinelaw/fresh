@@ -39,8 +39,11 @@ fresh ssh://alice@host/home/alice/src/main.rs:42:7
 - Sudo save support for protected files
 - Status bar shows `[SSH:user@host]` indicator
 - Background auto-reconnect after a dropped connection, with a disconnected indicator in the status bar
+- Integrated terminal opens a login shell **on the remote host** (`ssh -t … 'cd <workspace>; exec $SHELL -l'`), rooted at the workspace
 
 Under the hood, attaching to an SSH remote points the editor's filesystem and process [Authority](../plugins/api/) at that host — file I/O, the embedded terminal, spawned LSP servers, and any process Fresh launches all run on the remote.
+
+Because the integrated terminal re-parents itself onto the remote host, it runs the *remote* `$SHELL` as a login shell and the local [`terminal.shell`](./terminal.md#shell-override) override does not apply. Interactive auth prompts (key passphrase, password, 2FA) surface inside the terminal pane on first open.
 
 **Requirements:**
 - SSH access to the remote host

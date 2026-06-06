@@ -141,7 +141,8 @@ jobs:
           if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
-          # embed-plugins is now a default feature - plugins are always embedded as fallback
+          # Default features include embed-plugins; plugins (and themes via build.rs)
+          # are compiled into the binary, so we ship a single self-contained executable.
           cargo build --release --target ${{ matrix.target }}
 
       - name: Create archive (Unix)
@@ -151,8 +152,8 @@ jobs:
           mkdir -p "${ARCHIVE_NAME}"
           cp target/${{ matrix.target }}/release/fresh "${ARCHIVE_NAME}/"
           cp README.md LICENSE CHANGELOG.md "${ARCHIVE_NAME}/"
-          cp -r crates/fresh-editor/plugins "${ARCHIVE_NAME}/"
-          cp -r crates/fresh-editor/themes "${ARCHIVE_NAME}/"
+          # Plugins and themes are compiled into the binary via embed-plugins
+          # and build.rs BUILTIN_THEMES, so we ship just the binary + docs.
 
           # Include icons and desktop file for Linux targets
           if [[ "${{ matrix.target }}" == *-linux-* ]]; then
@@ -176,8 +177,7 @@ jobs:
           New-Item -ItemType Directory -Path $ARCHIVE_NAME -Force
           Copy-Item "target/${{ matrix.target }}/release/fresh.exe" "$ARCHIVE_NAME/"
           Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$ARCHIVE_NAME/"
-          Copy-Item -Recurse "crates/fresh-editor/plugins" "$ARCHIVE_NAME/"
-          Copy-Item -Recurse "crates/fresh-editor/themes" "$ARCHIVE_NAME/"
+          # Plugins and themes are compiled into the binary; no on-disk copy needed.
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
@@ -203,6 +203,13 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/musl-builds.yml
+    secrets: inherit
+
+  # Build the minimal-size static binary (min-size profile, trimmed features)
+  build-min-size:
+    needs: plan
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
+    uses: ./.github/workflows/min-size-build.yml
     secrets: inherit
 
   # Build Linux packages (.deb, .rpm) - builds from source, can run in parallel
@@ -273,10 +280,8 @@ jobs:
           # Create package.json from template with version
           sed "s/VERSION_PLACEHOLDER/${VERSION}/g" crates/fresh-editor/npm-package/package.json.template > dist-npm/package.json
 
-          # Copy supporting files
+          # Copy supporting files. Plugins/themes are embedded in the binary.
           cp README.md LICENSE CHANGELOG.md dist-npm/
-          cp -r crates/fresh-editor/plugins dist-npm/
-          cp -r crates/fresh-editor/themes dist-npm/
 
           # Create the tarball
           cd dist-npm
@@ -345,9 +350,9 @@ jobs:
             end
 
             def install
+              # Plugins and themes are compiled into the binary; the tarball
+              # ships only the binary + docs.
               bin.install "fresh"
-              share.install "plugins" if File.directory?("plugins")
-              share.install "themes" if File.directory?("themes")
             end
 
             test do
@@ -368,7 +373,7 @@ jobs:
   # Only runs if ALL needed jobs succeed - uses !cancelled() to run after all jobs complete,
   # then !failure() ensures none failed
   release:
-    needs: [plan, build, build-freebsd, build-musl, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
+    needs: [plan, build, build-freebsd, build-musl, build-min-size, build-linux-packages, build-flatpak, build-appimage, build-gui, build-npm-package, build-homebrew-formula, test-nix-build]
     if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
@@ -531,10 +536,8 @@ jobs:
           # Create package.json from template with version
           sed "s/VERSION_PLACEHOLDER/${VERSION}/g" crates/fresh-editor/npm-package/package.json.template > dist-npm/package.json
 
-          # Copy supporting files
+          # Copy supporting files. Plugins/themes are embedded in the binary.
           cp README.md LICENSE CHANGELOG.md dist-npm/
-          cp -r crates/fresh-editor/plugins dist-npm/
-          cp -r crates/fresh-editor/themes dist-npm/
 
           # Create the tarball
           cd dist-npm

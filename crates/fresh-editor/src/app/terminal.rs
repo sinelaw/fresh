@@ -33,6 +33,35 @@ use crate::view::split::SplitViewState;
 use rust_i18n::t;
 use std::path::PathBuf;
 
+/// How often [`Window::sync_terminal_titles`] polls each terminal's
+/// foreground process group for tmux-style tab auto-naming. Frequent enough
+/// to feel responsive when a command starts/exits, infrequent enough that
+/// the per-terminal `tcgetpgrp` + `/proc` read is negligible. Also drives
+/// the editor's periodic-redraw deadline so the tab refreshes while idle.
+pub(crate) const FG_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Combine the foreground process name with the program's OSC title into one
+/// tab label. The command leads (short, answers "what's running"); the OSC
+/// title follows as context, e.g. `python3 — root@host: ~/proj`.
+///
+/// Returns `None` only when both are absent, so the caller falls back to the
+/// default name. When the OSC title already names the command (e.g. vim's
+/// `file - VIM`), the command isn't prepended again to avoid `vim — … VIM`.
+fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
+    match (pty, osc) {
+        (Some(p), Some(o)) => {
+            if o.to_lowercase().contains(&p.to_lowercase()) {
+                Some(o.to_string())
+            } else {
+                Some(format!("{p} \u{2014} {o}"))
+            }
+        }
+        (Some(p), None) => Some(p.to_string()),
+        (None, Some(o)) => Some(o.to_string()),
+        (None, None) => None,
+    }
+}
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config
@@ -359,7 +388,7 @@ impl Window {
                             let _ = line_numbers;
                             let _ = highlight_current_line;
                             view_state
-                                .apply_config_defaults(false, false, false, false, None, rulers);
+                                .apply_config_defaults(false, false, false, false, None, rulers, 0);
                             // Terminal output is ANSI-sequenced and
                             // assumes a fixed column count; wrapping
                             // would mangle cursor positioning.
@@ -452,6 +481,9 @@ impl Window {
             if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
                 meta.display_name = final_name;
             }
+            // Mark this tab as explicitly titled so foreground-process
+            // auto-naming leaves it alone (an OSC title still overrides).
+            self.terminal_explicit_titles.insert(buffer_id);
         }
 
         // When the new terminal ended up as this window's active
@@ -511,6 +543,104 @@ impl Window {
         // are taken — still unique because the loop exhausted the
         // numeric variants we considered. Practically unreachable.
         format!("{} (n)", desired)
+    }
+
+    /// Refresh terminal buffers' tab titles, tmux-style. Runs every frame,
+    /// but the expensive part — reading each terminal's foreground process
+    /// group (`tcgetpgrp` + `/proc`) — is throttled to [`FG_POLL_INTERVAL`]
+    /// and cached; the cached name is re-applied to the tab on every frame
+    /// so the title is responsive to renders without re-running the syscall.
+    ///
+    /// The tab label **combines** two sources (see [`combine_terminal_title`]):
+    ///
+    /// - **Foreground process name** — the command currently in the
+    ///   terminal's foreground process group (e.g. `python3` while a REPL
+    ///   runs, `bash` at the prompt). Mirrors tmux's
+    ///   `#{pane_current_command}`; read on Linux, `None` elsewhere.
+    /// - **OSC title** — what a program set via OSC 0/1/2 (e.g. a shell's
+    ///   `user@host: ~/dir` prompt title, or vim's `file - VIM`).
+    ///
+    /// e.g. `python3 — root@host: ~/proj`. When only one is present that one
+    /// is used; when neither is, the default `*Terminal N*` stands.
+    ///
+    /// Terminals with an explicit (plugin-/command-derived) title are left
+    /// untouched — like a tmux manual rename, an intentional name opts out
+    /// of auto-naming.
+    ///
+    /// Both parts are sanitized (control characters stripped, length capped)
+    /// the same way as the host window title, and applied without the
+    /// `name (k)` disambiguation used for plugin titles.
+    pub fn sync_terminal_titles(&mut self) {
+        // Gated by config: when off, tabs keep their static `*Terminal N*`
+        // (or plugin) names. Clearing the cache lets a later enable start
+        // fresh.
+        if !self.config().editor.terminal_auto_title {
+            self.terminal_fg_cache.clear();
+            return;
+        }
+
+        // Refresh the foreground-name cache. A terminal is re-read when the
+        // poll interval has elapsed, or eagerly while it has no cached name
+        // yet (its first prompt may not have a foreground pgid the instant
+        // it spawns, and renders are event-driven — so keep trying until it
+        // resolves rather than waiting a full interval).
+        let now = std::time::Instant::now();
+        let interval_due = self
+            .terminal_fg_poll_at
+            .is_none_or(|last| now.duration_since(last) >= FG_POLL_INTERVAL);
+        if interval_due {
+            self.terminal_fg_poll_at = Some(now);
+        }
+        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+            if self.terminal_explicit_titles.contains(buffer_id) {
+                continue;
+            }
+            if !interval_due && self.terminal_fg_cache.contains_key(buffer_id) {
+                continue;
+            }
+            let name = self
+                .terminal_manager
+                .get(*terminal_id)
+                .and_then(|h| h.foreground_process_name())
+                .map(|n| crate::services::terminal_title::sanitize_title(&n))
+                .filter(|n| !n.is_empty());
+            match name {
+                Some(n) => {
+                    self.terminal_fg_cache.insert(*buffer_id, n);
+                }
+                None => {
+                    self.terminal_fg_cache.remove(buffer_id);
+                }
+            }
+        }
+
+        // Apply a title to every (non-explicit) terminal tab every frame,
+        // combining the cached foreground name with the current OSC title.
+        // Snapshot first so the mutable `buffer_metadata` borrow doesn't
+        // overlap the immutable reads above.
+        let mut updates: Vec<(BufferId, String)> = Vec::new();
+        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+            if self.terminal_explicit_titles.contains(buffer_id) {
+                continue;
+            }
+            let pty = self.terminal_fg_cache.get(buffer_id).cloned();
+            let osc = self.terminal_manager.get(*terminal_id).and_then(|handle| {
+                let osc = handle.state.lock().ok()?.title().to_string();
+                let sanitized = crate::services::terminal_title::sanitize_title(&osc);
+                (!sanitized.is_empty()).then_some(sanitized)
+            });
+            let name = combine_terminal_title(pty.as_deref(), osc.as_deref())
+                .unwrap_or_else(|| format!("*Terminal {}*", terminal_id.0));
+            updates.push((*buffer_id, name));
+        }
+
+        for (buffer_id, title) in updates {
+            if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                if meta.display_name != title {
+                    meta.display_name = title;
+                }
+            }
+        }
     }
 
     /// Open a new terminal in this window: spawn the PTY, create
@@ -966,23 +1096,41 @@ impl Window {
         }
     }
 
+    /// The rect the editor splits lay out into, mirroring the renderer
+    /// (`render.rs::compute_dock_split` + the file-explorer split): the
+    /// editor-global dock claims the leftmost `dock_cols`, then the file
+    /// explorer claims a slice of the remaining chrome, and the splits get
+    /// what's left. `dock_cols` is pushed down by `Editor::relayout`.
+    /// Computing the file-explorer width against the post-dock chrome
+    /// width (not the full screen) matches the renderer exactly, so split
+    /// geometry derived from this lines up with the cells actually drawn.
+    pub(crate) fn editor_content_area(&self) -> ratatui::layout::Rect {
+        let chrome_width = self.terminal_width.saturating_sub(self.dock_cols);
+        let file_explorer_width = if self.file_explorer_visible {
+            self.file_explorer_width.to_cols(chrome_width)
+        } else {
+            0
+        };
+        let editor_x = match self.file_explorer_side {
+            crate::config::FileExplorerSide::Left => {
+                self.dock_cols.saturating_add(file_explorer_width)
+            }
+            crate::config::FileExplorerSide::Right => self.dock_cols,
+        };
+        let editor_width = chrome_width.saturating_sub(file_explorer_width);
+        ratatui::layout::Rect::new(
+            editor_x,
+            1, // menu bar
+            editor_width,
+            self.terminal_height.saturating_sub(2), // menu bar + status bar
+        )
+    }
+
     /// Resize all this window's visible terminal PTYs to match their
     /// current split dimensions. Reads the window's cached
     /// `terminal_width` / `terminal_height` for the screen size.
     pub fn resize_visible_terminals(&mut self) {
-        // Get the content area excluding file explorer
-        let file_explorer_width = if self.file_explorer_visible {
-            self.file_explorer_width.to_cols(self.terminal_width)
-        } else {
-            0
-        };
-        let editor_width = self.terminal_width.saturating_sub(file_explorer_width);
-        let editor_area = ratatui::layout::Rect::new(
-            file_explorer_width,
-            1, // menu bar
-            editor_width,
-            self.terminal_height.saturating_sub(2), // menu bar + status bar
-        );
+        let editor_area = self.editor_content_area();
 
         let Some((mgr, _)) = self.buffers.splits() else {
             return;
@@ -1030,6 +1178,25 @@ impl Window {
         let mut history_end_byte: Option<u64> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
+                use std::io::BufWriter;
+
+                // Flush any scrollback that has scrolled off but isn't in the
+                // file yet — in particular the lines a resize spilled from the
+                // screen into history. The PTY read loop also flushes on output,
+                // but an idle terminal that was only resized has pending lines;
+                // capturing them here guarantees the scroll-back view is complete.
+                if let Ok(mut file) = self
+                    .resources
+                    .authority
+                    .filesystem
+                    .open_file_for_append(&backing_file)
+                {
+                    let mut writer = BufWriter::new(&mut *file);
+                    if let Err(e) = state.flush_new_scrollback(&mut writer) {
+                        tracing::error!("Failed to flush terminal scrollback: {}", e);
+                    }
+                }
+
                 // Record the current file size as the history end point
                 // (before appending visible screen) so we can truncate back to it
                 if let Ok(metadata) = self.resources.authority.filesystem.metadata(&backing_file) {
@@ -1044,7 +1211,6 @@ impl Window {
                     .filesystem
                     .open_file_for_append(&backing_file)
                 {
-                    use std::io::BufWriter;
                     let mut writer = BufWriter::new(&mut *file);
                     if let Err(e) = state.append_visible_screen(&mut writer) {
                         tracing::error!("Failed to append visible screen to backing file: {}", e);
@@ -1136,11 +1302,15 @@ impl Window {
                     let buf_state = vs.ensure_buffer_state(buffer_id);
                     buf_state.show_line_numbers = false;
                     buf_state.highlight_current_line = false;
-                    buf_state.viewport.line_wrap_enabled = false;
+                    // Scrollback is stored as unwrapped logical lines, so soft-wrap
+                    // the read-only view to reflow long lines to the current width.
+                    // (Visible-screen rows are ≤ the view width and so never wrap,
+                    // keeping the exit frame aligned with the live grid.)
+                    buf_state.viewport.line_wrap_enabled = true;
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.line_wrap_enabled = true;
                 view_state.viewport.set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
@@ -1550,4 +1720,43 @@ fn encode_x10_mouse(
     let cb = cb + 32;
 
     Some(vec![0x1b, b'[', b'M', cb, cx, cy])
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::combine_terminal_title;
+
+    #[test]
+    fn combines_command_and_osc_title() {
+        assert_eq!(
+            combine_terminal_title(Some("python3"), Some("root@host: ~/proj")).as_deref(),
+            Some("python3 \u{2014} root@host: ~/proj")
+        );
+    }
+
+    #[test]
+    fn uses_single_source_when_only_one_present() {
+        assert_eq!(
+            combine_terminal_title(Some("bash"), None).as_deref(),
+            Some("bash")
+        );
+        assert_eq!(
+            combine_terminal_title(None, Some("root@host: ~/proj")).as_deref(),
+            Some("root@host: ~/proj")
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_command_already_in_osc_title() {
+        // vim sets its own OSC title; don't prepend "vim — … VIM".
+        assert_eq!(
+            combine_terminal_title(Some("vim"), Some("README.md (~/proj) - VIM")).as_deref(),
+            Some("README.md (~/proj) - VIM")
+        );
+    }
+
+    #[test]
+    fn none_when_neither_present() {
+        assert_eq!(combine_terminal_title(None, None), None);
+    }
 }

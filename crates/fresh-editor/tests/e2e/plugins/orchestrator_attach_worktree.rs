@@ -603,9 +603,11 @@ fn visible_feats(screen: &str) -> std::collections::BTreeSet<String> {
 #[test]
 fn scrollbar_click_scrolls_the_session_list() {
     let (_temp, repo) = set_up_repo_with_many_worktrees(15);
-    // 24 rows ⇒ list visible height well under the 16 rows, so it
-    // overflows and a scrollbar is drawn.
-    let mut harness = EditorTestHarness::with_working_dir(160, 24, repo.clone()).unwrap();
+    // 16 sessions rendered as multi-row cards far exceed the visible
+    // height, so the list overflows and a scrollbar is drawn. The
+    // terminal is tall enough that a few whole cards (each carrying a
+    // `· on-disk` line) are visible to confirm discovery landed.
+    let mut harness = EditorTestHarness::with_working_dir(160, 40, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
     wait_for_command(&mut harness, "Orchestrator: Open");
 
@@ -615,7 +617,7 @@ fn scrollbar_click_scrolls_the_session_list() {
     // and for the screen to settle, so the full set is present before
     // we snapshot.
     harness
-        .wait_until_stable(|h| h.screen_to_string().matches("· on-disk").count() >= 5)
+        .wait_until_stable(|h| h.screen_to_string().matches("· on-disk").count() >= 3)
         .unwrap();
 
     let before = visible_feats(&harness.screen_to_string());
@@ -728,6 +730,176 @@ fn worktrees_hidden_by_default_until_show_toggled() {
         .unwrap_or_else(|_| {
             panic!(
                 "Alt+T again should hide the on-disk worktree.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// Toggle the global dock open via the command palette and wait for it
+/// to render *and* take keyboard focus (focus is set asynchronously
+/// through the plugin→host bridge, so poll `is_dock_focused`).
+fn open_dock(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Orchestrator: Toggle Dock").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused()
+        })
+        .unwrap();
+}
+
+/// 0-based screen row containing `needle`, or panic with the screen.
+fn dock_row_of(harness: &EditorTestHarness, needle: &str) -> usize {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
+}
+
+/// Pressing Enter on a discovered (on-disk) worktree row in the *dock*
+/// attaches a managed session at that worktree — the same outcome the
+/// Open dialog produces. Before the fix the dock's Enter always blurred
+/// to the editor, so the on-disk attach was silently dropped: diving a
+/// worktree worked from the dialog but did nothing from the dock.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
+fn dock_enter_attaches_discovered_worktree() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Toggle Dock");
+
+    open_dock(&mut harness);
+
+    // Alt+T reveals the discovered on-disk worktree in the dock.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Click the discovered row to select it, then Enter to activate.
+    let row = dock_row_of(&harness, "· on-disk") as u16;
+    harness.mouse_click(3, row).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Attach is async (`createWindowWithTerminal`). It opens a live
+    // session rooted at the worktree, so the dock's discovered row turns
+    // into a live `feature-x` row (no longer `· on-disk`).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && !s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Enter on the dock's discovered worktree row should attach a live \
+                 session (row loses `· on-disk`).\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
+/// Archiving the *last* session — which is also the launch / in-place
+/// session (no dedicated worktree) — must not be refused. Every session
+/// is archivable now: the launch session is recorded at its own root and,
+/// because it's the only live window, a replacement terminal session is
+/// opened in its project first so the editor is never left empty.
+///
+/// Before the fix this was doubly blocked: `enterConfirm` refused both
+/// "no worktree to archive" and "last window", so the confirm step never
+/// even appeared.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // replacement spawns a Unix shell terminal.
+fn archive_last_in_place_session_opens_replacement() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    // Only the launch session exists (the on-disk worktree is never
+    // attached here) — an in-place session with no dedicated worktree.
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    open_orchestrator_dialog(&mut harness);
+    // The launch session is a trivial (empty) session, hidden by default;
+    // Alt+I reveals it so it can be selected.
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("launch session"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the launch session should be listed after Alt+I.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Focus opens on Visit; Tab to the Archive button (Stop is disabled
+    // for the terminal-less launch session, so the cycle skips it:
+    // visit -> toggle-details -> archive). Activate it to open the
+    // confirm. Without the fix Archive is disabled (dropped from the Tab
+    // cycle) and the action is refused, so the confirm never shows.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Archive"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "archiving the launch session should reach the confirm step.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Confirm (Cancel is focused first; Tab -> Confirm Archive).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The launch session is archived; because it was the only window, a
+    // replacement terminal session was opened in its project — so the
+    // editor still hosts a live session, now a *Terminal*.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Terminal"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "archiving the last session should open a replacement terminal \
+                 session.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });

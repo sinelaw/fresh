@@ -63,6 +63,12 @@ pub struct TerminalHandle {
     /// shell or agent forked. `None` on Windows or when
     /// portable_pty couldn't report the pid.
     pid: Option<u32>,
+    /// PTY master file descriptor, captured at spawn. Used to read the
+    /// terminal's foreground process group via `tcgetpgrp` for tmux-style
+    /// tab auto-naming. `None` on Windows or when the platform doesn't
+    /// expose it. Only read on Linux (the only `/proc`-backed target).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    master_fd: Option<i32>,
 }
 
 impl TerminalHandle {
@@ -105,6 +111,44 @@ impl TerminalHandle {
     /// platforms / configurations that don't expose a pid.
     pub fn pid(&self) -> Option<u32> {
         self.pid
+    }
+
+    /// Name of the command currently in the foreground of this terminal,
+    /// e.g. `"bash"` at the prompt or `"python3"` while a REPL runs.
+    ///
+    /// Derived from the PTY's foreground process *group* (`tcgetpgrp` on
+    /// the master fd) rather than the shell pid, so it tracks whatever the
+    /// user is actually interacting with — the same signal tmux uses for
+    /// `#{pane_current_command}`. This is how a tab can read `python3`
+    /// even though `python3` never emits an OSC title sequence.
+    ///
+    /// Only implemented on Linux (via `/proc/<pgid>/comm`); returns `None`
+    /// elsewhere so callers fall back to the OSC title or default name.
+    pub fn foreground_process_name(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            let fd = self.master_fd?;
+            // SAFETY: `fd` is the PTY master, kept open by the writer
+            // thread for the terminal's lifetime. `tcgetpgrp` only reads.
+            let pgid = unsafe { libc::tcgetpgrp(fd) };
+            if pgid <= 0 {
+                return None;
+            }
+            // Local OS introspection of a local fd. The `FileSystem` trait
+            // abstracts the *editing* filesystem (possibly remote); it does
+            // not apply to reading this host's `/proc`.
+            let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;
+            let name = comm.trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
     }
 
     /// Send `signal` to the terminal's process group. Returns
@@ -181,6 +225,12 @@ impl TerminalHandle {
 
 /// Manager for multiple terminal sessions
 pub struct TerminalManager {
+    /// The window that owns this manager. Terminal IDs are only unique
+    /// within a single manager (each starts numbering at 0), so output
+    /// messages are tagged with `(window_id, terminal_id)` — see
+    /// [`fresh_core::WindowTerminalId`] — to stay unambiguous once they
+    /// leave this window's context (e.g. on the async bus).
+    window_id: fresh_core::WindowId,
     /// Map from terminal ID to handle
     terminals: HashMap<TerminalId, TerminalHandle>,
     /// Next terminal ID
@@ -190,13 +240,22 @@ pub struct TerminalManager {
 }
 
 impl TerminalManager {
-    /// Create a new terminal manager
-    pub fn new() -> Self {
+    /// Create a new terminal manager owned by `window_id`. The owner is
+    /// required (not defaulted) so output can never be attributed to the
+    /// wrong window: every terminal this manager spawns is tagged with
+    /// it.
+    pub fn new(window_id: fresh_core::WindowId) -> Self {
         Self {
+            window_id,
             terminals: HashMap::new(),
             next_id: 0,
             async_bridge: None,
         }
+    }
+
+    /// The window that owns this manager.
+    pub fn window_id(&self) -> fresh_core::WindowId {
+        self.window_id
     }
 
     /// Set the async bridge for communication with main loop
@@ -289,6 +348,21 @@ impl TerminalManager {
             // Set TERM so programs like less know the terminal capabilities.
             // The built-in emulator is alacritty-based so xterm-256color is appropriate.
             cmd.env("TERM", "xterm-256color");
+
+            // Advertise this editor's local control socket to local child
+            // shells via FRESH_SESSION, so a `fresh` launched from inside
+            // this embedded terminal forwards file/dir opens back to us
+            // instead of starting a second editor. Only for the local host
+            // shell: `manages_cwd` (== `skip_cwd`) marks docker/ssh-style
+            // wrappers, whose inner `fresh` runs on another host where this
+            // unix socket isn't reachable. (A nested `fresh` that can't reach
+            // the socket falls back to running inline, so this gate is an
+            // optimization, not a correctness requirement.)
+            if !skip_cwd {
+                if let Some(session_id) = crate::server::local_control::local_session_id() {
+                    cmd.env("FRESH_SESSION", session_id);
+                }
+            }
 
             // On Windows, set additional environment variables that help with ConPTY
             #[cfg(windows)]
@@ -403,6 +477,11 @@ impl TerminalManager {
 
             // Spawn reader thread
             let terminal_id = id;
+            // Tag output/exit with the owning window so the main loop
+            // never has to guess which session a `Terminal-N` belongs to
+            // (ids collide across windows). `Copy`, so both threads below
+            // capture it independently.
+            let wt_id = fresh_core::WindowTerminalId::new(self.window_id, terminal_id);
             let pty_response_tx = command_tx.clone();
             thread::spawn(move || {
                 tracing::debug!("Terminal {:?} reader thread started", terminal_id);
@@ -487,7 +566,7 @@ impl TerminalManager {
                                 #[allow(clippy::let_underscore_must_use)]
                                 let _ = bridge.sender().send(
                                     crate::services::async_bridge::AsyncMessage::TerminalOutput {
-                                        terminal_id,
+                                        terminal: wt_id,
                                     },
                                 );
                             }
@@ -536,12 +615,27 @@ impl TerminalManager {
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = bridge.sender().send(
                         crate::services::async_bridge::AsyncMessage::TerminalExited {
-                            terminal_id,
+                            terminal: wt_id,
                             exit_code,
                         },
                     );
                 }
             });
+
+            // Capture the PTY master fd before the master moves into the
+            // writer thread below. Used later by `foreground_process_name`
+            // (tmux-style tab auto-naming). The fd stays valid for the
+            // terminal's lifetime because the writer thread owns the master.
+            let master_fd: Option<i32> = {
+                #[cfg(unix)]
+                {
+                    pty_pair.master.as_raw_fd()
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            };
 
             // Spawn writer thread
             let pty_size_ref = pty_pair.master;
@@ -591,6 +685,7 @@ impl TerminalManager {
                 cwd: cwd.clone(),
                 shell,
                 pid: child_pid,
+                master_fd,
             })
         })();
 
@@ -653,12 +748,6 @@ impl TerminalManager {
         }
 
         dead
-    }
-}
-
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -742,6 +831,35 @@ mod tests {
     fn test_terminal_id_display() {
         let id = TerminalId(42);
         assert_eq!(format!("{}", id), "Terminal-42");
+    }
+
+    /// Terminal ids are per-window: each manager numbers from 0, so two
+    /// windows both hand out `Terminal-0`. The owning window is what
+    /// disambiguates them — output messages are tagged with the
+    /// `(window, terminal)` pair so a `Terminal-0` from one session can't
+    /// be attributed to another session's `Terminal-0`. (Regression
+    /// guard for the dock "pending output on the wrong session" bug.)
+    #[test]
+    fn terminal_ids_collide_across_windows_but_window_disambiguates() {
+        use fresh_core::{WindowId, WindowTerminalId};
+
+        let win_a = TerminalManager::new(WindowId(1));
+        let win_b = TerminalManager::new(WindowId(2));
+
+        // Both managers would assign the same local id to their first
+        // terminal — the namespaces are independent.
+        assert_eq!(win_a.next_terminal_id(), win_b.next_terminal_id());
+        assert_eq!(win_a.next_terminal_id(), TerminalId(0));
+
+        // Each manager knows its owner, so the global identity differs.
+        assert_eq!(win_a.window_id(), WindowId(1));
+        assert_eq!(win_b.window_id(), WindowId(2));
+        let a0 = WindowTerminalId::new(win_a.window_id(), win_a.next_terminal_id());
+        let b0 = WindowTerminalId::new(win_b.window_id(), win_b.next_terminal_id());
+        assert_ne!(
+            a0, b0,
+            "same local terminal id in different windows must be distinct globally"
+        );
     }
 
     #[test]

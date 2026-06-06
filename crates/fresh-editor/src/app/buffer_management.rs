@@ -583,6 +583,7 @@ impl Editor {
                 self.config.editor.wrap_indent,
                 wrap_column,
                 self.config.editor.rulers.clone(),
+                self.config.editor.scroll_offset,
             );
         }
 

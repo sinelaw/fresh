@@ -1,0 +1,113 @@
+.TH FRESH 1 "2026-05-31" "fresh 0.3.10" "Fresh Editor"
+.SH NAME
+fresh \- terminal text editor with LSP and TypeScript plugins
+.SH SYNOPSIS
+.B fresh
+[\fIOPTIONS\fR]
+[\fIFILES\fR...]
+.SH DESCRIPTION
+.B fresh
+is a lightweight terminal-based text editor with LSP support, syntax
+highlighting, multi-cursor editing, and a TypeScript plugin runtime.
+.PP
+File arguments accept several syntaxes:
+.IP \(bu 2
+\fIfile\fR \(em open a file
+.IP \(bu 2
+\fIfile\fR:\fIline\fR[:\fIcol\fR] \(em open a file and jump to a position
+.IP \(bu 2
+\fIfile\fR:\fIline\fR:\fIcol\fR\-\fIline\fR:\fIcol\fR \(em open a file with a selection range
+.SH OPTIONS
+.TP
+.BR \-a ", " \-\-attach " [\fINAME\fR]"
+Attach to a running session. Use
+.B \-a
+on its own for the current directory or
+.BI \-a " NAME"
+for a named session.
+.TP
+.B \-\-stdin
+Read content from standard input (alternative to passing "\-" as a filename).
+.TP
+.BI \-\-cmd " COMMAND..."
+Run a command instead of opening files. Available commands include
+.BR session " (" list ", " attach ", " new ", " kill ", " open\-file ")"
+.BR config " (" show ", " paths ")"
+.BR "grammar list" ,
+and
+.BR init .
+.TP
+.BI \-\-config " PATH"
+Path to a configuration file.
+.TP
+.BI \-\-log\-file " PATH"
+Path to a log file for editor diagnostics.
+.TP
+.BI \-\-event\-log " FILE"
+Enable event logging to the specified file.
+.TP
+.B \-\-no\-plugins
+Disable plugin loading for this launch.
+.TP
+.B \-\-no\-init
+Skip
+.I ~/.config/fresh/init.ts
+for this launch.
+.TP
+.B \-\-safe
+Safe mode: skip
+.I init.ts
+and all plugins (for recovering from a bad config).
+.TP
+.B \-\-no\-restore
+Do not restore the previous workspace.
+.TP
+.B \-\-restore
+Force restore of the previous workspace, overriding the
+.B editor.restore_previous_session
+configuration setting.
+.TP
+.B \-\-no\-upgrade\-check
+Disable upgrade checking and anonymous telemetry.
+.TP
+.BI \-\-locale " LOCALE"
+Override the interface locale (e.g.\&
+.IR en ,
+.IR ja ,
+.IR zh\-CN ).
+.TP
+.BR \-h ", " \-\-help
+Print help text.
+.TP
+.BR \-V ", " \-\-version
+Print version information.
+.SH FILES
+.TP
+.I ~/.config/fresh/config.json
+Per-user editor configuration.
+.TP
+.I ~/.config/fresh/init.ts
+Per-user initialization script, run at startup unless
+.B \-\-no\-init
+or
+.B \-\-safe
+is given.
+.TP
+.I ~/.config/fresh/plugins/
+User-installed plugins.
+.TP
+.I ~/.config/fresh/themes/
+User-installed themes.
+.TP
+.I ~/.cache/fresh/embedded\-plugins/
+Cache directory for the plugin bundle compiled into the binary.
+.SH SEE ALSO
+Project documentation:
+.UR https://sinelaw.github.io/fresh/
+.UE
+.SH BUGS
+Report issues at
+.UR https://github.com/sinelaw/fresh/issues
+.UE .
+.SH AUTHOR
+Noam Lewis.

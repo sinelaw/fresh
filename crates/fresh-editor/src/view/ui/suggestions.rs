@@ -302,7 +302,51 @@ impl SuggestionsRenderer {
             };
 
             // Column 3: Description (flexible width, leaves room for source)
-            if let Some(desc) = &suggestion.description {
+            // A suggestion may carry styled `description_spans` (rendered
+            // verbatim, each span with its own styling) or a plain
+            // `description` string. Styled spans take precedence and let a
+            // row highlight part of itself (e.g. the symbol word inside a
+            // code-line snippet).
+            if let Some(segments) = &suggestion.description_spans {
+                if fixed_columns_width + source_reserved < available_width {
+                    let desc_width = available_width
+                        .saturating_sub(fixed_columns_width)
+                        .saturating_sub(source_reserved);
+                    // Render each span, truncating to the remaining width.
+                    let mut used = 0usize;
+                    for seg in segments {
+                        if used >= desc_width {
+                            break;
+                        }
+                        let remaining = desc_width - used;
+                        let mut seg_width = 0;
+                        let seg_text: String = seg
+                            .text
+                            .chars()
+                            .take_while(|ch| {
+                                let w = char_width(*ch);
+                                if seg_width + w <= remaining {
+                                    seg_width += w;
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .collect();
+                        if seg_text.is_empty() {
+                            continue;
+                        }
+                        let seg_style = styled_span_style(base_style, seg.style.as_ref(), theme);
+                        spans.push(Span::styled(seg_text, seg_style));
+                        used += seg_width;
+                    }
+                    // Pad to fill the allocated space and align the source column.
+                    let desc_padding = desc_width.saturating_sub(used);
+                    if desc_padding > 0 {
+                        spans.push(Span::styled(" ".repeat(desc_padding), base_style));
+                    }
+                }
+            } else if let Some(desc) = &suggestion.description {
                 // Only show description if we have enough space
                 if fixed_columns_width + source_reserved < available_width {
                     let desc_width = available_width
@@ -442,6 +486,62 @@ impl SuggestionsRenderer {
             prompt.suggestions.len(),
         ))
     }
+}
+
+/// Resolve an overlay color spec (RGB array or `"section.field"` theme key)
+/// to a concrete [`Color`], using the active theme for key lookups.
+fn overlay_spec_color(
+    spec: &fresh_core::api::OverlayColorSpec,
+    theme: &crate::view::theme::Theme,
+) -> Option<Color> {
+    if let Some((r, g, b)) = spec.as_rgb() {
+        Some(Color::Rgb(r, g, b))
+    } else if let Some(key) = spec.as_theme_key() {
+        theme.resolve_theme_key(key)
+    } else {
+        None
+    }
+}
+
+/// Build the style for a single description span: start from the row's
+/// `base` style (so unset colors inherit the row/selection background) and
+/// layer the span's own `fg`/`bg`/modifiers on top.
+fn styled_span_style(
+    base: Style,
+    style: Option<&fresh_core::api::OverlayOptions>,
+    theme: &crate::view::theme::Theme,
+) -> Style {
+    let mut s = base;
+    let Some(opts) = style else {
+        return s;
+    };
+    if let Some(fg) = &opts.fg {
+        if let Some(c) = overlay_spec_color(fg, theme) {
+            s = s.fg(c);
+        }
+    }
+    if let Some(bg) = &opts.bg {
+        if let Some(c) = overlay_spec_color(bg, theme) {
+            s = s.bg(c);
+        }
+    }
+    let mut modifiers = Modifier::empty();
+    if opts.bold {
+        modifiers |= Modifier::BOLD;
+    }
+    if opts.italic {
+        modifiers |= Modifier::ITALIC;
+    }
+    if opts.underline {
+        modifiers |= Modifier::UNDERLINED;
+    }
+    if opts.strikethrough {
+        modifiers |= Modifier::CROSSED_OUT;
+    }
+    if !modifiers.is_empty() {
+        s = s.add_modifier(modifiers);
+    }
+    s
 }
 
 #[cfg(test)]

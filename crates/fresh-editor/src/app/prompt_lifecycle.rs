@@ -488,9 +488,11 @@ impl Editor {
             state.update_shortcuts();
         }
 
-        // Use tokio runtime to load directory
+        // Use tokio runtime to load directory. Use the *active window's*
+        // fs_manager (which rides that window's authority) so the Open File
+        // browser lists the remote host for a remote window, not the local box.
         if let Some(ref runtime) = self.tokio_runtime {
-            let fs_manager = self.fs_manager.clone();
+            let fs_manager = self.active_window().resources.fs_manager.clone();
             let sender = self.async_bridge.as_ref().map(|b| b.sender());
 
             runtime.spawn(async move {

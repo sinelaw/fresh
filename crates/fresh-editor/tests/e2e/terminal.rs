@@ -269,6 +269,66 @@ fn test_terminal_content_rendering() {
     assert!(!content[0].is_empty());
 }
 
+/// A terminal tab auto-names from its foreground process, tmux-style: the
+/// command running in the pty (here the shell itself, right after open)
+/// replaces the default `*Terminal 0*` label. Asserted on the rendered tab
+/// bar row, so it observes real output rather than inspecting model state.
+///
+/// Linux-only: the foreground process group is read via `tcgetpgrp` +
+/// `/proc`, which other platforms don't implement (they fall back to the
+/// OSC title / default).
+#[cfg(target_os = "linux")]
+#[test]
+fn test_terminal_tab_title_follows_foreground_process() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Opt into tmux-style auto-naming (the harness disables it by default for
+    // deterministic `*Terminal N*` tabs elsewhere).
+    let mut cfg = harness.editor().config().clone();
+    cfg.editor.terminal_auto_title = true;
+    harness.editor_mut().set_config(cfg);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("active buffer should be a terminal");
+
+    // Semantic wait: the shell becomes the pty's foreground process group
+    // shortly after spawn. Drive renders until auto-naming resolves; the
+    // bound only guards against a hang (cargo nextest times out externally).
+    let mut expected = None;
+    for _ in 0..2000 {
+        if let Some(name) = harness
+            .editor()
+            .terminal_manager()
+            .get(terminal_id)
+            .and_then(|h| h.foreground_process_name())
+        {
+            expected = Some(name);
+            harness.render().unwrap();
+            break;
+        }
+        harness.render().unwrap();
+    }
+    let expected = expected.expect("foreground process name should resolve on Linux");
+
+    // The tab bar (row 1) now shows the foreground command, not the default.
+    let tab_bar = harness.get_tab_bar();
+    assert!(
+        tab_bar.contains(&expected),
+        "tab bar {tab_bar:?} should contain foreground command {expected:?}"
+    );
+    assert!(
+        !tab_bar.contains("*Terminal 0*"),
+        "tab bar {tab_bar:?} should no longer show the default label"
+    );
+}
+
 /// Test terminal handles ANSI escape sequences for cursor positioning
 /// Uses direct terminal state processing (synchronous) instead of PTY
 #[test]

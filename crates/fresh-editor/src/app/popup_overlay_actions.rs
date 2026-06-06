@@ -341,11 +341,7 @@ impl Editor {
             "allow_once" => {
                 // Spawn the LSP server just this once (don't add to always-allowed)
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     // Temporarily allow this language for spawning
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
@@ -366,11 +362,7 @@ impl Editor {
             "allow_always" => {
                 // Spawn the LSP server and remember the preference
                 let __active_id = self.active_window;
-                if let Some(lsp) = self
-                    .windows
-                    .get_mut(&__active_id)
-                    .and_then(|w| w.lsp.as_mut())
-                {
+                if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
                     lsp.allow_language(&language);
                     // Use force_spawn since user explicitly confirmed
                     if lsp.force_spawn(&language, file_path.as_deref()).is_some() {
@@ -497,7 +489,8 @@ impl Editor {
             .expect("active window must exist");
         let diagnostic_result_ids = &__win.diagnostic_result_ids;
         let __next_id = &mut __win.next_lsp_request_id;
-        if let Some(lsp) = __win.lsp.as_mut() {
+        {
+            let lsp = &mut __win.lsp;
             // force_spawn starts all servers for this language
             if lsp.force_spawn(language, file_path.as_deref()).is_some() {
                 tracing::info!("Sending didOpen to LSP servers for: {}", uri.as_str());

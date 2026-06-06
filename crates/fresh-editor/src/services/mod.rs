@@ -13,6 +13,8 @@ pub mod file_watcher;
 pub mod fs;
 #[cfg(target_os = "linux")]
 pub mod gpm;
+/// Outbound HTTP(S); the only place `ureq`/TLS is used (gated by `http`).
+pub mod http;
 pub mod live_grep_state;
 pub mod log_dirs;
 pub mod lsp;

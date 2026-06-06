@@ -1,5 +1,7 @@
 ---
 title: "What's New in Fresh (0.2.18)"
+date: 2026-03-23
+description: "Project-wide search & replace, inline diagnostics, surround selection, 30 new syntax grammars, and more."
 outline: false
 ---
 

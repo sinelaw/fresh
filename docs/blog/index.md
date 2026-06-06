@@ -6,6 +6,11 @@ outline: false
 
 Updates on new features and changes in Fresh.
 
+<a class="blog-rss" href="/docs/feed.rss" target="_blank" rel="noopener">
+  <img class="blog-rss-icon" src="/rss.svg" alt="" width="16" height="16" />
+  Subscribe via RSS
+</a>
+
 <div class="blog-grid">
 
 <a class="blog-card" href="./fresh-pipeline/">

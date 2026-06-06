@@ -24,6 +24,92 @@ fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
 }
 
 impl Editor {
+    /// If any overlay layer captures mouse events, dispatch to its
+    /// dedicated handler and return its result; otherwise return `None`
+    /// so the caller continues with the normal click/wheel pipeline.
+    ///
+    /// This is the mouse counterpart of `resolve_focus_context` /
+    /// `presents_blocking_overlay`: precedence is the order of
+    /// `overlay_layers()`, top-first. Only the kinds whose modal
+    /// handlers exist need an arm here — non-capturing layers fall
+    /// through.
+    fn dispatch_modal_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+        is_double_click: bool,
+    ) -> Option<AnyhowResult<bool>> {
+        use crate::app::overlay::LayerKind;
+
+        // Snapshot the capturing kinds first so the borrow ends before
+        // any `&mut self` handler runs.
+        let capturing_kind = self.overlay_layers().iter().find_map(|l| match l.kind {
+            LayerKind::Settings
+            | LayerKind::KeybindingEditor
+            | LayerKind::CalibrationWizard
+            | LayerKind::WorkspaceTrust
+            | LayerKind::FloatingModal => Some(l.kind),
+            _ => None,
+        })?;
+        Some(match capturing_kind {
+            LayerKind::KeybindingEditor => self.handle_keybinding_editor_mouse(mouse_event),
+            LayerKind::Settings => self.handle_settings_mouse(mouse_event, is_double_click),
+            // The calibration wizard owns the modal z-band but ignores
+            // every mouse event (its UI is keyboard-driven). Swallowing
+            // here matches the previous explicit `return Ok(false)`.
+            LayerKind::CalibrationWizard => Ok(false),
+            LayerKind::WorkspaceTrust => self.handle_workspace_trust_mouse(mouse_event),
+            // The centered widget modal (orchestrator control room /
+            // New-Session form) captures the whole mouse channel here —
+            // before the terminal-forward and the editor's buffer paths —
+            // so a click/double-click/scroll over the dialog never leaks to
+            // an alternate-screen terminal or the buffer it covers. Clicks
+            // route to the panel's own hit-test (focusing the clicked
+            // widget); everything else is swallowed.
+            LayerKind::FloatingModal => self.handle_floating_modal_mouse(mouse_event),
+            _ => unreachable!("find_map only returns capturing kinds"),
+        })
+    }
+
+    /// Mouse handler for the centered widget modal (`floating_widget_panel`).
+    /// The dialog is fully modal: presses hit-test the panel (focusing the
+    /// clicked widget / placing the text cursor), wheel scrolls it, and a
+    /// drag drives only its scrollbar. Every other event — and every press
+    /// that lands outside the panel box — is swallowed, so nothing reaches
+    /// the buffer, terminal, or dock beneath. Always returns
+    /// `Ok(true)` (a render is cheap and the modal just consumed an event).
+    fn handle_floating_modal_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let (col, row) = (mouse_event.column, mouse_event.row);
+        match mouse_event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Single / double / triple clicks all map to one panel
+                // hit-test — never the buffer's word/line select beneath.
+                self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Only a scrollbar drag is meaningful; other drags are
+                // swallowed rather than starting a buffer text-selection.
+                self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.release_widget_scrollbar();
+            }
+            MouseEventKind::ScrollUp => {
+                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, -3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, 3);
+            }
+            // Right-click, horizontal scroll, motion, other-button releases:
+            // swallowed — the modal eats them all.
+            _ => {}
+        }
+        Ok(true)
+    }
+
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
     pub fn handle_mouse(
@@ -37,31 +123,13 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // When keybinding editor is open, capture all mouse events
-        if self.keybinding_editor.is_some() {
-            return self.handle_keybinding_editor_mouse(mouse_event);
-        }
-
-        // When settings modal is open, capture all mouse events
-        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
-            return self.handle_settings_mouse(mouse_event, is_double_click);
-        }
-
-        // When calibration wizard is active, ignore all mouse events
-        if self.calibration_wizard.is_some() {
-            return Ok(false);
-        }
-
-        // The workspace-trust modal captures every mouse event: clicks act on
-        // its controls (and are otherwise absorbed), the wheel scrolls it. None
-        // of it may leak to the buffer behind (which would move the cursor).
-        if self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        }) {
-            return self.handle_workspace_trust_mouse(mouse_event);
+        // Modal mouse-capture: walk the overlay stack top-down (the same
+        // list `get_key_context` / `dispatch_terminal_input` consult) and
+        // dispatch to the first layer that captures mouse. This replaces
+        // a hand-listed ladder that had drifted out of order with the
+        // keyboard dispatcher.
+        if let Some(result) = self.dispatch_modal_mouse(mouse_event, is_double_click) {
+            return result;
         }
 
         // Cancel LSP rename prompt on any mouse interaction
@@ -90,11 +158,26 @@ impl Editor {
 
         // Check if we should forward mouse events to the terminal
         // Forward if: in terminal mode, mouse is over terminal buffer, and terminal is in alternate screen mode
-        if let Some(result) =
-            self.active_window_mut()
-                .try_forward_mouse_to_terminal(col, row, mouse_event)
-        {
-            return result;
+        //
+        // ...unless a chrome drag is in progress (dock-border resize, split
+        // separator, or file-explorer width). That drag owns the mouse until
+        // release, so don't let an alternate-screen terminal swallow the
+        // motion once the pointer crosses over it — *growing* the dock drags
+        // the cursor rightward across a full-screen `btop`, and forwarding
+        // there both stalls the resize and eats the mouse-up that ends it,
+        // leaving the drag stuck. Shrinking happened to work only because the
+        // pointer stays left of the terminal the whole time.
+        let chrome_drag_active = self.dock_resizing || {
+            let ms = &self.active_window().mouse_state;
+            ms.dragging_separator.is_some() || ms.drag_start_explorer_width.is_some()
+        };
+        if !chrome_drag_active {
+            if let Some(result) =
+                self.active_window_mut()
+                    .try_forward_mouse_to_terminal(col, row, mouse_event)
+            {
+                return result;
+            }
         }
 
         // Dismiss theme info popup on any left-click; check if click is on the button first
@@ -158,6 +241,17 @@ impl Editor {
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                // End a dock-resize drag and persist the chosen width so
+                // it survives toggling the dock off/on.
+                if self.dock_resizing {
+                    self.dock_resizing = false;
+                    if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+                        self.dock.as_ref().map(|f| f.placement)
+                    {
+                        self.dock_width = Some(width_cols);
+                    }
+                    return Ok(true);
+                }
                 // Check if we were dragging a separator to trigger terminal resize
                 let was_dragging_separator = self
                     .active_window_mut()
@@ -180,42 +274,12 @@ impl Editor {
 
                 // Stop dragging and clear drag state
                 self.release_widget_scrollbar();
-                self.active_window_mut().mouse_state.dragging_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_row = None;
-                self.active_window_mut().mouse_state.drag_start_top_byte = None;
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_horizontal_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_hcol = None;
-                self.active_window_mut().mouse_state.drag_start_left_column = None;
-                self.active_window_mut().mouse_state.dragging_separator = None;
-                self.active_window_mut().mouse_state.drag_start_position = None;
-                self.active_window_mut().mouse_state.drag_start_ratio = None;
-                self.active_window_mut().mouse_state.dragging_file_explorer = false;
-                self.active_window_mut()
-                    .mouse_state
-                    .drag_start_explorer_width = None;
-                // Clear text selection drag state (selection remains in cursor)
-                self.active_window_mut().mouse_state.dragging_text_selection = false;
-                self.active_window_mut().mouse_state.drag_selection_split = None;
-                self.active_window_mut().mouse_state.drag_selection_anchor = None;
-                self.active_window_mut().mouse_state.drag_selection_by_words = false;
-                self.active_window_mut().mouse_state.drag_selection_word_end = None;
-                // Clear popup scrollbar drag state
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_popup_scrollbar = None;
-                self.active_window_mut().mouse_state.drag_start_popup_scroll = None;
-                // Clear prompt scrollbar drag state (issue #1796)
-                self.active_window_mut()
-                    .mouse_state
-                    .dragging_prompt_scrollbar = false;
-                // Clear popup text selection drag state (selection remains in popup)
-                self.active_window_mut().mouse_state.selecting_in_popup = None;
+                self.clear_active_window_drag_state();
 
-                // If we finished dragging a separator, resize visible terminals
+                // If we finished dragging a split separator, the split
+                // ratios changed: reflow through the single layout funnel.
                 if was_dragging_separator {
-                    self.active_window_mut().resize_visible_terminals();
+                    self.relayout();
                 }
 
                 needs_render = true;
@@ -378,13 +442,17 @@ impl Editor {
         } else if self.is_mouse_over_any_popup(col, row) {
             self.scroll_popup(delta);
         } else if self.floating_widget_panel.is_some() {
-            // The floating widget panel (orchestrator picker, New
-            // Session form, ...) is modal: scroll it when the pointer is
-            // over it (e.g. a Text-widget completion popup scrolls its
-            // candidate list), and otherwise swallow the wheel so it
-            // can't leak through to the buffer behind the modal. Either
-            // way the event is consumed here — never falls through.
-            self.handle_floating_widget_panel_wheel(col, row, delta);
+            // A centered modal (orchestrator picker, New-Session form,
+            // ...) is modal and takes precedence: scroll it when the
+            // pointer is over it, otherwise swallow the wheel so it
+            // can't leak through to the buffer (or the dock) behind it.
+            // Either way the event is consumed here — never falls through.
+            self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, delta);
+        } else if self.dock.is_some()
+            && self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
+        {
+            // The dock swallows the wheel whenever the pointer is over
+            // its column (never leaks to the window beneath).
         } else if self
             .active_window()
             .split_at_position(col, row)
@@ -629,13 +697,15 @@ impl Editor {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
         // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
-        // tab context menu) to avoid hover tooltips overlapping other popups.
+        // tab context menu, or the status-bar LSP status popup) to avoid hover
+        // tooltips overlapping other popups.
         if self.active_window_mut().theme_info_popup.is_some()
             || self.active_window_mut().tab_context_menu.is_some()
             || self
                 .active_window_mut()
                 .file_explorer_context_menu
                 .is_some()
+            || self.is_lsp_status_popup_open()
         {
             if self
                 .active_window_mut()
@@ -861,6 +931,14 @@ impl Editor {
 
     /// Compute what hover target is at the given position
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        self.hover_target_in_floating_overlays(col, row)
+            .or_else(|| self.hover_target_in_chrome(col, row))
+    }
+
+    /// Hit-test floating overlay layers: context menus, command palette,
+    /// popup lists, and the file-browser dialog. These always render on
+    /// top of the chrome and must be checked first.
+    fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
                 self.active_chrome().last_frame_width,
@@ -938,6 +1016,13 @@ impl Editor {
             }
         }
 
+        None
+    }
+
+    /// Hit-test the permanent chrome: menu bar, file explorer panel,
+    /// split separators, tabs, scrollbars, status bar, and search
+    /// options. Called only after floating overlays have been ruled out.
+    fn hover_target_in_chrome(&self, col: u16, row: u16) -> Option<HoverTarget> {
         // Check menu bar (row 0, only when visible)
         // Check menu bar using cached layout from previous render
         if self.active_window().menu_bar_visible {
@@ -1121,7 +1206,6 @@ impl Editor {
             }
         }
 
-        // No hover target
         None
     }
 
@@ -1477,14 +1561,64 @@ impl Editor {
         row: u16,
         modifiers: crossterm::event::KeyModifiers,
     ) -> AnyhowResult<()> {
-        // Floating widget panel is modal: clicks inside hit-test
-        // against its widget hits; clicks outside are swallowed so
-        // the user can't accidentally focus another split while the
-        // form is up. Auto-dismiss on outside-click is deliberately
-        // NOT done — the form has explicit Cancel / Esc.
+        // A centered modal takes click precedence over the dock: while
+        // the New-Session form is up over the dock, clicks hit-test the
+        // modal (clicks outside it are swallowed — it has Cancel / Esc).
         if self.floating_widget_panel.is_some() {
-            self.handle_floating_widget_click(col, row);
+            self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
             return Ok(());
+        }
+        // Dock resize: a press on the dock's right border (its rightmost
+        // column) starts a drag that resizes the dock width. Checked
+        // before the click-routing below so the border column is a
+        // resize handle, not a widget hit.
+        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+            self.dock.as_ref().map(|f| f.placement)
+        {
+            if col == width_cols.saturating_sub(1) {
+                self.dock_resizing = true;
+                return Ok(());
+            }
+        }
+        // Dock click routing (non-modal): clicks inside its column
+        // hit-test (and re-focus it if blurred); clicks in the editor
+        // blur the dock and fall through to normal editor handling.
+        if let Some((super::PanelPlacement::LeftDock { width_cols }, focused)) =
+            self.dock.as_ref().map(|f| (f.placement, f.focused))
+        {
+            if col < width_cols {
+                tracing::debug!(
+                    target: "fresh::dock",
+                    col,
+                    row,
+                    width_cols,
+                    focused,
+                    "handle_mouse_click: click in dock column"
+                );
+                if !focused {
+                    // Symmetric with `blur_floating_panel`: the un-blur
+                    // must notify the plugin via a `focus` widget_event
+                    // so any mirror of dock-focus state updates before
+                    // the click's row-select event fires its scheduling
+                    // logic. Without this, the orchestrator's
+                    // `dockBlurred` mirror stayed `true` and its
+                    // debounced live-switch aborted on the first
+                    // un-dive click.
+                    self.refocus_floating_panel(super::PanelSlot::Dock);
+                }
+                self.handle_floating_widget_click(super::PanelSlot::Dock, col, row);
+                return Ok(());
+            }
+            if focused {
+                tracing::debug!(
+                    target: "fresh::dock",
+                    col,
+                    row,
+                    width_cols,
+                    "handle_mouse_click: click outside dock — blurring"
+                );
+                self.blur_floating_panel(super::PanelSlot::Dock);
+            }
         }
         if let Some(r) = self.handle_click_context_menus(col, row) {
             return r;
@@ -2455,9 +2589,40 @@ impl Editor {
 
     /// Handle mouse drag event
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        // Dock resize drag: track the pointer column as the new dock
+        // width (the right border follows the cursor), clamped so it
+        // can't swallow the chrome.
+        if self.dock_resizing {
+            let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
+            let new_w = col.saturating_add(1).clamp(10, max_cols);
+            let mut changed = false;
+            if let Some(fwp) = self.dock.as_mut() {
+                if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
+                    changed = *width_cols != new_w;
+                    *width_cols = new_w;
+                }
+            }
+            if changed {
+                // Persist the live width *before* relaying out. `relayout`
+                // fires the `resize` hook, and the orchestrator answers it
+                // by re-issuing the dock's responsive `dock_width`, which
+                // `handle_floating_panel_control` clamps against the
+                // persisted `dock_width` override. Updating that override
+                // here (not only on mouse-up) lets the user's dragged width
+                // win the round-trip — otherwise the responsive re-issue
+                // snaps the dock straight back and the drag does nothing.
+                self.dock_width = Some(new_w);
+                // The dock got wider/narrower: reflow the chrome (terminals,
+                // viewports, panels) to the new dock width via the funnel.
+                self.relayout();
+            }
+            return Ok(());
+        }
         // Floating-panel list scrollbar drag takes precedence — the
         // modal panel owns the input channel while it's up.
-        if self.try_widget_scrollbar_drag(row) {
+        if self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
+            || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
+        {
             let _ = col;
             return Ok(());
         }
@@ -2881,6 +3046,9 @@ impl Editor {
                     ExplorerWidth::Columns(new_cols)
                 }
             };
+            // The sidebar width changed: reflow terminals/viewports/panels
+            // through the single layout funnel.
+            self.relayout();
         }
 
         Ok(())
@@ -2948,6 +3116,9 @@ impl Editor {
             } else {
                 self.set_grouped_split_ratio(split_id, new_ratio);
             }
+            // Reflow live as the separator moves so terminals track the
+            // split sizes during the drag, not just on release.
+            self.relayout();
         }
 
         Ok(())
@@ -3542,8 +3713,14 @@ impl Editor {
     /// is active AND the mouse is inside its inner rect (so the
     /// caller knows the wheel was consumed and shouldn't fall
     /// through to buffer scrolling).
-    fn handle_floating_widget_panel_wheel(&mut self, col: u16, row: u16, delta: i32) -> bool {
-        let inner = match self.floating_widget_panel.as_ref() {
+    fn handle_floating_widget_panel_wheel(
+        &mut self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+        delta: i32,
+    ) -> bool {
+        let inner = match self.panel(slot) {
             Some(fwp) => match fwp.last_inner_rect {
                 Some(rect) => rect,
                 None => return false,
@@ -3556,27 +3733,34 @@ impl Editor {
         if row < inner.y || row >= inner.y + inner.height {
             return false;
         }
-        self.handle_widget_panel_wheel(super::FLOATING_PANEL_BUFFER_ID, delta)
+        let scrolled = self.handle_widget_panel_wheel(slot.buffer_id(), delta);
+        // The non-modal dock must swallow the wheel whenever the pointer
+        // is over it, even when the list is too short to scroll — the
+        // scroll must never leak through to the active window beneath.
+        let is_dock = matches!(
+            self.panel(slot).map(|f| f.placement),
+            Some(super::PanelPlacement::LeftDock { .. })
+        );
+        scrolled || is_dock
     }
 
     /// Try to start a floating-panel list scrollbar drag. Returns
     /// true if the press landed on a scrollbar track (so the caller
     /// skips row hit-testing — the bar overlaps the list's rightmost
     /// column). Reuses the canonical `ScrollbarMouse`/`ScrollbarState`.
-    fn try_widget_scrollbar_press(&mut self, col: u16, row: u16) -> bool {
+    fn try_widget_scrollbar_press(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
         use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_id, tracks) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, tracks) = match self.panel(slot) {
             Some(fwp) => (fwp.panel_id, fwp.scrollbar_tracks.clone()),
             None => return false,
         };
         for t in &tracks {
             let state = ScrollbarState::new(t.total, t.visible, t.scroll);
             let pressed = self
-                .floating_widget_panel
-                .as_mut()
+                .panel_mut(slot)
                 .and_then(|fwp| fwp.scrollbar_mouse.press(state, t.rect, col, row));
             if let Some(new_offset) = pressed {
-                if let Some(fwp) = self.floating_widget_panel.as_mut() {
+                if let Some(fwp) = self.panel_mut(slot) {
                     fwp.scrollbar_drag_key = Some(t.list_key.clone());
                 }
                 self.apply_widget_scroll(panel_id, &t.list_key, new_offset, t.visible);
@@ -3588,9 +3772,9 @@ impl Editor {
 
     /// Continue an in-flight floating-panel scrollbar drag. Returns
     /// true if a drag is active (the press captured a `list_key`).
-    fn try_widget_scrollbar_drag(&mut self, row: u16) -> bool {
+    fn try_widget_scrollbar_drag(&mut self, slot: super::PanelSlot, row: u16) -> bool {
         use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_id, key) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, key) = match self.panel(slot) {
             Some(fwp) => match &fwp.scrollbar_drag_key {
                 Some(k) => (fwp.panel_id, k.clone()),
                 None => return false,
@@ -3599,7 +3783,7 @@ impl Editor {
         };
         // The track geometry for the dragged list (its rect may have
         // shifted if the panel re-rendered between events).
-        let track = self.floating_widget_panel.as_ref().and_then(|fwp| {
+        let track = self.panel(slot).and_then(|fwp| {
             fwp.scrollbar_tracks
                 .iter()
                 .find(|t| t.list_key == key)
@@ -3610,8 +3794,7 @@ impl Editor {
         };
         let state = ScrollbarState::new(t.total, t.visible, t.scroll);
         let new_offset = self
-            .floating_widget_panel
-            .as_mut()
+            .panel_mut(slot)
             .and_then(|fwp| fwp.scrollbar_mouse.drag(state, t.rect, row));
         if let Some(off) = new_offset {
             self.apply_widget_scroll(panel_id, &key, off, t.visible);
@@ -3621,7 +3804,10 @@ impl Editor {
 
     /// End any in-flight floating-panel scrollbar drag.
     pub(super) fn release_widget_scrollbar(&mut self) {
-        if let Some(fwp) = self.floating_widget_panel.as_mut() {
+        for fwp in [self.dock.as_mut(), self.floating_widget_panel.as_mut()]
+            .into_iter()
+            .flatten()
+        {
             fwp.scrollbar_mouse.release();
             fwp.scrollbar_drag_key = None;
         }
@@ -3668,13 +3854,13 @@ impl Editor {
 
     /// `handle_editor_click` uses; clicks outside the rect are
     /// swallowed without dismissing the panel.
-    fn handle_floating_widget_click(&mut self, col: u16, row: u16) {
+    fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
         // Scrollbar press wins over row hit-testing (the bar overlaps
         // the list's rightmost column).
-        if self.try_widget_scrollbar_press(col, row) {
+        if self.try_widget_scrollbar_press(slot, col, row) {
             return;
         }
-        let (panel_id, inner) = match self.floating_widget_panel.as_ref() {
+        let (panel_id, inner) = match self.panel(slot) {
             Some(fwp) => match fwp.last_inner_rect {
                 Some(rect) => (fwp.panel_id, rect),
                 None => return,
@@ -3689,8 +3875,7 @@ impl Editor {
         }
         let brow = (row - inner.y) as u32;
         let entries = self
-            .floating_widget_panel
-            .as_ref()
+            .panel(slot)
             .map(|f| f.entries.clone())
             .unwrap_or_default();
         let local_screen_col = (col - inner.x) as usize;
@@ -3701,7 +3886,7 @@ impl Editor {
         let (hit_payload, hit_event, hit_key, hit_kind) =
             match self
                 .widget_registry
-                .hit_test(super::FLOATING_PANEL_BUFFER_ID, brow, bcol as u32)
+                .hit_test(slot.buffer_id(), brow, bcol as u32)
             {
                 Some((_, hit)) => (
                     hit.payload.clone(),
@@ -3709,7 +3894,14 @@ impl Editor {
                     hit.widget_key.clone(),
                     hit.widget_kind,
                 ),
-                None => return,
+                None => {
+                    tracing::debug!(
+                        target: "fresh::dock",
+                        ?slot, col, row, brow, bcol,
+                        "handle_floating_widget_click: hit_test found no widget"
+                    );
+                    return;
+                }
             };
         if !hit_key.is_empty() {
             let tabbable = self
@@ -3717,10 +3909,25 @@ impl Editor {
                 .get(panel_id)
                 .map(|p| p.tabbable.iter().any(|k| k == &hit_key))
                 .unwrap_or(false);
+            tracing::debug!(
+                target: "fresh::dock",
+                hit_key = %hit_key,
+                hit_kind,
+                hit_event = %hit_event,
+                tabbable,
+                "handle_floating_widget_click: hit"
+            );
             if tabbable {
                 self.set_panel_focus_and_notify(panel_id, hit_key.clone());
             }
             self.rerender_widget_panel(panel_id);
+        } else {
+            tracing::debug!(
+                target: "fresh::dock",
+                hit_kind,
+                hit_event = %hit_event,
+                "handle_floating_widget_click: hit with empty key (not focusable)"
+            );
         }
         let handled_specially = if hit_kind == "tree" && hit_event == "expand" {
             if let Some(item_key) = hit_payload.get("key").and_then(|v| v.as_str()) {
@@ -3749,6 +3956,33 @@ impl Editor {
                 },
             );
         }
+    }
+
+    /// Clear all in-progress drag state on the active window's mouse state.
+    /// The active text/popup selection is intentionally preserved — only the
+    /// drag bookkeeping fields are reset.
+    fn clear_active_window_drag_state(&mut self) {
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.dragging_scrollbar = None;
+        ms.drag_start_row = None;
+        ms.drag_start_top_byte = None;
+        ms.dragging_horizontal_scrollbar = None;
+        ms.drag_start_hcol = None;
+        ms.drag_start_left_column = None;
+        ms.dragging_separator = None;
+        ms.drag_start_position = None;
+        ms.drag_start_ratio = None;
+        ms.dragging_file_explorer = false;
+        ms.drag_start_explorer_width = None;
+        ms.dragging_text_selection = false;
+        ms.drag_selection_split = None;
+        ms.drag_selection_anchor = None;
+        ms.drag_selection_by_words = false;
+        ms.drag_selection_word_end = None;
+        ms.dragging_popup_scrollbar = None;
+        ms.drag_start_popup_scroll = None;
+        ms.dragging_prompt_scrollbar = false;
+        ms.selecting_in_popup = None;
     }
 }
 
