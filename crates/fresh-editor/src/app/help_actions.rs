@@ -7,9 +7,18 @@
 //! buffer storage and use window-side `create_virtual_buffer` +
 //! `set_active_buffer`.
 
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use super::help;
 use crate::app::window::Window;
 use crate::app::Editor;
+use crate::input::buffer_mode::BufferMode;
+use crate::input::keybindings::{Action, KeyContext};
+
+/// Mode name carried on the help/manual virtual buffers. Referenced
+/// both when creating the buffer (so input dispatch resolves keys
+/// against this context) and when installing the close binding.
+pub(super) const HELP_PANEL_MODE: &str = "special";
 
 impl Editor {
     /// Register the built-in `"special"` buffer mode used by the help
@@ -18,19 +27,31 @@ impl Editor {
     /// `inherit_normal_bindings` keeps cursor motion / copy / search
     /// usable even though `editing_disabled` blocks edits.
     ///
-    /// Idempotent: `handle_define_mode` clears prior plugin defaults
-    /// for the mode before re-installing, so it's safe to call on
-    /// every viewer open. Re-calling after a config reload (which
-    /// wipes `KeybindingResolver`) also restores the binding without
-    /// any extra wiring.
+    /// Idempotent: clears any prior binding for this mode context
+    /// before installing, so it's safe to call on every viewer open
+    /// (also restores the binding after a config reload, which
+    /// reinitializes `KeybindingResolver`).
+    ///
+    /// Avoids calling into `handle_define_mode` because that path
+    /// lives under `#[cfg(feature = "plugins")]`; we only need the
+    /// keybinding + mode-registry slice here, which is always built.
     pub(super) fn ensure_help_panel_mode_registered(&mut self) {
-        self.handle_define_mode(
-            "special".to_string(),
-            vec![("q".to_string(), "close_tab".to_string())],
-            true,
-            false,
-            true,
-            None,
+        let mode_ctx = KeyContext::Mode(HELP_PANEL_MODE.to_string());
+        {
+            let mut kb = self.keybindings.write().unwrap();
+            kb.clear_plugin_defaults_for_mode(HELP_PANEL_MODE);
+            kb.set_mode_inherits_normal_bindings(HELP_PANEL_MODE, true);
+            kb.load_plugin_default(
+                mode_ctx,
+                KeyCode::Char('q'),
+                KeyModifiers::NONE,
+                Action::CloseTab,
+            );
+        }
+        self.mode_registry.register(
+            BufferMode::new(HELP_PANEL_MODE)
+                .with_read_only(true)
+                .with_inherit_normal_bindings(true),
         );
     }
 }
@@ -56,7 +77,7 @@ impl Window {
         // Create new help buffer with "special" mode (has 'q' to close).
         let buffer_id = self.create_virtual_buffer(
             help::HELP_MANUAL_BUFFER_NAME.to_string(),
-            "special".to_string(),
+            HELP_PANEL_MODE.to_string(),
             true,
         );
 
@@ -123,7 +144,7 @@ impl Window {
 
         let buffer_id = self.create_virtual_buffer(
             help::KEYBOARD_SHORTCUTS_BUFFER_NAME.to_string(),
-            "special".to_string(),
+            HELP_PANEL_MODE.to_string(),
             true,
         );
 
