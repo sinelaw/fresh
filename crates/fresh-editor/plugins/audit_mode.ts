@@ -1666,43 +1666,47 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
         return la - lb;
     });
 
+    // Each comment renders as a block: a "path:line" location row followed
+    // by the note text wrapped over as many rows as needed (no truncation).
+    // Every row maps back to the comment id, so clicking or selecting any
+    // row of the block jumps to that comment.
+    const panelWidth = Math.max(20, Math.floor(state.viewportWidth * 0.25) - 2);
     let rowIdx = 1; // header is row 0 (0-indexed); comments start at row 1
     for (const c of sortedComments) {
-        rowIdx++;
         const lineRef = c.new_line ?? c.old_line ?? 0;
         const path = c.file.split('/').pop() || c.file;
-        const snippet = c.text.replace(/\s+/g, ' ').trim();
-        // Leading marker: ">" when this comment is the diff cursor's
-        // current target (cursor is on the comment row itself, or on
-        // the line the comment is attached to). Otherwise a space.
-        const marker = c.id === state.commentsHighlightId ? '>' : ' ';
-        const text = `${marker} ${path}:${lineRef}  ${snippet}`;
+        const isCurrent = c.id === state.commentsHighlightId;
+        const marker = isCurrent ? '>' : ' ';
 
-        // Truncate to fit panel width (estimate).
-        const panelWidth = Math.max(20, Math.floor(state.viewportWidth * 0.25) - 2);
-        const display = text.length > panelWidth ? text.slice(0, panelWidth - 1) + '…' : text;
-
-        const isSelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
-        const isCursorMarked = c.id === state.commentsHighlightId;
-        const style: Partial<OverlayOptions> | undefined = isSelected
-            ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-            : isCursorMarked
-                ? { bold: true }
-                : undefined;
-
-        // Color the path:line prefix in keyword color (skip the marker).
-        const prefixLen = getByteLength(`${marker} ${path}:${lineRef}`);
-        const inlineOverlays: InlineOverlay[] = [
-            { start: 2, end: prefixLen, style: { fg: STYLE_KEY_FG } },
-        ];
-
+        // Location row.
+        rowIdx++;
+        const locText = `${marker} ${path}:${lineRef}`;
+        const locSelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
+        const locDisplay = locText.length > panelWidth ? locText.slice(0, panelWidth - 1) + '…' : locText;
         state.commentsByRow[rowIdx] = c.id;
         entries.push({
-            text: display + "\n",
-            style,
-            inlineOverlays,
+            text: locDisplay + "\n",
+            style: locSelected
+                ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
+                : { bold: true },
+            inlineOverlays: [{ start: 2, end: getByteLength(locText), style: { fg: STYLE_KEY_FG } }],
             properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
         });
+
+        // Body rows: the full note text, wrapped and indented.
+        const body = c.text.replace(/\s+/g, ' ').trim();
+        for (const wl of wrapText(body, panelWidth - 3)) {
+            rowIdx++;
+            const bodySelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
+            state.commentsByRow[rowIdx] = c.id;
+            entries.push({
+                text: `   ${wl}\n`,
+                style: bodySelected
+                    ? { bg: STYLE_SELECTED_BG, extendToLineEnd: true }
+                    : (isCurrent ? undefined : { fg: STYLE_COMMENT }),
+                properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
+            });
+        }
     }
 
     return entries;

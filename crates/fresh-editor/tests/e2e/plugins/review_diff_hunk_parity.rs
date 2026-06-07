@@ -252,6 +252,38 @@ fn test_review_comment_from_header_opens_prompt() {
         .unwrap();
 }
 
+/// §5.6 — the COMMENTS side panel renders the full note wrapped over
+/// multiple lines, not a single truncated row: both the first and a late
+/// word of a long note are visible.
+#[test]
+fn test_review_comments_panel_wraps_full_note() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("ALPHAWORD this note is long enough to wrap across several panel rows OMEGAWORD")
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // The whole note is present (not truncated): the trailing word shows.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("ALPHAWORD") && s.contains("OMEGAWORD")
+        })
+        .unwrap();
+}
+
 /// §5.12 — `W` toggles watch (auto-reload on save) and reports its state.
 #[test]
 fn test_review_watch_toggle_status() {
