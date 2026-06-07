@@ -390,16 +390,16 @@ fn new_session_form_hints_existing_worktree() {
         });
 }
 
-/// The session list is sorted by a *stable* lexicographic key (label),
-/// with no special-casing of live vs discovered rows — so a row keeps its
-/// place when its session changes state (see
-/// `dock_opening_worktree_keeps_its_row_position`). Here the discovered
-/// `feature-x` worktree sorts *above* the `mainrepo` base row purely
-/// because `"feature-x" < "mainrepo"`, not because of any live/on-disk
-/// grouping. The base row is identified by its `[ ]` checkbox and the
-/// absence of the `· on-disk` tag (which marks the discovered worktree).
+/// The session list sorts by a *stable* key: the project's own checkout
+/// (the `mainrepo` base) sits above its linked worktrees, then rows are
+/// alphabetical. This grouping is by `root == projectPath`, NOT by
+/// live/discovered state — so a worktree keeps its place when opened (see
+/// `dock_opening_worktree_keeps_its_row_position`) instead of jumping into
+/// a "live" group. Here the `mainrepo` base row stays above the discovered
+/// `feature-x` worktree. The base row is identified by its `[ ]` checkbox
+/// and the absence of the `· on-disk` tag (which marks the worktree).
 #[test]
-fn rows_sort_stably_by_label_not_by_live_state() {
+fn rows_sort_stably_main_checkout_above_worktrees() {
     let (_temp, repo, _wt) = set_up_repo_with_worktree();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -418,10 +418,9 @@ fn rows_sort_stably_by_label_not_by_live_state() {
         .position(|l| l.contains("[ ]") && l.contains("mainrepo") && !l.contains("· on-disk"));
     let disc_idx = lines.iter().position(|l| l.contains("· on-disk"));
     assert!(
-        base_idx.is_some() && disc_idx.is_some() && disc_idx < base_idx,
-        "rows must sort lexically by label (feature-x above mainrepo), \
-         independent of live/discovered state.\nbase_idx={:?} disc_idx={:?}\n\
-         Screen:\n{}",
+        base_idx.is_some() && disc_idx.is_some() && base_idx < disc_idx,
+        "main checkout (mainrepo) must sort above its worktrees, independent \
+         of live/discovered state.\nbase_idx={:?} disc_idx={:?}\nScreen:\n{}",
         base_idx,
         disc_idx,
         screen
@@ -882,11 +881,11 @@ fn dock_arrow_nav_opens_discovered_worktree() {
 }
 
 /// Opening a discovered worktree from the dock keeps it in the *same row*
-/// — the sort is stable. With two on-disk worktrees the lexicographic
-/// order is `feature-x`, `feature-y`, then the `mainrepo` base; opening
-/// `feature-x` turns it live but it must stay above `feature-y` rather
-/// than jumping into a "live" group (the old live-before-discovered sort
-/// shuffled rows under you as you navigated).
+/// — the sort is stable. The order is the `mainrepo` base (main checkout)
+/// first, then its worktrees alphabetically (`feature-x`, `feature-y`);
+/// opening `feature-x` turns it live but it must stay above `feature-y`
+/// rather than jumping into a "live" group (the old live-before-discovered
+/// sort shuffled rows under you as you navigated).
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
 fn dock_opening_worktree_keeps_its_row_position() {

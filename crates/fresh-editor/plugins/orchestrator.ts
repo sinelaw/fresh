@@ -1009,19 +1009,26 @@ function filterSessions(needle: string): number[] {
   // so an "all" view groups the current project's sessions at the top and
   // other projects' below.
   //
-  // Within a project the order is a *stable* identity key — label, then
-  // root — deliberately NOT the live/discovered state or the numeric id.
-  // A row must keep its place when its session changes state: opening a
-  // discovered on-disk worktree turns it into a live session (and swaps
-  // its synthetic negative id for a positive window id), but it should
-  // stay exactly where it was instead of jumping into a "live" group and
-  // shuffling the rows under you as you arrow-navigate. `id` is only a
-  // final tie-break for two otherwise-identical rows.
+  // Within a project the order is a *stable* identity key, deliberately
+  // NOT the live/discovered state or the numeric id — a row must keep its
+  // place when its session changes state. Opening a discovered on-disk
+  // worktree turns it into a live session (and swaps its synthetic
+  // negative id for a positive window id), but it should stay exactly
+  // where it was instead of jumping into a "live" group and shuffling the
+  // rows under you as you arrow-navigate. The key is:
+  //   1. main checkout first — the project's own checkout (root ===
+  //      projectPath) sits above its linked worktrees. This is stable:
+  //      whether a worktree is discovered or open, its root never equals
+  //      its projectPath, so it never crosses this boundary.
+  //   2. then label, then root — alphabetical within each group.
+  //   3. id only as a final tie-break for two otherwise-identical rows.
   //
   // The dock is persistent and switches the active session constantly, so
   // it must NOT reorder as the active project changes — it pins this
   // stable order. The modal picker, opened fresh each time, additionally
   // floats the current project to the top.
+  const isWorktree = (s: AgentSession): number =>
+    normRoot(s.root) === normRoot(projectKeyOf(s)) ? 0 : 1;
   const pinCurrentFirst = !dockMode;
   const byProjectThenStable = (a: number, b: number): number => {
     const sa = orchestratorSessions.get(a)!;
@@ -1032,6 +1039,9 @@ function filterSessions(needle: string): number[] {
     const ka = projectKeyOf(sa);
     const kb = projectKeyOf(sb);
     if (ka !== kb) return ka < kb ? -1 : 1;
+    const wa = isWorktree(sa);
+    const wb = isWorktree(sb);
+    if (wa !== wb) return wa - wb;
     const la = sa.label.toLowerCase();
     const lb = sb.label.toLowerCase();
     if (la !== lb) return la < lb ? -1 : 1;
