@@ -1005,20 +1005,25 @@ function filterSessions(needle: string): number[] {
     allIds = allIds.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === want);
   }
 
-  const isDisc = (id: number): number =>
-    orchestratorSessions.get(id)!.discovered ? 1 : 0;
-
-  // Sort by (current-project-first, project, live-before-discovered,
-  // then id) so an "all" view groups the current project's sessions
-  // at the top and other projects' below, and within each project the
-  // pre-existing live sessions come first with the discovered on-disk
-  // worktrees listed after them.
-  // The dock is persistent and switches the active session constantly,
-  // so it must NOT reorder as the active project changes — pin a stable
-  // order (project, then id). The modal picker, opened fresh each time,
-  // keeps the current-project-first grouping.
+  // Sort by (current-project-first, project, then a stable identity key)
+  // so an "all" view groups the current project's sessions at the top and
+  // other projects' below.
+  //
+  // Within a project the order is a *stable* identity key — label, then
+  // root — deliberately NOT the live/discovered state or the numeric id.
+  // A row must keep its place when its session changes state: opening a
+  // discovered on-disk worktree turns it into a live session (and swaps
+  // its synthetic negative id for a positive window id), but it should
+  // stay exactly where it was instead of jumping into a "live" group and
+  // shuffling the rows under you as you arrow-navigate. `id` is only a
+  // final tie-break for two otherwise-identical rows.
+  //
+  // The dock is persistent and switches the active session constantly, so
+  // it must NOT reorder as the active project changes — it pins this
+  // stable order. The modal picker, opened fresh each time, additionally
+  // floats the current project to the top.
   const pinCurrentFirst = !dockMode;
-  const byProjectThenId = (a: number, b: number): number => {
+  const byProjectThenStable = (a: number, b: number): number => {
     const sa = orchestratorSessions.get(a)!;
     const sb = orchestratorSessions.get(b)!;
     const aCur = projectKeyOf(sa) === cur ? 0 : 1;
@@ -1027,14 +1032,15 @@ function filterSessions(needle: string): number[] {
     const ka = projectKeyOf(sa);
     const kb = projectKeyOf(sb);
     if (ka !== kb) return ka < kb ? -1 : 1;
-    const da = isDisc(a);
-    const db = isDisc(b);
-    if (da !== db) return da - db;
+    const la = sa.label.toLowerCase();
+    const lb = sb.label.toLowerCase();
+    if (la !== lb) return la < lb ? -1 : 1;
+    if (sa.root !== sb.root) return sa.root < sb.root ? -1 : 1;
     return a - b;
   };
 
   if (!needle) {
-    const ids = allIds.slice().sort(byProjectThenId);
+    const ids = allIds.slice().sort(byProjectThenStable);
     if (scope === "current") {
       return ids.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === cur);
     }

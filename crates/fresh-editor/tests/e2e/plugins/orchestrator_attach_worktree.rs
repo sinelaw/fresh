@@ -390,13 +390,16 @@ fn new_session_form_hints_existing_worktree() {
         });
 }
 
-/// Discovered on-disk worktree rows sort *after* the live sessions:
-/// the base session's list row appears above the discovered worktree
-/// row. The base list row is identified by the `[ ]` checkbox + the
-/// `BASE` badge (both unique to that list row); the discovered row by
-/// its `· on-disk` tag.
+/// The session list is sorted by a *stable* lexicographic key (label),
+/// with no special-casing of live vs discovered rows — so a row keeps its
+/// place when its session changes state (see
+/// `dock_opening_worktree_keeps_its_row_position`). Here the discovered
+/// `feature-x` worktree sorts *above* the `mainrepo` base row purely
+/// because `"feature-x" < "mainrepo"`, not because of any live/on-disk
+/// grouping. The base row is identified by its `[ ]` checkbox and the
+/// absence of the `· on-disk` tag (which marks the discovered worktree).
 #[test]
-fn discovered_rows_sort_after_live_sessions() {
+fn rows_sort_stably_by_label_not_by_live_state() {
     let (_temp, repo, _wt) = set_up_repo_with_worktree();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -410,18 +413,16 @@ fn discovered_rows_sort_after_live_sessions() {
 
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
-    // The live launch session is the `mainrepo` row with a checkbox and
-    // no `· on-disk` tag (that tag marks the discovered worktree). There
-    // is no longer a `BASE` badge — id 1 is just a normal session now.
-    let live_idx = lines
+    let base_idx = lines
         .iter()
         .position(|l| l.contains("[ ]") && l.contains("mainrepo") && !l.contains("· on-disk"));
     let disc_idx = lines.iter().position(|l| l.contains("· on-disk"));
     assert!(
-        live_idx.is_some() && disc_idx.is_some() && live_idx < disc_idx,
-        "live launch session must list above the discovered worktree.\n\
-         live_idx={:?} disc_idx={:?}\nScreen:\n{}",
-        live_idx,
+        base_idx.is_some() && disc_idx.is_some() && disc_idx < base_idx,
+        "rows must sort lexically by label (feature-x above mainrepo), \
+         independent of live/discovered state.\nbase_idx={:?} disc_idx={:?}\n\
+         Screen:\n{}",
+        base_idx,
         disc_idx,
         screen
     );
@@ -878,6 +879,73 @@ fn dock_arrow_nav_opens_discovered_worktree() {
                 harness.screen_to_string()
             )
         });
+}
+
+/// Opening a discovered worktree from the dock keeps it in the *same row*
+/// — the sort is stable. With two on-disk worktrees the lexicographic
+/// order is `feature-x`, `feature-y`, then the `mainrepo` base; opening
+/// `feature-x` turns it live but it must stay above `feature-y` rather
+/// than jumping into a "live" group (the old live-before-discovered sort
+/// shuffled rows under you as you navigated).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
+fn dock_opening_worktree_keeps_its_row_position() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    let (_temp, repo, _wt1, _wt2) = set_up_repo_with_two_worktrees();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Toggle Dock");
+
+    open_dock(&mut harness);
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
+        })
+        .unwrap();
+
+    // Stable lexicographic order before opening: feature-x above feature-y.
+    let fx_before = dock_row_of(&harness, "feature-x");
+    let fy_before = dock_row_of(&harness, "feature-y");
+    assert!(
+        fx_before < fy_before,
+        "initial order should be lexicographic (feature-x above feature-y).\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Open feature-x by clicking it.
+    harness.mouse_click(3, fx_before as u16).unwrap();
+    harness
+        .wait_until(|h| {
+            // feature-x is now live (its on-disk tag is gone) while feature-y
+            // is still discovered.
+            let s = h.screen_to_string();
+            s.matches("· on-disk").count() == 1 && s.contains("feature-y")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "clicking feature-x should open it (one on-disk row left).\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Stable: feature-x kept its place above feature-y after going live.
+    let fx_after = dock_row_of(&harness, "feature-x");
+    let fy_after = dock_row_of(&harness, "feature-y");
+    assert!(
+        fx_after < fy_after,
+        "opening feature-x must not reorder it below feature-y — the sort is \
+         stable.\nfx_after={fx_after} fy_after={fy_after}\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// Archiving the *last* session — which is also the launch / in-place
