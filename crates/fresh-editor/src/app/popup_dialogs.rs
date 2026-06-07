@@ -975,24 +975,55 @@ impl Editor {
     /// nothing to gate. Called from every editor-startup path (in-process run
     /// and the session server) so the prompt fires regardless of launch mode.
     pub fn maybe_prompt_workspace_trust(&mut self) {
-        // WIP: the auto trust prompt is temporarily disabled and undecided
-        // workspaces default to Trusted (full execution), so the editor
-        // behaves as it did before Workspace Trust landed. This unblocks
-        // merging the surrounding work while the trust UX is redesigned around
-        // a sandboxed-execution model — see
-        // `docs/internal/workspace-trust-sandbox-design.md`. A decision the
-        // user explicitly recorded is still honored; only the prompt-on-open
-        // is suppressed. The manual `Workspace: Set Trust Level` command and
-        // the enforcement core are untouched, so this is a one-line revert.
+        // Phase 1 of the trust+env+devcontainer UX plan (see
+        // `docs/internal/trust-env-devcontainer-ux-plan.md`): the centered trust
+        // modal is still suppressed on open while the sandboxed-execution model
+        // (`docs/internal/workspace-trust-sandbox-design.md`) is finalized.
+        // Instead, we set the initial trust *level* based on what the folder
+        // contains, so the env-manager plugin can deliver the right UX:
+        //
+        // - Project has env-shell markers (`.envrc`/`mise.toml`/`.tool-versions`)
+        //   and no prior decision → start as **Restricted**. The env-manager
+        //   plugin notices the un-trusted state and surfaces its combined
+        //   "Trust this folder and activate?" popup, which is one decision for
+        //   what is logically one intent. Picking "Trust & activate" dispatches
+        //   the `workspace_trust_trust` action, which records the decision and
+        //   raises the level to Trusted.
+        // - Everything else (path-only env like `.venv`, project manifests,
+        //   devcontainer) → start as **Trusted**, preserving today's WIP
+        //   behavior. Auto-activation for `.venv` happens silently; the
+        //   devcontainer attach popup fires independently from its plugin.
+        //
+        // A decision the user explicitly recorded is always honored — this
+        // branch only fires for undecided projects.
         let store = crate::services::workspace_trust::TrustStore::for_project_dir(
             &self.dir_context.project_state_dir(self.working_dir()),
         );
         if store.is_decided() {
             return; // respect a decision the user already recorded
         }
-        self.authority
-            .workspace_trust
-            .set_level(crate::services::workspace_trust::TrustLevel::Trusted);
+
+        let markers =
+            crate::services::workspace_trust::executable_content_markers(self.working_dir());
+        let has_env_shell = markers.iter().any(|m| {
+            matches!(
+                m.as_str(),
+                ".envrc" | "mise.toml" | ".mise.toml" | ".tool-versions"
+            )
+        });
+
+        let initial_level = if has_env_shell {
+            // Stay restricted so the env-manager plugin's combined popup
+            // surfaces. The popup elevates to Trusted on "Trust & activate".
+            crate::services::workspace_trust::TrustLevel::Restricted
+        } else {
+            // No shell-env risk — keep the WIP "default to Trusted" behavior
+            // so existing tooling (LSP, build, devcontainer attach) is
+            // un-gated until the full sandboxed-execution model lands.
+            crate::services::workspace_trust::TrustLevel::Trusted
+        };
+
+        self.authority.workspace_trust.set_level(initial_level);
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this
