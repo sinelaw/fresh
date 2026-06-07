@@ -58,6 +58,35 @@ fn plus_button_opens_menu_and_new_file_creates_buffer() {
 }
 
 #[test]
+fn plus_button_pins_to_right_edge_on_overflow() {
+    // A narrow bar with many tabs forces the buffer tabs to overflow.
+    let width: u16 = 50;
+    let mut harness = EditorTestHarness::new(width, 24).unwrap();
+    for _ in 0..8 {
+        harness.new_buffer().unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
+        panic!("expected a pinned '+' button on the tab row. Screen:\n{screen}")
+    });
+
+    // Pinned: the "+" cell occupies the rightmost columns of the bar
+    // (" + " => '+' sits one column in from the right edge).
+    assert!(
+        plus_col >= width - 3,
+        "expected '+' pinned near the right edge (col >= {}), got {plus_col}. Screen:\n{screen}",
+        width - 3
+    );
+
+    // It is still interactive: clicking the pinned button opens the popup.
+    harness.mouse_click(plus_col, 1).unwrap();
+    harness.assert_screen_contains("New Terminal");
+    harness.assert_screen_contains("New File");
+}
+
+#[test]
 fn plus_button_menu_dismisses_on_outside_click() {
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
     harness.render().unwrap();
