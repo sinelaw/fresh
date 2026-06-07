@@ -751,8 +751,54 @@ function fileChangeCounts(file: FileEntry): { added: number; removed: number } {
     return { added, removed };
 }
 
+// Inline review-note box sizing. The note renders as a bordered, wrapped
+// callout anchored under its diff line (hunk-style), instead of a single
+// truncated one-line row. See
+// docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.6.
+const COMMENT_BOX_MIN_W = 24;
+const COMMENT_BOX_MAX_W = 100;
+
 /**
- * Push inline comment lines for a given diff line into the lines array.
+ * Greedy word-wrap to `width` columns. Preserves explicit newlines as
+ * paragraph breaks and hard-splits any single word longer than `width`.
+ * Always returns at least one (possibly empty) line.
+ */
+function wrapText(text: string, width: number): string[] {
+    const out: string[] = [];
+    const w = Math.max(1, width);
+    for (const para of text.split('\n')) {
+        const words = para.split(/\s+/).filter(t => t.length > 0);
+        if (words.length === 0) {
+            out.push('');
+            continue;
+        }
+        let cur = '';
+        for (let word of words) {
+            while (word.length > w) {
+                if (cur.length > 0) {
+                    out.push(cur);
+                    cur = '';
+                }
+                out.push(word.slice(0, w));
+                word = word.slice(w);
+            }
+            if (cur.length === 0) cur = word;
+            else if (cur.length + 1 + word.length <= w) cur += ' ' + word;
+            else {
+                out.push(cur);
+                cur = word;
+            }
+        }
+        if (cur.length > 0) out.push(cur);
+    }
+    return out.length > 0 ? out : [''];
+}
+
+/**
+ * Push inline comment box rows for a given diff line into the lines array.
+ * Each comment becomes a bordered, word-wrapped callout whose border title
+ * is the line reference. Every row carries the same `commentId` so cursor
+ * hit-testing, deletion, and comment navigation resolve from any box row.
  */
 function pushLineComments(
     lines: DiffLine[], hunk: Hunk,
@@ -766,21 +812,36 @@ function pushLineComments(
             (c.line_type === 'context' && c.new_line === newLine)
         )
     );
-    // Indent the comment so its `»` glyph aligns with the diff content
+    if (lineComments.length === 0) return;
+    // Indent the box so its left border aligns with the diff content
     // column (just past the OLD/NEW number gutter and the +/- indicator).
     const commentIndent = ' '.repeat(LINE_NUM_W + 1 + LINE_NUM_W + 1 + 1 + 1);
+    // Box outer width, clamped to the visible content area.
+    const boxW = Math.max(
+        COMMENT_BOX_MIN_W,
+        Math.min(COMMENT_BOX_MAX_W, state.viewportWidth - commentIndent.length - 1)
+    );
+    const innerW = boxW - 4; // "| " + content + " |"
     for (const comment of lineComments) {
         const lineRef = comment.line_type === 'add'
             ? `+${comment.new_line}`
             : comment.line_type === 'remove'
             ? `-${comment.old_line}`
             : `${comment.new_line}`;
-        lines.push({
-            text: `${commentIndent}\u00bb [${lineRef}] ${comment.text}`,
+        const pushRow = (text: string, italic: boolean) => lines.push({
+            text: commentIndent + text,
             type: 'comment',
             commentId: comment.id,
-            style: { fg: STYLE_COMMENT, italic: true },
+            style: { fg: STYLE_COMMENT, italic },
         });
+        // Top border carries the line reference as its title.
+        const titleSeg = `\u256d\u2500 ${lineRef} `;
+        const topFill = '\u2500'.repeat(Math.max(0, boxW - titleSeg.length - 1));
+        pushRow(`${titleSeg}${topFill}\u256e`, false);
+        for (const wl of wrapText(comment.text, innerW)) {
+            pushRow(`\u2502 ${wl.padEnd(innerW)} \u2502`, true);
+        }
+        pushRow(`\u2570${'\u2500'.repeat(Math.max(0, boxW - 2))}\u256f`, false);
     }
 }
 
