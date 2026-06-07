@@ -3405,6 +3405,50 @@ async function review_drill_down() {
 }
 registerHandler("review_drill_down", review_drill_down);
 
+// --- Layout toggle: stack (unified) <-> split (side-by-side) ---
+//
+// `hunk`-style 1/2/0 layout keys. Stack is the unified review buffer;
+// split is the per-file side-by-side composite (reusing the verified
+// drill-down). Auto picks split on wide terminals, stack otherwise. The
+// full multi-file split-of-the-whole-stream is future work; today split
+// shows the file under the cursor, which is what the reviewer is reading.
+// See docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.1.
+const AUTO_SPLIT_MIN_WIDTH = 140;
+
+async function review_layout_split() {
+    if (activeCompositeDiffState) return; // already side-by-side
+    await review_drill_down(); // sets its own diff-summary status
+}
+registerHandler("review_layout_split", review_layout_split);
+
+function review_layout_stack() {
+    if (!activeCompositeDiffState) {
+        editor.setStatus(editor.t("status.unified_view") || "Unified view");
+        return;
+    }
+    const st = activeCompositeDiffState;
+    // Bring the unified review buffer back first, then tear down the
+    // composite so the view never lands on a closed buffer.
+    if (state.groupId !== null && state.panelBuffers["diff"] !== undefined) {
+        editor.showBuffer(state.panelBuffers["diff"]);
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+    }
+    try {
+        editor.closeCompositeBuffer(st.compositeBufferId);
+        editor.closeBuffer(st.oldBufferId);
+        editor.closeBuffer(st.newBufferId);
+    } catch {}
+    activeCompositeDiffState = null;
+    editor.setStatus(editor.t("status.unified_view") || "Unified view");
+}
+registerHandler("review_layout_stack", review_layout_stack);
+
+async function review_layout_auto() {
+    if (state.viewportWidth >= AUTO_SPLIT_MIN_WIDTH) await review_layout_split();
+    else review_layout_stack();
+}
+registerHandler("review_layout_auto", review_layout_auto);
+
 // --- Hunk navigation for side-by-side diff view ---
 
 /**
@@ -3690,6 +3734,12 @@ registerHandler("review_diff_open_working_at_cursor", review_diff_open_working_a
 editor.defineMode("diff-view", [
     ["Enter", "review_diff_open_at_cursor"],
     ["M-o", "review_diff_open_working_at_cursor"],
+    // Layout toggle: 2 returns to the unified review, 0 picks by width.
+    // 1 is a no-op here (already side-by-side). The composite router owns
+    // n/p/[/] (scroll + hunk nav), so only the free digits are bound.
+    ["1", "review_layout_split"],
+    ["2", "review_layout_stack"],
+    ["0", "review_layout_auto"],
 ], true);
 
 // --- Review Comment Actions ---
@@ -5340,6 +5390,11 @@ editor.defineMode("review-mode", [
     ["Home", "move_line_start"], ["End", "move_line_end"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
+    // Layout toggle (hunk-style): 1 = split (side-by-side of the file
+    // under the cursor), 2 = stack (unified), 0 = auto by terminal width.
+    ["1", "review_layout_split"],
+    ["2", "review_layout_stack"],
+    ["0", "review_layout_auto"],
     // Per-file collapse: Tab toggles the file under the cursor;
     // `z a` collapses every file; `z r` reveals (expands) every file.
     ["Tab", "review_toggle_file_collapse"],
