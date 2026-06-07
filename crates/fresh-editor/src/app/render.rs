@@ -1653,6 +1653,14 @@ impl Editor {
                 .as_ref()
                 .map(|f| f.fullscreen)
                 .unwrap_or(false);
+            // An anchored context-menu popup is unobtrusive: it neither
+            // dims the dock nor confines itself to `chrome_area` (its
+            // anchor is an absolute screen cell that may sit over the
+            // dock). Treat it like a non-dimming, full-frame placement.
+            let is_anchored = matches!(
+                self.floating_widget_panel.as_ref().map(|f| f.placement),
+                Some(super::PanelPlacement::Anchored { .. })
+            );
             // A centered modal makes the *whole* UI a passive, dimmed
             // background — the dock included. The dock was drawn above at
             // full brightness. A beside-dock modal only dims `chrome_area`,
@@ -1663,7 +1671,7 @@ impl Editor {
             // modal is up (the host blurs it on mount and the modal swallows
             // keys/clicks/wheel), so dimming it makes that passivity visible
             // rather than leaving it looking live beside the dialog.
-            if !fullscreen {
+            if !fullscreen && !is_anchored {
                 if let Some(dock) = dock_area {
                     if self.dock.is_some() {
                         crate::view::dimming::apply_dimming(frame, dock);
@@ -1679,7 +1687,11 @@ impl Editor {
             // with the dock — mirroring the settings / keybinding-editor
             // modals, which already lay into `chrome_area`. A `fullscreen`
             // panel instead gets the whole frame (`size`).
-            let modal_area = if fullscreen { size } else { chrome_area };
+            let modal_area = if fullscreen || is_anchored {
+                size
+            } else {
+                chrome_area
+            };
             self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
         }
     }
@@ -3993,21 +4005,47 @@ impl Editor {
         // modal overlay. The centered placement keeps the historical
         // fit-to-content + background-dim behaviour.
         let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
-        let overlay_rect = if is_dock {
-            area
-        } else {
-            let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
-            let needed_h = (entries.len() as u16).saturating_add(2);
-            let effective_h = needed_h.min(requested.height).max(3);
-            ratatui::layout::Rect {
-                x: requested.x,
-                y: area.y + (area.height.saturating_sub(effective_h)) / 2,
-                width: requested.width,
-                height: effective_h,
+        let overlay_rect = match placement {
+            super::PanelPlacement::LeftDock { .. } => area,
+            super::PanelPlacement::Anchored { x, y } => {
+                // Size to the rendered content (not a percentage): an
+                // unobtrusive popup hugs its items. Width = widest entry +
+                // borders; height = entry count + borders. Then clamp the
+                // top-left so the whole box stays on screen.
+                use crate::primitives::display_width::str_width;
+                let content_w = entries
+                    .iter()
+                    .map(|e| str_width(&e.text) as u16)
+                    .max()
+                    .unwrap_or(0);
+                let w = content_w.saturating_add(2).clamp(6, area.width);
+                let needed_h = (entries.len() as u16).saturating_add(2);
+                let h = needed_h.clamp(3, area.height);
+                let max_x = area.x + area.width.saturating_sub(w);
+                let max_y = area.y + area.height.saturating_sub(h);
+                ratatui::layout::Rect {
+                    x: x.clamp(area.x, max_x),
+                    y: y.clamp(area.y, max_y),
+                    width: w,
+                    height: h,
+                }
+            }
+            super::PanelPlacement::Centered => {
+                let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
+                let needed_h = (entries.len() as u16).saturating_add(2);
+                let effective_h = needed_h.min(requested.height).max(3);
+                ratatui::layout::Rect {
+                    x: requested.x,
+                    y: area.y + (area.height.saturating_sub(effective_h)) / 2,
+                    width: requested.width,
+                    height: effective_h,
+                }
             }
         };
 
-        if !is_dock {
+        // Only the centered modal dims the background; the dock and the
+        // anchored context-menu popup paint over the editor without it.
+        if matches!(placement, super::PanelPlacement::Centered) {
             crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         }
         frame.render_widget(Clear, overlay_rect);

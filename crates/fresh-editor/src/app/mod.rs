@@ -1098,6 +1098,13 @@ pub(crate) enum PanelPlacement {
     /// chrome is laid out in the remaining width; no background
     /// dimming. Non-modal — see `FloatingWidgetState::focused`.
     LeftDock { width_cols: u16 },
+    /// Content-sized popup anchored near a screen cell — a right-click
+    /// context menu. Drawn at `(x, y)` (clamped to stay fully on
+    /// screen), sized to its rendered content, with **no** background
+    /// dimming, so it reads as an unobtrusive popup rather than a modal.
+    /// Still input-modal via the `FloatingModal` layer: keys route to it
+    /// and a click outside dismisses it.
+    Anchored { x: u16, y: u16 },
 }
 
 #[derive(Debug, Clone)]

@@ -492,15 +492,23 @@ let dockBlurred = false;
 // Monotonic token so a rapid run of ↑/↓ only commits the *last*
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
-// Right-click context menu for a dock session row. A centered, dimmed
-// floating modal (its own host slot, so the dock stays visible behind
-// it) that offers Visit / Archive / Delete against one session. The
-// menu opens at `stage: "menu"`; choosing Archive/Delete swaps the same
-// panel to a `stage: "confirm"` pane (the destructive actions require a
+// Right-click context menu for a dock session row. At `stage: "menu"`
+// it's an unobtrusive content-sized popup anchored at the click (no
+// background dim) offering Visit / Archive / Delete against one session.
+// Choosing Archive/Delete swaps the SAME panel to a centered, dimmed
+// `stage: "confirm"` modal (the destructive actions require a
 // confirmation), reusing `buildConfirmPane`. Visit acts immediately.
+// `anchorCol`/`anchorRow` are the right-click cell, kept so a return
+// from confirm→menu (Cancel) re-anchors the popup where it opened.
 type DockMenuState =
-  | { sessionId: number; stage: "menu" }
-  | { sessionId: number; stage: "confirm"; action: "archive" | "delete" };
+  | { sessionId: number; anchorCol: number; anchorRow: number; stage: "menu" }
+  | {
+      sessionId: number;
+      anchorCol: number;
+      anchorRow: number;
+      stage: "confirm";
+      action: "archive" | "delete";
+    };
 let dockMenuPanel: FloatingWidgetPanel | null = null;
 let dockMenuState: DockMenuState | null = null;
 // Default dock width on a "typical" terminal, and the bounds the
@@ -3028,10 +3036,27 @@ function renderDockMenu(): void {
   }
 }
 
+// Pack a screen cell into the single numeric arg `floatingPanelControl`
+// takes (the host unpacks `y << 16 | x`). Both coords fit a u16.
+function packCell(col: number, row: number): number {
+  return (Math.max(0, row) * 65536) + Math.max(0, col);
+}
+
+// Anchor the menu popup at its stored right-click cell — an unobtrusive,
+// content-sized popup with no background dim.
+function anchorDockMenu(): void {
+  if (!dockMenuPanel || !dockMenuState) return;
+  editor.floatingPanelControl(
+    dockMenuPanel.id(),
+    "anchor",
+    packCell(dockMenuState.anchorCol, dockMenuState.anchorRow),
+  );
+}
+
 // Open the right-click context menu for the session at filtered-list
-// `index`. Mounts a small centered modal over the dock (the dock stays
-// mounted in its own slot behind the dimmed overlay).
-function openDockContextMenu(index: number): void {
+// `index`, anchored at the click cell `(col, row)`. The dock stays
+// mounted in its own slot behind the popup.
+function openDockContextMenu(index: number, col: number, row: number): void {
   if (!openDialog) return;
   const id = openDialog.filteredIds[index];
   if (typeof id !== "number") return;
@@ -3039,18 +3064,26 @@ function openDockContextMenu(index: number): void {
   // menu and the list agree on the target.
   openDialog.selectedIndex = index;
   if (openPanel) openPanel.setSelectedIndex("sessions", index);
-  dockMenuState = { sessionId: id, stage: "menu" };
+  dockMenuState = { sessionId: id, anchorCol: col, anchorRow: row, stage: "menu" };
   if (!dockMenuPanel) dockMenuPanel = new FloatingWidgetPanel();
-  // Sized to fit the tallest stage (the Delete confirmation pane); the
-  // menu stage simply leaves blank space below its three buttons.
+  // widthPct/heightPct seed the centered confirm stage; the anchored menu
+  // stage ignores them (it sizes to content). Mount, then anchor.
   dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
     widthPct: 50,
     heightPct: 44,
   });
-  // Center + dim over the *full* screen (covering the dock), so the menu
-  // and its confirmation read as a true modal rather than a panel cramped
-  // into the chrome area beside the dock. Mirrors the modal picker.
+  anchorDockMenu();
+}
+
+// Switch the popup to the centered, full-screen-dimmed confirmation for a
+// destructive action. Reuses the same panel; only the placement + spec
+// change.
+function dockMenuEnterConfirm(action: "archive" | "delete"): void {
+  if (!dockMenuPanel || !dockMenuState) return;
+  dockMenuState = { ...dockMenuState, stage: "confirm", action };
+  editor.floatingPanelControl(dockMenuPanel.id(), "center", 0);
   editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
+  renderDockMenu();
 }
 
 function closeDockContextMenu(): void {
@@ -3059,6 +3092,19 @@ function closeDockContextMenu(): void {
     dockMenuPanel = null;
   }
   dockMenuState = null;
+}
+
+// Tear down the menu and hand keyboard focus back to the dock (whose
+// keys were blurred when the popup mounted). Mirrors `restoreDockAfterForm`.
+function closeDockContextMenuAndRestoreDock(): void {
+  closeDockContextMenu();
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    dockFocus = "list";
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
+    refreshOpenDialog();
+  }
 }
 
 // Commit the highlighted session as the active window after a short
@@ -6123,38 +6169,46 @@ editor.on("widget_event", (e) => {
   if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
     const id = dockMenuState.sessionId;
     if (e.event_type === "cancel") {
-      // Esc dismissed the menu — the host already unmounted the panel,
-      // so just drop our handle (don't unmount it again).
+      // Esc or a click outside dismissed the popup — the host already
+      // unmounted the panel, so just drop our handle (don't unmount it
+      // again) and hand keyboard focus back to the dock.
       dockMenuPanel = null;
       dockMenuState = null;
+      if (openPanel && dockMode) {
+        dockBlurred = false;
+        dockFocus = "list";
+        editor.floatingPanelControl(openPanel.id(), "focus", 0);
+        openPanel.setFocusKey("sessions");
+        refreshOpenDialog();
+      }
       return;
     }
     if (e.event_type === "activate") {
       if (e.widget_key === "ctx-visit") {
+        // Visit dives into the editor — no dock refocus.
         closeDockContextMenu();
         dockMenuVisit(id);
         return;
       }
       if (e.widget_key === "ctx-archive" && bulkEligible("archive", id)) {
-        dockMenuState = { sessionId: id, stage: "confirm", action: "archive" };
-        renderDockMenu();
+        dockMenuEnterConfirm("archive");
         return;
       }
       if (e.widget_key === "ctx-delete" && bulkEligible("delete", id)) {
-        dockMenuState = { sessionId: id, stage: "confirm", action: "delete" };
-        renderDockMenu();
+        dockMenuEnterConfirm("delete");
         return;
       }
       if (e.widget_key === "confirm-cancel") {
-        // Back to the menu (not all the way out) so a mis-click on a
-        // destructive action is one click from recoverable.
-        dockMenuState = { sessionId: id, stage: "menu" };
+        // Back to the anchored menu (not all the way out) so a mis-click
+        // on a destructive action is one click from recoverable.
+        dockMenuState = { ...dockMenuState, stage: "menu" };
         renderDockMenu();
+        anchorDockMenu();
         return;
       }
       if (e.widget_key === "confirm-archive" || e.widget_key === "confirm-delete") {
         const action = e.widget_key === "confirm-archive" ? "archive" : "delete";
-        closeDockContextMenu();
+        closeDockContextMenuAndRestoreDock();
         void runConfirmedAction(action, [id]);
         return;
       }
@@ -6492,7 +6546,9 @@ editor.on("widget_event", (e) => {
     ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
-      if (typeof idx === "number") openDockContextMenu(idx);
+      const col = typeof payload.col === "number" ? payload.col : 0;
+      const row = typeof payload.row === "number" ? payload.row : 0;
+      if (typeof idx === "number") openDockContextMenu(idx, col, row);
       return;
     }
     // List selection. Keyboard nav fires this with `widget_key`

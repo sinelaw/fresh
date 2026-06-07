@@ -4349,6 +4349,20 @@ impl Editor {
                 fwp.focused = true;
                 true
             }
+            // Place the panel as an unobtrusive content-sized popup anchored
+            // at a screen cell (a right-click context menu). The (x, y) cell
+            // is packed into the single `f64` arg as `y << 16 | x` — both fit
+            // a u16 and the sum is exact in `f64`. No chrome-geometry change
+            // (the dock/editor layout is untouched), so no relayout.
+            "anchor" => {
+                let packed = arg.max(0.0) as u64;
+                let x = (packed & 0xFFFF) as u16;
+                let y = ((packed >> 16) & 0xFFFF) as u16;
+                fwp.placement = super::PanelPlacement::Anchored { x, y };
+                fwp.focused = true;
+                fwp.fullscreen = false;
+                false
+            }
             "focus" => {
                 fwp.focused = true;
                 false

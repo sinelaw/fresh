@@ -85,6 +85,16 @@ impl Editor {
         let (col, row) = (mouse_event.column, mouse_event.row);
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // An anchored popup (right-click context menu) dismisses when
+                // the press lands outside its box — standard menu behaviour.
+                // The centered modal instead swallows outside-clicks (it has
+                // explicit Cancel / Esc).
+                if self.floating_panel_is_anchored()
+                    && !self.point_in_floating_panel(super::PanelSlot::Floating, col, row)
+                {
+                    self.dismiss_floating_panel_with_cancel(super::PanelSlot::Floating);
+                    return Ok(true);
+                }
                 // Single / double / triple clicks all map to one panel
                 // hit-test — never the buffer's word/line select beneath.
                 self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
@@ -3906,7 +3916,7 @@ impl Editor {
             Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
             None => return false,
         };
-        let (payload, key, kind) =
+        let (mut payload, key, kind) =
             match self
                 .widget_registry
                 .hit_test(slot.buffer_id(), brow, bcol as u32)
@@ -3917,6 +3927,12 @@ impl Editor {
         // A context menu only makes sense over a real list row.
         if kind != "list" {
             return false;
+        }
+        // Carry the screen cell so the plugin can anchor its popup at the
+        // click (the list `select` payload only has the row index).
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("col".to_string(), serde_json::json!(col));
+            obj.insert("row".to_string(), serde_json::json!(row));
         }
         if !self
             .plugin_manager
@@ -3936,6 +3952,61 @@ impl Editor {
             },
         );
         true
+    }
+
+    /// True when the centered (`Floating`) slot currently holds an
+    /// anchored context-menu popup rather than a centered modal.
+    fn floating_panel_is_anchored(&self) -> bool {
+        matches!(
+            self.floating_widget_panel.as_ref().map(|f| f.placement),
+            Some(super::PanelPlacement::Anchored { .. })
+        )
+    }
+
+    /// True when `(col, row)` falls within the panel's drawn box — the
+    /// last-rendered inner rect grown by its 1-cell border. False when the
+    /// panel or its rect is absent.
+    fn point_in_floating_panel(&self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
+        let Some(inner) = self.panel(slot).and_then(|f| f.last_inner_rect) else {
+            return false;
+        };
+        let x0 = inner.x.saturating_sub(1);
+        let y0 = inner.y.saturating_sub(1);
+        // inner.{x,y} + {width,height} already lands on the far border cell.
+        col >= x0 && col <= inner.x + inner.width && row >= y0 && row <= inner.y + inner.height
+    }
+
+    /// Unmount the floating panel and fire a `cancel` widget_event so the
+    /// owning plugin clears its state — the click-outside analogue of the
+    /// Esc dismissal in `dispatch_floating_widget_key`.
+    fn dismiss_floating_panel_with_cancel(&mut self, slot: super::PanelSlot) {
+        let panel_id = match self.panel(slot) {
+            Some(f) => f.panel_id,
+            None => return,
+        };
+        let widget_key = self
+            .widget_registry
+            .get(panel_id)
+            .map(|p| p.focus_key.clone())
+            .unwrap_or_default();
+        if self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            self.plugin_manager.read().unwrap().run_hook(
+                "widget_event",
+                crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                    panel_id,
+                    widget_key,
+                    event_type: "cancel".to_string(),
+                    payload: serde_json::json!({}),
+                },
+            );
+        }
+        *self.panel_opt_mut(slot) = None;
+        let _ = self.widget_registry.unmount(panel_id);
     }
 
     /// `handle_editor_click` uses; clicks outside the rect are

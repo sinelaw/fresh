@@ -1541,3 +1541,47 @@ fn dock_context_menu_archive_shows_confirmation() {
         .unwrap();
     h.assert_screen_contains("Cancel");
 }
+
+/// The menu is an unobtrusive popup anchored at the click, not a centered
+/// modal: its items render in the left columns (near the dock click), not
+/// around mid-screen, and at roughly the clicked row.
+#[test]
+fn dock_context_menu_is_anchored_near_click() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    let card_row = row_of(&h, "alphaproj") as u16;
+    h.mouse_right_click(3, card_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Visit"))
+        .unwrap();
+
+    let (vcol, vrow) = pos_of(&h, "Visit");
+    // Anchored to the left edge where the click landed — a centered modal
+    // on a 120-wide terminal would put this near col ~50.
+    assert!(
+        vcol < 24,
+        "context menu should hug the click (left columns), got col {vcol}"
+    );
+    // And vertically near the clicked row, not screen-centered.
+    assert!(
+        vrow >= card_row && vrow <= card_row + 6,
+        "context menu should open near the clicked row {card_row}, got row {vrow}"
+    );
+}
+
+/// Clicking outside the anchored popup dismisses it (standard menu
+/// behaviour) and returns control to the dock.
+#[test]
+fn dock_context_menu_click_outside_dismisses() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Click far away in the editor area, well outside the popup box.
+    h.mouse_click(90, 20).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Archive"))
+        .unwrap();
+    h.assert_screen_contains("Manage");
+}
