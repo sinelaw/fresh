@@ -1072,11 +1072,17 @@ function filterSessions(needle: string): number[] {
       matches.push({ id, score: 2, len: label.length });
     }
   }
-  // Live sessions before discovered worktrees at equal relevance, so
-  // the on-disk rows still trail the real sessions in search results.
+  // At equal relevance, a project's own checkout sorts before its
+  // worktrees (same stable `isWorktree` grouping as the browse list), so
+  // the on-disk / worktree rows still trail the project's own session in
+  // search results — and a result doesn't jump when a discovered worktree
+  // is opened (its root/projectPath, hence its group, don't change).
   matches.sort(
     (a, b) =>
-      a.score - b.score || isDisc(a.id) - isDisc(b.id) || a.len - b.len ||
+      a.score - b.score ||
+      isWorktree(orchestratorSessions.get(a.id)!) -
+        isWorktree(orchestratorSessions.get(b.id)!) ||
+      a.len - b.len ||
       a.id - b.id,
   );
   return matches.map((m) => m.id);
