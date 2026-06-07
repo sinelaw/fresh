@@ -1,4 +1,4 @@
-//! VS Code–style, regex-based auto-indentation (pure Rust, WASM-safe).
+//! Per-language, regex-based auto-indentation (pure Rust, WASM-safe).
 //!
 //! This is the per-language indentation tier described in
 //! `docs/internal/indentation-rules-design.md`. It sits between the
@@ -7,8 +7,7 @@
 //!
 //! # What it does
 //!
-//! Each language is described by a small set of anchored regexes modeled on
-//! VS Code's `language-configuration.json#indentationRules`:
+//! Each language is described by a small set of anchored regexes:
 //!
 //! - **increase** — if the *reference* line matches, the new line goes one
 //!   level deeper (e.g. a line ending with `{`, or a Ruby `def`).
@@ -19,8 +18,14 @@
 //! - **dedent_next_line** — one-shot −1 (Python flow-exit `return`/`pass`/…,
 //!   Fresh's existing `@dedent_after`, issue #2192).
 //! - **self_close** — suppresses *increase* when the same line also closes the
-//!   block it opened (`def f; end`, `if x then y end`). This replaces the
-//!   negative lookahead VS Code uses, which the `regex` crate cannot express.
+//!   block it opened (`def f; end`, `if x then y end`). This lets one-liners
+//!   avoid over-indenting without needing regex look-ahead (which the `regex`
+//!   crate does not support).
+//!
+//! Patterns use the [`regex`](https://docs.rs/regex) crate's syntax (linear,
+//! no look-around or back-references). They are matched against each line's
+//! *code view* — the line with comment and string spans blanked to spaces — so
+//! a bracket or keyword inside a string/comment never triggers indentation.
 //!
 //! # Avoiding glitches: scope masking
 //!
@@ -75,6 +80,13 @@ pub struct IndentRulesDef {
     pub indent_next_line: Option<&'static str>,
     pub dedent_next_line: Option<&'static str>,
     pub self_close: Option<&'static str>,
+    /// True for indentation-significant languages (Python, YAML, …) where
+    /// indentation *is* the block structure. For these, pressing Enter on a
+    /// blank line keeps the cursor's current column instead of re-deriving from
+    /// an earlier line — a manual dedent must stick. Brace/keyword languages
+    /// leave this false: their structure makes the indent unambiguous, so
+    /// re-deriving is correct.
+    pub indentation_significant: bool,
 }
 
 /// Compiled, cached form of [`IndentRulesDef`].
@@ -84,6 +96,7 @@ pub struct IndentRules {
     indent_next_line: Option<Regex>,
     dedent_next_line: Option<Regex>,
     self_close: Option<Regex>,
+    indentation_significant: bool,
 }
 
 impl IndentRules {
@@ -94,6 +107,7 @@ impl IndentRules {
             def.indent_next_line,
             def.dedent_next_line,
             def.self_close,
+            def.indentation_significant,
         )
     }
 
@@ -107,9 +121,11 @@ impl IndentRules {
         indent_next_line: Option<&str>,
         dedent_next_line: Option<&str>,
         self_close: Option<&str>,
+        indentation_significant: bool,
     ) -> Self {
         let c = |p: Option<&str>| p.and_then(|s| Regex::new(s).ok());
         Self {
+            indentation_significant,
             increase: c(increase),
             decrease: c(decrease),
             indent_next_line: c(indent_next_line),
@@ -131,11 +147,29 @@ impl IndentRules {
     ) -> usize {
         let unit = tab_size.max(1);
 
+        let cur = line_bounds(buffer, position);
+        let cur_has_content = first_nonws(buffer, cur.start, position).is_some();
+
+        // Indentation-significant languages only (Python, …): cursor on a
+        // whitespace-only stretch with nothing after it on the line (a blank
+        // line, or trailing whitespace) preserves the cursor's current column.
+        // Pressing Enter must keep a manual dedent — once the user has stepped
+        // out from under an earlier block, re-deriving the indent from that
+        // block (pulling them back in) is wrong, and in a layout-defined
+        // language only the user can say which block the next line belongs to.
+        // Brace/keyword languages skip this: their structure is unambiguous, so
+        // the normal derivation below is correct. A closing delimiter *after*
+        // the cursor (`    │}`) is handled by the normal path regardless.
+        if self.indentation_significant
+            && !cur_has_content
+            && first_nonws(buffer, position, cur.end).is_none()
+        {
+            return visual_indent(buffer, cur.start, position, tab_size);
+        }
+
         // Reference line: the current line's content above the split if it has
         // any, else the nearest previous non-blank line. Mirrors the structure
         // of `indent_pattern::calculate_indent_pattern`.
-        let cur = line_bounds(buffer, position);
-        let cur_has_content = first_nonws(buffer, cur.start, position).is_some();
         let reference = if cur_has_content {
             Some(LineSpan {
                 start: cur.start,
@@ -313,8 +347,8 @@ pub fn clear_user_rules() {
 /// config that sets only `increase_indent_pattern` keeps the family's
 /// `decrease`/`self_close`); a language with no family starts from blank rules,
 /// which is how config can add indentation for an otherwise-unknown language.
-/// Patterns are VS Code-style regexes evaluated against the line's code view
-/// (comment/string spans masked out); see the module docs.
+/// Patterns are regexes evaluated against the line's code view (comment/string
+/// spans masked out); see the module docs.
 pub fn set_user_rule(
     id: &str,
     increase: Option<&str>,
@@ -323,7 +357,8 @@ pub fn set_user_rule(
     dedent_next_line: Option<&str>,
     self_close: Option<&str>,
 ) {
-    // Inherit each unset pattern from the built-in family (if any).
+    // Inherit each unset pattern (and the indentation-significant flag) from the
+    // built-in family, if any.
     let base = family_for_id(id).map(def_for_family);
     let rules = IndentRules::compile_parts(
         increase.or(base.and_then(|d| d.increase)),
@@ -331,6 +366,7 @@ pub fn set_user_rule(
         indent_next_line.or(base.and_then(|d| d.indent_next_line)),
         dedent_next_line.or(base.and_then(|d| d.dedent_next_line)),
         self_close.or(base.and_then(|d| d.self_close)),
+        base.map(|d| d.indentation_significant).unwrap_or(false),
     );
     USER_RULES
         .write()
@@ -348,6 +384,7 @@ const CURLY_BRACE: IndentRulesDef = IndentRulesDef {
     indent_next_line: Some(r"^\s*((if|for|while)\b.*\)|else)\s*$"),
     dedent_next_line: None,
     self_close: None,
+    indentation_significant: false,
 };
 
 const PYTHON: IndentRulesDef = IndentRulesDef {
@@ -357,6 +394,7 @@ const PYTHON: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: Some(r"^\s*(return|pass|raise|break|continue)\b"),
     self_close: None,
+    indentation_significant: true,
 };
 
 const RUBY_LIKE: IndentRulesDef = IndentRulesDef {
@@ -370,6 +408,7 @@ const RUBY_LIKE: IndentRulesDef = IndentRulesDef {
     dedent_next_line: None,
     // Suppress increase for one-liners like `def f; end` / `if x then y end`.
     self_close: Some(r"\bend\b"),
+    indentation_significant: false,
 };
 
 const LUA_LIKE: IndentRulesDef = IndentRulesDef {
@@ -380,6 +419,7 @@ const LUA_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: Some(r"\bend\b"),
+    indentation_significant: false,
 };
 
 const BASH_LIKE: IndentRulesDef = IndentRulesDef {
@@ -392,6 +432,7 @@ const BASH_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: None,
+    indentation_significant: false,
 };
 
 const PASCAL_LIKE: IndentRulesDef = IndentRulesDef {
@@ -400,6 +441,7 @@ const PASCAL_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: Some(r"\bend\b"),
+    indentation_significant: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -609,30 +651,58 @@ mod tests {
     }
 
     // ---- Python -----------------------------------------------------------
+    // Indent is taken at the end of the content (cursor on the line being split),
+    // mirroring an Enter pressed at end-of-line in the editor.
 
     #[test]
     fn python_indents_after_colon() {
-        assert_eq!(indent("python", "def foo():\n", 4), 4);
-        assert_eq!(indent("python", "if x:\n", 4), 4);
+        assert_eq!(indent("python", "def foo():", 4), 4);
+        assert_eq!(indent("python", "if x:", 4), 4);
     }
 
     #[test]
     fn python_dedents_after_return() {
-        let content = "def foo():\n    return 1\n";
+        let content = "def foo():\n    return 1";
         assert_eq!(indent("python", content, 4), 0);
     }
 
     #[test]
     fn python_keeps_indent_inside_body() {
-        let content = "def foo():\n    x = 1\n";
+        let content = "def foo():\n    x = 1";
         assert_eq!(indent("python", content, 4), 4);
+    }
+
+    #[test]
+    fn python_blank_line_keeps_manual_dedent() {
+        // After an `if x:` block the user backspaces the auto-indent to column 0
+        // on the blank line, then presses Enter: the new line must stay at 0,
+        // not be pulled back under the block. (Indentation-significant: only the
+        // user can say which block the next line belongs to.)
+        let content = "if x:\n    foo()\n"; // cursor on the trailing blank line, col 0
+        assert_eq!(indent("python", content, 4), 0);
+    }
+
+    #[test]
+    fn python_blank_line_maintains_current_column() {
+        // On a blank line whose whitespace the user left at the body column,
+        // Enter keeps that column (does not collapse).
+        let content = "if x:\n    foo()\n    "; // trailing 4 spaces, cursor at col 4
+        assert_eq!(indent("python", content, 4), 4);
+    }
+
+    #[test]
+    fn curly_blank_line_rederives_not_preserved() {
+        // Contrast: brace languages are NOT indentation-significant, so a blank
+        // line re-derives from the structure (here: still inside `{`), rather
+        // than preserving a column. `fn f() {` + blank line → one level in.
+        assert_eq!(indent("rust", "fn f() {\n", 4), 4);
     }
 
     #[test]
     fn python_colon_in_string_does_not_indent() {
         // `x = {"a": 1}` ends with `}` not `:`, but check a dict-literal colon
         // inside a string is ignored: `s = "key:"`.
-        let content = "s = \"key:\"\n";
+        let content = "s = \"key:\"";
         let q1 = content.find('"').unwrap();
         let q2 = content.rfind('"').unwrap();
         let masked = [(q1, q2 + 1)];

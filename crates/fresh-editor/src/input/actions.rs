@@ -498,9 +498,9 @@ fn byte_is_code(state: &EditorState, pos: usize) -> bool {
     )
 }
 
-/// Try the per-language regex indentation rules (VS Code style) for a buffer
-/// that has no tree-sitter grammar, keyed by the syntect syntax name. Returns
-/// `None` when no rules exist for the language so the caller can fall back.
+/// Try the per-language regex indentation rules for a buffer that has no
+/// tree-sitter grammar, keyed by the syntect syntax name. Returns `None` when
+/// no rules exist for the language so the caller can fall back.
 fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
     let rules =
         crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;

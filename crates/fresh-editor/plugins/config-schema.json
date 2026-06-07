@@ -1340,7 +1340,7 @@
           "default": null
         },
         "indent": {
-          "description": "VS Code–style indentation rules for this language. Overrides (and, for\nunspecified patterns, inherits from) the built-in rules. Lets users tune\nauto-indent — or add it for a language Fresh doesn't know — without a\ntree-sitter grammar. See `IndentRulesConfig`.",
+          "description": "Indentation rules for this language. Overrides (and, for unspecified\npatterns, inherits from) the built-in rules. Lets you tune auto-indent —\nor add it for a language Fresh doesn't know — without a tree-sitter\ngrammar. See `IndentRulesConfig`.",
           "anyOf": [
             {
               "$ref": "#/$defs/IndentRulesConfig"
@@ -1436,11 +1436,11 @@
       "x-display-field": "/command"
     },
     "IndentRulesConfig": {
-      "description": "User-overridable indentation rules, modeled on VS Code's\n`language-configuration.json#indentationRules`. Each pattern is a regex\nmatched against a line's *code view* (comment/string spans are masked out\nbefore matching, so a `{` inside a string never triggers an indent). Any\nfield left unset inherits from the language's built-in rule family.",
+      "description": "User-overridable auto-indentation rules for a language.\n\nWhen you press Enter, Fresh looks at the line being split (the \"reference\nline\") and the text that moves down to the new line, and applies these rules\nto decide the new line's indent. Each field is a regular expression\n([`regex` crate] syntax: no look-ahead/behind or back-references). A regex is\nmatched against the line's **code view** — the text with comment and string\nspans blanked to spaces first — so a bracket or keyword inside a string or\ncomment never triggers indentation.\n\nAny field left unset inherits from the language's built-in rules, so you can\noverride just one pattern. All patterns are optional.\n\n[`regex` crate]: https://docs.rs/regex/latest/regex/#syntax",
       "type": "object",
       "properties": {
         "increase_indent_pattern": {
-          "description": "If the line above matches, the new line is indented one level deeper\n(e.g. `[\\{\\[\\(]\\s*$` — a line ending with an opening bracket).",
+          "description": "If the reference line matches, the new line is indented one level deeper.\nExample — a line ending with an opening bracket: `[\\{\\[\\(]\\s*$`.\nExample — Python block headers ending in a colon: `:\\s*$`.",
           "type": [
             "string",
             "null"
@@ -1448,7 +1448,7 @@
           "default": null
         },
         "decrease_indent_pattern": {
-          "description": "If the new line's leading content matches, it is dedented one level\n(e.g. `^\\s*[\\}\\]\\)]` — a line starting with a closing bracket).",
+          "description": "If the new line's leading text matches, that line is dedented one level.\nExample — a line starting with a closing bracket: `^\\s*[\\}\\]\\)]`.",
           "type": [
             "string",
             "null"
@@ -1456,7 +1456,7 @@
           "default": null
         },
         "indent_next_line_pattern": {
-          "description": "One-shot +1 for the immediately following line only (e.g. a braceless\n`if (x)` head).",
+          "description": "Like `increase_indent_pattern`, but the extra level applies to the\nimmediately following line only (a one-shot indent that doesn't persist).\nExample — a braceless control head: `^\\s*(if|for|while)\\b.*\\)\\s*$`.",
           "type": [
             "string",
             "null"
@@ -1464,7 +1464,7 @@
           "default": null
         },
         "dedent_next_line_pattern": {
-          "description": "One-shot −1 for the following line (e.g. Python `return`/`pass`).",
+          "description": "If the reference line matches, the following line is dedented one level\n(a one-shot dedent). Example — Python flow-exit statements:\n`^\\s*(return|pass|raise|break|continue)\\b`.",
           "type": [
             "string",
             "null"
@@ -1472,7 +1472,7 @@
           "default": null
         },
         "self_close_pattern": {
-          "description": "Suppresses `increase_indent_pattern` when the same line also closes the\nblock it opened (e.g. Ruby `\\bend\\b` for one-liners like `def f; end`).",
+          "description": "Cancels `increase_indent_pattern` when the reference line *also* closes\nthe block it opened, so one-liners don't over-indent. Example — Ruby\n`\\bend\\b` matches `def f; end` and stops it from indenting the next line.",
           "type": [
             "string",
             "null"
