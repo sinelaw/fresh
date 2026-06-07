@@ -1473,7 +1473,10 @@ fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
     screen
         .lines()
         .enumerate()
-        .find_map(|(r, l)| l.find(needle).map(|b| (l[..b].chars().count() as u16, r as u16)))
+        .find_map(|(r, l)| {
+            l.find(needle)
+                .map(|b| (l[..b].chars().count() as u16, r as u16))
+        })
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
