@@ -990,6 +990,10 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
 
+        // Honor the active `/` filter — skip non-matching files entirely so
+        // the center matches the sidebar.
+        if (!fileMatchesFilter(file)) continue;
+
         // Section header — full-line-wide INVERSE band, uppercase, bold.
         // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
         // makes the band read as a hard divider between Staged /
@@ -1005,7 +1009,7 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
             else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const sectionCount = state.files.filter(f => f.category === file.category).length;
+            const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
             // Always render expanded triangle (▾). Collapse state is
             // shown by overlaying a `▸` replacement-conceal on the
             // triangle byte range — the buffer text never changes, so
@@ -1536,7 +1540,8 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.filesPanelByRow = {};
 
-    const headerLabel = (editor.t("panel.files") || "Files").toUpperCase();
+    const headerLabel = (editor.t("panel.files") || "Files").toUpperCase()
+        + (state.fileFilter ? `  /${state.fileFilter}` : "");
     entries.push({
         text: ` ${headerLabel}\n`,
         style: { fg: STYLE_INVERSE_FG, bg: STYLE_INVERSE_BG, bold: true, extendToLineEnd: true },
@@ -1559,7 +1564,12 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
 
     let row1 = 1; // header occupied row 1
     let lastCategory: string | undefined;
+    let shownAny = false;
     for (const file of state.files) {
+        // Honor the active `/` filter — hide non-matching rows (and any
+        // section that ends up empty).
+        if (!fileMatchesFilter(file)) continue;
+        shownAny = true;
         if (file.category !== lastCategory) {
             lastCategory = file.category;
             let label: string = file.category;
@@ -1567,7 +1577,7 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
             else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
             else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const count = state.files.filter(f => f.category === file.category).length;
+            const count = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
             const display = state.mode === 'range' ? label : label.toUpperCase();
             row1++;
             entries.push({
@@ -1597,6 +1607,13 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             text: ` ${glyph} ${name}${stats}\n`,
             style,
             properties: { type: "file", fileKey: key, filePath: file.path },
+        });
+    }
+    if (!shownAny && state.fileFilter) {
+        entries.push({
+            text: ` ${editor.t("status.filter_no_match") || "No files match"}\n`,
+            style: { fg: STYLE_SECTION_HEADER, italic: true },
+            properties: { type: "empty" },
         });
     }
     return entries;
@@ -3611,6 +3628,7 @@ async function review_help() {
         "             z a / z r  fold all / unfold all",
         " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
         " View        a          show / hide inline notes",
+        "             /          filter files (empty to clear)",
         " Review      c          add comment        x   delete comment",
         "             s / u / d  stage / unstage / discard (hunk or file)",
         "             S / U / D  stage / unstage / discard the whole file",
@@ -3638,25 +3656,57 @@ registerHandler("review_help", review_help);
 
 // --- Focus-file selection + file navigation ---
 
-/** Ensure `filesCurrentKey` names a file that still exists (focus mode). */
+/** True if `file` passes the active `/` filter (case-insensitive substring
+ *  on the path). Empty filter matches everything. */
+function fileMatchesFilter(file: FileEntry): boolean {
+    if (!state.fileFilter) return true;
+    return file.path.toLowerCase().includes(state.fileFilter.toLowerCase());
+}
+
+/** Files visible under the active filter, in display order. */
+function visibleFiles(): FileEntry[] {
+    return state.files.filter(fileMatchesFilter);
+}
+
+/** Nearest diff row (add/remove/context) to the cursor, or null if the
+ *  current view has no commentable line. Used so `c` off a diff line lands
+ *  the user on a real line instead of leaving keystrokes to execute as
+ *  commands. */
+function nearestDiffRow(): number | null {
+    const cur = state.diffCursorRow;
+    let best: number | null = null;
+    for (const k of Object.keys(state.entryPropsByRow)) {
+        const r = Number(k);
+        const t = state.entryPropsByRow[r]?.["type"];
+        if (t === 'add' || t === 'remove' || t === 'context') {
+            if (best === null || Math.abs(r - cur) < Math.abs(best - cur)) best = r;
+        }
+    }
+    return best;
+}
+
+/** Ensure `filesCurrentKey` names a visible file (exists + passes filter). */
 function ensureFocusFile() {
     if (!state.focusOnly) return;
     const valid = state.filesCurrentKey !== null
-        && state.files.some(f => fileKey(f) === state.filesCurrentKey);
+        && state.files.some(f => fileKey(f) === state.filesCurrentKey && fileMatchesFilter(f));
     if (!valid) {
-        state.filesCurrentKey = state.files.length > 0 ? fileKey(state.files[0]) : null;
+        const vis = visibleFiles();
+        state.filesCurrentKey = vis.length > 0 ? fileKey(vis[0]) : null;
     }
 }
 
-/** Move the focused file by `delta` (clamped) and rebuild the center. */
+/** Move the focused file by `delta` (clamped) across the visible
+ *  (filtered) files and rebuild the center. */
 function review_goto_file(delta: number) {
-    if (state.files.length === 0) return;
     ensureFocusFile();
-    let idx = state.files.findIndex(f => fileKey(f) === state.filesCurrentKey);
+    const vis = visibleFiles();
+    if (vis.length === 0) return;
+    let idx = vis.findIndex(f => fileKey(f) === state.filesCurrentKey);
     if (idx < 0) idx = 0;
     const next = idx + delta;
-    if (next < 0 || next >= state.files.length) return;
-    state.filesCurrentKey = fileKey(state.files[next]);
+    if (next < 0 || next >= vis.length) return;
+    state.filesCurrentKey = fileKey(vis[next]);
     updateMagitDisplay();
     jumpDiffCursorToRow(1, { recenter: false });
 }
@@ -3664,6 +3714,29 @@ function review_goto_next_file() { review_goto_file(1); }
 function review_goto_prev_file() { review_goto_file(-1); }
 registerHandler("review_goto_next_file", review_goto_next_file);
 registerHandler("review_goto_prev_file", review_goto_prev_file);
+
+// --- File filter (hunk-style `/`) ---
+function review_filter_files() {
+    const label = editor.t("prompt.filter_files") || "Filter files: ";
+    editor.startPromptWithInitial(label, "review-filter", state.fileFilter);
+}
+registerHandler("review_filter_files", review_filter_files);
+
+editor.on("prompt_confirmed", (args) => {
+    if (args.prompt_type !== "review-filter") return true;
+    state.fileFilter = (args.input || "").trim();
+    ensureFocusFile();
+    updateMagitDisplay();
+    jumpDiffCursorToRow(1, { recenter: false });
+    const vis = visibleFiles().length;
+    editor.setStatus(
+        state.fileFilter
+            ? (editor.t("status.filter_active", { n: String(vis), q: state.fileFilter })
+                || `Filter "${state.fileFilter}" — ${vis} file(s)`)
+            : (editor.t("status.filter_cleared") || "Filter cleared")
+    );
+    return true;
+});
 
 // --- Hunk navigation for side-by-side diff view ---
 
@@ -4061,7 +4134,17 @@ async function review_add_comment() {
         }
     }
 
-    const info = getCurrentLineInfo();
+    let info = getCurrentLineInfo();
+    if (!info) {
+        // Cursor isn't on a diff line. Rather than no-op (which, in a modal
+        // buffer, leaves the user's next keystrokes to execute as commands),
+        // hop to the nearest diff line and comment there.
+        const row = nearestDiffRow();
+        if (row !== null) {
+            jumpDiffCursorToRow(row, { recenter: false });
+            info = getCurrentLineInfo();
+        }
+    }
     if (!info) {
         editor.setStatus(
             editor.t("status.comment_needs_line") ||
@@ -5613,8 +5696,9 @@ editor.defineMode("review-mode", [
     ["1", "review_layout_split"],
     ["2", "review_layout_stack"],
     ["0", "review_layout_auto"],
-    // Toggle inline review-note visibility; open the keyboard reference.
+    // Toggle inline review-note visibility; filter files; help reference.
     ["a", "review_toggle_agent_notes"],
+    ["/", "review_filter_files"],
     ["?", "review_help"],
     // Per-file collapse: Tab toggles the file under the cursor;
     // `z a` collapses every file; `z r` reveals (expands) every file.

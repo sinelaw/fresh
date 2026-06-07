@@ -36,6 +36,28 @@ fn repo_with_modification() -> GitTestRepo {
     repo
 }
 
+/// Repo with two committed, then modified, files (for filter tests).
+fn repo_with_two_files() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    fs::write(repo.path.join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(repo.path.join("src/widget.rs"), "pub fn widget() {}\n").unwrap();
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() {\n    println!(\"changed main\");\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path.join("src/widget.rs"),
+        "pub fn widget() {\n    // changed widget\n}\n",
+    )
+    .unwrap();
+    repo
+}
+
 fn harness_for(repo: &GitTestRepo) -> EditorTestHarness {
     EditorTestHarness::with_config_and_working_dir(160, 44, Config::default(), repo.path.clone())
         .unwrap()
@@ -172,6 +194,58 @@ fn test_review_inline_comment_renders_as_box() {
         "the old single-line `\u{00bb} [ref]` rendering should be gone. Screen:\n{}",
         screen
     );
+}
+
+/// §5.11 — `/` filters the file list: typing a query narrows the sidebar to
+/// matching files and hides the rest.
+#[test]
+fn test_review_filter_narrows_files() {
+    init_tracing_from_env();
+    let repo = repo_with_two_files();
+    let mut harness = harness_for(&repo);
+    let screen = open_review_diff(&mut harness);
+    assert!(screen.contains("main.rs") && screen.contains("widget.rs"), "both files initially. Screen:\n{}", screen);
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("widget").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("widget.rs") && !s.contains("main.rs") && s.contains("/widget")
+        })
+        .unwrap();
+}
+
+/// The comment hazard: pressing `c` off a diff line (e.g. on a header) hops
+/// to the nearest diff line and opens the prompt instead of no-opping (which
+/// would leave the next keystrokes to execute as commands).
+#[test]
+fn test_review_comment_from_header_opens_prompt() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    // Cursor starts at the top of the stream (a section/file header row, not
+    // a diff line). `c` should still open the comment prompt.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    // If the hazard regressed, no prompt opens and this waits out (external
+    // timeout). On success the comment prompt is up.
+    harness.wait_for_prompt().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Comment on"))
+        .unwrap();
 }
 
 /// The `?` help reference opens and, per its own "Press q to close" hint,
