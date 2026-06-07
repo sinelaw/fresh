@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "右側を閉じる",
   "tab.copy_full_path": "フルパスをコピー",
   "tab.copy_relative_path": "相対パスをコピー",
+  "tab.new_file": "新規ファイル",
+  "tab.new_terminal": "新規ターミナル",
   "terminal.closed": "ターミナル %{id} を閉じました",
   "terminal.exited": "ターミナル %{id} が終了しました",
   "terminal.failed_to_open": "ターミナルを開けませんでした: %{error}",

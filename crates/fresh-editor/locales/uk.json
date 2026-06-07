@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "Закрити праворуч",
   "tab.copy_full_path": "Копіювати повний шлях",
   "tab.copy_relative_path": "Копіювати відносний шлях",
+  "tab.new_file": "Новий файл",
+  "tab.new_terminal": "Новий термінал",
   "terminal.closed": "Термінал %{id} закрито",
   "terminal.exited": "Термінал %{id} завершено",
   "terminal.failed_to_open": "Не вдалося відкрити термінал: %{error}",

@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "Zavřít vpravo",
   "tab.copy_full_path": "Kopírovat úplnou cestu",
   "tab.copy_relative_path": "Kopírovat relativní cestu",
+  "tab.new_file": "Nový soubor",
+  "tab.new_terminal": "Nový terminál",
   "terminal.closed": "Terminál %{id} zavřen",
   "terminal.exited": "Terminál %{id} ukončen",
   "terminal.failed_to_open": "Otevření terminálu selhalo: %{error}",

@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "오른쪽 탭 닫기",
   "tab.copy_full_path": "전체 경로 복사",
   "tab.copy_relative_path": "상대 경로 복사",
+  "tab.new_file": "새 파일",
+  "tab.new_terminal": "새 터미널",
   "terminal.closed": "터미널 %{id} 닫힘",
   "terminal.exited": "터미널 %{id} 종료됨",
   "terminal.failed_to_open": "터미널 열기 실패: %{error}",

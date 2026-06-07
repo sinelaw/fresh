@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "ปิดด้านขวา",
   "tab.copy_full_path": "คัดลอกพาธแบบเต็ม",
   "tab.copy_relative_path": "คัดลอกพาธแบบสัมพัทธ์",
+  "tab.new_file": "ไฟล์ใหม่",
+  "tab.new_terminal": "เทอร์มินัลใหม่",
   "terminal.closed": "ปิดเทอร์มินัล %{id} แล้ว",
   "terminal.exited": "เทอร์มินัล %{id} ออกแล้ว",
   "terminal.failed_to_open": "เปิดเทอร์มินัลไม่สำเร็จ: %{error}",

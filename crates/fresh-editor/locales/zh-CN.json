@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "关闭右侧",
   "tab.copy_full_path": "复制完整路径",
   "tab.copy_relative_path": "复制相对路径",
+  "tab.new_file": "新建文件",
+  "tab.new_terminal": "新建终端",
   "terminal.closed": "终端 %{id} 已关闭",
   "terminal.exited": "终端 %{id} 已退出",
   "terminal.failed_to_open": "打开终端失败：%{error}",

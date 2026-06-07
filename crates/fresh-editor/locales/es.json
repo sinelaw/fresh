@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "Cerrar a la derecha",
   "tab.copy_full_path": "Copiar ruta completa",
   "tab.copy_relative_path": "Copiar ruta relativa",
+  "tab.new_file": "Nuevo archivo",
+  "tab.new_terminal": "Nuevo terminal",
   "terminal.closed": "Terminal %{id} cerrado",
   "terminal.exited": "Terminal %{id} finalizado",
   "terminal.failed_to_open": "Error al abrir terminal: %{error}",

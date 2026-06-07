@@ -1393,6 +1393,8 @@
   "tab.close_to_right": "Đóng bên phải",
   "tab.copy_full_path": "Sao chép đường dẫn đầy đủ",
   "tab.copy_relative_path": "Sao chép đường dẫn tương đối",
+  "tab.new_file": "Tệp mới",
+  "tab.new_terminal": "Terminal mới",
   "terminal.closed": "Đã đóng terminal %{id}",
   "terminal.exited": "Terminal %{id} đã thoát",
   "terminal.failed_to_open": "Mở terminal thất bại: %{error}",
