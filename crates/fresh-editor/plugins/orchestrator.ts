@@ -492,6 +492,17 @@ let dockBlurred = false;
 // Monotonic token so a rapid run of ↑/↓ only commits the *last*
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
+// Right-click context menu for a dock session row. A centered, dimmed
+// floating modal (its own host slot, so the dock stays visible behind
+// it) that offers Visit / Archive / Delete against one session. The
+// menu opens at `stage: "menu"`; choosing Archive/Delete swaps the same
+// panel to a `stage: "confirm"` pane (the destructive actions require a
+// confirmation), reusing `buildConfirmPane`. Visit acts immediately.
+type DockMenuState =
+  | { sessionId: number; stage: "menu" }
+  | { sessionId: number; stage: "confirm"; action: "archive" | "delete" };
+let dockMenuPanel: FloatingWidgetPanel | null = null;
+let dockMenuState: DockMenuState | null = null;
 // Default dock width on a "typical" terminal, and the bounds the
 // responsive width is clamped to. The dock scales with the terminal
 // (`dockDefaultWidth`) between these; a user drag still overrides it
@@ -2948,6 +2959,106 @@ function buildDockSpec(): WidgetSpec {
     }),
     ...bottom,
   );
+}
+
+// ---------------------------------------------------------------------
+// Dock session context menu (right-click).
+//
+// A centered, dimmed floating modal (its own host slot, so the dock
+// stays visible behind it) offering Visit / Archive / Delete against a
+// single right-clicked session. The destructive actions (Archive,
+// Delete) swap the same panel to a confirmation pane — reusing the
+// modal picker's `buildConfirmPane` — before they run. Visit acts
+// immediately.
+// ---------------------------------------------------------------------
+
+// Visit the session behind the context menu: switch the active window to
+// it and hand keyboard focus to the editor (the dock stays visible). A
+// discovered on-disk worktree has no live window, so attach a fresh
+// session to it instead — mirrors the dock's Enter (`dock_activate`).
+function dockMenuVisit(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s) return;
+  if (s.discovered) {
+    void attachToWorktree({
+      root: s.root,
+      projectPath: s.projectPath ?? s.root,
+      label: s.label,
+      branch: s.branch,
+      discoveredId: s.id,
+    });
+    return;
+  }
+  if (id > 0 && id !== editor.activeWindow()) editor.setActiveWindow(id);
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+    editor.setEditorMode(null);
+  }
+}
+
+function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
+  if (state.stage === "confirm") {
+    // Reuse the picker's confirmation pane (single-session form). Its
+    // buttons are keyed `confirm-cancel` / `confirm-<action>`, handled
+    // in the dock-menu `widget_event` block.
+    return buildConfirmPane({ action: state.action, ids: [state.sessionId] });
+  }
+  const s = orchestratorSessions.get(state.sessionId);
+  const label = s?.label ?? `[${state.sessionId}]`;
+  const canArchive = bulkEligible("archive", state.sessionId);
+  const canDelete = bulkEligible("delete", state.sessionId);
+  return labeledSection({
+    label: `Session: ${label}`,
+    child: col(
+      button("Visit…", { intent: "primary", key: "ctx-visit" }),
+      spacer(0),
+      button("Archive", { key: "ctx-archive", disabled: !canArchive }),
+      spacer(0),
+      button("Delete", { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
+      spacer(0),
+      row(flexSpacer(), hintBar([{ keys: "Esc", label: "close" }]), flexSpacer()),
+    ),
+  });
+}
+
+function renderDockMenu(): void {
+  if (dockMenuPanel && dockMenuState) {
+    dockMenuPanel.update(buildDockMenuSpec(dockMenuState));
+  }
+}
+
+// Open the right-click context menu for the session at filtered-list
+// `index`. Mounts a small centered modal over the dock (the dock stays
+// mounted in its own slot behind the dimmed overlay).
+function openDockContextMenu(index: number): void {
+  if (!openDialog) return;
+  const id = openDialog.filteredIds[index];
+  if (typeof id !== "number") return;
+  // Align the dock's highlighted row with the right-clicked one so the
+  // menu and the list agree on the target.
+  openDialog.selectedIndex = index;
+  if (openPanel) openPanel.setSelectedIndex("sessions", index);
+  dockMenuState = { sessionId: id, stage: "menu" };
+  if (!dockMenuPanel) dockMenuPanel = new FloatingWidgetPanel();
+  // Sized to fit the tallest stage (the Delete confirmation pane); the
+  // menu stage simply leaves blank space below its three buttons.
+  dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
+    widthPct: 50,
+    heightPct: 44,
+  });
+  // Center + dim over the *full* screen (covering the dock), so the menu
+  // and its confirmation read as a true modal rather than a panel cramped
+  // into the chrome area beside the dock. Mirrors the modal picker.
+  editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
+}
+
+function closeDockContextMenu(): void {
+  if (dockMenuPanel) {
+    dockMenuPanel.unmount();
+    dockMenuPanel = null;
+  }
+  dockMenuState = null;
 }
 
 // Commit the highlighted session as the active window after a short
@@ -6007,6 +6118,51 @@ function enterBulkConfirm(action: BulkAction): void {
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
+  // Dock session context menu (right-click): Visit / Archive / Delete.
+  // ---------------------------------------------------------------------
+  if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
+    const id = dockMenuState.sessionId;
+    if (e.event_type === "cancel") {
+      // Esc dismissed the menu — the host already unmounted the panel,
+      // so just drop our handle (don't unmount it again).
+      dockMenuPanel = null;
+      dockMenuState = null;
+      return;
+    }
+    if (e.event_type === "activate") {
+      if (e.widget_key === "ctx-visit") {
+        closeDockContextMenu();
+        dockMenuVisit(id);
+        return;
+      }
+      if (e.widget_key === "ctx-archive" && bulkEligible("archive", id)) {
+        dockMenuState = { sessionId: id, stage: "confirm", action: "archive" };
+        renderDockMenu();
+        return;
+      }
+      if (e.widget_key === "ctx-delete" && bulkEligible("delete", id)) {
+        dockMenuState = { sessionId: id, stage: "confirm", action: "delete" };
+        renderDockMenu();
+        return;
+      }
+      if (e.widget_key === "confirm-cancel") {
+        // Back to the menu (not all the way out) so a mis-click on a
+        // destructive action is one click from recoverable.
+        dockMenuState = { sessionId: id, stage: "menu" };
+        renderDockMenu();
+        return;
+      }
+      if (e.widget_key === "confirm-archive" || e.widget_key === "confirm-delete") {
+        const action = e.widget_key === "confirm-archive" ? "archive" : "delete";
+        closeDockContextMenu();
+        void runConfirmedAction(action, [id]);
+        return;
+      }
+    }
+    return;
+  }
+
+  // ---------------------------------------------------------------------
   // New-session form
   // ---------------------------------------------------------------------
   if (form && formPanel && e.panel_id === formPanel.id()) {
@@ -6324,6 +6480,19 @@ editor.on("widget_event", (e) => {
       const nextIdx = prevId !== undefined ? next.indexOf(prevId) : -1;
       openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
       refreshOpenDialog();
+      return;
+    }
+    // Right-click on a session row → open its context menu. Only the
+    // dock wires this up (the host fires `context` for right-clicks in
+    // the dock column); the modal picker has its own action buttons.
+    if (
+      e.event_type === "context" &&
+      dockMode &&
+      ((e.payload ?? {}) as Record<string, unknown>).list_key === "sessions"
+    ) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = payload.index;
+      if (typeof idx === "number") openDockContextMenu(idx);
       return;
     }
     // List selection. Keyboard nav fires this with `widget_key`

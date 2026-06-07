@@ -1437,3 +1437,107 @@ fn creating_session_moves_dock_highlight_to_new_session() {
         "the previously-active session must drop the heavy highlight border:\n{screen}"
     );
 }
+
+// ── right-click session context menu ──────────────────────────────────────
+//
+// Right-clicking a session card opens a small dimmed modal with
+// Visit / Archive / Delete; the destructive actions swap it to a centered
+// confirmation pane before they run. These drive only the mouse/keyboard
+// and assert on rendered output per CONTRIBUTING §2.
+
+/// Open the dock and right-click the first session card. Returns the
+/// harness with the context menu showing.
+fn open_dock_context_menu(name: &str) -> (tempfile::TempDir, EditorTestHarness) {
+    let (tmp, root) = setup_project(name);
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The session card's name line bears the project basename; right-click
+    // a column well inside the dock on that row.
+    let card_row = row_of(&h, name) as u16;
+    h.mouse_right_click(4, card_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Archive"))
+        .unwrap();
+    (tmp, h)
+}
+
+/// 0-based screen position (col, row) of the first occurrence of `needle`.
+fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
+    let screen = h.screen_to_string();
+    screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| l.find(needle).map(|c| (c as u16, r as u16)))
+        .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
+}
+
+#[test]
+fn dock_right_click_opens_context_menu() {
+    let (_tmp, h) = open_dock_context_menu("alphaproj");
+
+    // All three actions plus the session header are present.
+    h.assert_screen_contains("Visit");
+    h.assert_screen_contains("Archive");
+    h.assert_screen_contains("Delete");
+    h.assert_screen_contains("alphaproj");
+}
+
+#[test]
+fn dock_context_menu_esc_closes() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Esc dismisses the menu; the dock returns (its "Manage" button shows)
+    // and the menu-only "Archive"/"Delete" actions are gone.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Archive"))
+        .unwrap();
+    h.assert_screen_contains("Manage");
+}
+
+#[test]
+fn dock_context_menu_delete_shows_centered_confirmation() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Click the menu's "Delete" action → the confirmation pane replaces
+    // the menu (full-screen dimmed, centered).
+    let (dcol, drow) = pos_of(&h, "Delete");
+    h.mouse_click(dcol, drow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap();
+    // The destructive-action warning and the Confirm/Cancel pair render.
+    h.assert_screen_contains("Uncommitted changes will be lost");
+    h.assert_screen_contains("Cancel");
+}
+
+#[test]
+fn dock_context_menu_confirm_cancel_returns_to_menu() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    let (dcol, drow) = pos_of(&h, "Delete");
+    h.mouse_click(dcol, drow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap();
+
+    // Cancel returns to the three-action menu rather than closing outright,
+    // so a mis-click on a destructive action is recoverable.
+    let (ccol, crow) = pos_of(&h, "Cancel");
+    h.mouse_click(ccol, crow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Visit"))
+        .unwrap();
+    h.assert_screen_contains("Archive");
+    h.assert_screen_contains("Delete");
+}
+
+#[test]
+fn dock_context_menu_archive_shows_confirmation() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    let (acol, arow) = pos_of(&h, "Archive");
+    h.mouse_click(acol, arow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Archive"))
+        .unwrap();
+    h.assert_screen_contains("Cancel");
+}

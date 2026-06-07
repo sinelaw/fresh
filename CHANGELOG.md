@@ -24,6 +24,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Improvements
 
+* **Orchestrator Dock right-click menu**: right-click a session row for a context menu with Visit / Archive / Delete. Archive and Delete open a centered, full-screen-dimmed confirmation before they run.
 * **`variable.builtin` syntax category** for `this` / `self` / `super` (#2150, by @masmu).
 * **`storage.type`** keywords highlight as keywords rather than types (#2151, by @masmu).
 * **Async clipboard paste**: paste no longer blocks the editor, and a hung X11/Wayland clipboard owner should no longer freeze it (#2155).

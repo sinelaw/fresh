@@ -3126,6 +3126,23 @@ impl Editor {
 
     /// Handle right-click event
     pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        // Right-click inside the orchestrator dock column → let the plugin
+        // raise a per-session context menu. Mirrors the left-click path:
+        // re-focus the dock first (so the menu acts against a focused dock)
+        // and swallow the event so it never falls through to the editor or
+        // the file-explorer menu below.
+        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
+            self.dock.as_ref().map(|f| f.placement)
+        {
+            if col < width_cols {
+                if self.dock.as_ref().map(|f| !f.focused).unwrap_or(false) {
+                    self.refocus_floating_panel(super::PanelSlot::Dock);
+                }
+                self.handle_floating_widget_context_click(super::PanelSlot::Dock, col, row);
+                return Ok(());
+            }
+        }
+
         let frame_w = self.active_chrome().last_frame_width;
         let frame_h = self.active_chrome().last_frame_height;
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
@@ -3850,6 +3867,75 @@ impl Editor {
                 );
             }
         }
+    }
+
+    /// Right-click hit-test against a floating widget panel. Resolves the
+    /// cell under the cursor to a widget and — only when it lands on a
+    /// `list` row — fires a `widget_event` with `event_type: "context"`
+    /// (carrying the same `{ index, key, list_key }` payload a left-click
+    /// "select" would). Plugins use this to raise a context menu for the
+    /// right-clicked row. Returns `true` when a context event fired (so the
+    /// caller swallows the click). Clicks on non-list widgets, padding, or
+    /// outside the inner rect return `false`.
+    fn handle_floating_widget_context_click(
+        &mut self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+    ) -> bool {
+        let (panel_id, inner) = match self.panel(slot) {
+            Some(fwp) => match fwp.last_inner_rect {
+                Some(rect) => (fwp.panel_id, rect),
+                None => return false,
+            },
+            None => return false,
+        };
+        if col < inner.x || col >= inner.x + inner.width {
+            return false;
+        }
+        if row < inner.y || row >= inner.y + inner.height {
+            return false;
+        }
+        let brow = (row - inner.y) as u32;
+        let entries = self
+            .panel(slot)
+            .map(|f| f.entries.clone())
+            .unwrap_or_default();
+        let local_screen_col = (col - inner.x) as usize;
+        let bcol = match entries.get(brow as usize) {
+            Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
+            None => return false,
+        };
+        let (payload, key, kind) =
+            match self
+                .widget_registry
+                .hit_test(slot.buffer_id(), brow, bcol as u32)
+            {
+                Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
+                None => return false,
+            };
+        // A context menu only makes sense over a real list row.
+        if kind != "list" {
+            return false;
+        }
+        if !self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_hook_handlers("widget_event")
+        {
+            return false;
+        }
+        self.plugin_manager.read().unwrap().run_hook(
+            "widget_event",
+            crate::services::plugins::hooks::HookArgs::WidgetEvent {
+                panel_id,
+                widget_key: key,
+                event_type: "context".to_string(),
+                payload,
+            },
+        );
+        true
     }
 
     /// `handle_editor_click` uses; clicks outside the rect are
