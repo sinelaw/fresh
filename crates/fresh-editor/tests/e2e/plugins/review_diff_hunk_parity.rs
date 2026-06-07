@@ -101,28 +101,26 @@ fn test_review_layout_toggle_split_and_back() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
 
-    // Move into the hunk so the file under the cursor is resolvable, then
-    // switch to the side-by-side split.
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // `1` renders the focused file as an in-panel side-by-side (the sidebar
+    // stays); the status line confirms the mode.
     harness
         .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("OLD (HEAD)"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Side-by-side view") && s.contains("FILES")
+        })
         .unwrap();
 
-    // Back to the unified stack: the split panes go away and the sidebar
-    // returns.
+    // `2` returns to the unified stack, sidebar intact.
     harness
         .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            !s.contains("OLD (HEAD)") && s.contains("FILES")
+            s.contains("Unified view") && s.contains("FILES")
         })
         .unwrap();
 }
