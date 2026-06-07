@@ -1632,7 +1632,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       styledRow([{ text: "" }]),
       styledRow([
         {
-          text: "Press Enter to open this worktree as a session.",
+          text: "Click it (or press Enter) to open this worktree as a session.",
           style: { fg: "ui.help_key_fg", italic: true },
         },
       ]),
@@ -6577,6 +6577,28 @@ editor.on("widget_event", (e) => {
           // wiping down when moving down the list and up when moving up.
           openPanel.update(buildDockSpec());
           openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+          // A mouse click (payload.via === "click") on an inactive
+          // on-disk worktree opens it directly — there's no live window
+          // to switch to, so attach a fresh session, mirroring how a
+          // click on a live row switches to it (and the dock's Enter /
+          // `dock_activate`). Arrow-nav fires `select` *without* `via`,
+          // so scrolling past a discovered row never spawns a session.
+          if (payload.via === "click") {
+            const clickedId = openDialog.filteredIds[openDialog.selectedIndex];
+            const clicked = typeof clickedId === "number"
+              ? orchestratorSessions.get(clickedId)
+              : undefined;
+            if (clicked && clicked.discovered) {
+              void attachToWorktree({
+                root: clicked.root,
+                projectPath: clicked.projectPath ?? clicked.root,
+                label: clicked.label,
+                branch: clicked.branch,
+                discoveredId: clicked.id,
+              });
+              return;
+            }
+          }
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
           scheduleDockSwitch(fromEdge);
           return;
@@ -6586,6 +6608,29 @@ editor.on("widget_event", (e) => {
         // Re-pin the list selection so the spec re-emit doesn't
         // snap it back to 0.
         openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+        // A mouse click on an inactive on-disk worktree opens it
+        // directly — no Enter/Visit "confirmation" needed. There's no
+        // live window to switch to, so attach a fresh session, mirroring
+        // the dialog's Visit (`activate`) path. Live rows keep
+        // select+preview (opened with Enter / Visit). Arrow-nav fires
+        // `select` without `via`, so it only previews.
+        if (payload.via === "click") {
+          const clickedId = openDialog.filteredIds[openDialog.selectedIndex];
+          const clicked = typeof clickedId === "number"
+            ? orchestratorSessions.get(clickedId)
+            : undefined;
+          if (clicked && clicked.discovered) {
+            closeOpenDialog();
+            void attachToWorktree({
+              root: clicked.root,
+              projectPath: clicked.projectPath ?? clicked.root,
+              label: clicked.label,
+              branch: clicked.branch,
+              discoveredId: clicked.id,
+            });
+            return;
+          }
+        }
         // Up/Down on a focused action button (Stop / Archive /
         // Delete / Details / +New Session) routes to the sessions
         // list via the host's smart-key dispatch but leaves focus

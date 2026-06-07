@@ -4040,7 +4040,7 @@ impl Editor {
             Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
             None => return,
         };
-        let (hit_payload, hit_event, hit_key, hit_kind) =
+        let (mut hit_payload, hit_event, hit_key, hit_kind) =
             match self
                 .widget_registry
                 .hit_test(slot.buffer_id(), brow, bcol as u32)
@@ -4103,6 +4103,15 @@ impl Editor {
                 .unwrap()
                 .has_hook_handlers("widget_event")
         {
+            // Tag the event as mouse-originated. Keyboard nav (arrows)
+            // fires `select` through `handle_widget_command` *without* this
+            // marker, so a plugin can tell a click apart from an arrow-move
+            // that happens to emit the same event/payload — e.g. the
+            // orchestrator dock opens an inactive on-disk worktree on
+            // *click* but not when you merely arrow past it.
+            if let Some(obj) = hit_payload.as_object_mut() {
+                obj.insert("via".to_string(), serde_json::json!("click"));
+            }
             self.plugin_manager.read().unwrap().run_hook(
                 "widget_event",
                 crate::services::plugins::hooks::HookArgs::WidgetEvent {

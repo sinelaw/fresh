@@ -263,7 +263,7 @@ fn open_dialog_discovers_existing_worktree() {
 }
 
 /// Selecting the discovered worktree row shows the on-disk preview
-/// panel — the "On-disk worktree" header and the "Press Enter to
+/// panel — the "On-disk worktree" header and the "click / Enter to
 /// open" affordance — rather than a live window embed.
 #[test]
 fn discovered_worktree_preview_offers_open() {
@@ -285,7 +285,7 @@ fn discovered_worktree_preview_offers_open() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("On-disk worktree") && s.contains("Press Enter to open")
+            s.contains("On-disk worktree") && s.contains("to open this worktree as a session")
         })
         .unwrap_or_else(|_| {
             panic!(
@@ -766,14 +766,17 @@ fn dock_row_of(harness: &EditorTestHarness, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
-/// Pressing Enter on a discovered (on-disk) worktree row in the *dock*
-/// attaches a managed session at that worktree — the same outcome the
-/// Open dialog produces. Before the fix the dock's Enter always blurred
-/// to the editor, so the on-disk attach was silently dropped: diving a
-/// worktree worked from the dialog but did nothing from the dock.
+/// Clicking a discovered (on-disk) worktree row in the *dock* opens it
+/// directly — it attaches a managed session at that worktree, the same
+/// outcome the Open dialog produces. There's no live window to switch
+/// to, so a click can't "live-switch" the way it does for a live row;
+/// before the fix the click was therefore a silent no-op and visiting an
+/// inactive session from the dock did nothing (you had to press Enter or
+/// the Visit button). The dock's Enter (`dock_activate`) path still works
+/// too — this just makes a click open the worktree without that step.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
-fn dock_enter_attaches_discovered_worktree() {
+fn dock_click_attaches_discovered_worktree() {
     if !pty_available() {
         eprintln!("skipping: no PTY available in this environment");
         return;
@@ -802,13 +805,9 @@ fn dock_enter_attaches_discovered_worktree() {
             )
         });
 
-    // Click the discovered row to select it, then Enter to activate.
+    // A single click on the discovered row opens it — no Enter needed.
     let row = dock_row_of(&harness, "· on-disk") as u16;
     harness.mouse_click(3, row).unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 
     // Attach is async (`createWindowWithTerminal`). It opens a live
     // session rooted at the worktree, so the dock's discovered row turns
@@ -820,7 +819,7 @@ fn dock_enter_attaches_discovered_worktree() {
         })
         .unwrap_or_else(|_| {
             panic!(
-                "Enter on the dock's discovered worktree row should attach a live \
+                "Clicking the dock's discovered worktree row should attach a live \
                  session (row loses `· on-disk`).\nScreen:\n{}",
                 harness.screen_to_string()
             )
