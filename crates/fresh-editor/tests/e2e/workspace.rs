@@ -2444,3 +2444,124 @@ fn test_hidden_from_tabs_external_files_not_persisted() {
         }
     }
 }
+
+/// Regression test for the "orphaned split-leaf" blank-pane bug (the #1939
+/// class). See the pane-buffer invariant in `app/active_focus.rs`.
+///
+/// Setup: a window saved with a resolvable background tab plus an *empty*
+/// `[No Name]` buffer that is the active tab. The empty buffer has no content,
+/// so it is never persisted (no recovery id) and its tab cannot be resolved on
+/// restore.
+///
+/// The "resolvable background tab" here is a second unnamed buffer that *does*
+/// have content (so hot-exit recovery persists and restores it). A content
+/// tab — like a terminal in the original orchestrator repro — is the key
+/// ingredient: unlike a file tab, restoring it does *not* consume the fresh
+/// window's empty seed buffer, so the seed survives as a separate live buffer.
+///
+/// Before the fix, `restore_split_view_state` left `active_buffer_id` as `None`
+/// when the saved active tab couldn't be resolved, so the split-manager leaf
+/// kept pointing at the throwaway seed buffer created by `seed_initial_layout`.
+/// `clean_orphaned_buffers` then removed that seed (it is in no tab list),
+/// leaving the leaf dangling at a dead `BufferId`. The renderer paints the
+/// dangling leaf — a blank pane — even though `effective_active_pair`'s
+/// fallback still reports a live buffer to the status bar (issue #1939).
+///
+/// The fix makes restore fall back to a surviving tab, so the leaf, the view
+/// state, and the tab list all agree. Observed on screen: the restored pane
+/// renders the surviving tab's content rather than a blank pane.
+#[test]
+fn test_restore_orphaned_active_unnamed_tab_renders_surviving_tab() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let make_config = || {
+        let mut c = Config::default();
+        // hot_exit on so the *content* unnamed buffer is recoverable (a
+        // resolvable background tab) while the *empty* seed `[No Name]` is not.
+        c.editor.hot_exit = true;
+        c
+    };
+
+    // ---- First session: the empty seed `[No Name]` (tab 1) plus a second
+    // unnamed buffer with content (tab 2). Leave the empty seed active at save
+    // time so its (unrecoverable) tab is the saved active tab. ----
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(make_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        // Tab 2: a fresh unnamed buffer with content. Because it has content it
+        // gets a recovery id and survives the round-trip as a real tab.
+        harness.new_buffer().unwrap();
+        harness.type_text("ORPHAN_LEAF_SURVIVOR_MARKER").unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("ORPHAN_LEAF_SURVIVOR_MARKER");
+
+        // Switch focus back to the empty seed `[No Name]` (tab 1) so it is the
+        // active tab when the workspace is saved.
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+
+        harness.shutdown(true).unwrap();
+    }
+
+    // ---- Second session: restore. The active leaf must resolve to the
+    // surviving content tab, not a blank dangling leaf. ----
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(make_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "session should have been restored");
+        harness.render().unwrap();
+
+        // The active pane renders the surviving buffer's content. Before the fix
+        // the leaf dangled at the removed seed buffer and the pane was blank,
+        // so this marker never appeared.
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("ORPHAN_LEAF_SURVIVOR_MARKER"),
+            "restored pane should render the surviving tab, not a blank \
+             dangling leaf.\nScreen:\n{screen}"
+        );
+
+        // And the split-manager leaf must point at a live buffer: the raw
+        // active-leaf buffer (not the `effective_active_pair` fallback) must be
+        // present in `window.buffers`, i.e. the split tree is consistent.
+        let window = harness.editor().active_window();
+        let raw_leaf_buffer = window
+            .buffers
+            .split_manager()
+            .expect("window must have a populated split layout")
+            .active_buffer_id()
+            .expect("active leaf must resolve to a buffer");
+        assert!(
+            window.buffers.contains_key(&raw_leaf_buffer),
+            "active leaf points at BufferId {raw_leaf_buffer:?} which is missing \
+             from window.buffers — the split tree is in the inconsistent \
+             (dangling-leaf) state of issue #1939",
+        );
+    }
+}

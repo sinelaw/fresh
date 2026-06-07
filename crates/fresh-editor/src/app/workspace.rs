@@ -1277,6 +1277,26 @@ impl crate::app::window::Window {
                     );
                 }
 
+                // Pane-buffer invariant repair (issue #1939): the leaf must end
+                // up pointing at a buffer that is one of its restored tabs. If
+                // the saved active tab couldn't be resolved — e.g. it referenced
+                // an empty `[No Name]` buffer that was never persisted to
+                // recovery, or a terminal that failed to respawn —
+                // `active_buffer_id` is still `None` here. Leaving it `None`
+                // means the leaf keeps pointing at the throwaway seed buffer set
+                // by `restore_split_node` (`set_pane_buffer(.., active_buffer())`),
+                // which is absent from `open_buffers`. `clean_orphaned_buffers`
+                // then removes that seed, leaving the split-manager leaf dangling
+                // at a dead `BufferId` — the render path paints it blank while
+                // `effective_active_pair` falls back elsewhere for the status
+                // bar. Fall back to the first surviving tab so the tree, the
+                // view state, and the tab list all agree. (When `open_buffers`
+                // is empty the #1278 re-add above already seeded it with the
+                // leaf's own buffer, so this keeps that buffer instead.)
+                if active_buffer_id.is_none() {
+                    active_buffer_id = view_state.buffer_tab_ids().next();
+                }
+
                 // For buffers without saved file_state (e.g., terminals), apply split-level
                 // view_mode/compose_width as fallback (backward compatibility)
                 let restored_view_mode = match split_state.view_mode {
