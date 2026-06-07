@@ -826,6 +826,60 @@ fn dock_click_attaches_discovered_worktree() {
         });
 }
 
+/// Arrowing the dock's highlight onto a discovered (on-disk) worktree
+/// opens it — keyboard parity with the click path. The dock's live-switch
+/// treats the highlighted row as the active session, so for an inactive
+/// worktree "becoming active" means attaching a session there. No click
+/// and no Enter: just moving the selection onto it with the keyboard.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
+fn dock_arrow_nav_opens_discovered_worktree() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    let (_temp, repo, _wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Toggle Dock");
+
+    open_dock(&mut harness);
+
+    // Alt+T reveals the discovered on-disk worktree below the base session.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Move the highlight down onto the on-disk row — no click, no Enter.
+    // The debounced live-switch then opens it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && !s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "Arrowing onto the dock's discovered worktree row should open it \
+                 (row loses `· on-disk`).\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}
+
 /// Archiving the *last* session — which is also the launch / in-place
 /// session (no dedicated worktree) — must not be refused. Every session
 /// is archivable now: the launch session is recorded at its own root and,

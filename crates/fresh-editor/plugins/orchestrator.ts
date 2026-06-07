@@ -2988,12 +2988,15 @@ function dockMenuVisit(id: number): void {
   const s = orchestratorSessions.get(id);
   if (!s) return;
   if (s.discovered) {
+    // Visit "dives in" (like the live path below, which blurs to the
+    // editor), so attach with dive: true.
     void attachToWorktree({
       root: s.root,
       projectPath: s.projectPath ?? s.root,
       label: s.label,
       branch: s.branch,
       discoveredId: s.id,
+      dive: true,
     });
     return;
   }
@@ -3122,9 +3125,27 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     if (token !== dockSwitchToken) return;
     if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
     const id = openDialog.filteredIds[openDialog.selectedIndex];
-    if (typeof id !== "number" || id <= 0) return;
-    // A discovered worktree has no window to switch to.
-    if (orchestratorSessions.get(id)?.discovered) return;
+    if (typeof id !== "number") return;
+    const sess = orchestratorSessions.get(id);
+    // A discovered (on-disk) worktree has no window to switch to — in the
+    // dock's live-switch model the highlighted row *is* the active
+    // session, so opening it means attaching a fresh session at the
+    // worktree. Do that without diving (keep the dock focused) so it
+    // matches switching to a live row, and you can keep arrowing. The
+    // 30 ms debounce above means scrolling *past* it without pausing
+    // never spawns a session.
+    if (sess?.discovered) {
+      void attachToWorktree({
+        root: sess.root,
+        projectPath: sess.projectPath ?? sess.root,
+        label: sess.label,
+        branch: sess.branch,
+        discoveredId: sess.id,
+        dive: false,
+      });
+      return;
+    }
+    if (id <= 0) return;
     if (id === editor.activeWindow()) return;
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
@@ -5878,6 +5899,17 @@ async function attachToWorktree(opts: {
   label: string;
   branch?: string;
   discoveredId?: number;
+  /**
+   * Whether to hand keyboard focus to the new window (blur the dock) once
+   * attached. `true` for the "dive in" gestures (Enter, Visit) — mirrors
+   * the dock's live-session Enter, which blurs to the editor. `false`
+   * (default) for the "activate / live-switch" gestures (arrow-nav, a
+   * row click), which open the worktree as the active session but keep
+   * the dock focused so you can keep navigating — mirrors the dock's
+   * live-session arrow/click switch, which never blurs. No-op in the
+   * modal picker (it closes `openPanel` before calling here).
+   */
+  dive?: boolean;
 }): Promise<void> {
   try {
     const result = await editor.createWindowWithTerminal({
@@ -5903,16 +5935,24 @@ async function attachToWorktree(opts: {
       createdAt: Date.now(),
       branch: opts.branch,
     });
-    // The new window is now the active session. When this was triggered from
-    // the dock (Enter on a discovered worktree), the dock is still focused, so
-    // its keys would be swallowed and the new session's terminal couldn't
-    // receive input — mirror the dock's live-session Enter path and blur it so
-    // the new window gets the keyboard. (No-op for the modal picker, which has
-    // already closed openPanel before calling this.)
-    if (dockMode && openPanel) {
+    // The new window is now the active session. For a "dive in" gesture
+    // (Enter / Visit) the dock is still focused, so its keys would be
+    // swallowed and the new session's terminal couldn't receive input —
+    // mirror the dock's live-session Enter path and blur it so the new
+    // window gets the keyboard. The "activate / live-switch" gestures
+    // (arrow-nav, row click) deliberately keep the dock focused, exactly
+    // like switching to a live session does.
+    if (opts.dive && dockMode && openPanel) {
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
       editor.setEditorMode(null);
+    } else if (dockMode && openPanel) {
+      // Live-switch: keep the dock focused, but rebuild the list (the
+      // `· on-disk` row's synthetic id is gone, replaced by the new live
+      // window's) and move the highlight onto the now-active session so
+      // the user stays put on the row they just opened.
+      refreshOpenDialog();
+      syncDockSelectionToActive();
     }
   } catch (e) {
     editor.setStatus(
@@ -6453,11 +6493,12 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "dock_activate") {
-      // Host Enter on the dock's session list. Mirrors the dialog's
-      // `activate` branch: a discovered (on-disk) worktree has no live
-      // window to switch to, so attach a fresh session at it; any other
-      // row is already active via the arrow live-switch, so Enter just
-      // hands keyboard focus to the editor (the dock stays visible).
+      // Host Enter on the dock's session list — the "dive in" gesture.
+      // Every row is already the active session via the arrow/click
+      // live-switch (a discovered worktree was opened on navigation too),
+      // so Enter just hands keyboard focus to the editor. If the row is
+      // still discovered here (Enter pressed before the debounced switch
+      // landed) attach it now, diving in to match the live path below.
       if (!dockMode || !openPanel || !openDialog) return;
       const id = openDialog.filteredIds[openDialog.selectedIndex];
       const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
@@ -6468,6 +6509,7 @@ editor.on("widget_event", (e) => {
           label: sel.label,
           branch: sel.branch,
           discoveredId: sel.id,
+          dive: true,
         });
         return;
       }
@@ -6572,33 +6614,14 @@ editor.on("widget_event", (e) => {
         openDialog.selectedIndex = idx;
         clearDialogError();
         if (dockMode) {
-          // The editor to the dock's right is the preview: arrowing
-          // the list switches the active window live (debounced),
-          // wiping down when moving down the list and up when moving up.
+          // The editor to the dock's right is the preview: arrowing the
+          // list (or clicking a row) switches the active window live
+          // (debounced), wiping down when moving down and up when moving
+          // up. A discovered (on-disk) worktree has no window to switch
+          // to, so `scheduleDockSwitch` opens it as the active session
+          // instead — both click and arrow land there the same way.
           openPanel.update(buildDockSpec());
           openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-          // A mouse click (payload.via === "click") on an inactive
-          // on-disk worktree opens it directly — there's no live window
-          // to switch to, so attach a fresh session, mirroring how a
-          // click on a live row switches to it (and the dock's Enter /
-          // `dock_activate`). Arrow-nav fires `select` *without* `via`,
-          // so scrolling past a discovered row never spawns a session.
-          if (payload.via === "click") {
-            const clickedId = openDialog.filteredIds[openDialog.selectedIndex];
-            const clicked = typeof clickedId === "number"
-              ? orchestratorSessions.get(clickedId)
-              : undefined;
-            if (clicked && clicked.discovered) {
-              void attachToWorktree({
-                root: clicked.root,
-                projectPath: clicked.projectPath ?? clicked.root,
-                label: clicked.label,
-                branch: clicked.branch,
-                discoveredId: clicked.id,
-              });
-              return;
-            }
-          }
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
           scheduleDockSwitch(fromEdge);
           return;
