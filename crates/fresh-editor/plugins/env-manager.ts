@@ -13,6 +13,31 @@
  * code, so it is gated on Workspace Trust: the plugin only calls `setEnv` when
  * `editor.workspaceTrustLevel() === "trusted"` (and core enforces the same).
  *
+ * ## Activation strategy (see `docs/internal/trust-env-devcontainer-ux-plan.md`)
+ *
+ * Detected envs are split by what their activation actually *does*:
+ *
+ * - **path-only** (`.venv` / `venv`): activation is a `PATH` prepend and a few
+ *   env-var sets. No arbitrary shell is run against repo-controlled scripts
+ *   *that the user authored* — yes, `activate` is sourced, but it's a fixed
+ *   script that pyvenv/virtualenv writes. We treat this as low-risk and
+ *   auto-activate on plugin load with no popup, mirroring VS Code Python.
+ *   Undo is one click on the status pill (or `Env: Use System`).
+ * - **shell** (`.envrc` / `mise.toml` / `.mise.toml` / `.tool-versions`):
+ *   activation runs `direnv export` / `mise env`, which evaluate user shell
+ *   inside the repo. This is the dangerous case. We surface a combined
+ *   "trust this folder and activate?" popup so the user makes one decision
+ *   that elevates trust *and* activates the env.
+ *
+ * Coordination with the devcontainer plugin: if a `devcontainer.json` is
+ * present and the current authority is local, env-manager defers entirely —
+ * the devcontainer plugin's "Reopen in Container?" popup goes first. After
+ * the user attaches and the editor restarts under the container authority,
+ * env-manager re-runs and asks about the env from inside the container, which
+ * is the right place to do it. If the user dismisses the devcontainer popup,
+ * env-manager picks up its own decision on the next plugin reload (next
+ * editor restart).
+ *
  * Freshness: one-shot spawns re-capture automatically when the env inputs
  * change (core's cache is keyed on them). A long-running language server has
  * its env fixed at spawn, so to pick up a changed `.envrc`/`mise.toml` the
@@ -24,11 +49,27 @@ const editor = getEditor();
 
 const STATUS_TOKEN = "env";
 
+/** Popup ids — namespaced so action_popup_result callbacks can route. */
+const POPUP_ACTIVATE = "env-manager-activate";
+const POPUP_TRUST_ELEVATE = "env-manager-trust-elevate";
+
+interface ActionPopupResultData {
+  popup_id: string;
+  action_id: string;
+}
+
 interface Detected {
   /** Short label for the status pill, e.g. ".venv" / "direnv" / "mise". */
   name: string;
   /** The activation snippet handed to `editor.setEnv`. */
   snippet: string;
+  /**
+   * "path-only" envs (`.venv`/`venv`) auto-activate silently.
+   * "shell" envs (`.envrc`/`mise.toml`/`.tool-versions`) prompt first.
+   */
+  kind: "path-only" | "shell";
+  /** Marker file or directory name that triggered detection (for the popup body). */
+  marker: string;
 }
 
 function fileExists(p: string): boolean {
@@ -56,17 +97,32 @@ function detect(): Detected | null {
       fileExists(editor.pathJoin(dir, "bin", "python3")) ||
       fileExists(editor.pathJoin(dir, "Scripts", "python.exe"))
     ) {
-      return { name, snippet: `source ${editor.pathJoin(dir, "bin", "activate")}` };
+      return {
+        name,
+        snippet: `source ${editor.pathJoin(dir, "bin", "activate")}`,
+        kind: "path-only",
+        marker: name,
+      };
     }
   }
 
   if (fileExists(editor.pathJoin(cwd, ".envrc"))) {
-    return { name: "direnv", snippet: `eval "$(direnv export bash)"` };
+    return {
+      name: "direnv",
+      snippet: `eval "$(direnv export bash)"`,
+      kind: "shell",
+      marker: ".envrc",
+    };
   }
 
   for (const name of ["mise.toml", ".mise.toml", ".tool-versions"]) {
     if (fileExists(editor.pathJoin(cwd, name))) {
-      return { name: "mise", snippet: `eval "$(mise env -s bash)"` };
+      return {
+        name: "mise",
+        snippet: `eval "$(mise env -s bash)"`,
+        kind: "shell",
+        marker: name,
+      };
     }
   }
 
@@ -77,25 +133,87 @@ function isTrusted(): boolean {
   return editor.workspaceTrustLevel() === "trusted";
 }
 
+/**
+ * Whether a devcontainer config exists at the workspace root. Used to decide
+ * whether to defer to the devcontainer plugin's attach popup. We do a passive
+ * file check rather than reach across plugins so the two stay independent.
+ */
+function devcontainerConfigPresent(): boolean {
+  const cwd = editor.getCwd();
+  if (!cwd) return false;
+  return (
+    fileExists(editor.pathJoin(cwd, ".devcontainer", "devcontainer.json")) ||
+    fileExists(editor.pathJoin(cwd, ".devcontainer.json"))
+  );
+}
+
+/**
+ * True when an authority other than "local" is installed — i.e. the editor
+ * is already attached to a container or SSH host. Used by the defer-to-
+ * devcontainer rule: we only stand aside *before* attach. After attach, the
+ * authority is non-empty and we're free to surface our own popup.
+ */
+function authorityIsNonLocal(): boolean {
+  return editor.getAuthorityLabel().length > 0;
+}
+
+// === Per-cwd decision persistence ===
+
+type EnvDecision = "activated" | "dismissed";
+
+function envDecisionKey(): string {
+  return "env-decision:" + editor.getCwd();
+}
+
+function readEnvDecision(): EnvDecision | null {
+  const raw = editor.getGlobalState(envDecisionKey()) as unknown;
+  if (raw === "activated" || raw === "dismissed") return raw;
+  return null;
+}
+
+function writeEnvDecision(value: EnvDecision): void {
+  editor.setGlobalState(envDecisionKey(), value);
+}
+
+/** Session-only "Not now" — cleared on plugin reload, so the next editor
+ * restart re-asks. Separate from the persisted "Never here" decision so
+ * users have a real difference between "later" and "stop asking forever". */
+let envDismissedThisSession = false;
+
 // === Commands ===
 
-/** Activate (or, when already active, reload) the detected environment. */
+/**
+ * Apply `setEnv` and surface the activating/reloading status message.
+ * Pre-condition: trust must already be Trusted (the caller is responsible).
+ * Core captures the snippet on the active backend and restarts so language
+ * servers re-spawn under the fresh env.
+ */
+function applyActivation(det: Detected): void {
+  editor.setEnv(det.snippet, editor.getCwd());
+  editor.setStatus(
+    editor.t(editor.envActive() ? "status.reloading" : "status.activating", { name: det.name }),
+  );
+  writeEnvDecision("activated");
+}
+
+/** Activate (or, when already active, reload) the detected environment.
+ *
+ * Trust handling: if the workspace is not trusted, instead of silently
+ * failing we surface a follow-up action popup ("Workspace not trusted —
+ * trust and activate?") so the user can elevate trust without leaving the
+ * activation flow. This replaces the previous dead-end status message.
+ */
 function activate(): void {
-  if (!isTrusted()) {
-    editor.setStatus(editor.t("status.not_trusted"));
-    return;
-  }
   const det = detect();
   if (!det) {
     editor.setStatus(editor.t("status.no_env_detected"));
     return;
   }
-  // Core captures `snippet` on the active backend and applies it to every
-  // spawn; it restarts so language servers re-spawn under the fresh env.
-  editor.setEnv(det.snippet, editor.getCwd());
-  editor.setStatus(
-    editor.t(editor.envActive() ? "status.reloading" : "status.activating", { name: det.name }),
-  );
+  if (!isTrusted()) {
+    showTrustElevatePrompt(det);
+    return;
+  }
+  applyActivation(det);
 }
 registerHandler("env_activate_handler", activate);
 
@@ -127,7 +245,160 @@ editor.registerCommand("%cmd.reload", "%cmd.reload_desc", "env_activate_handler"
 editor.registerCommand("%cmd.use_system", "%cmd.use_system_desc", "env_use_system_handler");
 editor.registerCommand("%cmd.status", "%cmd.status_desc", "env_status_handler");
 
+// === Popups ===
+
+/**
+ * Combined trust + activate popup, surfaced on plugin load when the workspace
+ * has a shell-based env (`.envrc` / `mise.toml`) and the user hasn't yet made
+ * a decision. The "Trust & activate" action elevates trust *and* activates;
+ * the user gets one decision for what is logically one intent.
+ */
+function showActivatePrompt(det: Detected): void {
+  editor.showActionPopup({
+    id: POPUP_ACTIVATE,
+    title: editor.t("popup.activate_title"),
+    message: editor.t("popup.activate_message", { name: det.name, marker: det.marker }),
+    actions: [
+      { id: "trust_and_activate", label: editor.t("popup.activate_action_trust") },
+      { id: "dismiss_once", label: editor.t("popup.activate_action_not_now") },
+      { id: "dismiss_always", label: editor.t("popup.activate_action_never") },
+    ],
+  });
+}
+
+/**
+ * Follow-up popup shown when the user explicitly runs `Env: Activate` (or
+ * clicks the locked pill) on an untrusted workspace. Same shape as the
+ * combined popup but framed as an elevation request — the user already asked
+ * to activate, so we just need their consent to elevate trust.
+ */
+function showTrustElevatePrompt(det: Detected): void {
+  editor.showActionPopup({
+    id: POPUP_TRUST_ELEVATE,
+    title: editor.t("popup.trust_elevate_title"),
+    message: editor.t("popup.trust_elevate_message", { name: det.name }),
+    actions: [
+      { id: "trust_and_activate", label: editor.t("popup.activate_action_trust") },
+      { id: "keep_restricted", label: editor.t("popup.trust_elevate_action_keep") },
+      { id: "cancel", label: editor.t("popup.trust_elevate_action_cancel") },
+    ],
+  });
+}
+
+/** Promote the workspace to Trusted by dispatching the existing trust action.
+ * Plugins can't set trust directly through a dedicated API, but the editor
+ * exposes `workspace_trust_trust` as an action and `executeActions` is the
+ * generic dispatch channel. */
+function elevateTrust(): void {
+  editor.executeActions([{ action: "workspace_trust_trust", count: 1 }]);
+}
+
+function onActivatePopup(data: ActionPopupResultData): void {
+  const det = detect();
+  if (!det) return;
+  if (data.action_id === "trust_and_activate") {
+    elevateTrust();
+    applyActivation(det);
+  } else if (data.action_id === "dismiss_always") {
+    writeEnvDecision("dismissed");
+  } else {
+    // "dismiss_once" or the generic "dismissed" id the core injects on
+    // Escape — both are session-only; the next editor restart re-asks.
+    envDismissedThisSession = true;
+  }
+}
+
+function onTrustElevatePopup(data: ActionPopupResultData): void {
+  const det = detect();
+  if (!det) return;
+  if (data.action_id === "trust_and_activate") {
+    elevateTrust();
+    applyActivation(det);
+  } else if (data.action_id === "keep_restricted") {
+    editor.executeActions([{ action: "workspace_trust_restrict", count: 1 }]);
+    editor.setStatus(editor.t("status.kept_restricted"));
+  }
+  // "cancel" / "dismissed" — no-op, leaves trust as-is.
+}
+
+editor.on("action_popup_result", (data) => {
+  if (data.popup_id === POPUP_ACTIVATE) {
+    onActivatePopup(data);
+  } else if (data.popup_id === POPUP_TRUST_ELEVATE) {
+    onTrustElevatePopup(data);
+  }
+});
+
+// === Plugin-load orchestration ===
+
+/**
+ * Decide what (if anything) to do on plugin load for the detected env.
+ *
+ * Routing:
+ * - No env detected → nothing.
+ * - Path-only (`.venv`/`venv`) → auto-activate silently if trusted, regardless
+ *   of any prior decision (the activation is recorded but we don't re-prompt
+ *   the user about a non-prompting flow). Path-only is intentionally
+ *   exempt from the trust-gating popup; the snippet is just `PATH` setup.
+ * - Shell env, devcontainer present, local authority → defer entirely.
+ *   The devcontainer attach popup goes first; we re-run after the post-attach
+ *   restart inside the container.
+ * - Shell env, already activated → nothing (the env is live; user can reload).
+ * - Shell env, prior "dismissed" decision → nothing (respect the user's "never here").
+ * - Shell env, session-only dismissal → nothing this session.
+ * - Shell env, undecided + trusted → silent activation (trust is the
+ *   green light; honor it).
+ * - Shell env, undecided + untrusted → show the combined trust+activate popup.
+ */
+function maybeAutoActivate(): void {
+  const det = detect();
+  if (!det) return;
+
+  if (det.kind === "path-only") {
+    if (isTrusted() && !editor.envActive()) {
+      applyActivation(det);
+    }
+    return;
+  }
+
+  // det.kind === "shell"
+  if (editor.envActive()) return;
+  if (devcontainerConfigPresent() && !authorityIsNonLocal()) {
+    editor.debug("env-manager: deferring to devcontainer plugin (config present, local authority)");
+    return;
+  }
+
+  const prior = readEnvDecision();
+  if (prior === "dismissed") return;
+  if (envDismissedThisSession) return;
+  if (prior === "activated" && isTrusted()) {
+    // User previously said yes; silently re-activate without re-prompting.
+    applyActivation(det);
+    return;
+  }
+  if (isTrusted()) {
+    // Trust is already granted; just activate.
+    applyActivation(det);
+    return;
+  }
+  showActivatePrompt(det);
+}
+
+registerHandler("env_maybe_auto_activate", maybeAutoActivate);
+editor.on("plugins_loaded", "env_maybe_auto_activate");
+
 // === Status pill (opt-in to a user's status-bar layout) ===
+//
+// Two pills:
+// - "env" — what environment is active (always relevant once env-manager runs)
+// - "trust" — visible only when the workspace is *not* Trusted. This is the
+//   "restricted mode is always visible" rule: silent gating without a visible
+//   chip is the failure mode that gives VS Code its UX reputation. When the
+//   chip is present, the user knows code execution is gated and can run
+//   "Workspace Trust: Trust This Folder" (or click through the env pill
+//   prompt) to elevate.
+
+const TRUST_TOKEN = "trust";
 
 function refreshStatus(): void {
   const bufferId = editor.getActiveBufferId();
@@ -146,9 +417,21 @@ function refreshStatus(): void {
     value = editor.t("statusbar.system");
   }
   editor.setStatusBarValue(bufferId, STATUS_TOKEN, value);
+
+  // Trust chip — show only when not Trusted. Trusted is the "everything works"
+  // state and adding a chip there would just be noise.
+  const level = editor.workspaceTrustLevel();
+  const trustValue =
+    level === "restricted"
+      ? editor.t("statusbar.trust_restricted")
+      : level === "blocked"
+        ? editor.t("statusbar.trust_blocked")
+        : "";
+  editor.setStatusBarValue(bufferId, TRUST_TOKEN, trustValue);
 }
 
 editor.registerStatusBarElement(STATUS_TOKEN, editor.t("statusbar.label"));
+editor.registerStatusBarElement(TRUST_TOKEN, editor.t("statusbar.trust_label"));
 
 registerHandler("env_refresh_status", refreshStatus);
 for (const event of ["buffer_activated", "after_file_open", "focus_gained"]) {
