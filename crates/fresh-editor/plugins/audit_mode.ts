@@ -3426,19 +3426,16 @@ function review_layout_stack() {
         editor.setStatus(editor.t("status.unified_view") || "Unified view");
         return;
     }
+    // Close the composite tab exactly the way its `q` binding does — the
+    // editor cleanly removes the tab and returns to the review — then
+    // reap the background OLD/NEW content buffers so they don't leak.
     const st = activeCompositeDiffState;
-    // Bring the unified review buffer back first, then tear down the
-    // composite so the view never lands on a closed buffer.
-    if (state.groupId !== null && state.panelBuffers["diff"] !== undefined) {
-        editor.showBuffer(state.panelBuffers["diff"]);
-        editor.focusBufferGroupPanel(state.groupId, "diff");
-    }
+    activeCompositeDiffState = null;
+    editor.executeAction("close");
     try {
-        editor.closeCompositeBuffer(st.compositeBufferId);
         editor.closeBuffer(st.oldBufferId);
         editor.closeBuffer(st.newBufferId);
     } catch {}
-    activeCompositeDiffState = null;
     editor.setStatus(editor.t("status.unified_view") || "Unified view");
 }
 registerHandler("review_layout_stack", review_layout_stack);
