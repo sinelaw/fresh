@@ -185,6 +185,17 @@ interface ReviewState {
   // viewport's top file). Lets the scroll handler skip a sidebar repaint
   // when the current file hasn't changed.
   filesCurrentKey: string | null;
+  // Whether inline review-note boxes are shown in the diff stream. The
+  // `a` key toggles this (hunk-style "agent notes" visibility); the
+  // comments side panel is unaffected.
+  showComments: boolean;
+  // Active file-filter query (the `/` filter). Empty = show all files.
+  fileFilter: string;
+  // When true (default), the center panel renders only the focused file
+  // (`filesCurrentKey`) instead of every file's hunks. The sidebar is the
+  // multi-file navigator; this keeps the center buffer small and fast even
+  // on huge changesets. `,`/`.` move the focus between files.
+  focusOnly: boolean;
   // Current selection in the comments panel (1-indexed row, 0 means none)
   commentsSelectedRow: number;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
@@ -235,6 +246,9 @@ const state: ReviewState = {
   commentsByRow: {},
   filesPanelByRow: {},
   filesCurrentKey: null,
+  showComments: true,
+  fileFilter: "",
+  focusOnly: true,
   commentsSelectedRow: 0,
   commentsHighlightId: null,
   stickyCurrentFile: null,
@@ -814,6 +828,7 @@ function pushLineComments(
     lineType: 'add' | 'remove' | 'context',
     oldLine: number | undefined, newLine: number | undefined
 ) {
+    if (!state.showComments) return;
     const lineComments = state.comments.filter(c =>
         c.hunk_id === hunk.id && (
             (c.line_type === 'add' && c.new_line === newLine) ||
@@ -881,6 +896,13 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     let lastCategory: string | undefined;
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
+
+        // Focus mode: render only the file selected in the sidebar. The
+        // center buffer stays small (one file) so huge changesets remain
+        // responsive; the sidebar is the multi-file navigator.
+        if (state.focusOnly && state.filesCurrentKey && fileKey(file) !== state.filesCurrentKey) {
+            continue;
+        }
 
         // Section header — full-line-wide INVERSE band, uppercase, bold.
         // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
@@ -1575,6 +1597,7 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
 function updateMagitDisplay(): void {
     refreshViewportDimensions();
     if (state.groupId === null) return;
+    ensureFocusFile();
     editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
     editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
@@ -1821,7 +1844,14 @@ function on_review_mouse_click(data: {
         if (key) {
             const file = state.files.find(f => fileKey(f) === key);
             if (file) {
-                jumpToFile(file);
+                if (state.focusOnly && key !== state.filesCurrentKey) {
+                    // Focus mode: switch the center to the clicked file.
+                    state.filesCurrentKey = key;
+                    updateMagitDisplay();
+                    jumpDiffCursorToRow(1, { recenter: false });
+                } else {
+                    jumpToFile(file);
+                }
                 editor.focusBufferGroupPanel(state.groupId, "diff");
             }
         }
@@ -1862,6 +1892,12 @@ function jumpToComment(commentId: string): void {
     const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
     if (file) {
         const key = fileKey(file);
+        // Focus mode: the comment may live in a file other than the one
+        // shown in the center. Switch focus so the anchor row exists.
+        if (state.focusOnly && key !== state.filesCurrentKey) {
+            state.filesCurrentKey = key;
+            needRebuild = true;
+        }
         if (state.collapsedFiles.has(key)) {
             state.collapsedFiles.delete(key);
             needRebuild = true;
@@ -3445,6 +3481,87 @@ async function review_layout_auto() {
     else review_layout_stack();
 }
 registerHandler("review_layout_auto", review_layout_auto);
+
+// --- View toggle: inline review-note visibility (hunk-style `a`) ---
+function review_toggle_agent_notes() {
+    state.showComments = !state.showComments;
+    updateMagitDisplay();
+    editor.setStatus(
+        state.showComments
+            ? (editor.t("status.notes_shown") || "Notes shown")
+            : (editor.t("status.notes_hidden") || "Notes hidden")
+    );
+}
+registerHandler("review_toggle_agent_notes", review_toggle_agent_notes);
+
+// --- Help overlay (hunk-style `?`) ---
+// Built from English literals to match the existing toolbar hint bar,
+// which is likewise non-localized. Opens a read-only buffer the user
+// dismisses with `q`.
+async function review_help() {
+    const rows: string[] = [
+        " Review Diff — keyboard reference",
+        "",
+        " Navigate    n / p      next / prev hunk",
+        "             ] / [      next / prev comment",
+        "             Tab        fold the file under the cursor",
+        "             z a / z r  fold all / unfold all",
+        " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
+        " View        a          show / hide inline notes",
+        "             /          filter files",
+        " Review      c          add comment        x   delete comment",
+        "             s / u / d  stage / unstage / discard (hunk or file)",
+        "             S / U / D  stage / unstage / discard the whole file",
+        "             v          start line selection",
+        " Open        Enter      side-by-side, or open the comment under cursor",
+        "             Alt+o      open the working-tree file at this line",
+        " Session     r          refresh        e   export        q   close",
+        "",
+        " Press q to close this help.",
+    ];
+    const entries: TextPropertyEntry[] = rows.map(r => ({
+        text: r + "\n",
+        properties: { type: "help" },
+    }));
+    const res = await editor.createVirtualBuffer({
+        name: "*Review Keys*",
+        mode: "normal",
+        readOnly: true,
+        entries,
+        editingDisabled: true,
+    });
+    editor.showBuffer(res.bufferId);
+}
+registerHandler("review_help", review_help);
+
+// --- Focus-file selection + file navigation ---
+
+/** Ensure `filesCurrentKey` names a file that still exists (focus mode). */
+function ensureFocusFile() {
+    if (!state.focusOnly) return;
+    const valid = state.filesCurrentKey !== null
+        && state.files.some(f => fileKey(f) === state.filesCurrentKey);
+    if (!valid) {
+        state.filesCurrentKey = state.files.length > 0 ? fileKey(state.files[0]) : null;
+    }
+}
+
+/** Move the focused file by `delta` (clamped) and rebuild the center. */
+function review_goto_file(delta: number) {
+    if (state.files.length === 0) return;
+    ensureFocusFile();
+    let idx = state.files.findIndex(f => fileKey(f) === state.filesCurrentKey);
+    if (idx < 0) idx = 0;
+    const next = idx + delta;
+    if (next < 0 || next >= state.files.length) return;
+    state.filesCurrentKey = fileKey(state.files[next]);
+    updateMagitDisplay();
+    jumpDiffCursorToRow(1, { recenter: false });
+}
+function review_goto_next_file() { review_goto_file(1); }
+function review_goto_prev_file() { review_goto_file(-1); }
+registerHandler("review_goto_next_file", review_goto_next_file);
+registerHandler("review_goto_prev_file", review_goto_prev_file);
 
 // --- Hunk navigation for side-by-side diff view ---
 
@@ -5387,11 +5504,16 @@ editor.defineMode("review-mode", [
     ["Home", "move_line_start"], ["End", "move_line_end"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
+    // File navigation (hunk-style): focus the prev / next file.
+    [",", "review_goto_prev_file"], [".", "review_goto_next_file"],
     // Layout toggle (hunk-style): 1 = split (side-by-side of the file
     // under the cursor), 2 = stack (unified), 0 = auto by terminal width.
     ["1", "review_layout_split"],
     ["2", "review_layout_stack"],
     ["0", "review_layout_auto"],
+    // Toggle inline review-note visibility; open the keyboard reference.
+    ["a", "review_toggle_agent_notes"],
+    ["?", "review_help"],
     // Per-file collapse: Tab toggles the file under the cursor;
     // `z a` collapses every file; `z r` reveals (expands) every file.
     ["Tab", "review_toggle_file_collapse"],
