@@ -175,6 +175,7 @@ pub mod session_hot_exit;
 #[cfg(feature = "plugins")]
 pub mod sessions;
 pub mod settings;
+pub mod settings_bracketed_paste_routing;
 pub mod settings_config_issue_806;
 pub mod settings_fallback_category;
 pub mod settings_lsp_entry_dialog_bugs;

@@ -1137,10 +1137,15 @@ impl Editor {
         // keyboard above any panel. A bracketed paste must reach its focused
         // text input (or be swallowed when no field is focused) rather than
         // leaking into the buffer obscured behind it — the same class of bug
-        // the floating-panel routing below fixes (issue #2268).
-        if let Some(settings) = self.settings_state.as_mut() {
-            if settings.paste_into_focused_text(text) {
-                self.set_status_message(t!("clipboard.pasted").to_string());
+        // the floating-panel routing below fixes (issue #2268). Gate on
+        // `visible`, not mere presence: `close_settings` only hides the
+        // state (it isn't dropped), and a lingering hidden dialog must not
+        // swallow pastes meant for the buffer.
+        if self.settings_state.as_ref().is_some_and(|s| s.visible) {
+            if let Some(settings) = self.settings_state.as_mut() {
+                if settings.paste_into_focused_text(text) {
+                    self.set_status_message(t!("clipboard.pasted").to_string());
+                }
             }
             return true;
         }
