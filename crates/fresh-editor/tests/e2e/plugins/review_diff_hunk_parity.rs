@@ -6,7 +6,7 @@
 //!
 //! All assertions observe rendered screen output only.
 
-use crate::common::git_test_helper::GitTestRepo;
+use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -249,6 +249,56 @@ fn test_review_comment_from_header_opens_prompt() {
     harness.wait_for_prompt().unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Comment on"))
+        .unwrap();
+}
+
+/// §5.13 — "Review Stash" reviews a git stash entry: the stashed file and
+/// the stash ref show up in the review.
+#[test]
+fn test_review_stash_shows_stashed_diff() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() {\n    stashed_change();\n}\n",
+    )
+    .unwrap();
+    let out = git_command(&repo.path)
+        .args(["stash", "push", "-m", "wip"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git stash failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let mut harness = harness_for(&repo);
+    // Run the "Review Stash" command, then accept the default stash@{0}.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Stash").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Review stash"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Review Diff (stash") && s.contains("main.rs")
+        })
         .unwrap();
 }
 

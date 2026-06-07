@@ -104,6 +104,11 @@ interface ReviewRange {
   to: string;
   /** Human-readable label for status bar / layout name. */
   label: string;
+  /** Optional explicit `git` argv that produces the unified diff (e.g. a
+   *  stash: `["stash","show","-p",...]`). When set, used instead of the
+   *  default `diff <from>..<to>`. Lets stash/other read-only sources reuse
+   *  the whole range pipeline. */
+  command?: string[];
 }
 
 interface ReviewState {
@@ -4714,9 +4719,8 @@ function parseRangeInput(input: string): ReviewRange | null {
  * still works; untracked / staged categories are meaningless here.
  */
 async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
-    const result = await editor.spawnProcess("git", [
-        "diff", "--unified=3", `${range.from}..${range.to}`,
-    ]);
+    const args = range.command || ["diff", "--unified=3", `${range.from}..${range.to}`];
+    const result = await editor.spawnProcess("git", args);
     if (result.exit_code !== 0) {
         return { hunks: [], files: [] };
     }
@@ -4842,6 +4846,35 @@ editor.registerCommand(
     "%cmd.review_range",
     "%cmd.review_range_desc",
     "start_review_range",
+    null,
+);
+
+// --- Stash review (hunk-style `hunk stash show`) -------------------------
+// Reuses the range pipeline (read-only, ref-labelled) via an explicit
+// `git stash show -p` command override.
+async function start_review_stash(): Promise<void> {
+    if (state.groupId !== null) stop_review_diff();
+    const label = editor.t("prompt.review_stash") || "Review stash (e.g. stash@{0}):";
+    editor.startPromptWithInitial(label, "review-stash", "stash@{0}");
+}
+registerHandler("start_review_stash", start_review_stash);
+
+editor.on("prompt_confirmed", (args) => {
+    if (args.prompt_type !== "review-stash") return true;
+    const ref = (args.input || "").trim() || "stash@{0}";
+    bootstrapRangeReview({
+        from: ref,
+        to: ref,
+        label: ref,
+        command: ["stash", "show", "-p", "--unified=3", ref],
+    });
+    return true;
+});
+
+editor.registerCommand(
+    "%cmd.review_stash",
+    "%cmd.review_stash_desc",
+    "start_review_stash",
     null,
 );
 
