@@ -79,111 +79,45 @@ impl IndentCalculator {
         }
         #[cfg(feature = "tree-sitter")]
         {
-            let (lang_name, ts_language, query_str) = match language {
-                Language::Rust => (
-                    "rust",
-                    fresh_languages::tree_sitter_rust::LANGUAGE.into(),
-                    include_str!("../../queries/rust/indents.scm"),
-                ),
-                Language::Python => (
-                    "python",
-                    fresh_languages::tree_sitter_python::LANGUAGE.into(),
-                    include_str!("../../queries/python/indents.scm"),
-                ),
+            // Parser language comes from the centralized accessor, which is
+            // `None` for any grammar not compiled into this build. Most
+            // languages are no longer bundled (they use syntect highlighting +
+            // the regex indent-rules tier), so this bails to the caller's
+            // fallback for them. See fresh_languages::Language::ts_language.
+            let ts_language: fresh_languages::tree_sitter::Language = match language.ts_language() {
+                Some(l) => l,
+                None => return None,
+            };
+            let (lang_name, query_str) = match language {
+                Language::Rust => ("rust", include_str!("../../queries/rust/indents.scm")),
+                Language::Python => ("python", include_str!("../../queries/python/indents.scm")),
                 Language::JavaScript => (
                     "javascript",
-                    fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
                     include_str!("../../queries/javascript/indents.scm"),
                 ),
                 Language::TypeScript => (
                     "typescript",
-                    fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                     include_str!("../../queries/typescript/indents.scm"),
                 ),
-                Language::C => (
-                    "c",
-                    fresh_languages::tree_sitter_c::LANGUAGE.into(),
-                    include_str!("../../queries/c/indents.scm"),
-                ),
-                Language::Cpp => (
-                    "cpp",
-                    fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
-                    include_str!("../../queries/cpp/indents.scm"),
-                ),
-                Language::Go => (
-                    "go",
-                    fresh_languages::tree_sitter_go::LANGUAGE.into(),
-                    include_str!("../../queries/go/indents.scm"),
-                ),
-                Language::Java => (
-                    "java",
-                    fresh_languages::tree_sitter_java::LANGUAGE.into(),
-                    include_str!("../../queries/java/indents.scm"),
-                ),
-                Language::HTML => (
-                    "html",
-                    fresh_languages::tree_sitter_html::LANGUAGE.into(),
-                    include_str!("../../queries/html/indents.scm"),
-                ),
-                Language::CSS => (
-                    "css",
-                    fresh_languages::tree_sitter_css::LANGUAGE.into(),
-                    include_str!("../../queries/css/indents.scm"),
-                ),
-                Language::Bash => (
-                    "bash",
-                    fresh_languages::tree_sitter_bash::LANGUAGE.into(),
-                    include_str!("../../queries/bash/indents.scm"),
-                ),
-                Language::Json => (
-                    "json",
-                    fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                    include_str!("../../queries/json/indents.scm"),
-                ),
-                Language::Jsonc => (
-                    "jsonc",
-                    fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                    include_str!("../../queries/json/indents.scm"),
-                ),
-                Language::Ruby => (
-                    "ruby",
-                    fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
-                    include_str!("../../queries/ruby/indents.scm"),
-                ),
-                Language::Php => (
-                    "php",
-                    fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
-                    include_str!("../../queries/php/indents.scm"),
-                ),
-                Language::Lua => (
-                    "lua",
-                    fresh_languages::tree_sitter_lua::LANGUAGE.into(),
-                    include_str!("../../queries/lua/indents.scm"),
-                ),
-                Language::CSharp => (
-                    "csharp",
-                    fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
-                    include_str!("../../queries/csharp/indents.scm"),
-                ),
-                Language::Pascal => (
-                    "pascal",
-                    fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
-                    include_str!("../../queries/pascal/indents.scm"),
-                ),
-                Language::Odin => (
-                    "odin",
-                    fresh_languages::tree_sitter_odin::LANGUAGE.into(),
-                    include_str!("../../queries/odin/indents.scm"),
-                ),
-                Language::Templ => (
-                    // Templ extends Go's grammar; Go's indent rules apply to the
-                    // Go portions of a templ file. The HTML/CSS portions
-                    // currently fall back to copy-current-line indent, which is
-                    // good enough as an initial heuristic.
-                    "templ",
-                    fresh_languages::tree_sitter_templ::LANGUAGE.into(),
-                    include_str!("../../queries/go/indents.scm"),
-                ),
+                Language::C => ("c", include_str!("../../queries/c/indents.scm")),
+                Language::Cpp => ("cpp", include_str!("../../queries/cpp/indents.scm")),
+                Language::Go => ("go", include_str!("../../queries/go/indents.scm")),
+                Language::Java => ("java", include_str!("../../queries/java/indents.scm")),
+                Language::HTML => ("html", include_str!("../../queries/html/indents.scm")),
+                Language::CSS => ("css", include_str!("../../queries/css/indents.scm")),
+                Language::Bash => ("bash", include_str!("../../queries/bash/indents.scm")),
+                Language::Json => ("json", include_str!("../../queries/json/indents.scm")),
+                Language::Jsonc => ("jsonc", include_str!("../../queries/json/indents.scm")),
+                Language::Ruby => ("ruby", include_str!("../../queries/ruby/indents.scm")),
+                Language::Php => ("php", include_str!("../../queries/php/indents.scm")),
+                Language::Lua => ("lua", include_str!("../../queries/lua/indents.scm")),
+                Language::CSharp => ("csharp", include_str!("../../queries/csharp/indents.scm")),
+                Language::Pascal => ("pascal", include_str!("../../queries/pascal/indents.scm")),
+                Language::Odin => ("odin", include_str!("../../queries/odin/indents.scm")),
+                // Templ extends Go's grammar; Go's indent rules apply to the Go
+                // portions of a templ file. The HTML/CSS portions fall back to
+                // copy-current-line indent, good enough as an initial heuristic.
+                Language::Templ => ("templ", include_str!("../../queries/go/indents.scm")),
             };
 
             // Check if we already have this config
@@ -256,6 +190,16 @@ impl IndentCalculator {
             self.calculate_indent_tree_sitter(buffer, position, language, tab_size)
         {
             return Some(indent);
+        }
+
+        // No tree-sitter grammar (most languages aren't bundled) or it couldn't
+        // decide: consult the per-language regex rules tier, which knows each
+        // language's openers/closers (Python `:`/`return`, Ruby `end`, …). This
+        // path runs without scope masking (no highlighter here); the editor's
+        // primary, masked rules pass happens earlier in `actions.rs`, so this is
+        // mainly the fallback for languages whose grammar was dropped.
+        if let Some(rules) = crate::primitives::indent_rules::rules_for_id(language.id()) {
+            return Some(rules.calculate_indent(buffer, position, tab_size, |_| true));
         }
 
         // Tree-sitter could not decide. For keyword-delimited languages, copy
@@ -428,8 +372,23 @@ impl IndentCalculator {
         language: &Language,
         tab_size: usize,
     ) -> Option<usize> {
-        // Get parser and query for this language
-        let (parser, query) = self.get_config(language)?;
+        // Get parser and query for this language. When no grammar is bundled
+        // (most languages), defer to the per-language regex rules tier, then to
+        // the language-agnostic bracket scanner.
+        let Some((parser, query)) = self.get_config(language) else {
+            if let Some(rules) = crate::primitives::indent_rules::rules_for_id(language.id()) {
+                if let Some(indent) = rules.calculate_dedent_for_delimiter(
+                    buffer,
+                    position,
+                    _delimiter,
+                    tab_size,
+                    |_| true,
+                ) {
+                    return Some(indent);
+                }
+            }
+            return Self::calculate_dedent_pattern(buffer, position, tab_size);
+        };
 
         // Extract context before cursor (for parsing)
         let parse_start = position.saturating_sub(MAX_PARSE_BYTES);
@@ -1511,15 +1470,18 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_used_for_complete_block() {
-        // Test that tree-sitter is used when we have a complete block with context
+        // Test that tree-sitter is used when we have a complete block with
+        // context. Uses TypeScript, one of the bundled grammars (most grammars
+        // were dropped; their indentation is served by the rules tier instead).
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("function main() {\n    let x = 1;\n}");
         // Position after the closing }
         let position = buffer.len();
 
         // Tree-sitter should recognize this is a complete block
         // Pattern matching would see '}' and not indent, but tree-sitter context should work
-        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+        let ts_result =
+            calc.calculate_indent_tree_sitter(&buffer, position, &Language::TypeScript, 4);
 
         // Tree-sitter should return Some (even if it's 0 indent)
         assert!(
@@ -1614,13 +1576,15 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_enter_after_close_brace_returns_zero() {
-        // Verify tree-sitter correctly handles Enter after closing brace
+        // Verify tree-sitter correctly handles Enter after closing brace. Uses
+        // TypeScript (a bundled grammar) so the direct tree-sitter assertion
+        // below is meaningful.
         let mut calc = IndentCalculator::new();
-        let buffer = Buffer::from_str_test("fn main() {\n    let x = 1;\n}");
+        let buffer = Buffer::from_str_test("function main() {\n    let x = 1;\n}");
         let position = buffer.len(); // Position right after the }
 
         // Tree-sitter should recognize we're outside the block and return 0 indent
-        let indent = calc.calculate_indent(&buffer, position, &Language::Rust, 4);
+        let indent = calc.calculate_indent(&buffer, position, &Language::TypeScript, 4);
         assert_eq!(
             indent,
             Some(0),
@@ -1628,7 +1592,8 @@ mod tests {
         );
 
         // Verify tree-sitter is being used (not just pattern fallback)
-        let ts_result = calc.calculate_indent_tree_sitter(&buffer, position, &Language::Rust, 4);
+        let ts_result =
+            calc.calculate_indent_tree_sitter(&buffer, position, &Language::TypeScript, 4);
         assert!(ts_result.is_some(), "Tree-sitter should handle this case");
     }
 
@@ -1962,25 +1927,19 @@ mod tests {
     }
 
     #[test]
-    fn test_ruby_def_opens_block_via_tree_sitter_structural_rescue() {
-        // Verifiable improvement: Ruby `def foo` opens a method block.
-        // Master with the old pattern fallback returned 0 (last char `o`,
-        // no C-family trigger). With tree-sitter as source of truth and the
-        // structural "opens-on-cursor-line" rescue, when tree-sitter does
-        // produce a `(method)` capture this should yield +tab_size. When the
-        // input is so short tree-sitter can't recover (just an ERROR node),
-        // we accept "stay at current line indent" as the safe default.
+    fn test_ruby_def_opens_block() {
+        // Ruby `def foo` opens a method block. The old tree-sitter+keyword
+        // pipeline returned 0 on this incomplete input (no `end` yet); the
+        // regex rules tier (RubyLike: `def` is a block opener, no `end` on the
+        // line so `self_close` doesn't suppress it) correctly indents the body
+        // one level — the improvement the old code aimed for but couldn't reach.
         let mut calc = IndentCalculator::new();
         let buffer = Buffer::from_str_test("def foo");
         let indent = calc.calculate_indent(&buffer, buffer.len(), &Language::Ruby, 4);
-        // The result must NOT come from the C-family pattern matcher. With
-        // pattern fallback engaged the answer would still be 0 here (last
-        // char `o`, no trigger), so the meaningful assertion is that this
-        // is an answer we can justify structurally — copy current line indent.
         assert_eq!(
             indent,
-            Some(0),
-            "Ruby: short `def foo` (incomplete syntax) falls back to current line indent"
+            Some(4),
+            "Ruby: `def foo` opens a method block — should indent +4"
         );
     }
 

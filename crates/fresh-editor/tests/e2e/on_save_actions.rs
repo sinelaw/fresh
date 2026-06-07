@@ -56,6 +56,7 @@ fn test_format_on_save() {
             format_on_save: true,
             on_save: vec![],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -125,6 +126,7 @@ fn test_on_save_linter_style() {
             format_on_save: false,
             on_save: vec![action],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -194,6 +196,7 @@ fn test_on_save_action_failure() {
             format_on_save: false,
             on_save: vec![action],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -272,6 +275,7 @@ fn test_on_save_file_placeholder() {
             format_on_save: false,
             on_save: vec![action],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -344,6 +348,7 @@ fn test_formatter_stdin_mode() {
             format_on_save: true,
             on_save: vec![],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -423,6 +428,7 @@ fn test_on_save_stops_on_failure() {
             format_on_save: false,
             on_save: vec![action1, action2],
             word_characters: None,
+            indent: None,
         },
     );
 
@@ -523,6 +529,7 @@ fn test_formatter_not_found_shows_message() {
             format_on_save: true,
             on_save: vec![],
             word_characters: None,
+            indent: None,
         },
     );
 

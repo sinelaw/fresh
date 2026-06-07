@@ -70,4 +70,6 @@ pub enum HoverTarget {
     TabContextMenuItem(usize),
     /// Hovering over a file explorer context menu item (item_index)
     FileExplorerContextMenuItem(usize),
+    /// Hovering over a "+" new-tab popup menu item (item_index)
+    NewTabMenuItem(usize),
 }

@@ -1235,9 +1235,36 @@ fn collect_list(
         let mut style = entry.style.clone().unwrap_or_default();
         style.bold = true;
         if entry.text.starts_with('┏') || entry.text.starts_with('┗') {
+            // Top / bottom rows are pure border, so a whole-row fg tints
+            // the corner-to-corner run.
             style.fg = Some(OverlayColorSpec::theme_key("ui.popup_border_fg"));
+            entry.style = Some(style);
+        } else {
+            // Side rows hold the session text between two vertical border
+            // glyphs. A whole-row fg would repaint the name / git text
+            // (which only carries an fg overlay when the row is *active*),
+            // so tint just the leading and trailing `┃` glyphs with
+            // sub-range overlays. This frames the selected card on all
+            // four sides instead of only top + bottom.
+            entry.style = Some(style);
+            let bar = '┃';
+            let bar_len = bar.len_utf8();
+            let first = entry.text.find(bar);
+            let last = entry.text.rfind(bar);
+            for pos in [first, last].into_iter().flatten().collect::<HashSet<_>>() {
+                entry.inline_overlays.push(InlineOverlay {
+                    start: pos,
+                    end: pos + bar_len,
+                    style: OverlayOptions {
+                        fg: Some(OverlayColorSpec::theme_key("ui.popup_border_fg")),
+                        bold: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
         }
-        entry.style = Some(style);
     };
 
     let rows_emitted: u32 = if use_specs {
@@ -4711,6 +4738,75 @@ mod tests {
         // Rounded corners survived the per-item render.
         assert!(entries[0].text.starts_with('╭'));
         assert!(entries[2].text.starts_with('╰'));
+    }
+
+    #[test]
+    fn selected_card_accent_frames_all_four_sides() {
+        // A selected multi-row card frames itself with a heavy accent
+        // border. Regression: the accent fg was applied only to the
+        // top/bottom border rows, leaving the vertical `┃` glyphs on the
+        // body rows uncoloured — so the highlight framed only two sides.
+        // The fix tints the side `┃` glyphs via sub-range overlays without
+        // repainting the body text between them.
+        let card = |body: &str| WidgetSpec::LabeledSection {
+            label: String::new(),
+            child: Box::new(WidgetSpec::Raw {
+                entries: vec![TextPropertyEntry::text(body)],
+                key: None,
+            }),
+            width_pct: None,
+            key: None,
+        };
+        let spec = WidgetSpec::List {
+            items: vec![],
+            item_specs: vec![card("aaa"), card("bbb")],
+            item_keys: vec!["a".into(), "b".into()],
+            selected_index: 1,
+            visible_rows: 12,
+            focusable: true,
+            key: Some("cards".into()),
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let entries = out.entries;
+        // Selected card is index 1 → rows 3 (top), 4 (body/side), 5 (bottom).
+        let accent_is = |c: &OverlayColorSpec| matches!(c, OverlayColorSpec::ThemeKey(k) if k == "ui.popup_border_fg");
+        // Top + bottom carry the accent as a whole-row fg (entire row is border).
+        for r in [3usize, 5] {
+            let fg = entries[r].style.as_ref().and_then(|s| s.fg.as_ref());
+            assert!(
+                fg.map(accent_is).unwrap_or(false),
+                "row {r} (top/bottom border) should carry the accent fg"
+            );
+        }
+        // The body row keeps heavy side borders but must NOT set a
+        // whole-row fg (that would repaint the session text). Its vertical
+        // `┃` glyphs are tinted via sub-range overlays instead.
+        let body = &entries[4];
+        assert!(
+            body.text.contains('┃'),
+            "selected card body row should have heavy side borders: {:?}",
+            body.text
+        );
+        assert!(
+            body.style.as_ref().and_then(|s| s.fg.as_ref()).is_none(),
+            "body row must not set a whole-row fg (would repaint the text)"
+        );
+        let bar_overlays: Vec<_> = body
+            .inline_overlays
+            .iter()
+            .filter(|o| o.style.fg.as_ref().map(accent_is).unwrap_or(false))
+            .collect();
+        assert_eq!(
+            bar_overlays.len(),
+            2,
+            "both the leading and trailing ┃ should be accent-tinted: {:?}",
+            body.inline_overlays
+        );
+        // Each accent overlay covers exactly one `┃` glyph.
+        for o in bar_overlays {
+            assert_eq!(o.end - o.start, '┃'.len_utf8());
+            assert_eq!(&body.text[o.start..o.end], "┃");
+        }
     }
 
     #[test]

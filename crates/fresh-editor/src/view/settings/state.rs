@@ -518,7 +518,6 @@ impl SettingsState {
         // deliberate visits (click, search-jump, Enter on a section).
         let width = self.layout_width;
         if let Some(page) = self.pages.get(self.selected_category) {
-            self.scroll_panel.update_content_height(&page.items, width);
             // When the cursor lands on a section, snap the body's scroll
             // to that section's first item — same UX as clicking a
             // section in the tree. Without this, `ensure_focused_visible`
@@ -527,9 +526,11 @@ impl SettingsState {
             // earlier section and making the cursor visually "stick" on
             // the previous section row.
             if matches!(rows[target], TreeRow::Section { .. }) {
+                self.scroll_panel.update_content_height(&page.items, width);
+                let content_width = self.scroll_panel.content_width(width);
                 let item_y =
                     self.scroll_panel
-                        .item_y_offset(&page.items, self.selected_item, width);
+                        .item_y_offset(&page.items, self.selected_item, content_width);
                 self.scroll_panel.scroll.offset = item_y;
             } else {
                 let selected_item = self.selected_item;
@@ -624,6 +625,7 @@ impl SettingsState {
         let width = self.layout_width;
         if let Some(page) = self.pages.get(self.selected_category) {
             self.scroll_panel.update_content_height(&page.items, width);
+            let content_width = self.scroll_panel.content_width(width);
             // Snap the body to the top of the section. `ensure_visible`
             // would only scroll *just enough* to bring the target item
             // into view, which puts it at the bottom of the viewport
@@ -632,7 +634,7 @@ impl SettingsState {
             // the top".
             let item_y = self
                 .scroll_panel
-                .item_y_offset(&page.items, target_item, width);
+                .item_y_offset(&page.items, target_item, content_width);
             self.scroll_panel.scroll.offset = item_y;
         }
         self.sub_focus = None;
@@ -923,10 +925,6 @@ impl SettingsState {
             for item in &mut page.items {
                 item.style = style;
             }
-        }
-        let width = self.layout_width;
-        if let Some(page) = self.pages.get(self.selected_category) {
-            self.scroll_panel.update_content_height(&page.items, width);
         }
     }
 
@@ -1429,11 +1427,6 @@ impl SettingsState {
         self.focus.set(FocusPanel::Settings);
         // Reset scroll offset but preserve viewport for ensure_visible
         self.scroll_panel.scroll.offset = 0;
-        // Update content height for the new category's items
-        let width = self.layout_width;
-        if let Some(page) = self.pages.get(self.selected_category) {
-            self.scroll_panel.update_content_height(&page.items, width);
-        }
         self.sub_focus = None;
         self.init_map_focus(true);
 
@@ -2518,7 +2511,6 @@ impl SettingsState {
             let selected_item = self.selected_item;
             let width = self.layout_width;
             if let Some(page) = self.pages.get(self.selected_category) {
-                self.scroll_panel.update_content_height(&page.items, width);
                 // Ensure the dropdown item is visible with its new expanded height
                 self.scroll_panel
                     .ensure_focused_visible(&page.items, selected_item, None, width);

@@ -242,37 +242,64 @@ impl ScrollablePanel {
         self.scroll.viewport as usize
     }
 
-    /// Calculate total content height from items at the given width.
-    pub fn update_content_height<I: ScrollItem>(&mut self, items: &[I], width: u16) {
-        let height: u16 = items.iter().map(|i| i.height(width)).sum();
-        self.scroll.set_content_height(height);
+    /// Calculate total content height from items at the given area width.
+    /// Handles the circular dependency between scrollbar presence and item height.
+    pub fn update_content_height<I: ScrollItem>(&mut self, items: &[I], area_width: u16) {
+        // First pass: assume no scrollbar
+        let height1: u16 = items.iter().map(|i| i.height(area_width)).sum();
+        self.scroll.set_content_height(height1);
+
+        // If a scrollbar is needed, it reduces width, which might change height
+        if self.scroll.needs_scrollbar() && area_width > 0 {
+            let height2: u16 = items.iter().map(|i| i.height(area_width - 1)).sum();
+            self.scroll.set_content_height(height2);
+        }
     }
 
-    /// Get Y offset for an item by index at the given width.
-    pub fn item_y_offset<I: ScrollItem>(&self, items: &[I], index: usize, width: u16) -> u16 {
-        items[..index].iter().map(|i| i.height(width)).sum()
+    /// Get the effective content width given an outer area width
+    pub fn content_width(&self, area_width: u16) -> u16 {
+        if self.scroll.needs_scrollbar() {
+            area_width.saturating_sub(1)
+        } else {
+            area_width
+        }
     }
 
-    /// Ensure focused item (and optional sub-region) is visible at the given width.
+    /// Get Y offset for an item by index at the given effective content width.
+    pub fn item_y_offset<I: ScrollItem>(
+        &self,
+        items: &[I],
+        index: usize,
+        content_width: u16,
+    ) -> u16 {
+        items[..index].iter().map(|i| i.height(content_width)).sum()
+    }
+
+    /// Ensure focused item (and optional sub-region) is visible at the given outer width.
     pub fn ensure_focused_visible<I: ScrollItem>(
         &mut self,
         items: &[I],
         focused_index: usize,
         sub_focus: Option<usize>,
-        width: u16,
+        area_width: u16,
     ) {
         if focused_index >= items.len() {
             return;
         }
 
+        // Must sync content height first to know if scrollbar is present
+        self.update_content_height(items, area_width);
+
+        let content_width = self.content_width(area_width);
+
         // Calculate Y offset of focused item
-        let item_y = self.item_y_offset(items, focused_index, width);
+        let item_y = self.item_y_offset(items, focused_index, content_width);
         let item = &items[focused_index];
-        let item_h = item.height(width);
+        let item_h = item.height(content_width);
 
         // If sub-focus specified, use that region
         let (focus_y, focus_h) = if let Some(sub_id) = sub_focus {
-            let regions = item.focus_regions(width);
+            let regions = item.focus_regions(content_width);
             if let Some(region) = regions.iter().find(|r| r.id == sub_id) {
                 (item_y + region.y_offset, region.height)
             } else {
@@ -281,7 +308,6 @@ impl ScrollablePanel {
         } else {
             (item_y, item_h)
         };
-
         self.scroll.ensure_visible(focus_y, focus_h);
     }
 
@@ -470,6 +496,12 @@ mod tests {
     impl ScrollItem for TestItem {
         fn height(&self, _width: u16) -> u16 {
             self.height
+        }
+    }
+
+    impl ScrollItem for fn(u16) -> u16 {
+        fn height(&self, width: u16) -> u16 {
+            self(width)
         }
     }
 
@@ -663,5 +695,75 @@ mod tests {
         panel.ensure_focused_visible(&items, 0, Some(2), TEST_WIDTH);
         // Region at y=7, h=1, viewport=5, so offset should be 7+1-5=3
         assert_eq!(panel.scroll.offset, 3);
+    }
+
+    /// Regression test for the scrollbar-width mismatch bug.
+    ///
+    /// ## Background
+    ///
+    /// `ScrollablePanel::render()` reserves one column for the scrollbar when
+    /// `needs_scrollbar()` is true, so items are rendered at `area_width - 1`.
+    /// Before the fix, `ensure_focused_visible` computed Y-offsets using the
+    /// *full* `area_width`, not the narrower render width. When items are
+    /// taller at the narrow width (because description text wraps onto an
+    /// extra line), the cumulative Y position of items deep in the list drifts
+    /// below the offset that `ensure_focused_visible` calculated — leaving the
+    /// target item off-screen after the jump.
+    ///
+    /// ## Scenario
+    ///
+    /// - `area_width = 10`, `viewport = 5`
+    /// - 4 "wide" items: height 2 at w ≥ 10, height 3 at w < 10
+    /// - 1 "target" item (index 4): fixed height 2 at any width
+    ///
+    /// Content height at w=10:  4×2 + 2 = 10  →  needs_scrollbar (10 > 5)
+    /// Render width:            10 − 1 = 9
+    /// Content height at w=9:   4×3 + 2 = 14
+    ///
+    /// Y-position of item 4 at render width 9: 3+3+3+3 = **12**
+    ///
+    /// | Path          | offset computed | item 4 visible?            |
+    /// |---------------|-----------------|----------------------------|
+    /// | Bug (w=10)    | 8+2−5 = 5       | 12..14 ∉ [5..10) → **NO** |
+    /// | Fix (w=9)     | 12+2−5 = 9      | 12..14 ⊆ [9..14) → **YES**|
+    #[test]
+    fn test_ensure_focused_visible_uses_render_width_when_scrollbar_present() {
+        let area_width = 10u16;
+        let viewport = 5u16;
+
+        // 4 items that grow by 1 row when the scrollbar steals a column,
+        // plus the target item at index 4 (fixed height).
+        let mut items: Vec<fn(u16) -> u16> = vec![|w| if w >= 10 { 2 } else { 3 }; 4];
+        items.push(|_| 2);
+
+        let mut panel = ScrollablePanel::new();
+        panel.set_viewport(viewport);
+        panel.update_content_height(&items, area_width);
+
+        // The scrollbar must be active for the bug to manifest.
+        assert!(
+            panel.needs_scrollbar(),
+            "content height ({}) should exceed viewport ({}) to trigger the scrollbar",
+            panel.scroll.content_height,
+            viewport
+        );
+
+        // Ask the panel to make item 4 visible.
+        panel.ensure_focused_visible(&items, 4, None, area_width);
+
+        // The render engine will use (area_width - 1) = 9 for item heights.
+        let render_width = area_width - 1;
+        let item4_y: u16 = items[..4].iter().map(|i| i.height(render_width)).sum();
+        let item4_h = items[4].height(render_width);
+        let offset = panel.offset();
+
+        // Item 4 must lie fully within the rendered viewport.
+        assert!(
+            offset <= item4_y && item4_y + item4_h <= offset + viewport,
+            "Item 4 at render-y={item4_y}..{} must be visible in viewport \
+             [{offset}..{}), but offset was computed as {offset}",
+            item4_y + item4_h,
+            offset + viewport,
+        );
     }
 }

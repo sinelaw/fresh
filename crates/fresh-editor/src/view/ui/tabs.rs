@@ -68,6 +68,8 @@ pub struct TabLayout {
     pub left_scroll_area: Option<Rect>,
     /// Hit area for the right scroll button (if shown)
     pub right_scroll_area: Option<Rect>,
+    /// Hit area for the trailing "+" new-tab button (if visible)
+    pub new_tab_area: Option<Rect>,
 }
 
 /// Hit test result for tab interactions
@@ -83,6 +85,8 @@ pub enum TabHit {
     ScrollLeft,
     /// Hit the right scroll button
     ScrollRight,
+    /// Hit the trailing "+" new-tab button
+    NewTabButton,
 }
 
 impl TabLayout {
@@ -93,6 +97,7 @@ impl TabLayout {
             bar_area,
             left_scroll_area: None,
             right_scroll_area: None,
+            new_tab_area: None,
         }
     }
 
@@ -135,6 +140,13 @@ impl TabLayout {
             }
         }
 
+        // Check the trailing "+" new-tab button
+        if let Some(new_tab_area) = self.new_tab_area {
+            if point_in_rect(new_tab_area, x, y) {
+                return Some(TabHit::NewTabButton);
+            }
+        }
+
         // Check bar background
         if point_in_rect(self.bar_area, x, y) {
             return Some(TabHit::BarBackground);
@@ -146,6 +158,30 @@ impl TabLayout {
 
 /// Renders the tab bar showing open buffers
 pub struct TabsRenderer;
+
+/// The trailing "+" new-tab button cell text.
+const NEW_TAB_BUTTON_TEXT: &str = " + ";
+/// Display width (columns) of [`NEW_TAB_BUTTON_TEXT`].
+pub const NEW_TAB_BUTTON_WIDTH: usize = 3;
+
+/// Width available for laying out / scrolling the real tabs, given the total
+/// width of all tabs (including inter-tab separators) and the full tab-bar
+/// width.
+///
+/// When the tabs plus an inline "+" button fit, the "+" is rendered inline
+/// right after the last tab and the full bar width is available. When they
+/// overflow, the "+" is pinned to the right edge of the bar and its column is
+/// reserved here, so the tabs scroll within the remaining width and never slip
+/// underneath the pinned button.
+pub fn tabs_render_width(tabs_total: usize, bar_width: usize) -> usize {
+    let sep_before_plus = if tabs_total > 0 { 1 } else { 0 };
+    let inline_total = tabs_total + sep_before_plus + NEW_TAB_BUTTON_WIDTH;
+    if inline_total > bar_width && bar_width > NEW_TAB_BUTTON_WIDTH {
+        bar_width - NEW_TAB_BUTTON_WIDTH
+    } else {
+        bar_width
+    }
+}
 
 /// Compute scroll offset to bring the active tab into view.
 /// Always scrolls to put the active tab at a comfortable position.
@@ -563,11 +599,43 @@ impl TabsRenderer {
                 separator_offset += 1;
             }
         }
+        // Decide where the trailing "+" new-tab button goes. When the tabs
+        // plus an inline "+" fit, the "+" is appended into the scroll flow and
+        // sits right after the last tab. When they overflow, the "+" is pinned
+        // to the right edge of the bar (`tabs_render_width` reserves its
+        // column) and drawn on top after the main paragraph render below.
+        let tabs_total: usize = final_spans.iter().map(|(_, w)| w).sum();
+        let max_width = tabs_render_width(tabs_total, area.width as usize);
+        let pin_plus = max_width < area.width as usize;
+
+        let mut inline_plus_range: Option<(usize, usize)> = None;
+        if !pin_plus {
+            let plus_start = if !rendered_targets.is_empty() {
+                // Separator between the last real tab and the "+" button
+                final_spans.push((
+                    Span::styled(" ", Style::default().bg(theme.tab_separator_bg)),
+                    1,
+                ));
+                tabs_total + 1
+            } else {
+                tabs_total
+            };
+            final_spans.push((
+                Span::styled(
+                    NEW_TAB_BUTTON_TEXT.to_string(),
+                    Style::default()
+                        .fg(theme.tab_inactive_fg)
+                        .bg(theme.tab_inactive_bg),
+                ),
+                NEW_TAB_BUTTON_WIDTH,
+            ));
+            inline_plus_range = Some((plus_start, plus_start + NEW_TAB_BUTTON_WIDTH));
+        }
+
         #[allow(clippy::let_and_return)]
         let all_tab_spans = final_spans;
 
         let mut current_spans: Vec<Span> = Vec::new();
-        let max_width = area.width as usize;
 
         let total_width: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
         // Use rendered_targets (not tab_targets) to find active index,
@@ -676,6 +744,24 @@ impl TabsRenderer {
         let paragraph = Paragraph::new(line).block(block);
         frame.render_widget(paragraph, area);
 
+        // Pinned "+" button: when the tabs overflow, draw the button on top of
+        // the bar at the right edge. The main paragraph above filled the
+        // reserved columns with the separator background; overwrite them with
+        // the button cell here so it stays visible regardless of scroll.
+        if pin_plus {
+            let plus_w = NEW_TAB_BUTTON_WIDTH as u16;
+            let plus_x = area.x + area.width.saturating_sub(plus_w);
+            let plus_rect = Rect::new(plus_x, area.y, plus_w, 1);
+            let plus_para = Paragraph::new(Line::from(vec![Span::styled(
+                NEW_TAB_BUTTON_TEXT.to_string(),
+                Style::default()
+                    .fg(theme.tab_inactive_fg)
+                    .bg(theme.tab_inactive_bg),
+            )]));
+            frame.render_widget(plus_para, plus_rect);
+            layout.new_tab_area = Some(plus_rect);
+        }
+
         // Compute and return hit areas for mouse interaction
         // We need to map the logical tab positions to screen positions accounting for:
         // 1. The scroll offset
@@ -745,6 +831,34 @@ impl TabsRenderer {
             });
         }
 
+        // Map the inline "+" button's logical range to a screen rect using the
+        // same visibility/clamping logic as the per-tab mapping above. (The
+        // pinned variant set `new_tab_area` directly after the render.)
+        if let Some((plus_logical_start, plus_logical_end)) = inline_plus_range {
+            let visible_start = offset;
+            let visible_end = offset + available;
+            if plus_logical_end > visible_start && plus_logical_start < visible_end {
+                let screen_start = if plus_logical_start >= visible_start {
+                    area.x
+                        + left_indicator_offset as u16
+                        + (plus_logical_start - visible_start) as u16
+                } else {
+                    area.x + left_indicator_offset as u16
+                };
+                let screen_end = if plus_logical_end <= visible_end {
+                    area.x
+                        + left_indicator_offset as u16
+                        + (plus_logical_end - visible_start) as u16
+                } else {
+                    area.x + left_indicator_offset as u16 + available as u16
+                };
+                let width = screen_end.saturating_sub(screen_start);
+                if width > 0 {
+                    layout.new_tab_area = Some(Rect::new(screen_start, area.y, width, 1));
+                }
+            }
+        }
+
         layout
     }
 
@@ -787,6 +901,26 @@ impl TabsRenderer {
 mod tests {
     use super::*;
     use crate::model::event::BufferId;
+
+    #[test]
+    fn tabs_render_width_inline_when_fits() {
+        // Tabs + inline "+" fit: full width available, no reservation.
+        assert_eq!(tabs_render_width(10, 40), 40);
+        // Exactly fits inline: tabs(33) + sep(1) + plus(3) = 37 <= 40.
+        assert_eq!(tabs_render_width(33, 40), 40);
+        // No tabs: just the "+" — still inline.
+        assert_eq!(tabs_render_width(0, 40), 40);
+    }
+
+    #[test]
+    fn tabs_render_width_pins_when_overflow() {
+        // tabs(37) + sep(1) + plus(3) = 41 > 40 → reserve 3.
+        assert_eq!(tabs_render_width(37, 40), 37);
+        // Heavy overflow still just reserves the button column.
+        assert_eq!(tabs_render_width(200, 40), 37);
+        // Degenerate: bar narrower than the button — fall back to full width.
+        assert_eq!(tabs_render_width(100, 2), 2);
+    }
 
     #[test]
     fn scroll_to_show_active_first_tab() {

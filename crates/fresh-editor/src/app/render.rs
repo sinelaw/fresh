@@ -1548,6 +1548,12 @@ impl Editor {
             self.render_file_explorer_context_menu(frame, &menu);
         }
 
+        // Render the "+" new-tab popup menu if open
+        let new_tab_menu = self.active_window().new_tab_menu.clone();
+        if let Some(menu) = new_tab_menu {
+            self.render_new_tab_menu(frame, &menu);
+        }
+
         // Record non-editor region theme keys for the theme inspector
         self.record_non_editor_theme_regions();
 
@@ -1653,6 +1659,14 @@ impl Editor {
                 .as_ref()
                 .map(|f| f.fullscreen)
                 .unwrap_or(false);
+            // An anchored context-menu popup is unobtrusive: it neither
+            // dims the dock nor confines itself to `chrome_area` (its
+            // anchor is an absolute screen cell that may sit over the
+            // dock). Treat it like a non-dimming, full-frame placement.
+            let is_anchored = matches!(
+                self.floating_widget_panel.as_ref().map(|f| f.placement),
+                Some(super::PanelPlacement::Anchored { .. })
+            );
             // A centered modal makes the *whole* UI a passive, dimmed
             // background — the dock included. The dock was drawn above at
             // full brightness. A beside-dock modal only dims `chrome_area`,
@@ -1663,7 +1677,7 @@ impl Editor {
             // modal is up (the host blurs it on mount and the modal swallows
             // keys/clicks/wheel), so dimming it makes that passivity visible
             // rather than leaving it looking live beside the dialog.
-            if !fullscreen {
+            if !fullscreen && !is_anchored {
                 if let Some(dock) = dock_area {
                     if self.dock.is_some() {
                         crate::view::dimming::apply_dimming(frame, dock);
@@ -1679,7 +1693,11 @@ impl Editor {
             // with the dock — mirroring the settings / keybinding-editor
             // modals, which already lay into `chrome_area`. A `fullscreen`
             // panel instead gets the whole frame (`size`).
-            let modal_area = if fullscreen { size } else { chrome_area };
+            let modal_area = if fullscreen || is_anchored {
+                size
+            } else {
+                chrome_area
+            };
             self.render_floating_widget_panel(frame, modal_area, super::PanelSlot::Floating);
         }
     }
@@ -3513,6 +3531,64 @@ impl Editor {
         frame.render_widget(paragraph, area);
     }
 
+    /// Render the "+" new-tab popup menu (New Terminal / New File).
+    fn render_new_tab_menu(&self, frame: &mut Frame, menu: &super::types::NewTabMenu) {
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        let items = super::types::NewTabMenuItem::all();
+        let menu_width = super::types::NEW_TAB_MENU_WIDTH;
+        let menu_height = items.len() as u16 + 2; // items + borders
+
+        let screen_width = frame.area().width;
+        let screen_height = frame.area().height;
+
+        let menu_x = if menu.position.0 + menu_width > screen_width {
+            screen_width.saturating_sub(menu_width)
+        } else {
+            menu.position.0
+        };
+        let menu_y = if menu.position.1 + menu_height > screen_height {
+            screen_height.saturating_sub(menu_height)
+        } else {
+            menu.position.1
+        };
+
+        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
+
+        frame.render_widget(Clear, area);
+
+        let mut lines = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let is_highlighted = idx == menu.highlighted;
+
+            let style = if is_highlighted {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_highlight_fg)
+                    .bg(self.theme.read().unwrap().menu_highlight_bg)
+            } else {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
+                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
+            };
+
+            let label = item.label();
+            let content_width = (menu_width as usize).saturating_sub(2);
+            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
+
+            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
+            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
+
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(paragraph, area);
+    }
+
     /// Render the file explorer context menu
     fn render_file_explorer_context_menu(
         &self,
@@ -3993,21 +4069,47 @@ impl Editor {
         // modal overlay. The centered placement keeps the historical
         // fit-to-content + background-dim behaviour.
         let is_dock = matches!(placement, super::PanelPlacement::LeftDock { .. });
-        let overlay_rect = if is_dock {
-            area
-        } else {
-            let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
-            let needed_h = (entries.len() as u16).saturating_add(2);
-            let effective_h = needed_h.min(requested.height).max(3);
-            ratatui::layout::Rect {
-                x: requested.x,
-                y: area.y + (area.height.saturating_sub(effective_h)) / 2,
-                width: requested.width,
-                height: effective_h,
+        let overlay_rect = match placement {
+            super::PanelPlacement::LeftDock { .. } => area,
+            super::PanelPlacement::Anchored { x, y } => {
+                // Size to the rendered content (not a percentage): an
+                // unobtrusive popup hugs its items. Width = widest entry +
+                // borders; height = entry count + borders. Then clamp the
+                // top-left so the whole box stays on screen.
+                use crate::primitives::display_width::str_width;
+                let content_w = entries
+                    .iter()
+                    .map(|e| str_width(&e.text) as u16)
+                    .max()
+                    .unwrap_or(0);
+                let w = content_w.saturating_add(2).clamp(6, area.width);
+                let needed_h = (entries.len() as u16).saturating_add(2);
+                let h = needed_h.clamp(3, area.height);
+                let max_x = area.x + area.width.saturating_sub(w);
+                let max_y = area.y + area.height.saturating_sub(h);
+                ratatui::layout::Rect {
+                    x: x.clamp(area.x, max_x),
+                    y: y.clamp(area.y, max_y),
+                    width: w,
+                    height: h,
+                }
+            }
+            super::PanelPlacement::Centered => {
+                let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
+                let needed_h = (entries.len() as u16).saturating_add(2);
+                let effective_h = needed_h.min(requested.height).max(3);
+                ratatui::layout::Rect {
+                    x: requested.x,
+                    y: area.y + (area.height.saturating_sub(effective_h)) / 2,
+                    width: requested.width,
+                    height: effective_h,
+                }
             }
         };
 
-        if !is_dock {
+        // Only the centered modal dims the background; the dock and the
+        // anchored context-menu popup paint over the editor without it.
+        if matches!(placement, super::PanelPlacement::Centered) {
             crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         }
         frame.render_widget(Clear, overlay_rect);

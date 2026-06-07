@@ -573,6 +573,36 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
 /// common single-digit case (the text is suffix-padded, not number-padded).
 const CURSOR_COL_RESERVE: usize = 3;
 
+/// Compute the cursor column as the number of grapheme clusters between the
+/// start of the cursor's line and the cursor. The line start is derived from
+/// the live cursor byte position (not a cached line number), so it stays
+/// correct in diff/split views where the two can disagree. Counting graphemes
+/// — rather than bytes or code points — keeps the reported column consistent
+/// with the editor's grapheme-based cursor movement.
+fn cursor_column(buffer: &mut crate::model::buffer::TextBuffer, cursor_position: usize) -> usize {
+    let mut iter = buffer.line_iterator(cursor_position, 80);
+    let line_start = iter.current_position();
+    let byte_col = cursor_position.saturating_sub(line_start);
+    if byte_col == 0 {
+        return 0;
+    }
+    // Prefer counting grapheme clusters over the line's text so multi-byte
+    // characters advance the column by one (issue #2090). Composite/diff
+    // buffers don't expose readable line content here; in that case fall back
+    // to the byte distance, which equals the grapheme count for the ASCII
+    // content those views render and matches the prior behavior.
+    match iter.next_line() {
+        Some((_, text)) if text.len() >= byte_col => {
+            let mut end = byte_col;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            crate::primitives::grapheme::grapheme_count(&text[..end])
+        }
+        _ => byte_col,
+    }
+}
+
 /// Format the cursor's `Ln X, Col Y` indicator so its rendered width is
 /// stable as the cursor moves. The numbers themselves are emitted with
 /// their natural width — preserving the format existing tests and screen-
@@ -867,10 +897,8 @@ impl StatusBarRenderer {
                 let cursor = *ctx.cursors.primary();
                 let line_count = ctx.state.buffer.line_count();
                 let text = if let Some(lc) = line_count {
-                    let cursor_iter = ctx.state.buffer.line_iterator(cursor.position, 80);
-                    let line_start = cursor_iter.current_position();
-                    let col = cursor.position.saturating_sub(line_start);
                     let line = ctx.state.primary_cursor_line_number.value();
+                    let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     format_cursor_position(line + 1, col + 1, lc)
                 } else {
                     format!("Byte {}", cursor.position)
@@ -887,10 +915,8 @@ impl StatusBarRenderer {
                 let cursor = *ctx.cursors.primary();
                 let line_count = ctx.state.buffer.line_count();
                 let text = if let Some(lc) = line_count {
-                    let cursor_iter = ctx.state.buffer.line_iterator(cursor.position, 80);
-                    let line_start = cursor_iter.current_position();
-                    let col = cursor.position.saturating_sub(line_start);
                     let line = ctx.state.primary_cursor_line_number.value();
+                    let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     format_cursor_position_compact(line + 1, col + 1, lc)
                 } else {
                     format!("{}", cursor.position)
@@ -2235,5 +2261,62 @@ mod tests {
         let top = format_cursor_position(1, 1, 10_000);
         let high = format_cursor_position(9_999, 999, 10_000);
         assert_eq!(top.len(), high.len());
+    }
+
+    #[test]
+    fn test_cursor_column_counts_chars_not_bytes() {
+        let mut buf =
+            crate::model::buffer::TextBuffer::from_str_test("hello\ncafé résumé\nworld\n");
+        let line_start = buf.line_start_offset(1).unwrap();
+
+        // 'r' starts at byte 6 ("café " = 5 chars / 6 bytes), char column 5.
+        let col = cursor_column(&mut buf, line_start + 6);
+        assert_eq!(
+            col, 5,
+            "cursor at 'r' should be column 5, not byte offset 6"
+        );
+
+        // 'é' starts at byte 3 (after "caf"), column 3.
+        let col = cursor_column(&mut buf, line_start + 3);
+        assert_eq!(col, 3, "cursor at 'é' should be column 3");
+
+        // 'u' in "résumé" sits at byte 10, column 8.
+        let col = cursor_column(&mut buf, line_start + 10);
+        assert_eq!(col, 8, "cursor at 'u' should be column 8");
+    }
+
+    #[test]
+    fn test_cursor_column_counts_grapheme_clusters() {
+        // Line 1 is "e + combining acute" followed by 'x'. The accented 'e' is
+        // two code points but one grapheme; counting graphemes (not chars or
+        // bytes) keeps the column aligned with grapheme-based cursor movement.
+        let mut buf = crate::model::buffer::TextBuffer::from_str_test("ab\ne\u{0301}x\n");
+        let line_start = buf.line_start_offset(1).unwrap();
+
+        // 'x' sits after the 1-byte 'e' and 2-byte combining accent (byte 3),
+        // which is char column 2 but grapheme column 1.
+        let col = cursor_column(&mut buf, line_start + 3);
+        assert_eq!(
+            col, 1,
+            "accented 'e' is one grapheme; 'x' should be column 1, not 2"
+        );
+    }
+
+    #[test]
+    fn test_cursor_column_zwj_emoji_is_one_grapheme() {
+        // Family emoji is several code points joined by ZWJ but a single
+        // grapheme cluster (18 bytes).
+        let mut buf = crate::model::buffer::TextBuffer::from_str_test("👨\u{200D}👩\u{200D}👧z\n");
+        let line_start = buf.line_start_offset(0).unwrap();
+
+        let col = cursor_column(&mut buf, line_start + 18);
+        assert_eq!(col, 1, "ZWJ family emoji should count as one column");
+    }
+
+    #[test]
+    fn test_cursor_column_at_line_start_is_zero() {
+        let mut buf = crate::model::buffer::TextBuffer::from_str_test("hello\nworld\n");
+        let line_start = buf.line_start_offset(1).unwrap();
+        assert_eq!(cursor_column(&mut buf, line_start), 0);
     }
 }

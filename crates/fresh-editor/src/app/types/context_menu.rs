@@ -3,6 +3,9 @@ use rust_i18n::t;
 
 pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 24;
 
+/// Width of the "+" new-tab popup menu (fits "New Terminal" + padding).
+pub const NEW_TAB_MENU_WIDTH: u16 = 18;
+
 /// Tab context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuItem {
@@ -88,6 +91,70 @@ impl TabContextMenu {
     /// Move highlight up
     pub fn prev_item(&mut self) {
         let items = TabContextMenuItem::all();
+        self.highlighted = if self.highlighted == 0 {
+            items.len() - 1
+        } else {
+            self.highlighted - 1
+        };
+    }
+}
+
+/// Items in the "+" new-tab popup menu (shown when clicking the `+`
+/// button at the end of the tab bar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewTabMenuItem {
+    /// Open a new terminal in the split
+    NewTerminal,
+    /// Create a new empty file buffer
+    NewFile,
+}
+
+impl NewTabMenuItem {
+    /// Get all menu items in order.
+    pub fn all() -> &'static [Self] {
+        &[Self::NewTerminal, Self::NewFile]
+    }
+
+    /// Get the display label for this menu item.
+    pub fn label(&self) -> String {
+        match self {
+            Self::NewTerminal => t!("tab.new_terminal").to_string(),
+            Self::NewFile => t!("tab.new_file").to_string(),
+        }
+    }
+}
+
+/// State for the "+" new-tab popup menu (left-click on the tab bar's
+/// trailing `+` button).
+#[derive(Debug, Clone)]
+pub struct NewTabMenu {
+    /// The split whose tab bar's `+` button was clicked.
+    pub split_id: LeafId,
+    /// Screen position where the menu should appear (x, y).
+    pub position: (u16, u16),
+    /// Currently highlighted menu item index.
+    pub highlighted: usize,
+}
+
+impl NewTabMenu {
+    /// Create a new "+" popup menu anchored at the given screen position.
+    pub fn new(split_id: LeafId, x: u16, y: u16) -> Self {
+        Self {
+            split_id,
+            position: (x, y),
+            highlighted: 0,
+        }
+    }
+
+    /// Move highlight down.
+    pub fn next_item(&mut self) {
+        let items = NewTabMenuItem::all();
+        self.highlighted = (self.highlighted + 1) % items.len();
+    }
+
+    /// Move highlight up.
+    pub fn prev_item(&mut self) {
+        let items = NewTabMenuItem::all();
         self.highlighted = if self.highlighted == 0 {
             items.len() - 1
         } else {

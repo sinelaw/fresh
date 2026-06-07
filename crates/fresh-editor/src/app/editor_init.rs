@@ -374,6 +374,7 @@ impl Editor {
         std::sync::Arc::get_mut(&mut grammar_registry)
             .expect("defaults_only returned a shared Arc")
             .apply_language_config(&config.languages);
+        crate::config::reload_indent_overrides(&config.languages);
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
         // first flush_pending_grammars() call so that plugin-registered grammars
@@ -429,6 +430,7 @@ impl Editor {
         std::sync::Arc::get_mut(&mut grammar_registry)
             .expect("grammar registry Arc must be uniquely owned at for_test entry")
             .apply_language_config(&config.languages);
+        crate::config::reload_indent_overrides(&config.languages);
         let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(
             config,

@@ -46,13 +46,15 @@ plugins = [
     "dep:oxc_parser",
     "dep:oxc_span",
 ]
-# Tree-sitter language grammars + AST-based features (precise indent,
-# semantic reference highlighting, tree-sitter syntax highlighting for the
-# languages syntect doesn't cover). Enabled by default. When disabled, the
-# editor falls back to syntect (TextMate) highlighting and pattern-based
-# indentation only — this drops ~19 generated grammar crates from the
-# binary. Requires `runtime` (which provides the `fresh-languages` types).
-tree-sitter = ["fresh-languages/all-languages"]
+# Tree-sitter AST features (precise indent, scope-aware reference highlighting,
+# and tree-sitter syntax highlighting for the languages syntect can't cover).
+# Enabled by default, but only bundles the grammars that *must* use tree-sitter
+# — JavaScript, TypeScript, JSONC, Templ and Go (see
+# `fresh-languages/bundled-languages`). Every other language is highlighted by
+# syntect and indented by the regex indent-rules tier, so its parse table is
+# not linked. When this feature is disabled entirely, all tree-sitter code is
+# dropped and indentation is pattern/rules-based. Requires `runtime`.
+tree-sitter = ["fresh-languages/bundled-languages"]
 # Embed plugins into the binary as a fallback when no disk plugins are found
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)

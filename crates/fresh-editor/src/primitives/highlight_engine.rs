@@ -1642,8 +1642,10 @@ mod tests {
 
     #[test]
     fn test_tree_sitter_direct() {
-        // Verify tree-sitter highlighter can be created directly for Rust
-        let highlighter = Highlighter::new(Language::Rust);
+        // Verify a tree-sitter highlighter can be created directly for a
+        // bundled grammar (TypeScript — most grammars were dropped and are now
+        // highlighted by syntect instead).
+        let highlighter = Highlighter::new(Language::TypeScript);
         assert!(highlighter.is_ok());
     }
 

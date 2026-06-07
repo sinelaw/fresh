@@ -254,7 +254,10 @@ fn test_ctrl_d_multicursor_e2e() {
 #[test]
 fn test_no_auto_close_quote_inside_string() {
     let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("test.rs");
+    // TypeScript: a bundled tree-sitter grammar, so the highlighter populates
+    // string scopes (most grammars were dropped; this test needs scope info to
+    // know the cursor is inside a string).
+    let file_path = temp_dir.path().join("test.ts");
     // Pre-fill with content containing a string. Cursor will start at 0.
     std::fs::write(&file_path, "let x = \"hello\";").unwrap();
 

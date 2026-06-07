@@ -414,8 +414,8 @@ mod tests {
 
     #[test]
     fn test_highlighter_basic() {
-        let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
-        let mut highlighter = Highlighter::new(Language::Rust).unwrap();
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // Highlight entire buffer
@@ -462,11 +462,11 @@ mod tests {
         // Create a large buffer
         let mut content = String::new();
         for i in 0..1000 {
-            content.push_str(&format!("fn function_{i}() {{}}\n"));
+            content.push_str(&format!("function function_{i}() {{}}\n"));
         }
         let buffer = Buffer::from_str_test(&content);
 
-        let mut highlighter = Highlighter::new(Language::Rust).unwrap();
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // Highlight only a small viewport in the middle
@@ -491,8 +491,8 @@ mod tests {
 
     #[test]
     fn test_cache_invalidation() {
-        let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
-        let mut highlighter = Highlighter::new(Language::Rust).unwrap();
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
 
         // First highlight
@@ -514,8 +514,8 @@ mod tests {
 
     #[test]
     fn test_theme_affects_colors() {
-        let buffer = Buffer::from_str_test("fn main() {\n    println!(\"Hello\");\n}");
-        let mut highlighter = Highlighter::new(Language::Rust).unwrap();
+        let buffer = Buffer::from_str_test("function main() {\n    console.log(\"Hello\");\n}");
+        let mut highlighter = Highlighter::new(Language::TypeScript).unwrap();
 
         // Highlight with dark theme
         let dark_theme = Theme::load_builtin(theme::THEME_DARK).unwrap();

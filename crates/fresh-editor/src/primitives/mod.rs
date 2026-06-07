@@ -54,6 +54,10 @@ pub mod highlight_types;
 // These provide pure-Rust implementations without tree-sitter
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod indent_pattern;
+// Per-language regex indentation rules (VS Code style). Pure Rust; works with
+// or without tree-sitter. See docs/internal/indentation-rules-design.md.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod indent_rules;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod reference_highlight_text;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
