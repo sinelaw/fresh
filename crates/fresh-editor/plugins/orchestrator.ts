@@ -463,6 +463,12 @@ interface OpenDialogState {
   projectFilter: string | null;
   // `true` while the dock project dropdown overlay is open.
   projectMenuOpen: boolean;
+  // Keyboard cursor (highlighted row) within the open project
+  // dropdown, indexing `projectMenuKeys()` (0 = "All projects").
+  // Distinct from `projectFilter`, which is the *applied* scope shown
+  // with a `●`; this is just where ↑/↓ currently sit before Enter
+  // commits. Only meaningful while `projectMenuOpen`.
+  projectMenuIndex: number;
 }
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -486,6 +492,25 @@ let dockBlurred = false;
 // Monotonic token so a rapid run of ↑/↓ only commits the *last*
 // selection after the debounce window (30ms) — see `scheduleDockSwitch`.
 let dockSwitchToken = 0;
+// Right-click context menu for a dock session row. At `stage: "menu"`
+// it's an unobtrusive content-sized popup anchored at the click (no
+// background dim) offering Visit / Archive / Delete against one session.
+// Choosing Archive/Delete swaps the SAME panel to a centered, dimmed
+// `stage: "confirm"` modal (the destructive actions require a
+// confirmation), reusing `buildConfirmPane`. Visit acts immediately.
+// `anchorCol`/`anchorRow` are the right-click cell, kept so a return
+// from confirm→menu (Cancel) re-anchors the popup where it opened.
+type DockMenuState =
+  | { sessionId: number; anchorCol: number; anchorRow: number; stage: "menu" }
+  | {
+      sessionId: number;
+      anchorCol: number;
+      anchorRow: number;
+      stage: "confirm";
+      action: "archive" | "delete";
+    };
+let dockMenuPanel: FloatingWidgetPanel | null = null;
+let dockMenuState: DockMenuState | null = null;
 // Default dock width on a "typical" terminal, and the bounds the
 // responsive width is clamped to. The dock scales with the terminal
 // (`dockDefaultWidth`) between these; a user drag still overrides it
@@ -2227,6 +2252,21 @@ function refreshOpenDialog(): void {
   }
 }
 
+// Move the dock's highlighted row onto the active window. Used when the
+// active session changes from *outside* the dock's own ↑/↓ live-switch —
+// a new session is created, or another window is focused — so the dock,
+// which is a passive mirror while blurred, highlights the session the
+// editor actually switched to instead of stranding the highlight on the
+// previously-active row. No-op when the active window isn't in the
+// (filtered) list.
+function syncDockSelectionToActive(): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  const idx = openDialog.filteredIds.indexOf(editor.activeWindow());
+  if (idx < 0) return;
+  openDialog.selectedIndex = idx;
+  openPanel.setSelectedIndex("sessions", idx);
+}
+
 // =============================================================================
 // PR probe — opportunistic `gh` integration for the pill's second line
 //
@@ -2508,6 +2548,7 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     bulkInFlight: null,
     projectFilter: asDock ? lastDockProjectFilter : null,
     projectMenuOpen: false,
+    projectMenuIndex: 0,
   };
   // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
   // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
@@ -2693,37 +2734,122 @@ function dockTitleRow(): WidgetSpec {
   };
 }
 
+// Option keys for the dock's project dropdown, in display order. Index 0
+// is always "All projects" (the empty-string key); the rest are the
+// projects with a session in the worktree/trivial-filtered set. The
+// project menu's keyboard cursor (`projectMenuIndex`) and the
+// `dock_menu_*` nav handlers index into this list, so it's the single
+// source of truth for both render and navigation.
+function projectMenuKeys(): string[] {
+  return ["", ...dockProjectOptions()];
+}
+
+// The `project-pick:<key>` widget key for a menu row — the host reads
+// this focus key to recognise that the dropdown (not the session list)
+// owns the keyboard, and to route ↑/↓/Enter/Esc to the `dock_menu_*`
+// events. Empty suffix = "All projects".
+function projectPickKey(optionKey: string): string {
+  return `project-pick:${optionKey}`;
+}
+
 // Floating menu for the dock's project dropdown: "All projects" plus
 // every project with a session in the worktree/trivial-filtered set.
 // Anchored just under the toolbar via `overlay`, so it paints over the
 // rows below without reflowing them. Each option is a button whose key
 // (`project-pick:<key>`, empty suffix = all) the widget_event handler
-// decodes.
+// decodes. The `●` marks the *applied* filter; the `primary` intent
+// marks the keyboard *cursor* (`projectMenuIndex`) — two separate
+// signals so ↑/↓ can move the cursor over options without yet applying
+// them, the way a standard dropdown behaves.
 function dockProjectMenu(): WidgetSpec {
   const cur = openDialog?.projectFilter ?? null;
-  const opts = dockProjectOptions();
-  const rows: WidgetSpec[] = [
-    row(
-      button(cur === null ? "● All projects" : "  All projects", {
-        key: "project-pick:",
-        intent: cur === null ? "primary" : "normal",
+  const keys = projectMenuKeys();
+  const cursor = clampMenuIndex(openDialog?.projectMenuIndex ?? 0, keys.length);
+  const rows: WidgetSpec[] = keys.map((key, i) => {
+    const applied = key === "" ? cur === null : key === cur;
+    const label = key === "" ? "All projects" : projectLabel(key);
+    return row(
+      button((applied ? "● " : "  ") + label, {
+        key: projectPickKey(key),
+        intent: i === cursor ? "primary" : "normal",
       }),
       flexSpacer(),
-    ),
-  ];
-  for (const key of opts) {
-    const sel = key === cur;
-    rows.push(
-      row(
-        button((sel ? "● " : "  ") + projectLabel(key), {
-          key: `project-pick:${key}`,
-          intent: sel ? "primary" : "normal",
-        }),
-        flexSpacer(),
-      ),
     );
-  }
+  });
   return overlay(labeledSection({ label: "project", child: col(...rows) }));
+}
+
+// Clamp a menu cursor into `[0, len)`, tolerating an empty list.
+function clampMenuIndex(idx: number, len: number): number {
+  if (len <= 0) return 0;
+  return Math.max(0, Math.min(idx, len - 1));
+}
+
+// Open the dock's project dropdown and hand it the keyboard. Seeds the
+// cursor on the *applied* option (so ↑/↓ start from where you are) and
+// moves panel focus onto that option's button — which is the signal the
+// host uses to route nav keys here instead of the session list.
+function openProjectMenu(): void {
+  if (!openDialog || !openPanel) return;
+  const keys = projectMenuKeys();
+  const applied = openDialog.projectFilter;
+  const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
+  openDialog.projectMenuOpen = true;
+  openDialog.projectMenuIndex = clampMenuIndex(idx, keys.length);
+  // Render the menu first so its buttons exist in the spec, *then* move
+  // focus onto the cursor row — otherwise the host re-clamps an unknown
+  // focus key back to the first tabbable.
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(projectPickKey(keys[openDialog.projectMenuIndex]));
+}
+
+// Close the dropdown and return the keyboard to the session list.
+function closeProjectMenu(): void {
+  if (!openDialog || !openPanel) return;
+  openDialog.projectMenuOpen = false;
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey("sessions");
+}
+
+// Move the dropdown cursor by `delta` (clamped, no wrap) and keep panel
+// focus on the highlighted row so the host keeps routing nav keys here.
+function moveProjectMenu(delta: number): void {
+  if (!openDialog || !openPanel || !openDialog.projectMenuOpen) return;
+  const keys = projectMenuKeys();
+  const next = clampMenuIndex(openDialog.projectMenuIndex + delta, keys.length);
+  openDialog.projectMenuIndex = next;
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey(projectPickKey(keys[next]));
+}
+
+// Commit the cursor's option as the active project filter and close.
+function acceptProjectMenu(): void {
+  if (!openDialog || !openDialog.projectMenuOpen) return;
+  const keys = projectMenuKeys();
+  const key = keys[clampMenuIndex(openDialog.projectMenuIndex, keys.length)] ?? "";
+  pickProject(key);
+}
+
+// Apply a project-dropdown option (empty = "All projects") as the dock's
+// project filter, re-filter the session list, close the menu, and return
+// focus to the list. Shared by mouse clicks on a row, Enter on the
+// keyboard cursor, and any programmatic pick.
+function pickProject(optionKey: string): void {
+  if (!openDialog) return;
+  openDialog.projectFilter = optionKey === "" ? null : optionKey;
+  lastDockProjectFilter = openDialog.projectFilter;
+  // Re-filter to the chosen project and keep the active session selected
+  // when it's still in view.
+  const activeId = editor.activeWindow();
+  const next = filterSessions(openDialog.filter.value);
+  openDialog.filteredIds = next;
+  const activeIdx = next.indexOf(activeId);
+  openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+  closeProjectMenu();
+  refreshOpenDialog();
+  if (openPanel && next.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+  }
 }
 
 // Single-column spec for the dock. Reuses the same `sessions` list key +
@@ -2760,13 +2886,24 @@ function buildDockSpec(): WidgetSpec {
   // (req: hide them when the editor owns the keyboard). A blurred dock
   // gives the row back to the list.
   const showHints = !dockBlurred;
+  // While the project dropdown owns the keyboard, the hints describe the
+  // dropdown (choose/select/cancel), not the session list — otherwise
+  // they'd advertise the wrong keys for where focus actually is.
   const hintRow = row(
     flexSpacer(),
-    hintBar([
-      { keys: "↑↓", label: "switch" },
-      { keys: "Enter", label: "edit" },
-      { keys: "Esc", label: "editor" },
-    ]),
+    hintBar(
+      openDialog.projectMenuOpen
+        ? [
+          { keys: "↑↓", label: "choose" },
+          { keys: "Enter", label: "select" },
+          { keys: "Esc", label: "cancel" },
+        ]
+        : [
+          { keys: "↑↓", label: "switch" },
+          { keys: "Enter", label: "edit" },
+          { keys: "Esc", label: "editor" },
+        ],
+    ),
     flexSpacer(),
   );
   const bottom: WidgetSpec[] = showHints ? [hintRow] : [];
@@ -2832,38 +2969,163 @@ function buildDockSpec(): WidgetSpec {
   );
 }
 
+// ---------------------------------------------------------------------
+// Dock session context menu (right-click).
+//
+// A centered, dimmed floating modal (its own host slot, so the dock
+// stays visible behind it) offering Visit / Archive / Delete against a
+// single right-clicked session. The destructive actions (Archive,
+// Delete) swap the same panel to a confirmation pane — reusing the
+// modal picker's `buildConfirmPane` — before they run. Visit acts
+// immediately.
+// ---------------------------------------------------------------------
+
+// Visit the session behind the context menu: switch the active window to
+// it and hand keyboard focus to the editor (the dock stays visible). A
+// discovered on-disk worktree has no live window, so attach a fresh
+// session to it instead — mirrors the dock's Enter (`dock_activate`).
+function dockMenuVisit(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s) return;
+  if (s.discovered) {
+    void attachToWorktree({
+      root: s.root,
+      projectPath: s.projectPath ?? s.root,
+      label: s.label,
+      branch: s.branch,
+      discoveredId: s.id,
+    });
+    return;
+  }
+  if (id > 0 && id !== editor.activeWindow()) editor.setActiveWindow(id);
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+    editor.setEditorMode(null);
+  }
+}
+
+function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
+  if (state.stage === "confirm") {
+    // Reuse the picker's confirmation pane (single-session form). Its
+    // buttons are keyed `confirm-cancel` / `confirm-<action>`, handled
+    // in the dock-menu `widget_event` block.
+    return buildConfirmPane({ action: state.action, ids: [state.sessionId] });
+  }
+  const s = orchestratorSessions.get(state.sessionId);
+  const label = s?.label ?? `[${state.sessionId}]`;
+  const canArchive = bulkEligible("archive", state.sessionId);
+  const canDelete = bulkEligible("delete", state.sessionId);
+  // Intentionally intrinsic-width content only: NO `labeledSection`,
+  // `flexSpacer`, or `fullWidth` widgets — those expand to the panel
+  // width and would blow the anchored popup up to ~half the screen. The
+  // host frames the box (its border) and sizes it to the widest of these
+  // rows, so the popup hugs its items like a real context menu.
+  return col(
+    { kind: "raw", entries: [
+      styledRow([{ text: `${label}`, style: { bold: true } }]),
+    ] },
+    button("Visit…", { intent: "primary", key: "ctx-visit" }),
+    button("Archive", { key: "ctx-archive", disabled: !canArchive }),
+    button("Delete", { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
+    { kind: "raw", entries: [
+      styledRow([{ text: "Esc to close", style: { fg: "ui.menu_disabled_fg" } }]),
+    ] },
+  );
+}
+
+function renderDockMenu(): void {
+  if (dockMenuPanel && dockMenuState) {
+    dockMenuPanel.update(buildDockMenuSpec(dockMenuState));
+  }
+}
+
+// Pack a screen cell into the single numeric arg `floatingPanelControl`
+// takes (the host unpacks `y << 16 | x`). Both coords fit a u16.
+function packCell(col: number, row: number): number {
+  return (Math.max(0, row) * 65536) + Math.max(0, col);
+}
+
+// Anchor the menu popup at its stored right-click cell — an unobtrusive,
+// content-sized popup with no background dim.
+function anchorDockMenu(): void {
+  if (!dockMenuPanel || !dockMenuState) return;
+  editor.floatingPanelControl(
+    dockMenuPanel.id(),
+    "anchor",
+    packCell(dockMenuState.anchorCol, dockMenuState.anchorRow),
+  );
+}
+
+// Open the right-click context menu for the session at filtered-list
+// `index`, anchored at the click cell `(col, row)`. The dock stays
+// mounted in its own slot behind the popup.
+function openDockContextMenu(index: number, col: number, row: number): void {
+  if (!openDialog) return;
+  const id = openDialog.filteredIds[index];
+  if (typeof id !== "number") return;
+  // Align the dock's highlighted row with the right-clicked one so the
+  // menu and the list agree on the target.
+  openDialog.selectedIndex = index;
+  if (openPanel) openPanel.setSelectedIndex("sessions", index);
+  dockMenuState = { sessionId: id, anchorCol: col, anchorRow: row, stage: "menu" };
+  if (!dockMenuPanel) dockMenuPanel = new FloatingWidgetPanel();
+  // widthPct/heightPct seed the centered confirm stage; the anchored menu
+  // stage ignores them (it sizes to content). Mount, then anchor.
+  dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
+    widthPct: 50,
+    heightPct: 44,
+  });
+  anchorDockMenu();
+}
+
+// Switch the popup to the centered, full-screen-dimmed confirmation for a
+// destructive action. Reuses the same panel; only the placement + spec
+// change.
+function dockMenuEnterConfirm(action: "archive" | "delete"): void {
+  if (!dockMenuPanel || !dockMenuState) return;
+  dockMenuState = { ...dockMenuState, stage: "confirm", action };
+  editor.floatingPanelControl(dockMenuPanel.id(), "center", 0);
+  editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
+  renderDockMenu();
+}
+
+function closeDockContextMenu(): void {
+  if (dockMenuPanel) {
+    dockMenuPanel.unmount();
+    dockMenuPanel = null;
+  }
+  dockMenuState = null;
+}
+
+// Tear down the menu and hand keyboard focus back to the dock (whose
+// keys were blurred when the popup mounted). Mirrors `restoreDockAfterForm`.
+function closeDockContextMenuAndRestoreDock(): void {
+  closeDockContextMenu();
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    dockFocus = "list";
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
+    refreshOpenDialog();
+  }
+}
+
 // Commit the highlighted session as the active window after a short
 // debounce, so holding ↑/↓ to traverse the list doesn't thrash through
 // every session in between. `fromEdge` drives the directional wipe.
 function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   const token = ++dockSwitchToken;
-  console.warn(`[dock-switch] scheduled token=${token} fromEdge=${fromEdge}`);
   void (async () => {
     await editor.delay(30);
-    if (token !== dockSwitchToken) {
-      console.warn(`[dock-switch] token=${token} superseded by ${dockSwitchToken}`);
-      return;
-    }
-    if (!openDialog || !openPanel || !dockMode || dockBlurred) {
-      console.warn(
-        `[dock-switch] token=${token} skipped: openDialog=${!!openDialog} openPanel=${!!openPanel} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
-      );
-      return;
-    }
+    // Superseded by a later keystroke — let the latest one win.
+    if (token !== dockSwitchToken) return;
+    if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
     const id = openDialog.filteredIds[openDialog.selectedIndex];
-    if (typeof id !== "number" || id <= 0) {
-      console.warn(`[dock-switch] token=${token} no valid id: ${id}`);
-      return;
-    }
-    if (orchestratorSessions.get(id)?.discovered) {
-      console.warn(`[dock-switch] token=${token} id=${id} is discovered, skipping`);
-      return;
-    }
-    if (id === editor.activeWindow()) {
-      console.warn(`[dock-switch] token=${token} id=${id} already active`);
-      return;
-    }
-    console.warn(`[dock-switch] token=${token} firing setActiveWindow(${id}) fromEdge=${fromEdge}`);
+    if (typeof id !== "number" || id <= 0) return;
+    // A discovered worktree has no window to switch to.
+    if (orchestratorSessions.get(id)?.discovered) return;
+    if (id === editor.activeWindow()) return;
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
   })();
@@ -5583,8 +5845,16 @@ async function submitForm(): Promise<void> {
       branch: reportedBranch || undefined,
     };
     orchestratorSessions.set(id, tracked);
-    // Refresh the dock so the freshly-created session shows up.
-    if (openPanel && dockMode) refreshOpenDialog();
+    // Refresh the dock so the freshly-created session shows up, then move
+    // the highlight onto it: it's now the active window, so the dock
+    // (blurred to hand focus to the new terminal) should point at it
+    // rather than leave the highlight on the previously-active row. The
+    // `active_window_changed` that fired mid-`createWindowWithTerminal`
+    // ran before this session was tracked, so it couldn't select it.
+    if (openPanel && dockMode) {
+      refreshOpenDialog();
+      syncDockSelectionToActive();
+    }
   } catch (e) {
     editor.setStatus(
       `Orchestrator: failed to start session — ${
@@ -5898,6 +6168,59 @@ function enterBulkConfirm(action: BulkAction): void {
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
+  // Dock session context menu (right-click): Visit / Archive / Delete.
+  // ---------------------------------------------------------------------
+  if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
+    const id = dockMenuState.sessionId;
+    if (e.event_type === "cancel") {
+      // Esc or a click outside dismissed the popup — the host already
+      // unmounted the panel, so just drop our handle (don't unmount it
+      // again) and hand keyboard focus back to the dock.
+      dockMenuPanel = null;
+      dockMenuState = null;
+      if (openPanel && dockMode) {
+        dockBlurred = false;
+        dockFocus = "list";
+        editor.floatingPanelControl(openPanel.id(), "focus", 0);
+        openPanel.setFocusKey("sessions");
+        refreshOpenDialog();
+      }
+      return;
+    }
+    if (e.event_type === "activate") {
+      if (e.widget_key === "ctx-visit") {
+        // Visit dives into the editor — no dock refocus.
+        closeDockContextMenu();
+        dockMenuVisit(id);
+        return;
+      }
+      if (e.widget_key === "ctx-archive" && bulkEligible("archive", id)) {
+        dockMenuEnterConfirm("archive");
+        return;
+      }
+      if (e.widget_key === "ctx-delete" && bulkEligible("delete", id)) {
+        dockMenuEnterConfirm("delete");
+        return;
+      }
+      if (e.widget_key === "confirm-cancel") {
+        // Back to the anchored menu (not all the way out) so a mis-click
+        // on a destructive action is one click from recoverable.
+        dockMenuState = { ...dockMenuState, stage: "menu" };
+        renderDockMenu();
+        anchorDockMenu();
+        return;
+      }
+      if (e.widget_key === "confirm-archive" || e.widget_key === "confirm-delete") {
+        const action = e.widget_key === "confirm-archive" ? "archive" : "delete";
+        closeDockContextMenuAndRestoreDock();
+        void runConfirmedAction(action, [id]);
+        return;
+      }
+    }
+    return;
+  }
+
+  // ---------------------------------------------------------------------
   // New-session form
   // ---------------------------------------------------------------------
   if (form && formPanel && e.panel_id === formPanel.id()) {
@@ -6167,10 +6490,32 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "dock_toggle_scope") {
       // The dock's scope control is now the project dropdown; Alt+P
       // opens/closes it instead of flipping the old current/all scope.
+      // Opening hands the keyboard to the menu; closing returns it to
+      // the session list.
       if (dockMode) {
-        openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
-        if (openPanel) openPanel.update(buildDockSpec());
+        if (openDialog.projectMenuOpen) closeProjectMenu();
+        else openProjectMenu();
       }
+      return;
+    }
+    // Dock project dropdown keyboard nav. The host fires these only
+    // while panel focus sits on a `project-pick:` row (i.e. the menu is
+    // open and owns the keyboard), so ↑/↓/Enter/Esc drive the dropdown
+    // instead of leaking to the session list underneath.
+    if (e.event_type === "dock_menu_prev") {
+      moveProjectMenu(-1);
+      return;
+    }
+    if (e.event_type === "dock_menu_next") {
+      moveProjectMenu(1);
+      return;
+    }
+    if (e.event_type === "dock_menu_accept") {
+      acceptProjectMenu();
+      return;
+    }
+    if (e.event_type === "dock_menu_cancel") {
+      closeProjectMenu();
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
@@ -6195,6 +6540,21 @@ editor.on("widget_event", (e) => {
       refreshOpenDialog();
       return;
     }
+    // Right-click on a session row → open its context menu. Only the
+    // dock wires this up (the host fires `context` for right-clicks in
+    // the dock column); the modal picker has its own action buttons.
+    if (
+      e.event_type === "context" &&
+      dockMode &&
+      ((e.payload ?? {}) as Record<string, unknown>).list_key === "sessions"
+    ) {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const idx = payload.index;
+      const col = typeof payload.col === "number" ? payload.col : 0;
+      const row = typeof payload.row === "number" ? payload.row : 0;
+      if (typeof idx === "number") openDockContextMenu(idx, col, row);
+      return;
+    }
     // List selection. Keyboard nav fires this with `widget_key`
     // "sessions" (the list's own key); a mouse click on a row fires it
     // with `widget_key` set to the clicked item's key, carrying the
@@ -6207,9 +6567,6 @@ editor.on("widget_event", (e) => {
     ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
-      console.warn(
-        `[dock-select] event reached plugin: idx=${idx} widget_key=${e.widget_key} dockMode=${dockMode} dockBlurred=${dockBlurred}`,
-      );
       if (typeof idx === "number") {
         const prevIdx = openDialog.selectedIndex;
         openDialog.selectedIndex = idx;
@@ -6306,8 +6663,8 @@ editor.on("widget_event", (e) => {
     // Dock project dropdown: the toolbar button toggles the menu open,
     // and each option button picks a project (empty suffix = all).
     if (e.event_type === "activate" && e.widget_key === "project-menu") {
-      openDialog.projectMenuOpen = !openDialog.projectMenuOpen;
-      if (openPanel) openPanel.update(buildDockSpec());
+      if (openDialog.projectMenuOpen) closeProjectMenu();
+      else openProjectMenu();
       return;
     }
     if (
@@ -6315,21 +6672,7 @@ editor.on("widget_event", (e) => {
       typeof e.widget_key === "string" &&
       e.widget_key.startsWith("project-pick:")
     ) {
-      const key = e.widget_key.slice("project-pick:".length);
-      openDialog.projectFilter = key === "" ? null : key;
-      lastDockProjectFilter = openDialog.projectFilter;
-      openDialog.projectMenuOpen = false;
-      // Re-filter to the chosen project and keep the active session
-      // selected when it's still in view.
-      const activeId = editor.activeWindow();
-      const next = filterSessions(openDialog.filter.value);
-      openDialog.filteredIds = next;
-      const activeIdx = next.indexOf(activeId);
-      openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-      refreshOpenDialog();
-      if (openPanel && next.length > 0) {
-        openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-      }
+      pickProject(e.widget_key.slice("project-pick:".length));
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "scope-toggle") {
@@ -6488,6 +6831,12 @@ editor.on("active_window_changed", () => {
   const s = orchestratorSessions.get(editor.activeWindow());
   if (s) s.activatedAt = Date.now();
   refreshOpenDialog();
+  // A passive (blurred) dock mirrors the active window, so keep its
+  // highlighted row in sync when focus moves to another window from
+  // outside the dock. While the dock holds focus the user drives ↑/↓
+  // selection (and the debounced live-switch already aligns the two), so
+  // re-selecting here would fight the scroll — hence the blurred guard.
+  if (dockBlurred) syncDockSelectionToActive();
 });
 
 // Re-flow the open-picker on terminal resize. The dialog's

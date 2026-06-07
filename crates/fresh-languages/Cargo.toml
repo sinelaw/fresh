@@ -11,36 +11,25 @@ description = "Language support and syntax highlighting for Fresh editor"
 [dependencies]
 tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true
-tree-sitter-rust = { version = "0.24.0", optional = true }
-tree-sitter-python = { version = "0.25.0", optional = true }
+# Only the grammars Fresh must use tree-sitter for are kept: languages syntect
+# ships no highlighting for — JavaScript, TypeScript, JSON (also serves JSONC),
+# Templ — plus Go, which the Templ grammar extends. The other 14 grammars were
+# removed: those languages are highlighted by syntect and indented by the regex
+# indent-rules tier, which dropped ~18 MB of parse tables from the binary.
 tree-sitter-javascript = { version = "0.25.0", optional = true }
 tree-sitter-typescript = { version = "0.23.2", optional = true }
-tree-sitter-html = { version = "0.23.2", optional = true }
-tree-sitter-css = { version = "0.25.0", optional = true }
-tree-sitter-c = { version = "0.24.1", optional = true }
-tree-sitter-cpp = { version = "0.23.4", optional = true }
 tree-sitter-go = { version = "0.25.0", optional = true }
 tree-sitter-json = { version = "0.24.8", optional = true }
-tree-sitter-java = { version = "0.23.5", optional = true }
-tree-sitter-c-sharp = { version = "0.23.1", optional = true }
-tree-sitter-php = { version = "0.24.2", optional = true }
-tree-sitter-ruby = { version = "0.23.1", optional = true }
-tree-sitter-bash = { version = "0.25.1", optional = true }
-tree-sitter-lua = { version = "0.4.1", optional = true }
-tree-sitter-pascal = { version = "0.10.2", optional = true }
-tree-sitter-odin = { version = "1.3.0", optional = true }
 tree-sitter-templ = { version = "2.2.0", optional = true }
 
 [features]
-# Note: enabling tree-sitter-templ also requires tree-sitter-go because the
-# templ grammar is built on top of Go and we reuse Go's highlight queries
-# for the embedded Go portions of a templ file.
+# Enabling tree-sitter-templ also requires tree-sitter-go: the templ grammar is
+# built on top of Go and reuses Go's highlight queries for the embedded Go.
 tree-sitter-templ = ["dep:tree-sitter-templ", "tree-sitter-go"]
 
-all-languages = [
-    "tree-sitter-rust", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript",
-    "tree-sitter-html", "tree-sitter-css", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-go",
-    "tree-sitter-json", "tree-sitter-java", "tree-sitter-c-sharp", "tree-sitter-php", "tree-sitter-ruby",
-    "tree-sitter-bash", "tree-sitter-lua", "tree-sitter-pascal", "tree-sitter-odin",
-    "tree-sitter-templ"
+# The grammars Fresh bundles — the must-keep set described above. This is what
+# the editor's `tree-sitter` feature enables.
+bundled-languages = [
+    "tree-sitter-javascript", "tree-sitter-typescript",
+    "tree-sitter-json", "tree-sitter-go", "tree-sitter-templ",
 ]

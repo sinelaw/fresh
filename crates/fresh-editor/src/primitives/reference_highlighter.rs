@@ -222,29 +222,18 @@ impl ReferenceHighlighter {
         }
         #[cfg(feature = "tree-sitter")]
         {
-            let ts_language = match language {
-                Language::Rust => fresh_languages::tree_sitter_rust::LANGUAGE.into(),
-                Language::Python => fresh_languages::tree_sitter_python::LANGUAGE.into(),
-                Language::JavaScript => fresh_languages::tree_sitter_javascript::LANGUAGE.into(),
-                Language::TypeScript => {
-                    fresh_languages::tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+            // Centralized accessor: `None` when the grammar isn't compiled into
+            // this build (most languages now), in which case reference
+            // highlighting uses the pure-Rust text-matching fallback.
+            let ts_language = match language.ts_language() {
+                Some(l) => l,
+                None => {
+                    self.parser = None;
+                    self.identifier_query = None;
+                    self.locals_query = None;
+                    self.locals_captures = LocalsCaptures::default();
+                    return;
                 }
-                Language::Go => fresh_languages::tree_sitter_go::LANGUAGE.into(),
-                Language::C => fresh_languages::tree_sitter_c::LANGUAGE.into(),
-                Language::Cpp => fresh_languages::tree_sitter_cpp::LANGUAGE.into(),
-                Language::Java => fresh_languages::tree_sitter_java::LANGUAGE.into(),
-                Language::Php => fresh_languages::tree_sitter_php::LANGUAGE_PHP.into(),
-                Language::Ruby => fresh_languages::tree_sitter_ruby::LANGUAGE.into(),
-                Language::Bash => fresh_languages::tree_sitter_bash::LANGUAGE.into(),
-                Language::Lua => fresh_languages::tree_sitter_lua::LANGUAGE.into(),
-                Language::Pascal => fresh_languages::tree_sitter_pascal::LANGUAGE.into(),
-                Language::Json => fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                Language::Jsonc => fresh_languages::tree_sitter_json::LANGUAGE.into(),
-                Language::HTML => fresh_languages::tree_sitter_html::LANGUAGE.into(),
-                Language::CSS => fresh_languages::tree_sitter_css::LANGUAGE.into(),
-                Language::CSharp => fresh_languages::tree_sitter_c_sharp::LANGUAGE.into(),
-                Language::Odin => fresh_languages::tree_sitter_odin::LANGUAGE.into(),
-                Language::Templ => fresh_languages::tree_sitter_templ::LANGUAGE.into(),
             };
 
             // Create parser
@@ -1031,9 +1020,10 @@ mod tests {
         use crate::primitives::highlighter::Language;
 
         let mut highlighter = ReferenceHighlighter::new();
-        highlighter.set_language(&Language::Rust);
+        // Go is a bundled grammar with a locals query (most grammars were
+        // dropped; their reference highlighting falls back to text match).
+        highlighter.set_language(&Language::Go);
 
-        // Rust should have locals support
         assert!(highlighter.has_locals());
     }
 

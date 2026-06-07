@@ -4,7 +4,7 @@ assertion_line: 69
 expression: "&screen_text"
 ---
  File   Edit   View   Selection   Go   LSP   Help                                                   
-┌ File Explorer (Ctrl+E) ──×─┐ main.rs ×                                                            
+┌ File Explorer (Ctrl+E) ──×─┐ main.rs ×   +                                                        
 │▼ project_root              │  1 │ // Main entry point                                             
 │  ▼ src                     │▾ 2 │ fn main() {                                                     
 │      main.rs               │  3 │     let hello = "world";                                        

@@ -194,6 +194,89 @@ The `grammar` field accepts a short name like `"bash"` or `"rust"` as well as th
 fresh --cmd grammar list
 ```
 
+### Customize Auto-Indentation
+
+Fresh auto-indents new lines when you press Enter. Most languages work out of
+the box, but you can tune the rules — or add them for a language Fresh doesn't
+recognize — with an `indent` block on a language entry. No tree-sitter grammar
+is required.
+
+```json
+{
+  "languages": {
+    "kotlin": {
+      "extensions": ["kt", "kts"],
+      "indent": {
+        "increase_indent_pattern": "[\\{\\[\\(]\\s*$",
+        "decrease_indent_pattern": "^\\s*[\\}\\]\\)]"
+      }
+    }
+  }
+}
+```
+
+#### How it works
+
+When you press Enter, Fresh looks at the line you're splitting (the **reference
+line**) and the text that moves down to the new line, then applies your
+patterns to choose the new line's indent.
+
+Each pattern is a regular expression
+([regex crate syntax](https://docs.rs/regex/latest/regex/#syntax) — linear, with
+no look-around or back-references). Before matching, Fresh blanks out comment
+and string spans on the line (replacing them with spaces), so a bracket or
+keyword **inside a string or comment never triggers indentation**.
+
+Every pattern is optional. Any pattern you omit keeps the language's built-in
+behavior, so you can override just one thing.
+
+| Field | When it matches | Effect |
+|-------|-----------------|--------|
+| `increase_indent_pattern` | the reference line | the new line is **one level deeper** |
+| `decrease_indent_pattern` | the new line's leading text | that line is **one level shallower** |
+| `indent_next_line_pattern` | the reference line | the **next line only** is one level deeper (one-shot; doesn't persist) |
+| `dedent_next_line_pattern` | the reference line | the **following line** is one level shallower (one-shot) |
+| `self_close_pattern` | the reference line | cancels `increase_indent_pattern` for that line (stops one-liners like `def f; end` from over-indenting) |
+
+The indent step is one unit of the language's `tab_size` (tabs or spaces per
+your `use_tabs` setting).
+
+#### Examples
+
+Brace-delimited language (indent after a line ending in an open bracket; outdent
+a line that starts with a close bracket):
+
+```json
+"indent": {
+  "increase_indent_pattern": "[\\{\\[\\(]\\s*$",
+  "decrease_indent_pattern": "^\\s*[\\}\\]\\)]"
+}
+```
+
+Python-like, layout-defined language (indent after a `:`; dedent the line after
+a flow-exit statement):
+
+```json
+"indent": {
+  "increase_indent_pattern": ":\\s*$",
+  "dedent_next_line_pattern": "^\\s*(return|pass|raise|break|continue)\\b"
+}
+```
+
+`begin`/`end`-style language, using `self_close_pattern` so `begin … end` on one
+line doesn't indent the next line:
+
+```json
+"indent": {
+  "increase_indent_pattern": "^\\s*begin\\b",
+  "decrease_indent_pattern": "^\\s*end\\b",
+  "self_close_pattern": "\\bend\\b"
+}
+```
+
+> Note: patterns are written in a JSON string, so backslashes must be escaped
+> (`\\s`, `\\{`).
+
 ### Set a Default Language for Unrecognized Files
 
 When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. Set `default_language` to the name of any entry in the `languages` map and unrecognized files will use that language's full configuration — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.

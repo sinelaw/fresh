@@ -2172,3 +2172,37 @@ fn test_mouse_select_multiline_multibyte() {
         );
     }
 }
+
+/// The status bar's `Col` must count grapheme clusters, not bytes (issue
+/// #2090: box-drawing / accented lines showed an inflated column). This
+/// drives Right one step at a time over a multi-byte line and asserts the
+/// rendered column advances by exactly one per keypress.
+#[test]
+fn test_status_bar_column_counts_graphemes_not_bytes() {
+    let mut harness = EditorTestHarness::new(120, 24).unwrap();
+
+    // 4 Chinese characters, 3 bytes each (12 bytes). The pre-fix byte count
+    // would report Col 13 at the end; the grapheme count is Col 5.
+    harness.type_text("你好世界").unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.get_status_bar().contains("Col 5"),
+        "end of 4-char line should render Col 5, got: {}",
+        harness.get_status_bar()
+    );
+
+    // Step from line start; each Right crosses one 3-byte character and must
+    // advance the column by exactly one.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    for expected_col in 2..=5 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let status = harness.get_status_bar();
+        assert!(
+            status.contains(&format!("Col {expected_col}")),
+            "after crossing one multi-byte char column should be {expected_col}, got: {status}"
+        );
+    }
+}

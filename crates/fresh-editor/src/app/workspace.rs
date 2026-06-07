@@ -593,6 +593,15 @@ impl crate::app::window::Window {
         for terminal in terminals {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
                 terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
+                // The terminal was live when the session was saved and the
+                // user never explicitly exited it, so focusing it should
+                // bring back a live terminal rather than the read-only
+                // scrollback view. Seed the resume set so `set_active_buffer`
+                // re-enters terminal mode when the tab is focused (the
+                // editing-disabled completion in `Editor::set_active_buffer`
+                // finishes the read-only → live transition). An explicit
+                // Ctrl+Space exit later removes it from the set as usual.
+                self.terminal_mode_resume.insert(buffer_id);
             }
         }
         terminal_buffer_map

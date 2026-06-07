@@ -55,7 +55,12 @@ impl crate::app::window::Window {
             );
 
             let total_tabs_width: usize = tab_widths.iter().sum();
-            let max_visible_width = available_width as usize;
+            // Reserve the pinned "+" button's column when the tabs overflow, so
+            // the active tab stays fully visible and never slips under it.
+            let max_visible_width = crate::view::ui::tabs::tabs_render_width(
+                total_tabs_width,
+                available_width as usize,
+            );
 
             let active_target = view_state.active_target();
             let active_target = if matches!(active_target, crate::view::split::TabTarget::Buffer(_))

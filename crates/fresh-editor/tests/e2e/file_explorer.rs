@@ -504,6 +504,57 @@ fn test_file_explorer_toggle_hidden_smoke() {
     // Test passes if no panic occurs
 }
 
+/// Regression test for issue #2073: file explorer should sort
+/// filenames naturally — `chapter-2.md` before `chapter-10.md`, not
+/// after.
+#[test]
+fn test_file_explorer_natural_sort_order() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    for name in &[
+        "chapter-1.md",
+        "chapter-2.md",
+        "chapter-10.md",
+        "chapter-11.md",
+        "chapter-3.md",
+    ] {
+        fs::write(project_root.join(name), "x").unwrap();
+    }
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness.wait_for_file_explorer_item("chapter-1.md").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+
+    let order = [
+        "chapter-1.md",
+        "chapter-2.md",
+        "chapter-3.md",
+        "chapter-10.md",
+        "chapter-11.md",
+    ];
+    let positions: Vec<_> = order
+        .iter()
+        .map(|name| {
+            screen
+                .find(name)
+                .unwrap_or_else(|| panic!("missing {name} in explorer screen:\n{screen}"))
+        })
+        .collect();
+
+    for window in positions.windows(2) {
+        assert!(
+            window[0] < window[1],
+            "Files should appear in natural order. positions={:?}\nScreen:\n{}",
+            positions,
+            screen
+        );
+    }
+}
+
 /// Test that file_explorer_toggle_gitignored can be called (smoke test)
 #[test]
 fn test_file_explorer_toggle_gitignored_smoke() {

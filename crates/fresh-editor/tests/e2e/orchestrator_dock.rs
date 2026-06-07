@@ -1281,3 +1281,313 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     h.wait_until(|h| h.screen_to_string().contains("Session Name"))
         .unwrap();
 }
+
+/// Regression: with the dock's project dropdown open, the keyboard drives
+/// the *dropdown* — ↑/↓ move its cursor and Enter commits the highlighted
+/// option — instead of leaking to the session list beneath it. Before the
+/// fix the menu opened but was inert: focus stayed on the session list, so
+/// ↑/↓ switched sessions and Enter dived into one, and a keyboard user
+/// could never pick a project from the dropdown.
+///
+/// The toolbar's project control is the discriminator: it reads "All ▾"
+/// while unfiltered and the project's basename once a project is picked.
+/// Driving Alt+P → ↓ → Enter must flip it to "alphaproj ▾"; with the bug
+/// the filter stays on "All".
+#[test]
+fn dock_project_dropdown_is_keyboard_navigable() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The project control starts unfiltered.
+    h.assert_screen_contains("All ▾");
+
+    // Alt+P opens the dropdown; it lists "All projects" plus this project.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+
+    // ↓ moves the cursor from "All projects" onto the project row; Enter
+    // commits it. With the bug these keys drove the session list instead,
+    // leaving the filter on "All".
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The dropdown closed and the project filter is applied: the toolbar
+    // now reads the project basename, no longer "All".
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj ▾"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("All ▾"),
+        "project filter should be applied (toolbar should not read 'All ▾'):\n{screen}"
+    );
+    // And the menu itself is gone.
+    assert!(
+        !screen.contains("All projects"),
+        "dropdown should have closed after Enter:\n{screen}"
+    );
+}
+
+/// Esc cancels the open project dropdown without applying a filter and
+/// leaves the keyboard with the dock (it must not commit the cursor's
+/// option, nor blur the dock to the editor). We prove the dock kept focus
+/// by re-opening the dropdown with Alt+P afterwards: if Esc had blurred the
+/// dock, Alt+P would reach the editor instead and the menu would not return.
+#[test]
+fn dock_project_dropdown_esc_cancels_without_filtering() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+    // Move the cursor onto the project row, then cancel.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
+    // Menu closed and no filter applied — toolbar still reads "All ▾".
+    h.wait_until(|h| !h.screen_to_string().contains("All projects"))
+        .unwrap();
+    let screen = h.screen_to_string();
+    assert!(
+        screen.contains("All ▾"),
+        "Esc must not apply the cursor's project (toolbar should still read 'All ▾'):\n{screen}"
+    );
+
+    // The dock still owns the keyboard: Alt+P re-opens the dropdown.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("All projects"))
+        .unwrap();
+}
+
+/// Regression: creating a session while the dock is open moves the dock's
+/// highlight onto the new session. It becomes the active window, and the
+/// dock — a passive mirror once focus dives into the new terminal — must
+/// re-point at it instead of stranding the highlight on the previously
+/// active row. We read this off the *selected card border*: the highlighted
+/// card uses heavy box glyphs (a `┃` down each side), unselected cards keep
+/// the light `│`. After creation the new session's card must be the heavy
+/// one and the old session's must not.
+#[test]
+fn creating_session_moves_dock_highlight_to_new_session() {
+    let (_tmp, root) = setup_project("alphaproj");
+    // A non-git directory for the new session: the worktree toggle
+    // auto-disables there, so it spawns a plain terminal session with no
+    // git worktree to create. It sits beside the git project (the tempdir
+    // root is not itself a repo).
+    let plain = root.parent().unwrap().join("plainwork");
+    fs::create_dir(&plain).unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // The launch session (alphaproj) is the only row, and it's selected.
+    h.assert_screen_contains("alphaproj");
+
+    // Open the new-session form and point it at the non-git dir.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+        .unwrap();
+    h.type_text(&plain.display().to_string()).unwrap();
+    // The typed path lands in the field (its last segment is visible).
+    h.wait_until(|h| h.screen_to_string().contains("plainwork"))
+        .unwrap();
+    // Accept the path completion with Tab so the popup closes and the
+    // Create button is no longer obscured by it.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+        .unwrap();
+
+    // Submit by clicking "Create Session".
+    let screen = h.screen_to_string();
+    let (col, btn_row) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| l.find("Create Session").map(|c| (c as u16, r as u16)))
+        .expect("Create Session button should be visible");
+    h.mouse_click(col, btn_row).unwrap();
+
+    // The new session appears and becomes the highlighted (heavy-border)
+    // card; the spawn + active-window switch + dock refresh are async, so
+    // wait until the highlight has actually migrated onto it.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("plainwork") && l.starts_with('┃'))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let alpha_line = screen
+        .lines()
+        .find(|l| l.contains("alphaproj"))
+        .expect("the original session row should still be listed");
+    assert!(
+        !alpha_line.starts_with('┃'),
+        "the previously-active session must drop the heavy highlight border:\n{screen}"
+    );
+}
+
+// ── right-click session context menu ──────────────────────────────────────
+//
+// Right-clicking a session card opens a small dimmed modal with
+// Visit / Archive / Delete; the destructive actions swap it to a centered
+// confirmation pane before they run. These drive only the mouse/keyboard
+// and assert on rendered output per CONTRIBUTING §2.
+
+/// Open the dock and right-click the first session card. Returns the
+/// harness with the context menu showing.
+fn open_dock_context_menu(name: &str) -> (tempfile::TempDir, EditorTestHarness) {
+    let (tmp, root) = setup_project(name);
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The session card's name line bears the project basename; right-click
+    // a column well inside the dock on that row.
+    let card_row = row_of(&h, name) as u16;
+    h.mouse_right_click(4, card_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Archive"))
+        .unwrap();
+    (tmp, h)
+}
+
+/// 0-based screen position (col, row) of the first occurrence of `needle`.
+/// `str::find` returns a *byte* offset, but dock rows contain multibyte
+/// box-drawing glyphs (`┗━━━│`, 3 bytes each), so convert to a character
+/// column — that's the screen column for width-1 glyphs — before returning.
+fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
+    let screen = h.screen_to_string();
+    screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| {
+            l.find(needle)
+                .map(|b| (l[..b].chars().count() as u16, r as u16))
+        })
+        .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
+}
+
+#[test]
+fn dock_right_click_opens_context_menu() {
+    let (_tmp, h) = open_dock_context_menu("alphaproj");
+
+    // All three actions plus the session header are present.
+    h.assert_screen_contains("Visit");
+    h.assert_screen_contains("Archive");
+    h.assert_screen_contains("Delete");
+    h.assert_screen_contains("alphaproj");
+}
+
+#[test]
+fn dock_context_menu_esc_closes() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Esc dismisses the menu; the dock returns (its "Manage" button shows)
+    // and the menu-only "Archive"/"Delete" actions are gone.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Archive"))
+        .unwrap();
+    h.assert_screen_contains("Manage");
+}
+
+#[test]
+fn dock_context_menu_delete_shows_centered_confirmation() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Click the menu's "Delete" action → the confirmation pane replaces
+    // the menu (full-screen dimmed, centered).
+    let (dcol, drow) = pos_of(&h, "Delete");
+    h.mouse_click(dcol, drow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap();
+    // The destructive-action warning and the Confirm/Cancel pair render.
+    h.assert_screen_contains("Uncommitted changes will be lost");
+    h.assert_screen_contains("Cancel");
+}
+
+#[test]
+fn dock_context_menu_confirm_cancel_returns_to_menu() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    let (dcol, drow) = pos_of(&h, "Delete");
+    h.mouse_click(dcol, drow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap();
+
+    // Cancel returns to the three-action menu rather than closing outright,
+    // so a mis-click on a destructive action is recoverable.
+    let (ccol, crow) = pos_of(&h, "Cancel");
+    h.mouse_click(ccol, crow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Visit"))
+        .unwrap();
+    h.assert_screen_contains("Archive");
+    h.assert_screen_contains("Delete");
+}
+
+#[test]
+fn dock_context_menu_archive_shows_confirmation() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    let (acol, arow) = pos_of(&h, "Archive");
+    h.mouse_click(acol, arow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Confirm Archive"))
+        .unwrap();
+    h.assert_screen_contains("Cancel");
+}
+
+/// The menu is an unobtrusive popup anchored at the click, not a centered
+/// modal: its items render in the left columns (near the dock click), not
+/// around mid-screen, and at roughly the clicked row.
+#[test]
+fn dock_context_menu_is_anchored_near_click() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    let card_row = row_of(&h, "alphaproj") as u16;
+    h.mouse_right_click(3, card_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Visit"))
+        .unwrap();
+
+    let (vcol, vrow) = pos_of(&h, "Visit");
+    // Anchored to the left edge where the click landed — a centered modal
+    // on a 120-wide terminal would put this near col ~50.
+    assert!(
+        vcol < 24,
+        "context menu should hug the click (left columns), got col {vcol}"
+    );
+    // And vertically near the clicked row, not screen-centered.
+    assert!(
+        vrow >= card_row && vrow <= card_row + 6,
+        "context menu should open near the clicked row {card_row}, got row {vrow}"
+    );
+}
+
+/// Clicking outside the anchored popup dismisses it (standard menu
+/// behaviour) and returns control to the dock.
+#[test]
+fn dock_context_menu_click_outside_dismisses() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+
+    // Click far away in the editor area, well outside the popup box.
+    h.mouse_click(90, 20).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Archive"))
+        .unwrap();
+    h.assert_screen_contains("Manage");
+}

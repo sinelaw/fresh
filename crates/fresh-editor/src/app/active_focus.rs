@@ -52,6 +52,22 @@ impl Editor {
         if !self.active_window_mut().set_active_buffer(buffer_id) {
             return;
         }
+        // Restored terminals load read-only (editing disabled) and the
+        // Window-side resume branch only flips the `terminal_mode` flag —
+        // it can't reach the Editor-level `enter_terminal_mode` that
+        // re-enables editing, drops the stale screen tail, and resizes the
+        // PTY. Without that completion, focusing a restored terminal tab
+        // leaves it in the read-only scrollback view (often a blank screen
+        // with no prompt) instead of a live terminal. Detect that exact
+        // state — a terminal we just resumed into terminal mode but whose
+        // buffer is still editing-disabled — and finish the transition.
+        // Live terminals (editing already enabled) are unaffected.
+        if self.active_window().terminal_mode
+            && self.active_window().is_terminal_buffer(buffer_id)
+            && self.active_window().is_editing_disabled()
+        {
+            self.enter_terminal_mode();
+        }
         // Plugin state snapshot reaches editor-wide state (clipboard,
         // windows list, config cache) so it stays on Editor. Run it
         // BEFORE the hook so the handler sees the new active buffer.

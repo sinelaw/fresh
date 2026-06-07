@@ -673,6 +673,10 @@ pub struct Window {
     /// Tab context menu state (right-click on a tab in this window).
     pub tab_context_menu: Option<crate::app::types::TabContextMenu>,
 
+    /// "+" new-tab popup menu state (left-click on the tab bar's trailing
+    /// `+` button). Offers "New Terminal" / "New File".
+    pub new_tab_menu: Option<crate::app::types::NewTabMenu>,
+
     /// File-explorer context menu state (right-click in the explorer).
     pub file_explorer_context_menu: Option<crate::app::types::FileExplorerContextMenu>,
 
@@ -1791,6 +1795,7 @@ impl Window {
             last_persistent_auto_save: now,
             warning_domains: crate::app::warning_domains::WarningDomainRegistry::default(),
             tab_context_menu: None,
+            new_tab_menu: None,
             file_explorer_context_menu: None,
             theme_info_popup: None,
             event_debug: None,

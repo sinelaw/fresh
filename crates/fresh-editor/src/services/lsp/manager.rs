@@ -2267,6 +2267,7 @@ mod tests {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
         languages.insert(
@@ -2291,6 +2292,7 @@ mod tests {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
         languages.insert(
@@ -2315,6 +2317,7 @@ mod tests {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
         languages
@@ -2380,6 +2383,7 @@ mod tests {
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
+                indent: None,
             },
         );
 
@@ -2495,6 +2499,7 @@ mod tests {
             format_on_save: false,
             on_save: vec![],
             word_characters: None,
+            indent: None,
         };
         languages.insert(
             "c".to_string(),
