@@ -10,6 +10,27 @@ live in `workspace-trust-sandbox-design.md`. This doc only specifies
 **when** prompts surface, **what** they say, and **how** the three features
 (trust / env / devcontainer) interact so the common case is 0–1 popup.
 
+## Phase 1 (this PR) vs. Phase 2 (follow-ups)
+
+Implementing all eight rules end-to-end touches the trust gate, persistence
+schema, status bar, plugin API, and at least three plugins. The first PR
+delivers the visible UX shift on the plugin side; the remaining Rust-core
+changes are tracked as Phase 2.
+
+| Rule | Phase 1 (this PR) | Phase 2 |
+|---|---|---|
+| 1. `.venv` auto-activate silently | done — env-manager fires `maybeAutoActivate` on `plugins_loaded` and activates path-only envs without a popup | — |
+| 2. `.envrc`/`mise.toml` combined trust+activate popup | done — env-manager surfaces the combined popup when trust is Restricted; `Trust & activate` dispatches `workspace_trust_trust` and applies the env in one step | — |
+| 3. Devcontainer takes precedence, env defers | done — env-manager skips its popup when a `devcontainer.json` is present and authority is local; the post-attach `plugins_loaded` re-runs inside the container | — |
+| 4. Deferred trust on first denied spawn | concrete trust-elevation popup *from the env flow* is wired (the user who runs `Env: Activate` against a restricted folder gets a concrete prompt instead of a dead-end status message) | core change: `workspace_trust::gate` returns a typed `Undecided` denial and the spawn site surfaces a popup naming the command (e.g. `dotnet restore`) for non-env plugins |
+| 5. Content-hash persistence | done in part — env decision is persisted per-cwd via plugin global state (`env-decision:<cwd>` → `"activated"` / `"dismissed"`) so the popup doesn't re-fire after a decision | extend `TrustStore` JSON schema with per-marker SHA-256 so re-prompts fire only when `.envrc` / `mise.toml` content actually changes |
+| 6. Restricted-mode chip in status bar | done — env-manager registers a `trust` status-bar element that shows nothing when Trusted, `restricted` / `blocked` otherwise | wire chip clicks to open the trust popup directly (today plugins can't register click handlers on status-bar elements) |
+| 7. Never stack popups | done in part — env-manager defers entirely to the devcontainer plugin when both apply | core arbitration so any future plugin popup competing with the trust modal queues instead of stacks |
+| 8. Trust parent folder setting | — | new setting `workspace.trust.inheritFromParent` + parent-traversal in `workspace_trust.rs`; off by default |
+
+The rest of this document describes the full design. Items not yet wired in
+Phase 1 are called out inline.
+
 ## Goal
 
 > Trust once, activate silently where safe, ask only when running shell —
