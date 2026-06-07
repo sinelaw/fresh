@@ -1465,12 +1465,15 @@ fn open_dock_context_menu(name: &str) -> (tempfile::TempDir, EditorTestHarness) 
 }
 
 /// 0-based screen position (col, row) of the first occurrence of `needle`.
+/// `str::find` returns a *byte* offset, but dock rows contain multibyte
+/// box-drawing glyphs (`┗━━━│`, 3 bytes each), so convert to a character
+/// column — that's the screen column for width-1 glyphs — before returning.
 fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
     let screen = h.screen_to_string();
     screen
         .lines()
         .enumerate()
-        .find_map(|(r, l)| l.find(needle).map(|c| (c as u16, r as u16)))
+        .find_map(|(r, l)| l.find(needle).map(|b| (l[..b].chars().count() as u16, r as u16)))
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
