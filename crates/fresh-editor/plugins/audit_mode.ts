@@ -178,6 +178,13 @@ interface ReviewState {
   sectionHeaderRows: Record<string, number>;
   // Maps a 1-indexed row in the comments panel -> comment id
   commentsByRow: Record<number, string>;
+  // Maps a 1-indexed row in the files sidebar -> file key. Lets clicks in
+  // the sidebar resolve back to a FileEntry.
+  filesPanelByRow: Record<number, string>;
+  // File key currently highlighted in the sidebar (tracks the diff
+  // viewport's top file). Lets the scroll handler skip a sidebar repaint
+  // when the current file hasn't changed.
+  filesCurrentKey: string | null;
   // Current selection in the comments panel (1-indexed row, 0 means none)
   commentsSelectedRow: number;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
@@ -226,6 +233,8 @@ const state: ReviewState = {
   hunkBodyRange: {},
   sectionHeaderRows: {},
   commentsByRow: {},
+  filesPanelByRow: {},
+  filesCurrentKey: null,
   commentsSelectedRow: 0,
   commentsHighlightId: null,
   stickyCurrentFile: null,
@@ -1388,6 +1397,87 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
  * truncated to fit the panel width. Empty state shows a dim "No comments
  * yet." line. Read-only in this step (interaction lands in Step 5/6).
  */
+// Sidebar width fraction (kept in sync with REVIEW_LAYOUT's files panel).
+const FILES_PANEL_RATIO = 0.16;
+
+/**
+ * Build the file sidebar: one row per changed file, grouped by git
+ * category, showing a status glyph, the (left-truncated) path, the
+ * +added/-removed counts, and a `*N` badge when the file carries review
+ * comments. The row matching the diff viewport's current file is
+ * highlighted. Populates `state.filesPanelByRow` so a click resolves back
+ * to a file.
+ */
+function buildFilesPanelEntries(): TextPropertyEntry[] {
+    const entries: TextPropertyEntry[] = [];
+    state.filesPanelByRow = {};
+
+    const headerLabel = (editor.t("panel.files") || "Files").toUpperCase();
+    entries.push({
+        text: ` ${headerLabel}\n`,
+        style: { fg: STYLE_INVERSE_FG, bg: STYLE_INVERSE_BG, bold: true, extendToLineEnd: true },
+        properties: { type: "header" },
+    });
+
+    if (state.files.length === 0) {
+        entries.push({
+            text: ` ${editor.t("panel.no_changes") || "No changes."}\n`,
+            style: { fg: STYLE_SECTION_HEADER, italic: true },
+            properties: { type: "empty" },
+        });
+        return entries;
+    }
+
+    const panelW = Math.max(16, Math.floor(state.viewportWidth * FILES_PANEL_RATIO) - 1);
+    // Per-file comment counts drive the `*N` badge.
+    const commentCounts: Record<string, number> = {};
+    for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
+
+    let row1 = 1; // header occupied row 1
+    let lastCategory: string | undefined;
+    for (const file of state.files) {
+        if (file.category !== lastCategory) {
+            lastCategory = file.category;
+            let label: string = file.category;
+            if (state.mode === 'range' && state.range) label = state.range.label;
+            else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
+            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
+            else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            const count = state.files.filter(f => f.category === file.category).length;
+            const display = state.mode === 'range' ? label : label.toUpperCase();
+            row1++;
+            entries.push({
+                text: ` ${display} (${count})\n`,
+                style: { fg: STYLE_SECTION_HEADER, bold: true },
+                properties: { type: "files-section" },
+            });
+        }
+
+        const counts = fileChangeCounts(file);
+        const key = fileKey(file);
+        const glyph = file.status || ' ';
+        const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
+        const stats = `  +${counts.added} -${counts.removed}${badge}`;
+        // Budget for the name = panel width minus " X " prefix and stats;
+        // truncate from the left so the basename stays visible.
+        const nameBudget = Math.max(4, panelW - 3 - stats.length);
+        let name = file.path;
+        if (name.length > nameBudget) name = '…' + name.slice(-(nameBudget - 1));
+        row1++;
+        const selected = key === state.filesCurrentKey;
+        const style: Partial<OverlayOptions> = selected
+            ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
+            : {};
+        state.filesPanelByRow[row1] = key;
+        entries.push({
+            text: ` ${glyph} ${name}${stats}\n`,
+            style,
+            properties: { type: "file", fileKey: key, filePath: file.path },
+        });
+    }
+    return entries;
+}
+
 function buildCommentsPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.commentsByRow = {};
@@ -1488,6 +1578,9 @@ function updateMagitDisplay(): void {
     editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
     editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    if (state.panelBuffers["files"] !== undefined) {
+        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+    }
     refreshStickyHeader(0);
     applyFolds();
     applyCursorLineOverlay('diff');
@@ -1596,6 +1689,17 @@ function refreshStickyHeader(topVisibleRow: number): void {
         style: { ...style, bg: STYLE_FILE_HEADER_BG, extendToLineEnd: true },
         properties: { type: "sticky-header" },
     }]);
+
+    // Keep the sidebar's highlighted file in sync with the diff's top
+    // file. Only repaint when the current file actually changed so
+    // scrolling within one file doesn't rebuild the sidebar.
+    const curKey = bestFile ? fileKey(bestFile) : null;
+    if (curKey !== state.filesCurrentKey) {
+        state.filesCurrentKey = curKey;
+        if (state.panelBuffers["files"] !== undefined) {
+            editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        }
+    }
 }
 
 /**
@@ -1707,6 +1811,20 @@ function on_review_mouse_click(data: {
             }
         }
         if (bestFile) jumpToFile(bestFile);
+        return;
+    }
+
+    // Click in the file sidebar: jump to that file and hand focus to the
+    // diff so the user can immediately keep navigating.
+    if (data.buffer_id === state.panelBuffers["files"]) {
+        const key = state.filesPanelByRow[data.buffer_row + 1];
+        if (key) {
+            const file = state.files.find(f => fileKey(f) === key);
+            if (file) {
+                jumpToFile(file);
+                editor.focusBufferGroupPanel(state.groupId, "diff");
+            }
+        }
         return;
     }
 
@@ -4011,18 +4129,26 @@ const REVIEW_LAYOUT = JSON.stringify({
     direction: "v",
     ratio: 0.05,
     first: { type: "fixed", id: "toolbar", height: 2 },
+    // Below the toolbar: a left file sidebar, then the diff (with its
+    // sticky header) and the comments panel.
     second: {
         type: "split",
         direction: "h",
-        ratio: 0.75,
-        first: {
+        ratio: 0.16,
+        first: { type: "scrollable", id: "files" },
+        second: {
             type: "split",
-            direction: "v",
-            ratio: 0.05,
-            first: { type: "fixed", id: "sticky", height: 1 },
-            second: { type: "scrollable", id: "diff" },
+            direction: "h",
+            ratio: 0.74,
+            first: {
+                type: "split",
+                direction: "v",
+                ratio: 0.05,
+                first: { type: "fixed", id: "sticky", height: 1 },
+                second: { type: "scrollable", id: "diff" },
+            },
+            second: { type: "scrollable", id: "comments" },
         },
-        second: { type: "scrollable", id: "comments" },
     },
 });
 
