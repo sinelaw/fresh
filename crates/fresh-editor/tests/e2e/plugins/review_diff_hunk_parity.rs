@@ -173,3 +173,32 @@ fn test_review_inline_comment_renders_as_box() {
         screen
     );
 }
+
+/// The `?` help reference opens and, per its own "Press q to close" hint,
+/// `q` dismisses it back to the review (regression: it used to be a plain
+/// buffer with no close binding, trapping the user).
+#[test]
+fn test_review_help_opens_and_q_closes() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('?'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("keyboard reference"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Help gone, back to the review (sidebar visible).
+            !s.contains("keyboard reference") && s.contains("FILES")
+        })
+        .unwrap();
+}

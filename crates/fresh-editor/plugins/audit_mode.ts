@@ -3605,12 +3605,12 @@ async function review_help() {
         " Review Diff — keyboard reference",
         "",
         " Navigate    n / p      next / prev hunk",
+        "             , / .      prev / next file",
         "             ] / [      next / prev comment",
         "             Tab        fold the file under the cursor",
         "             z a / z r  fold all / unfold all",
         " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
         " View        a          show / hide inline notes",
-        "             /          filter files",
         " Review      c          add comment        x   delete comment",
         "             s / u / d  stage / unstage / discard (hunk or file)",
         "             S / U / D  stage / unstage / discard the whole file",
@@ -3627,7 +3627,7 @@ async function review_help() {
     }));
     const res = await editor.createVirtualBuffer({
         name: "*Review Keys*",
-        mode: "normal",
+        mode: "review-help",
         readOnly: true,
         entries,
         editingDisabled: true,
@@ -3950,6 +3950,12 @@ registerHandler("review_diff_open_working_at_cursor", review_diff_open_working_a
 editor.defineMode("diff-view", [
     ["Enter", "review_diff_open_at_cursor"],
     ["M-o", "review_diff_open_working_at_cursor"],
+], true);
+
+// The `?` help reference is a read-only buffer; `q` closes it (matches the
+// "Press q to close" hint and the review's own `q` = close).
+editor.defineMode("review-help", [
+    ["q", "close"],
 ], true);
 
 // --- Review Comment Actions ---
