@@ -1,0 +1,177 @@
+//! E2E tests for the hunk-parity Review Diff increments
+//! (docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md):
+//!   * §5.2 — the file sidebar (status glyph, +/- counts, comment badge)
+//!   * §5.1 — the 1/2/0 split/stack layout toggle
+//!   * §5.6 — bordered inline review notes
+//!
+//! All assertions observe rendered screen output only.
+
+use crate::common::git_test_helper::GitTestRepo;
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::tracing::init_tracing_from_env;
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+use std::fs;
+
+fn setup_audit_mode_plugin(repo: &GitTestRepo) {
+    let plugins_dir = repo.path.join("plugins");
+    fs::create_dir_all(&plugins_dir).expect("create plugins dir");
+    copy_plugin(&plugins_dir, "audit_mode");
+    copy_plugin_lib(&plugins_dir);
+}
+
+/// Repo with one committed file and one unstaged modification that has a
+/// few added lines (so there is a diff line to comment on).
+fn repo_with_modification() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() {\n    println!(\"one\");\n    println!(\"two\");\n    println!(\"three\");\n}\n",
+    )
+    .unwrap();
+    repo
+}
+
+fn harness_for(repo: &GitTestRepo) -> EditorTestHarness {
+    EditorTestHarness::with_config_and_working_dir(160, 44, Config::default(), repo.path.clone())
+        .unwrap()
+}
+
+/// Open Review Diff via the command palette and wait for it to load.
+fn open_review_diff(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            if s.contains("TypeError") || s.contains("Error:") {
+                panic!("Error loading review diff. Screen:\n{}", s);
+            }
+            s.contains("next hunk")
+        })
+        .unwrap();
+    harness.screen_to_string()
+}
+
+/// §5.2 — the file sidebar lists the changed file with a FILES header and
+/// add/remove counts.
+#[test]
+fn test_review_sidebar_lists_files() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("FILES"),
+        "sidebar header should be visible. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains("main.rs"),
+        "the modified file should appear in the sidebar. Screen:\n{}",
+        screen
+    );
+    // The sidebar row carries the add count (the file has added lines).
+    assert!(
+        screen.contains("+3") || screen.contains("+4") || screen.contains("+5"),
+        "sidebar row should show an add count. Screen:\n{}",
+        screen
+    );
+}
+
+/// §5.1 — `1` switches to the side-by-side split, `2` returns to the
+/// unified stack with the sidebar intact.
+#[test]
+fn test_review_layout_toggle_split_and_back() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    // Move into the hunk so the file under the cursor is resolvable, then
+    // switch to the side-by-side split.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("OLD (HEAD)"))
+        .unwrap();
+
+    // Back to the unified stack: the split panes go away and the sidebar
+    // returns.
+    harness
+        .send_key(KeyCode::Char('2'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("OLD (HEAD)") && s.contains("FILES")
+        })
+        .unwrap();
+}
+
+/// §5.6 — a review note renders as a bordered box anchored under its diff
+/// line, not the old single `»` row.
+#[test]
+fn test_review_inline_comment_renders_as_box() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    // Land on a diff content line: jump to the hunk, then step down past
+    // the hunk header into an added line.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .type_text("needs a wrapping note that proves the box")
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // The bordered callout: top/bottom border glyphs are present
+            // and the note text shows up inside.
+            s.contains("╭") && s.contains("╰") && s.contains("wrapping note")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("\u{00bb} ["),
+        "the old single-line `\u{00bb} [ref]` rendering should be gone. Screen:\n{}",
+        screen
+    );
+}
