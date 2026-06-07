@@ -3016,18 +3016,22 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   const label = s?.label ?? `[${state.sessionId}]`;
   const canArchive = bulkEligible("archive", state.sessionId);
   const canDelete = bulkEligible("delete", state.sessionId);
-  return labeledSection({
-    label: `Session: ${label}`,
-    child: col(
-      button("Visit…", { intent: "primary", key: "ctx-visit" }),
-      spacer(0),
-      button("Archive", { key: "ctx-archive", disabled: !canArchive }),
-      spacer(0),
-      button("Delete", { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
-      spacer(0),
-      row(flexSpacer(), hintBar([{ keys: "Esc", label: "close" }]), flexSpacer()),
-    ),
-  });
+  // Intentionally intrinsic-width content only: NO `labeledSection`,
+  // `flexSpacer`, or `fullWidth` widgets — those expand to the panel
+  // width and would blow the anchored popup up to ~half the screen. The
+  // host frames the box (its border) and sizes it to the widest of these
+  // rows, so the popup hugs its items like a real context menu.
+  return col(
+    { kind: "raw", entries: [
+      styledRow([{ text: `${label}`, style: { bold: true } }]),
+    ] },
+    button("Visit…", { intent: "primary", key: "ctx-visit" }),
+    button("Archive", { key: "ctx-archive", disabled: !canArchive }),
+    button("Delete", { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
+    { kind: "raw", entries: [
+      styledRow([{ text: "Esc to close", style: { fg: "ui.menu_disabled_fg" } }]),
+    ] },
+  );
 }
 
 function renderDockMenu(): void {
