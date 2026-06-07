@@ -204,7 +204,11 @@ fn test_review_filter_narrows_files() {
     let repo = repo_with_two_files();
     let mut harness = harness_for(&repo);
     let screen = open_review_diff(&mut harness);
-    assert!(screen.contains("main.rs") && screen.contains("widget.rs"), "both files initially. Screen:\n{}", screen);
+    assert!(
+        screen.contains("main.rs") && screen.contains("widget.rs"),
+        "both files initially. Screen:\n{}",
+        screen
+    );
 
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
