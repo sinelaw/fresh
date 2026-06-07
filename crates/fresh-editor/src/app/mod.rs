@@ -3613,4 +3613,94 @@ mod tests {
             .sum();
         assert!(view_state.tab_scroll_offset <= total_width);
     }
+
+    /// Regression for sinelaw/fresh#2229.
+    ///
+    /// When the tab strip is scrolled (many tabs open) and the user invokes
+    /// "Close Others" / "Close to Left" / "Close to Right" / "Close All",
+    /// the surviving active tab must stay on-screen. Before the fix the
+    /// scroll offset was carried over from the pre-close state, so the only
+    /// remaining tab sat to the left of the viewport and the tab bar
+    /// looked empty.
+    #[test]
+    fn close_others_re_anchors_tab_scroll_to_surviving_tab() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let split_id = editor.split_manager().active_split();
+
+        // Open enough long-named buffers that the strip would scroll on a
+        // realistic terminal width.
+        use crate::view::split::TabTarget;
+        let mut buffers = Vec::new();
+        for i in 0..6 {
+            let id = editor.new_buffer();
+            editor
+                .buffers_mut()
+                .get_mut(&id)
+                .unwrap()
+                .buffer
+                .rename_file_path(std::path::PathBuf::from(format!(
+                    "long_filename_for_tab_{:02}.txt",
+                    i
+                )));
+            buffers.push(id);
+        }
+
+        // Make the last buffer the active one and seed a scrolled offset
+        // — what the renderer would have computed mid-session — then mark
+        // it as the surviving "keep" tab.
+        let keep = buffers[5];
+        editor
+            .active_window_mut()
+            .split_manager_mut()
+            .unwrap()
+            .set_split_buffer(split_id, keep);
+        {
+            let view_state = editor.split_view_states_mut().get_mut(&split_id).unwrap();
+            view_state.open_buffers = buffers
+                .iter()
+                .map(|b| TabTarget::Buffer(*b))
+                .collect::<Vec<_>>();
+            view_state.tab_scroll_offset = 80;
+        }
+
+        editor.close_other_tabs_in_split(keep, split_id);
+
+        // Only the kept tab remains. Its visual range is [0, tab_width)
+        // and it must be inside the viewport — i.e. the offset must fit
+        // within the total tab strip width.
+        let view_state = editor.split_view_states().get(&split_id).unwrap();
+        let remaining_targets = view_state.buffer_tab_ids_vec();
+        assert_eq!(
+            remaining_targets,
+            vec![keep],
+            "Close Others should leave only the kept buffer"
+        );
+        let name_len = editor
+            .buffers()
+            .get(&keep)
+            .unwrap()
+            .buffer
+            .file_path()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
+        let kept_tab_width = 2 + name_len;
+        assert!(
+            view_state.tab_scroll_offset < kept_tab_width,
+            "scroll offset {} must keep the {}-wide kept tab in view (without the fix it stays at 80)",
+            view_state.tab_scroll_offset,
+            kept_tab_width,
+        );
+    }
 }

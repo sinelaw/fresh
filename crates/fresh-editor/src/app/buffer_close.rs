@@ -674,6 +674,7 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .set_split_buffer(split_id, keep_buffer_id);
 
+        self.reseat_tab_scroll_for_split(split_id);
         self.set_batch_close_status_message(closed, skipped_modified);
     }
 
@@ -708,6 +709,7 @@ impl Editor {
             }
         }
 
+        self.reseat_tab_scroll_for_split(split_id);
         self.set_batch_close_status_message(closed, skipped_modified);
     }
 
@@ -742,6 +744,7 @@ impl Editor {
             }
         }
 
+        self.reseat_tab_scroll_for_split(split_id);
         self.set_batch_close_status_message(closed, skipped_modified);
     }
 
@@ -770,7 +773,35 @@ impl Editor {
             }
         }
 
+        // If any modified tabs were skipped, the split survives with a reduced
+        // tab list. Re-anchor its scroll offset so the surviving tabs stay in
+        // view. (When the split was torn down entirely there's no state left to
+        // adjust; the no-op is silent.)
+        self.reseat_tab_scroll_for_split(split_id);
         self.set_batch_close_status_message(closed, skipped_modified);
+    }
+
+    /// Re-pin a split's tab-scroll offset around its currently-active buffer.
+    ///
+    /// Batch closes (Close Others / Close to Right / Close to Left / Close All)
+    /// shrink the tab strip without going through `set_active_buffer`, so the
+    /// scroll offset from the pre-close state can leave the surviving active
+    /// tab off-screen — the user sees an empty tab bar after Close Others
+    /// (sinelaw/fresh#2229). Calling this after a batch close re-runs the
+    /// "make the active tab visible" math against the new tab list using the
+    /// editor's effective tabs width. Silently no-ops if the split is gone.
+    fn reseat_tab_scroll_for_split(&mut self, split_id: LeafId) {
+        let Some(active_buffer) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(mgr, _)| mgr.buffer_for_split(split_id))
+        else {
+            return;
+        };
+        let tabs_width = self.active_window().effective_tabs_width();
+        self.active_window_mut()
+            .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
     }
 
     /// Set status message for batch close operations
