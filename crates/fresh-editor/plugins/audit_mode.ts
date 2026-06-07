@@ -196,6 +196,10 @@ interface ReviewState {
   // multi-file navigator; this keeps the center buffer small and fast even
   // on huge changesets. `,`/`.` move the focus between files.
   focusOnly: boolean;
+  // When true, the focused file renders as a two-column side-by-side
+  // (OLD | NEW) in the center panel instead of the unified stream. The
+  // `1`/`2` keys toggle it; the sidebar and other panels stay put.
+  splitView: boolean;
   // Current selection in the comments panel (1-indexed row, 0 means none)
   commentsSelectedRow: number;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
@@ -249,6 +253,7 @@ const state: ReviewState = {
   showComments: true,
   fileFilter: "",
   focusOnly: true,
+  splitView: false,
   commentsSelectedRow: 0,
   commentsHighlightId: null,
   stickyCurrentFile: null,
@@ -870,6 +875,94 @@ function pushLineComments(
 }
 
 /**
+ * Render a single hunk as two side-by-side columns (OLD | NEW) into
+ * `lines`. Removed lines sit on the left, added on the right, aligned
+ * row-by-row; context lines appear on both sides. Per-column add/remove
+ * backgrounds are applied via inline overlays so each side keeps its own
+ * tint around the central separator. Used when `state.splitView` is on.
+ */
+function pushSideBySideHunk(lines: DiffLine[], hunk: Hunk) {
+    const centerW = Math.max(40, Math.floor(state.viewportWidth * 0.6));
+    const colW = Math.max(12, Math.floor((centerW - 3) / 2));
+    const SEP = ' │ ';
+    const gutterLen = LINE_NUM_W + 1;
+
+    const cell = (num: number | undefined, text: string): string => {
+        const g = num !== undefined ? String(num).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
+        let body = `${g} ${text}`;
+        body = body.length > colW ? body.slice(0, colW) : body.padEnd(colW);
+        return body;
+    };
+
+    let oldN = hunk.oldRange.start;
+    let newN = hunk.range.start;
+    let rem: { n: number; t: string }[] = [];
+    let add: { n: number; t: string }[] = [];
+
+    const pushRow = (
+        left: string, right: string,
+        leftFilled: boolean, rightFilled: boolean,
+        oldLine: number | undefined, newLine: number | undefined,
+    ) => {
+        const text = left + SEP + right;
+        const rightStart = getByteLength(left + SEP);
+        const overlays: InlineOverlay[] = [
+            { start: 0, end: gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
+            { start: rightStart, end: rightStart + gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
+        ];
+        if (leftFilled && oldLine !== undefined && newLine === undefined) {
+            overlays.push({ start: 0, end: getByteLength(left), style: { bg: STYLE_REMOVE_BG } });
+        }
+        if (rightFilled && newLine !== undefined && oldLine === undefined) {
+            overlays.push({ start: rightStart, end: rightStart + getByteLength(right), style: { bg: STYLE_ADD_BG } });
+        }
+        const type: DiffLine['type'] = leftFilled && !rightFilled ? 'remove'
+            : rightFilled && !leftFilled ? 'add' : 'context';
+        lines.push({
+            text, type,
+            hunkId: hunk.id, file: hunk.file,
+            lineType: type === 'add' ? 'add' : type === 'remove' ? 'remove' : 'context',
+            oldLine, newLine,
+            inlineOverlays: overlays,
+        });
+    };
+
+    const flush = () => {
+        const n = Math.max(rem.length, add.length);
+        for (let i = 0; i < n; i++) {
+            const l = rem[i];
+            const r = add[i];
+            const left = l ? cell(l.n, l.t) : ' '.repeat(colW);
+            const right = r ? cell(r.n, r.t) : ' '.repeat(colW);
+            pushRow(left, right, !!l, !!r, l ? l.n : undefined, r ? r.n : undefined);
+            if (r) pushLineComments(lines, hunk, 'add', undefined, r.n);
+            else if (l) pushLineComments(lines, hunk, 'remove', l.n, undefined);
+        }
+        rem = [];
+        add = [];
+    };
+
+    for (const raw of hunk.lines) {
+        const p = raw[0];
+        const content = raw.substring(1);
+        if (p === '-') {
+            rem.push({ n: oldN++, t: content });
+        } else if (p === '+') {
+            add.push({ n: newN++, t: content });
+        } else if (p === '\\') {
+            // "\ No newline at end of file" — not a real line.
+        } else {
+            flush();
+            pushRow(cell(oldN, content), cell(newN, content), true, true, oldN, newN);
+            pushLineComments(lines, hunk, 'context', oldN, newN);
+            oldN++;
+            newN++;
+        }
+    }
+    flush();
+}
+
+/**
  * Build the diff lines for the unified stream.
  * Emits one file-header row per file, followed by its hunks inline.
  * When the file is collapsed, only the header is emitted.
@@ -896,13 +989,6 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
     let lastCategory: string | undefined;
     for (let fi = 0; fi < state.files.length; fi++) {
         const file = state.files[fi];
-
-        // Focus mode: render only the file selected in the sidebar. The
-        // center buffer stays small (one file) so huge changesets remain
-        // responsive; the sidebar is the multi-file navigator.
-        if (state.focusOnly && state.filesCurrentKey && fileKey(file) !== state.filesCurrentKey) {
-            continue;
-        }
 
         // Section header — full-line-wide INVERSE band, uppercase, bold.
         // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
@@ -963,6 +1049,15 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
             },
         });
 
+        // Focus mode: emit the header for every file (so the stream stays
+        // a navigable overview) but build the hunk body only for the
+        // focused file. This keeps the center buffer small — and thus
+        // responsive — on large changesets without losing the file list.
+        if (state.focusOnly && state.filesCurrentKey && key !== state.filesCurrentKey) {
+            lines.push({ text: '', type: 'empty' });
+            continue;
+        }
+
         // Find hunks for this file
         const fileHunks = state.hunks.filter(
             h => h.file === file.path && h.gitStatus === file.category
@@ -1010,6 +1105,13 @@ function buildDiffLines(_rightWidth: number): DiffLine[] {
 
         // (Comments are line-based — they appear under their attached
         // diff line via pushLineComments below, never as hunk-level.)
+
+        // Side-by-side layout: render this hunk as two columns and skip
+        // the unified per-line emission below.
+        if (state.splitView) {
+            pushSideBySideHunk(lines, hunk);
+            continue;
+        }
 
         // Track actual file line numbers as we iterate
         let oldLineNum = hunk.oldRange.start;
@@ -3260,9 +3362,15 @@ interface CompositeDiffState {
 let activeCompositeDiffState: CompositeDiffState | null = null;
 
 async function review_drill_down() {
-    // Use the file under the cursor (the file whose section the cursor is in)
+    // In focus mode the sidebar's selected file is authoritative (the
+    // cursor may be sitting on a header row); otherwise use the file the
+    // cursor is within.
     if (state.files.length === 0) return;
-    const selectedFile = currentFileFromCursor();
+    let selectedFile: FileEntry | null = null;
+    if (state.focusOnly && state.filesCurrentKey) {
+        selectedFile = state.files.find(f => fileKey(f) === state.filesCurrentKey) ?? null;
+    }
+    if (!selectedFile) selectedFile = currentFileFromCursor();
     if (!selectedFile) return;
 
     // Create a minimal hunk-like reference for the rest of the function
@@ -3451,27 +3559,21 @@ registerHandler("review_drill_down", review_drill_down);
 // See docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.1.
 const AUTO_SPLIT_MIN_WIDTH = 140;
 
-async function review_layout_split() {
-    if (activeCompositeDiffState) return; // already side-by-side
-    await review_drill_down(); // sets its own diff-summary status
+function review_layout_split() {
+    if (state.splitView) return;
+    state.splitView = true;
+    updateMagitDisplay();
+    editor.setStatus(editor.t("status.split_view") || "Side-by-side view");
 }
 registerHandler("review_layout_split", review_layout_split);
 
 function review_layout_stack() {
-    if (!activeCompositeDiffState) {
+    if (!state.splitView) {
         editor.setStatus(editor.t("status.unified_view") || "Unified view");
         return;
     }
-    // Close the composite tab exactly the way its `q` binding does — the
-    // editor cleanly removes the tab and returns to the review — then
-    // reap the background OLD/NEW content buffers so they don't leak.
-    const st = activeCompositeDiffState;
-    activeCompositeDiffState = null;
-    editor.executeAction("close");
-    try {
-        editor.closeBuffer(st.oldBufferId);
-        editor.closeBuffer(st.newBufferId);
-    } catch {}
+    state.splitView = false;
+    updateMagitDisplay();
     editor.setStatus(editor.t("status.unified_view") || "Unified view");
 }
 registerHandler("review_layout_stack", review_layout_stack);
@@ -3848,12 +3950,6 @@ registerHandler("review_diff_open_working_at_cursor", review_diff_open_working_a
 editor.defineMode("diff-view", [
     ["Enter", "review_diff_open_at_cursor"],
     ["M-o", "review_diff_open_working_at_cursor"],
-    // Layout toggle: 2 returns to the unified review, 0 picks by width.
-    // 1 is a no-op here (already side-by-side). The composite router owns
-    // n/p/[/] (scroll + hunk nav), so only the free digits are bound.
-    ["1", "review_layout_split"],
-    ["2", "review_layout_stack"],
-    ["0", "review_layout_auto"],
 ], true);
 
 // --- Review Comment Actions ---
