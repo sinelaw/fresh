@@ -673,6 +673,16 @@ impl Editor {
             }
         }
 
+        // Handle "+" new-tab popup menu hover - update highlighted item
+        if let Some(HoverTarget::NewTabMenuItem(item_idx)) = new_target.clone() {
+            if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
+                if menu.highlighted != item_idx {
+                    menu.highlighted = item_idx;
+                    return true;
+                }
+            }
+        }
+
         // Handle file explorer status indicator hover - show tooltip
         // Always dismiss existing tooltip first when target changes
         if old_target != new_target
@@ -711,6 +721,7 @@ impl Editor {
         // tooltips overlapping other popups.
         if self.active_window_mut().theme_info_popup.is_some()
             || self.active_window_mut().tab_context_menu.is_some()
+            || self.active_window_mut().new_tab_menu.is_some()
             || self
                 .active_window_mut()
                 .file_explorer_context_menu
@@ -969,6 +980,26 @@ impl Editor {
             }
         }
 
+        // Check the "+" new-tab popup menu (rendered on top)
+        if let Some(ref menu) = self.active_window().new_tab_menu {
+            let menu_x = menu.position.0;
+            let menu_y = menu.position.1;
+            let menu_width = super::types::NEW_TAB_MENU_WIDTH;
+            let items = super::types::NewTabMenuItem::all();
+            let menu_height = items.len() as u16 + 2;
+
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row > menu_y
+                && row < menu_y + menu_height - 1
+            {
+                let item_idx = (row - menu_y - 1) as usize;
+                if item_idx < items.len() {
+                    return Some(HoverTarget::NewTabMenuItem(item_idx));
+                }
+            }
+        }
+
         // Check tab context menu first (it's rendered on top)
         if let Some(ref menu) = self.active_window().tab_context_menu {
             let menu_x = menu.position.0;
@@ -1143,6 +1174,7 @@ impl Editor {
                 Some(TabHit::ScrollLeft)
                 | Some(TabHit::ScrollRight)
                 | Some(TabHit::BarBackground)
+                | Some(TabHit::NewTabButton)
                 | None => {}
             }
         }
@@ -1762,6 +1794,11 @@ impl Editor {
         }
         if self.active_window_mut().tab_context_menu.is_some() {
             if let Some(result) = self.handle_tab_context_menu_click(col, row) {
+                return Some(result);
+            }
+        }
+        if self.active_window_mut().new_tab_menu.is_some() {
+            if let Some(result) = self.handle_new_tab_menu_click(col, row) {
                 return Some(result);
             }
         }
@@ -2593,6 +2630,14 @@ impl Editor {
                 }
                 Some(Ok(()))
             }
+            TabHit::NewTabButton => {
+                // Open the "+" popup just below the button. Close any tab
+                // context menu first so only one popup is visible.
+                self.active_window_mut().tab_context_menu = None;
+                self.active_window_mut().new_tab_menu =
+                    Some(super::types::NewTabMenu::new(split_id, col, row + 1));
+                Some(Ok(()))
+            }
             TabHit::BarBackground => None,
         }
     }
@@ -3136,6 +3181,10 @@ impl Editor {
 
     /// Handle right-click event
     pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
+        // A right-click anywhere dismisses the "+" new-tab popup (it's a
+        // left-click-only menu).
+        self.active_window_mut().new_tab_menu = None;
+
         // Right-click inside the orchestrator dock column → let the plugin
         // raise a per-session context menu. Mirrors the left-click path:
         // re-focus the dock first (so the menu acts against a focused dock)
@@ -3295,6 +3344,73 @@ impl Editor {
 
         // Execute the action
         Some(self.execute_tab_context_menu_action(item, buffer_id, split_id))
+    }
+
+    /// Handle left-click on the "+" new-tab popup menu.
+    pub(super) fn handle_new_tab_menu_click(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        let menu = self.active_window_mut().new_tab_menu.as_ref()?;
+        let (menu_x, menu_y) = menu.position;
+        let items = super::types::NewTabMenuItem::all();
+        let menu_width = super::types::NEW_TAB_MENU_WIDTH;
+        let menu_height = items.len() as u16 + 2; // items + borders
+
+        // Click outside the menu closes it.
+        if col < menu_x || col >= menu_x + menu_width || row < menu_y || row >= menu_y + menu_height
+        {
+            self.active_window_mut().new_tab_menu = None;
+            return Some(Ok(()));
+        }
+
+        // Border rows (first/last) are inert.
+        if row == menu_y || row == menu_y + menu_height - 1 {
+            return Some(Ok(()));
+        }
+
+        let item_idx = (row - menu_y - 1) as usize;
+        if item_idx >= items.len() {
+            return Some(Ok(()));
+        }
+
+        let split_id = menu.split_id;
+        let item = items[item_idx];
+
+        // Close the menu before running the action.
+        self.active_window_mut().new_tab_menu = None;
+
+        Some(self.execute_new_tab_menu_action(item, split_id))
+    }
+
+    /// Execute a "+" new-tab popup menu action.
+    fn execute_new_tab_menu_action(
+        &mut self,
+        item: super::types::NewTabMenuItem,
+        split_id: LeafId,
+    ) -> AnyhowResult<()> {
+        use super::types::NewTabMenuItem;
+        // Ensure the new buffer/terminal lands in the split whose "+" was
+        // clicked: `open_terminal`/`new_buffer` act on the active split, so
+        // focus that split first (via the buffer it currently shows).
+        if let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(mgr, _)| mgr.buffer_for_split(split_id))
+        {
+            self.focus_split(split_id, buffer_id);
+        }
+        match item {
+            NewTabMenuItem::NewTerminal => {
+                self.open_terminal();
+            }
+            NewTabMenuItem::NewFile => {
+                self.new_buffer();
+            }
+        }
+        Ok(())
     }
 
     /// Execute a tab context menu action

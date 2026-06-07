@@ -1548,6 +1548,12 @@ impl Editor {
             self.render_file_explorer_context_menu(frame, &menu);
         }
 
+        // Render the "+" new-tab popup menu if open
+        let new_tab_menu = self.active_window().new_tab_menu.clone();
+        if let Some(menu) = new_tab_menu {
+            self.render_new_tab_menu(frame, &menu);
+        }
+
         // Record non-editor region theme keys for the theme inspector
         self.record_non_editor_theme_regions();
 
@@ -3511,6 +3517,64 @@ impl Editor {
             // Pad the label to fill the menu width
             let label = item.label();
             let content_width = (menu_width as usize).saturating_sub(2); // -2 for borders
+            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
+
+            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
+            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
+
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(paragraph, area);
+    }
+
+    /// Render the "+" new-tab popup menu (New Terminal / New File).
+    fn render_new_tab_menu(&self, frame: &mut Frame, menu: &super::types::NewTabMenu) {
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        let items = super::types::NewTabMenuItem::all();
+        let menu_width = super::types::NEW_TAB_MENU_WIDTH;
+        let menu_height = items.len() as u16 + 2; // items + borders
+
+        let screen_width = frame.area().width;
+        let screen_height = frame.area().height;
+
+        let menu_x = if menu.position.0 + menu_width > screen_width {
+            screen_width.saturating_sub(menu_width)
+        } else {
+            menu.position.0
+        };
+        let menu_y = if menu.position.1 + menu_height > screen_height {
+            screen_height.saturating_sub(menu_height)
+        } else {
+            menu.position.1
+        };
+
+        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
+
+        frame.render_widget(Clear, area);
+
+        let mut lines = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let is_highlighted = idx == menu.highlighted;
+
+            let style = if is_highlighted {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_highlight_fg)
+                    .bg(self.theme.read().unwrap().menu_highlight_bg)
+            } else {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
+                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
+            };
+
+            let label = item.label();
+            let content_width = (menu_width as usize).saturating_sub(2);
             let padded_label = format!(" {:<width$}", label, width = content_width - 1);
 
             lines.push(Line::from(vec![Span::styled(padded_label, style)]));

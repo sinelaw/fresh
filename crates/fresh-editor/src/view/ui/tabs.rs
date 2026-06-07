@@ -68,6 +68,8 @@ pub struct TabLayout {
     pub left_scroll_area: Option<Rect>,
     /// Hit area for the right scroll button (if shown)
     pub right_scroll_area: Option<Rect>,
+    /// Hit area for the trailing "+" new-tab button (if visible)
+    pub new_tab_area: Option<Rect>,
 }
 
 /// Hit test result for tab interactions
@@ -83,6 +85,8 @@ pub enum TabHit {
     ScrollLeft,
     /// Hit the right scroll button
     ScrollRight,
+    /// Hit the trailing "+" new-tab button
+    NewTabButton,
 }
 
 impl TabLayout {
@@ -93,6 +97,7 @@ impl TabLayout {
             bar_area,
             left_scroll_area: None,
             right_scroll_area: None,
+            new_tab_area: None,
         }
     }
 
@@ -132,6 +137,13 @@ impl TabLayout {
             // Check tab area
             if point_in_rect(tab.tab_area, x, y) {
                 return Some(TabHit::TabName(tab.target));
+            }
+        }
+
+        // Check the trailing "+" new-tab button
+        if let Some(new_tab_area) = self.new_tab_area {
+            if point_in_rect(new_tab_area, x, y) {
+                return Some(TabHit::NewTabButton);
             }
         }
 
@@ -563,6 +575,36 @@ impl TabsRenderer {
                 separator_offset += 1;
             }
         }
+        // Append a trailing "+" new-tab button as a separate tab. It sits
+        // right after the last real tab (preceded by a separator) and
+        // participates in the same scroll/truncation flow below, so no
+        // special-casing is needed when rendering the visible window.
+        let plus_logical_start: usize = {
+            let tabs_total: usize = final_spans.iter().map(|(_, w)| w).sum();
+            if !rendered_targets.is_empty() {
+                // Separator between the last real tab and the "+" button
+                final_spans.push((
+                    Span::styled(" ", Style::default().bg(theme.tab_separator_bg)),
+                    1,
+                ));
+                tabs_total + 1
+            } else {
+                tabs_total
+            }
+        };
+        const NEW_TAB_BUTTON_TEXT: &str = " + ";
+        let new_tab_width = str_width(NEW_TAB_BUTTON_TEXT);
+        final_spans.push((
+            Span::styled(
+                NEW_TAB_BUTTON_TEXT.to_string(),
+                Style::default()
+                    .fg(theme.tab_inactive_fg)
+                    .bg(theme.tab_inactive_bg),
+            ),
+            new_tab_width,
+        ));
+        let plus_logical_end = plus_logical_start + new_tab_width;
+
         #[allow(clippy::let_and_return)]
         let all_tab_spans = final_spans;
 
@@ -743,6 +785,33 @@ impl TabsRenderer {
                 tab_area: Rect::new(screen_start, area.y, tab_width, 1),
                 close_area: Rect::new(screen_close_start, area.y, close_width, 1),
             });
+        }
+
+        // Map the trailing "+" button's logical range to a screen rect using
+        // the same visibility/clamping logic as the per-tab mapping above.
+        {
+            let visible_start = offset;
+            let visible_end = offset + available;
+            if plus_logical_end > visible_start && plus_logical_start < visible_end {
+                let screen_start = if plus_logical_start >= visible_start {
+                    area.x
+                        + left_indicator_offset as u16
+                        + (plus_logical_start - visible_start) as u16
+                } else {
+                    area.x + left_indicator_offset as u16
+                };
+                let screen_end = if plus_logical_end <= visible_end {
+                    area.x
+                        + left_indicator_offset as u16
+                        + (plus_logical_end - visible_start) as u16
+                } else {
+                    area.x + left_indicator_offset as u16 + available as u16
+                };
+                let width = screen_end.saturating_sub(screen_start);
+                if width > 0 {
+                    layout.new_tab_area = Some(Rect::new(screen_start, area.y, width, 1));
+                }
+            }
         }
 
         layout

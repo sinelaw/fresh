@@ -207,6 +207,7 @@ pub mod syntax_language_case;
 pub mod syntax_variable_builtin;
 pub mod tab_config;
 pub mod tab_drag;
+pub mod tab_new_button;
 pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_resize;
