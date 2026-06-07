@@ -252,6 +252,29 @@ fn test_review_comment_from_header_opens_prompt() {
         .unwrap();
 }
 
+/// §5.12 — `W` toggles watch (auto-reload on save) and reports its state.
+#[test]
+fn test_review_watch_toggle_status() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('W'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Watching for changes"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('W'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Watch off"))
+        .unwrap();
+}
+
 /// The `?` help reference opens and, per its own "Press q to close" hint,
 /// `q` dismisses it back to the review (regression: it used to be a plain
 /// buffer with no close binding, trapping the user).

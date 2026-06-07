@@ -3629,6 +3629,7 @@ async function review_help() {
         " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
         " View        a          show / hide inline notes",
         "             /          filter files (empty to clear)",
+        "             W          watch: auto-reload when a file is saved",
         " Review      c          add comment        x   delete comment",
         "             s / u / d  stage / unstage / discard (hunk or file)",
         "             S / U / D  stage / unstage / discard the whole file",
@@ -3735,6 +3736,40 @@ editor.on("prompt_confirmed", (args) => {
                 || `Filter "${state.fileFilter}" — ${vis} file(s)`)
             : (editor.t("status.filter_cleared") || "Filter cleared")
     );
+    return true;
+});
+
+// --- Watch / auto-reload (hunk-style `--watch`, opt-in via `W`) ---
+// When enabled, saving any file in the editor re-runs the diff and rebuilds,
+// preserving focus, comments, and folds. Saves are debounced via a
+// generation counter (QuickJS has no setTimeout). This keys off the editor's
+// own `after_file_save` event rather than a filesystem watch, so it tracks
+// edits made in Fresh (the common review-while-editing loop).
+let reviewWatchEnabled = false;
+let reviewWatchGen = 0;
+const WATCH_DEBOUNCE_MS = 200;
+
+function review_toggle_watch() {
+    reviewWatchEnabled = !reviewWatchEnabled;
+    editor.setStatus(
+        reviewWatchEnabled
+            ? (editor.t("status.watch_on") || "Watching for changes")
+            : (editor.t("status.watch_off") || "Watch off")
+    );
+}
+registerHandler("review_toggle_watch", review_toggle_watch);
+
+editor.on("after_file_save", () => {
+    if (!reviewWatchEnabled || state.groupId === null) return true;
+    // Range reviews are ref-to-ref; working-tree saves don't change them.
+    if (state.mode === 'range') return true;
+    const myGen = ++reviewWatchGen;
+    void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
+        // Superseded by a later save, or the review closed / watch turned
+        // off while we waited.
+        if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
+        void refreshMagitData();
+    });
     return true;
 });
 
@@ -4607,6 +4642,7 @@ function stop_review_diff() {
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
+    reviewWatchEnabled = false;
     editor.setContext("review-mode", false);
     editor.off("resize", onReviewDiffResize);
     editor.off("buffer_activated", on_review_buffer_activated);
@@ -5696,9 +5732,10 @@ editor.defineMode("review-mode", [
     ["1", "review_layout_split"],
     ["2", "review_layout_stack"],
     ["0", "review_layout_auto"],
-    // Toggle inline review-note visibility; filter files; help reference.
+    // Toggle inline review-note visibility; filter files; watch; help.
     ["a", "review_toggle_agent_notes"],
     ["/", "review_filter_files"],
+    ["W", "review_toggle_watch"],
     ["?", "review_help"],
     // Per-file collapse: Tab toggles the file under the cursor;
     // `z a` collapses every file; `z r` reveals (expands) every file.
