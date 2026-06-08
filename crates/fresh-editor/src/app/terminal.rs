@@ -1626,6 +1626,43 @@ pub mod render {
                 }
             }
         }
+
+        /// The Ctrl+hover link highlight underlines exactly the cells in the
+        /// given (row, col-range) span and leaves the rest untouched.
+        #[test]
+        fn link_highlight_underlines_only_its_span() {
+            // One 6-wide row of text "abcdef".
+            let area = Rect::new(0, 0, 6, 1);
+            let mut buf = Buffer::empty(area);
+            let row: Vec<TerminalCell> = "abcdef"
+                .chars()
+                .map(|c| TerminalCell {
+                    c,
+                    ..Default::default()
+                })
+                .collect();
+            let content = vec![row];
+
+            render_terminal_content(
+                &content,
+                (0, 0),
+                false,
+                area,
+                &mut buf,
+                Color::White,
+                Color::Black,
+                Some((0, 2..5)), // underline columns 2,3,4
+            );
+
+            for x in 0..area.width {
+                let underlined = buf[(x, 0)].modifier.contains(Modifier::UNDERLINED);
+                let expected = (2..5).contains(&(x as usize));
+                assert_eq!(
+                    underlined, expected,
+                    "cell col {x} underline = {underlined}, expected {expected}",
+                );
+            }
+        }
     }
 }
 
