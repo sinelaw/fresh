@@ -1995,10 +1995,20 @@ function on_review_mouse_click(data: {
                 return;
             }
         }
-        // File header click: toggle the single file.
+        // File header click.
         for (const f of state.files) {
             if (state.fileHeaderRows[fileKey(f)] === targetRow1) {
                 const key = fileKey(f);
+                // Focus mode: only the focused file's body is shown, so
+                // clicking a *different* file's header should switch the
+                // center to that file (show its diff) rather than toggle a
+                // fold the user can't see. Clicking the focused file's own
+                // header still toggles its fold.
+                if (state.focusOnly && key !== state.filesCurrentKey) {
+                    state.filesCurrentKey = key;
+                    refreshFocusedFile();
+                    return;
+                }
                 if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
                 else state.collapsedFiles.add(key);
                 applyFolds();
