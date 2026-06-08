@@ -158,6 +158,7 @@ pub mod recovery;
 pub mod remote_fs_test;
 pub mod remote_indicator_popup;
 pub mod rendering;
+pub mod restored_agent_terminal;
 pub mod restored_terminal_focus;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
