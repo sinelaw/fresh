@@ -829,9 +829,6 @@ impl Editor {
                         path: full_path.clone(),
                     },
                 );
-                self.active_window_mut().invalidate_file_explorer_status(
-                    crate::app::file_explorer::FileExplorerGitStatusRefreshReason::FileSaved,
-                );
 
                 if let Some(buffer_to_close) = self.active_window_mut().pending_close_buffer.take()
                 {

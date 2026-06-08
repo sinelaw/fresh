@@ -1153,16 +1153,10 @@ impl Editor {
                                     .map(|m| m.is_hidden)
                                     .unwrap_or(false),
                                 decorations: &self.active_window().file_explorer_decoration_cache,
-                                git_statuses: &self.active_window().file_explorer_git_status_cache,
                                 slot_overrides: &self
                                     .active_window()
                                     .file_explorer_slot_override_cache,
                                 theme: &theme,
-                                show_file_icons: self.config.file_explorer.show_file_icons,
-                                color_git_status_names: self
-                                    .config
-                                    .file_explorer
-                                    .color_git_status_names,
                                 neutral_fg,
                             };
                             let slot_resolution = slot_resolver.resolve(&slot_context);
@@ -3674,11 +3668,8 @@ impl Editor {
             is_symlink,
             is_hidden,
             decorations: &self.active_window().file_explorer_decoration_cache,
-            git_statuses: &self.active_window().file_explorer_git_status_cache,
             slot_overrides: &self.active_window().file_explorer_slot_override_cache,
             theme: &theme,
-            show_file_icons: self.config.file_explorer.show_file_icons,
-            color_git_status_names: self.config.file_explorer.color_git_status_names,
             neutral_fg,
         };
         let slot_resolution = slot_resolver.resolve(&slot_context);
@@ -3888,7 +3879,7 @@ impl Editor {
     ) -> Option<Vec<std::path::PathBuf>> {
         let modified_files = self
             .active_window()
-            .file_explorer_git_status_cache
+            .file_explorer_decoration_cache
             .direct_paths_under(dir_path);
 
         (!modified_files.is_empty()).then_some(modified_files)

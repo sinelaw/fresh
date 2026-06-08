@@ -1595,16 +1595,6 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_true")]
     pub compact_directories: bool,
 
-    /// Show a leading file-type icon token before each file or directory name.
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub show_file_icons: bool,
-
-    /// Color explorer file and directory names from git status when status
-    /// information is available. Default: true
-    #[serde(default = "default_true")]
-    pub color_git_status_names: bool,
-
     /// Symbol shown next to a collapsed (closed) directory in the file
     /// explorer tree. A short string (single character recommended).
     /// A trailing space is added automatically during rendering; the
@@ -2013,8 +2003,6 @@ impl Default for FileExplorerConfig {
             auto_open_on_last_buffer_close: true,
             follow_active_buffer: false,
             compact_directories: true,
-            show_file_icons: true,
-            color_git_status_names: true,
             tree_indicator_collapsed: default_tree_indicator_collapsed(),
             tree_indicator_expanded: default_tree_indicator_expanded(),
         }
@@ -2624,7 +2612,7 @@ impl Default for Config {
             lsp: Self::default_lsp_config(),
             universal_lsp: Self::default_universal_lsp_config(),
             warnings: WarningsConfig::default(),
-            plugins: HashMap::new(), // Populated when scanning for plugins
+            plugins: HashMap::new(),
             packages: PackagesConfig::default(),
         }
     }

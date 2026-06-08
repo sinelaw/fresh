@@ -29,6 +29,7 @@ pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
 pub mod env_manager;
+pub mod file_explorer_slots;
 pub mod find_file;
 pub mod git;
 pub mod git_log_split_tab_focus;

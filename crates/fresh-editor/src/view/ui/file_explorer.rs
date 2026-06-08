@@ -2,7 +2,7 @@ use crate::input::fuzzy::FuzzyMatch;
 use crate::primitives::display_width::str_width;
 use crate::view::file_tree::{
     ExplorerSlotContext, ExplorerSlotResolution, ExplorerSlotResolver, FileExplorerDecorationCache,
-    FileExplorerGitStatusCache, FileExplorerSlotOverrideCache, FileTreeView, NodeId,
+    FileExplorerSlotOverrideCache, FileTreeView, NodeId,
 };
 use crate::view::theme::Theme;
 use ratatui::{
@@ -42,7 +42,6 @@ impl FileExplorerRenderer {
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
-        git_statuses: &FileExplorerGitStatusCache,
         slot_overrides: &FileExplorerSlotOverrideCache,
         keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
         current_context: crate::input::keybindings::KeyContext,
@@ -50,8 +49,6 @@ impl FileExplorerRenderer {
         close_button_hovered: bool,
         remote_connection: Option<&str>,
         cut_paths: &[PathBuf],
-        show_file_icons: bool,
-        color_git_status_names: bool,
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
     ) {
@@ -104,14 +101,11 @@ impl FileExplorerRenderer {
                     is_focused,
                     files_with_unsaved_changes,
                     decorations,
-                    git_statuses,
                     slot_overrides,
                     theme,
                     content_width,
                     fuzzy_match.as_ref(),
                     cut_paths,
-                    show_file_icons,
-                    color_git_status_names,
                     tree_indicator_collapsed,
                     tree_indicator_expanded,
                 )
@@ -247,14 +241,11 @@ impl FileExplorerRenderer {
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
-        git_statuses: &FileExplorerGitStatusCache,
         slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
         cut_paths: &[PathBuf],
-        show_file_icons: bool,
-        color_git_status_names: bool,
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
     ) -> ListItem<'static> {
@@ -268,14 +259,11 @@ impl FileExplorerRenderer {
             is_focused,
             files_with_unsaved_changes,
             decorations,
-            git_statuses,
             slot_overrides,
             theme,
             content_width,
             fuzzy_match,
             cut_paths,
-            show_file_icons,
-            color_git_status_names,
             tree_indicator_collapsed,
             tree_indicator_expanded,
         );
@@ -298,14 +286,11 @@ impl FileExplorerRenderer {
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
         decorations: &FileExplorerDecorationCache,
-        git_statuses: &FileExplorerGitStatusCache,
         slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
         cut_paths: &[PathBuf],
-        show_file_icons: bool,
-        color_git_status_names: bool,
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
     ) -> Line<'static> {
@@ -363,11 +348,8 @@ impl FileExplorerRenderer {
                 .map(|m| m.is_hidden)
                 .unwrap_or(false),
             decorations,
-            git_statuses,
             slot_overrides,
             theme,
-            show_file_icons,
-            color_git_status_names,
             neutral_fg,
         };
         let slot_resolution = slot_resolver.resolve(&slot_context);
@@ -592,12 +574,8 @@ mod tests {
     use super::*;
     use crate::model::filesystem::StdFileSystem;
     use crate::services::fs::FsManager;
-    use crate::view::file_tree::{
-        FileExplorerGitStatus, FileExplorerGitStatusCache, GitStatusKind,
-    };
     use std::collections::{HashMap, HashSet};
     use std::fs as std_fs;
-    use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -628,276 +606,99 @@ mod tests {
         (temp_dir, FileTreeView::new(tree))
     }
 
-    fn spans_text(line: &Line<'static>) -> Vec<String> {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref().to_string())
-            .collect()
-    }
-
-    fn status_cache(
-        root: &std::path::Path,
-        entries: Vec<(PathBuf, GitStatusKind)>,
-    ) -> FileExplorerGitStatusCache {
-        FileExplorerGitStatusCache::rebuild(
-            entries
-                .into_iter()
-                .map(|(path, kind)| (path, FileExplorerGitStatus { kind })),
-            root,
-            &HashMap::new(),
+    fn build_line(
+        view: &FileTreeView,
+        node_id: NodeId,
+        indent: usize,
+        decorations: &FileExplorerDecorationCache,
+        slot_overrides: &FileExplorerSlotOverrideCache,
+        theme: &Theme,
+    ) -> Line<'static> {
+        FileExplorerRenderer::build_node_line(
+            view,
+            crate::view::file_tree::default_slot_providers().resolver(),
+            node_id,
+            indent,
+            false,
+            false,
+            false,
+            &HashSet::new(),
+            decorations,
+            slot_overrides,
+            theme,
+            80,
+            None,
+            &[],
+            ">",
+            "▼",
         )
     }
 
     #[tokio::test]
-    async fn git_status_name_colors_map_to_theme_tokens() {
-        let theme = Theme::load_builtin("dark").unwrap();
-
-        assert_eq!(
-            crate::view::file_tree::decorations::compatibility_git_status_name_color(
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
-                },
-                &theme
-            ),
-            theme.file_status_modified_fg
-        );
-        assert_eq!(
-            crate::view::file_tree::decorations::compatibility_git_status_name_color(
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Untracked,
-                },
-                &theme
-            ),
-            theme.file_status_untracked_fg
-        );
-        assert_eq!(
-            crate::view::file_tree::decorations::compatibility_git_status_name_color(
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Renamed,
-                },
-                &theme
-            ),
-            theme.file_status_renamed_fg
-        );
-    }
-
-    #[tokio::test]
-    async fn renderer_line_includes_icon_and_status_colored_name() {
+    async fn renderer_line_shows_plugin_decoration_badge() {
         let (_temp_dir, view) = create_renderer_view().await;
         let theme = Theme::load_builtin("dark").unwrap();
         let schema_path = view.tree().root_path().join("src/schema.ts");
         let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
-        let git_statuses = status_cache(
-            view.tree().root_path(),
-            vec![(schema_path.clone(), GitStatusKind::Modified)],
-        );
-
-        let line = FileExplorerRenderer::build_node_line(
-            &view,
-            crate::view::file_tree::compatibility_slot_providers().resolver(),
-            schema_id,
-            2,
-            false,
-            false,
-            false,
-            &HashSet::new(),
-            &FileExplorerDecorationCache::default(),
-            &git_statuses,
-            &FileExplorerSlotOverrideCache::default(),
-            &theme,
-            80,
-            None,
-            &[],
-            true,
-            true,
-            ">",
-            "▼",
-        );
-
-        let texts = spans_text(&line);
-        assert!(texts.iter().any(|text| text == "TS"));
-        assert!(line.spans.iter().any(|span| {
-            span.content.as_ref() == "schema.ts"
-                && span.style.fg == Some(theme.file_status_modified_fg)
-        }));
-        assert!(line.spans.iter().any(|span| span.content.as_ref() == "M"
-            && span.style.fg == Some(theme.file_status_modified_fg)));
-    }
-
-    #[tokio::test]
-    async fn directories_render_with_folder_icon_and_bubbled_status() {
-        let (_temp_dir, view) = create_renderer_view().await;
-        let theme = Theme::load_builtin("dark").unwrap();
-        let src_path = view.tree().root_path().join("src");
-        let schema_path = src_path.join("schema.ts");
-        let src_id = view.tree().get_node_by_path(&src_path).unwrap().id;
-        let git_statuses = status_cache(
-            view.tree().root_path(),
-            vec![(schema_path, GitStatusKind::Renamed)],
-        );
-
-        let line = FileExplorerRenderer::build_node_line(
-            &view,
-            crate::view::file_tree::compatibility_slot_providers().resolver(),
-            src_id,
-            1,
-            false,
-            false,
-            false,
-            &HashSet::new(),
-            &FileExplorerDecorationCache::default(),
-            &git_statuses,
-            &FileExplorerSlotOverrideCache::default(),
-            &theme,
-            80,
-            None,
-            &[],
-            true,
-            true,
-            ">",
-            "▼",
-        );
-
-        assert!(line.spans.iter().any(|span| span.content.as_ref() == "▣"));
-        assert!(line.spans.iter().any(|span| {
-            span.content.as_ref() == "src" && span.style.fg == Some(theme.file_status_renamed_fg)
-        }));
-        assert!(line.spans.iter().any(|span| {
-            span.content.as_ref() == "●" && span.style.fg == Some(theme.file_status_renamed_fg)
-        }));
-    }
-
-    #[tokio::test]
-    async fn renderer_line_blanks_leading_slot_when_icons_disabled() {
-        let (_temp_dir, view) = create_renderer_view().await;
-        let theme = Theme::load_builtin("dark").unwrap();
-        let schema_path = view.tree().root_path().join("src/schema.ts");
-        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
-
-        let line = FileExplorerRenderer::build_node_line(
-            &view,
-            crate::view::file_tree::compatibility_slot_providers().resolver(),
-            schema_id,
-            2,
-            false,
-            false,
-            false,
-            &HashSet::new(),
-            &FileExplorerDecorationCache::default(),
-            &FileExplorerGitStatusCache::default(),
-            &FileExplorerSlotOverrideCache::default(),
-            &theme,
-            80,
-            None,
-            &[],
-            false,
-            true,
-            ">",
-            "▼",
-        );
-
-        let texts = spans_text(&line);
-        assert!(!texts.iter().any(|text| text == "TS"));
-    }
-
-    #[tokio::test]
-    async fn renderer_line_keeps_git_name_color_when_plugin_badge_wins_trailing_slot() {
-        let (_temp_dir, view) = create_renderer_view().await;
-        let theme = Theme::load_builtin("dark").unwrap();
-        let schema_path = view.tree().root_path().join("src/schema.ts");
-        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
-        let git_statuses = status_cache(
-            view.tree().root_path(),
-            vec![(schema_path.clone(), GitStatusKind::Modified)],
-        );
         let decorations = FileExplorerDecorationCache::rebuild(
             vec![crate::view::file_tree::FileExplorerDecoration {
                 path: schema_path,
-                symbol: "P".to_string(),
+                symbol: "M".to_string(),
                 color: fresh_core::api::OverlayColorSpec::ThemeKey(
-                    "ui.file_status_added_fg".into(),
+                    "ui.file_status_modified_fg".into(),
                 ),
-                priority: 99,
+                priority: 50,
             }],
             view.tree().root_path(),
             &HashMap::new(),
         );
 
-        let line = FileExplorerRenderer::build_node_line(
+        let line = build_line(
             &view,
-            crate::view::file_tree::compatibility_slot_providers().resolver(),
             schema_id,
             2,
-            false,
-            false,
-            false,
-            &HashSet::new(),
             &decorations,
-            &git_statuses,
             &FileExplorerSlotOverrideCache::default(),
             &theme,
-            80,
-            None,
-            &[],
-            true,
-            true,
-            ">",
-            "▼",
         );
 
         assert!(line.spans.iter().any(|span| {
-            span.content.as_ref() == "schema.ts"
-                && span.style.fg == Some(theme.file_status_modified_fg)
-        }));
-        assert!(line.spans.iter().any(|span| {
-            span.content.as_ref() == "P" && span.style.fg == Some(theme.file_status_added_fg)
+            span.content.as_ref() == "M" && span.style.fg == Some(theme.file_status_modified_fg)
         }));
     }
 
     #[tokio::test]
-    async fn trailing_slot_bounds_track_rendered_right_edge_geometry() {
+    async fn directories_render_bubbled_plugin_status() {
         let (_temp_dir, view) = create_renderer_view().await;
         let theme = Theme::load_builtin("dark").unwrap();
-        let schema_path = view.tree().root_path().join("src/schema.ts");
-        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
-        let git_statuses = status_cache(
+        let src_path = view.tree().root_path().join("src");
+        let schema_path = src_path.join("schema.ts");
+        let src_id = view.tree().get_node_by_path(&src_path).unwrap().id;
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![crate::view::file_tree::FileExplorerDecoration {
+                path: schema_path,
+                symbol: "R".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_renamed_fg".into(),
+                ),
+                priority: 40,
+            }],
             view.tree().root_path(),
-            vec![(schema_path.clone(), GitStatusKind::Modified)],
+            &HashMap::new(),
         );
-        let slot_context = ExplorerSlotContext {
-            path: &schema_path,
-            is_dir: false,
-            has_unsaved: false,
-            is_symlink: false,
-            is_hidden: false,
-            decorations: &FileExplorerDecorationCache::default(),
-            git_statuses: &git_statuses,
-            slot_overrides: &FileExplorerSlotOverrideCache::default(),
-            theme: &theme,
-            show_file_icons: true,
-            color_git_status_names: true,
-            neutral_fg: theme.editor_fg,
-        };
-        let slot_resolution = crate::view::file_tree::compatibility_slot_providers()
-            .resolver()
-            .resolve(&slot_context);
-        let area = Rect::new(0, 0, 40, 10);
-        let content_width = area.width.saturating_sub(3) as usize;
 
-        let bounds = FileExplorerRenderer::trailing_slot_screen_bounds(
+        let line = build_line(
             &view,
-            schema_id,
-            2,
-            content_width,
-            &slot_resolution,
-            ">",
-            "▼",
-            area,
-        )
-        .expect("modified file should render a trailing slot");
+            src_id,
+            1,
+            &decorations,
+            &FileExplorerSlotOverrideCache::default(),
+            &theme,
+        );
 
-        assert_eq!(bounds.1, area.x + area.width.saturating_sub(1));
-        assert_eq!(bounds.1 - bounds.0, 1);
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == "●" && span.style.fg == Some(theme.file_status_renamed_fg)
+        }));
     }
 
     #[tokio::test]
@@ -934,26 +735,13 @@ mod tests {
             &HashMap::new(),
         );
 
-        let line = FileExplorerRenderer::build_node_line(
+        let line = build_line(
             &view,
-            crate::view::file_tree::default_slot_providers().resolver(),
             schema_id,
             2,
-            false,
-            false,
-            false,
-            &HashSet::new(),
             &FileExplorerDecorationCache::default(),
-            &FileExplorerGitStatusCache::default(),
             &slot_overrides,
             &theme,
-            80,
-            None,
-            &[],
-            true,
-            true,
-            ">",
-            "▼",
         );
 
         assert!(line.spans.iter().any(|span| span.content.as_ref() == "PL"));
@@ -970,9 +758,17 @@ mod tests {
         let theme = Theme::load_builtin("dark").unwrap();
         let schema_path = view.tree().root_path().join("src/schema.ts");
         let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
-        let git_statuses = status_cache(
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![crate::view::file_tree::FileExplorerDecoration {
+                path: schema_path.clone(),
+                symbol: "M".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_modified_fg".into(),
+                ),
+                priority: 50,
+            }],
             view.tree().root_path(),
-            vec![(schema_path.clone(), GitStatusKind::Modified)],
+            &HashMap::new(),
         );
         let slot_overrides = FileExplorerSlotOverrideCache::rebuild(
             vec![fresh_core::file_explorer::FileExplorerSlotEntry {
@@ -991,27 +787,7 @@ mod tests {
             &HashMap::new(),
         );
 
-        let line = FileExplorerRenderer::build_node_line(
-            &view,
-            crate::view::file_tree::default_slot_providers().resolver(),
-            schema_id,
-            2,
-            false,
-            false,
-            false,
-            &HashSet::new(),
-            &FileExplorerDecorationCache::default(),
-            &git_statuses,
-            &slot_overrides,
-            &theme,
-            80,
-            None,
-            &[],
-            true,
-            true,
-            ">",
-            "▼",
-        );
+        let line = build_line(&view, schema_id, 2, &decorations, &slot_overrides, &theme);
 
         assert!(line.spans.iter().any(|span| {
             span.content.as_ref() == "schema.ts" && span.style.fg == Some(theme.syntax_string)
@@ -1019,5 +795,56 @@ mod tests {
         assert!(line.spans.iter().any(|span| {
             span.content.as_ref() == "M" && span.style.fg == Some(theme.file_status_modified_fg)
         }));
+    }
+
+    #[tokio::test]
+    async fn trailing_slot_bounds_track_rendered_right_edge_geometry() {
+        let (_temp_dir, view) = create_renderer_view().await;
+        let theme = Theme::load_builtin("dark").unwrap();
+        let schema_path = view.tree().root_path().join("src/schema.ts");
+        let schema_id = view.tree().get_node_by_path(&schema_path).unwrap().id;
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![crate::view::file_tree::FileExplorerDecoration {
+                path: schema_path.clone(),
+                symbol: "M".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_modified_fg".into(),
+                ),
+                priority: 50,
+            }],
+            view.tree().root_path(),
+            &HashMap::new(),
+        );
+        let slot_context = ExplorerSlotContext {
+            path: &schema_path,
+            is_dir: false,
+            has_unsaved: false,
+            is_symlink: false,
+            is_hidden: false,
+            decorations: &decorations,
+            slot_overrides: &FileExplorerSlotOverrideCache::default(),
+            theme: &theme,
+            neutral_fg: theme.editor_fg,
+        };
+        let slot_resolution = crate::view::file_tree::default_slot_providers()
+            .resolver()
+            .resolve(&slot_context);
+        let area = Rect::new(0, 0, 40, 10);
+        let content_width = area.width.saturating_sub(3) as usize;
+
+        let bounds = FileExplorerRenderer::trailing_slot_screen_bounds(
+            &view,
+            schema_id,
+            2,
+            content_width,
+            &slot_resolution,
+            ">",
+            "▼",
+            area,
+        )
+        .expect("modified file should render a trailing slot");
+
+        assert_eq!(bounds.1, area.x + area.width.saturating_sub(1));
+        assert_eq!(bounds.1 - bounds.0, 1);
     }
 }

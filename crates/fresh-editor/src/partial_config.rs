@@ -354,8 +354,6 @@ pub struct PartialFileExplorerConfig {
     pub auto_open_on_last_buffer_close: Option<bool>,
     pub follow_active_buffer: Option<bool>,
     pub compact_directories: Option<bool>,
-    pub show_file_icons: Option<bool>,
-    pub color_git_status_names: Option<bool>,
     pub tree_indicator_collapsed: Option<String>,
     pub tree_indicator_expanded: Option<String>,
 }
@@ -376,9 +374,6 @@ impl Merge for PartialFileExplorerConfig {
             .merge_from(&other.follow_active_buffer);
         self.compact_directories
             .merge_from(&other.compact_directories);
-        self.show_file_icons.merge_from(&other.show_file_icons);
-        self.color_git_status_names
-            .merge_from(&other.color_git_status_names);
         self.tree_indicator_collapsed
             .merge_from(&other.tree_indicator_collapsed);
         self.tree_indicator_expanded
@@ -832,8 +827,6 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             auto_open_on_last_buffer_close: Some(cfg.auto_open_on_last_buffer_close),
             follow_active_buffer: Some(cfg.follow_active_buffer),
             compact_directories: Some(cfg.compact_directories),
-            show_file_icons: Some(cfg.show_file_icons),
-            color_git_status_names: Some(cfg.color_git_status_names),
             tree_indicator_collapsed: Some(cfg.tree_indicator_collapsed.clone()),
             tree_indicator_expanded: Some(cfg.tree_indicator_expanded.clone()),
         }
@@ -861,10 +854,6 @@ impl PartialFileExplorerConfig {
             compact_directories: self
                 .compact_directories
                 .unwrap_or(defaults.compact_directories),
-            show_file_icons: self.show_file_icons.unwrap_or(defaults.show_file_icons),
-            color_git_status_names: self
-                .color_git_status_names
-                .unwrap_or(defaults.color_git_status_names),
             tree_indicator_collapsed: self
                 .tree_indicator_collapsed
                 .unwrap_or_else(|| defaults.tree_indicator_collapsed.clone()),

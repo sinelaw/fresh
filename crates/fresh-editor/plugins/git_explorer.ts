@@ -5,6 +5,7 @@ const editor = getEditor();
  * Git Explorer Decorations
  *
  * Adds VS Code-style status badges (M/A/U/D/...) to the file explorer.
+ * Optional filename coloring via plugins.git_explorer.settings.colorNames.
  */
 
 const NAMESPACE = "git-explorer";
@@ -26,6 +27,11 @@ const PRIORITY = {
   renamed: 40,
   untracked: 30,
 };
+
+editor.defineConfigBoolean("colorNames", {
+  default: false,
+  description: "Color file explorer entry names by git status",
+});
 
 let refreshInFlight = false;
 let refreshPending = false;
@@ -100,6 +106,47 @@ function parseStatusOutput(output: string, repoRoot: string) {
   return Array.from(byPath.values());
 }
 
+function buildNameColorSlots(
+  statuses: Array<{ path: string; color: string; priority: number }>,
+  repoRoot: string
+) {
+  const byPath = new Map<string, { path: string; nameColor: string; priority: number }>();
+
+  for (const status of statuses) {
+    const existing = byPath.get(status.path);
+    if (!existing || status.priority >= existing.priority) {
+      byPath.set(status.path, {
+        path: status.path,
+        nameColor: status.color,
+        priority: status.priority,
+      });
+    }
+
+    let ancestor = status.path;
+    while (true) {
+      const parent = editor.pathDirname(ancestor);
+      if (!parent || parent === ancestor || !parent.startsWith(repoRoot)) {
+        break;
+      }
+      const bubbled = byPath.get(parent);
+      if (!bubbled || status.priority >= bubbled.priority) {
+        byPath.set(parent, {
+          path: parent,
+          nameColor: status.color,
+          priority: status.priority,
+        });
+      }
+      ancestor = parent;
+    }
+  }
+
+  return Array.from(byPath.values()).map(({ path, nameColor, priority }) => ({
+    path,
+    nameColor,
+    priority,
+  }));
+}
+
 async function refreshGitExplorerDecorations() {
   if (refreshInFlight) {
     refreshPending = true;
@@ -111,19 +158,16 @@ async function refreshGitExplorerDecorations() {
     const rootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
     if (rootResult.exit_code !== 0) {
       editor.clearFileExplorerDecorations(NAMESPACE);
+      editor.clearFileExplorerSlots(NAMESPACE);
       return;
     }
     const repoRoot = rootResult.stdout.trim();
     if (!repoRoot) {
       editor.clearFileExplorerDecorations(NAMESPACE);
+      editor.clearFileExplorerSlots(NAMESPACE);
       return;
     }
 
-    // -z gives NUL-terminated, raw (unquoted) paths. Without it git
-    // wraps any path containing spaces or special chars in double
-    // quotes (e.g. `?? "name copy.txt"`), which the parser would then
-    // key the decoration against — meaning the actual on-disk path
-    // never matches and the badge never appears next to the file.
     const statusResult = await editor.spawnProcess(
       "git",
       ["status", "--porcelain", "-z"],
@@ -131,17 +175,30 @@ async function refreshGitExplorerDecorations() {
     );
     if (statusResult.exit_code !== 0) {
       editor.clearFileExplorerDecorations(NAMESPACE);
+      editor.clearFileExplorerSlots(NAMESPACE);
       return;
     }
 
     const decorations = parseStatusOutput(statusResult.stdout, repoRoot);
     if (decorations.length === 0) {
       editor.clearFileExplorerDecorations(NAMESPACE);
+      editor.clearFileExplorerSlots(NAMESPACE);
     } else {
       editor.setFileExplorerDecorations(NAMESPACE, decorations);
+
+      const cfg = (editor.getPluginConfig() ?? {}) as { colorNames?: boolean };
+      if (cfg.colorNames) {
+        editor.setFileExplorerSlots(
+          NAMESPACE,
+          buildNameColorSlots(decorations, repoRoot)
+        );
+      } else {
+        editor.clearFileExplorerSlots(NAMESPACE);
+      }
     }
   } catch (err) {
     editor.clearFileExplorerDecorations(NAMESPACE);
+    editor.clearFileExplorerSlots(NAMESPACE);
     throw err;
   } finally {
     refreshInFlight = false;
@@ -151,14 +208,6 @@ async function refreshGitExplorerDecorations() {
     }
   }
 }
-
-
-
-
-
-
-
-
 
 editor.on("after_file_open", () => {
   refreshGitExplorerDecorations();

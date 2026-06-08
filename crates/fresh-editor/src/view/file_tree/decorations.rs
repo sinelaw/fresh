@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::cache::{build_bubbled_cache, insert_with_aliases};
-use super::git_status::{FileExplorerGitStatus, FileExplorerGitStatusCache};
 use super::slots::{
     ExplorerSlotContext, ExplorerTooltipSummary, ExplorerTrailingSlotPayload,
     ExplorerTrailingSlotProvider, ExplorerTrailingSlotResolution,
@@ -18,20 +17,12 @@ pub use fresh_core::file_explorer::FileExplorerDecoration;
 pub enum ResolvedExplorerStatus<'a> {
     Unsaved,
     Decoration(&'a FileExplorerDecoration),
-    Git(FileExplorerGitStatus),
     BubbledDecoration(&'a FileExplorerDecoration),
-    BubbledGit(FileExplorerGitStatus),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExplorerRowStatus<'a> {
-    // The badge/tooltip owner after precedence resolution. This can be plugin
-    // decoration state, native git state, or a bubbled directory summary.
     resolved: Option<ResolvedExplorerStatus<'a>>,
-    // The git state that should color the filename when git-name coloring is
-    // enabled. This intentionally stays separate from `resolved` so plugin
-    // badges can coexist with native git filename colors.
-    effective_git_status: Option<FileExplorerGitStatus>,
 }
 
 impl<'a> ExplorerRowStatus<'a> {
@@ -40,25 +31,14 @@ impl<'a> ExplorerRowStatus<'a> {
         is_dir: bool,
         has_unsaved: bool,
         decorations: &'a FileExplorerDecorationCache,
-        git_statuses: &'a FileExplorerGitStatusCache,
     ) -> Self {
-        let resolved =
-            resolve_explorer_status(path, is_dir, has_unsaved, decorations, git_statuses);
-        let effective_git_status =
-            resolve_effective_git_status(path, is_dir, has_unsaved, git_statuses);
-
         Self {
-            resolved,
-            effective_git_status,
+            resolved: resolve_explorer_status(path, is_dir, has_unsaved, decorations),
         }
     }
 
     pub fn resolved(&self) -> Option<ResolvedExplorerStatus<'a>> {
         self.resolved
-    }
-
-    pub fn effective_git_status(&self) -> Option<FileExplorerGitStatus> {
-        self.effective_git_status
     }
 
     pub fn compatibility_trailing_slot(
@@ -72,17 +52,9 @@ impl<'a> ExplorerRowStatus<'a> {
                 decoration_symbol(&decoration.symbol),
                 compatibility_decoration_color(decoration, theme),
             ),
-            Some(ResolvedExplorerStatus::Git(status)) => (
-                status.symbol().to_string(),
-                compatibility_git_status_name_color(status, theme),
-            ),
             Some(ResolvedExplorerStatus::BubbledDecoration(decoration)) => (
                 "●".to_string(),
                 compatibility_decoration_color(decoration, theme),
-            ),
-            Some(ResolvedExplorerStatus::BubbledGit(status)) => (
-                "●".to_string(),
-                compatibility_git_status_name_color(status, theme),
             ),
             None => return None,
         };
@@ -92,19 +64,6 @@ impl<'a> ExplorerRowStatus<'a> {
             fg,
             tooltip: self.tooltip_summary(is_dir),
         })
-    }
-
-    pub fn compatibility_name_color_hint(
-        &self,
-        theme: &Theme,
-        color_git_status_names: bool,
-    ) -> Option<Color> {
-        if !color_git_status_names {
-            return None;
-        }
-
-        self.effective_git_status
-            .map(|status| compatibility_git_status_name_color(status, theme))
     }
 
     pub fn tooltip_summary(&self, is_dir: bool) -> Option<ExplorerTooltipSummary> {
@@ -118,9 +77,6 @@ impl<'a> ExplorerRowStatus<'a> {
                     lines.push("● - Unsaved changes in editor".to_string());
                 }
             }
-            Some(ResolvedExplorerStatus::Git(status)) => {
-                lines.push(format!("{} - {}", status.symbol(), status.kind.tooltip()));
-            }
             Some(ResolvedExplorerStatus::Decoration(decoration)) => {
                 lines.push(format!(
                     "{} - {}",
@@ -128,8 +84,7 @@ impl<'a> ExplorerRowStatus<'a> {
                     decoration_tooltip(decoration)
                 ));
             }
-            Some(ResolvedExplorerStatus::BubbledDecoration(_))
-            | Some(ResolvedExplorerStatus::BubbledGit(_)) => {
+            Some(ResolvedExplorerStatus::BubbledDecoration(_)) => {
                 lines.push("● - Contains modified files".to_string());
             }
             None => return None,
@@ -154,36 +109,17 @@ impl ExplorerTrailingSlotProvider for CompatibilityTrailingSlotProvider {
             context.is_dir,
             context.has_unsaved,
             context.decorations,
-            context.git_statuses,
         );
 
         ExplorerTrailingSlotResolution {
             payload: row_status.compatibility_trailing_slot(context.theme, context.is_dir),
-            name_color_hint: row_status
-                .compatibility_name_color_hint(context.theme, context.color_git_status_names),
+            name_color_hint: None,
         }
     }
 
     fn hit_test_width(&self) -> u16 {
         COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH
     }
-}
-
-fn resolve_effective_git_status(
-    path: &Path,
-    is_dir: bool,
-    has_unsaved: bool,
-    git_statuses: &FileExplorerGitStatusCache,
-) -> Option<FileExplorerGitStatus> {
-    if has_unsaved {
-        return None;
-    }
-
-    git_statuses.direct_for_path(path).or_else(|| {
-        is_dir
-            .then(|| git_statuses.bubbled_for_path(path))
-            .flatten()
-    })
 }
 
 /// Cached decoration lookups for file explorer rendering.
@@ -247,6 +183,33 @@ impl FileExplorerDecorationCache {
     pub fn bubbled_for_path(&self, path: &Path) -> Option<&FileExplorerDecoration> {
         self.bubbled.get(path)
     }
+
+    /// Direct decoration paths under `dir_path`, excluding `dir_path` itself.
+    pub fn direct_paths_under(&self, dir_path: &Path) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self
+            .direct
+            .keys()
+            .filter(|path| path_is_strict_child_of(path, dir_path))
+            .cloned()
+            .collect();
+        paths.sort();
+        paths
+    }
+}
+
+fn path_is_strict_child_of(child: &Path, parent: &Path) -> bool {
+    if child == parent {
+        return false;
+    }
+    if child.starts_with(parent) {
+        return true;
+    }
+
+    // Git and the filesystem can disagree on macOS (/var vs /private/var).
+    match (child.canonicalize(), parent.canonicalize()) {
+        (Ok(child), Ok(parent)) => child.starts_with(&parent) && child != parent,
+        _ => false,
+    }
 }
 
 pub fn resolve_explorer_status<'a>(
@@ -254,17 +217,7 @@ pub fn resolve_explorer_status<'a>(
     is_dir: bool,
     has_unsaved: bool,
     decorations: &'a FileExplorerDecorationCache,
-    git_statuses: &'a FileExplorerGitStatusCache,
 ) -> Option<ResolvedExplorerStatus<'a>> {
-    // Precedence is:
-    // 1. Unsaved editor state
-    // 2. Direct plugin decoration
-    // 3. Direct native git state
-    // 4. Bubbled plugin decoration for directories
-    // 5. Bubbled native git state for directories
-    //
-    // This preserves existing plugin badge ownership while still letting the
-    // core git cache fill in when no plugin decoration is present.
     if has_unsaved {
         return Some(ResolvedExplorerStatus::Unsaved);
     }
@@ -273,16 +226,9 @@ pub fn resolve_explorer_status<'a>(
         return Some(ResolvedExplorerStatus::Decoration(decoration));
     }
 
-    if let Some(status) = git_statuses.direct_for_path(path) {
-        return Some(ResolvedExplorerStatus::Git(status));
-    }
-
     if is_dir {
         if let Some(decoration) = decorations.bubbled_for_path(path) {
             return Some(ResolvedExplorerStatus::BubbledDecoration(decoration));
-        }
-        if let Some(status) = git_statuses.bubbled_for_path(path) {
-            return Some(ResolvedExplorerStatus::BubbledGit(status));
         }
     }
 
@@ -309,20 +255,6 @@ pub fn compatibility_decoration_color(decoration: &FileExplorerDecoration, theme
         fresh_core::api::OverlayColorSpec::ThemeKey(key) => {
             theme.resolve_theme_key(key).unwrap_or(theme.editor_fg)
         }
-    }
-}
-
-pub fn compatibility_git_status_name_color(status: FileExplorerGitStatus, theme: &Theme) -> Color {
-    match status.kind {
-        super::git_status::GitStatusKind::Added
-        | super::git_status::GitStatusKind::StagedModified => theme.file_status_added_fg,
-        super::git_status::GitStatusKind::Modified => theme.file_status_modified_fg,
-        super::git_status::GitStatusKind::Deleted => theme.file_status_deleted_fg,
-        super::git_status::GitStatusKind::Renamed | super::git_status::GitStatusKind::Copied => {
-            theme.file_status_renamed_fg
-        }
-        super::git_status::GitStatusKind::Untracked => theme.file_status_untracked_fg,
-        super::git_status::GitStatusKind::Conflicted => theme.file_status_conflicted_fg,
     }
 }
 
@@ -360,29 +292,29 @@ fn is_staged_modified_decoration(decoration: &FileExplorerDecoration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::file_tree::{FileExplorerGitStatus, GitStatusKind};
 
     #[test]
-    fn resolves_unsaved_before_git_or_plugin_state() {
+    fn resolves_unsaved_before_plugin_decoration() {
         let path = PathBuf::from("/repo/file.rs");
-        let decorations = FileExplorerDecorationCache::default();
-        let git_statuses = FileExplorerGitStatusCache::rebuild(
-            vec![(
-                path.clone(),
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
-                },
-            )],
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![FileExplorerDecoration {
+                path: path.clone(),
+                symbol: "M".to_string(),
+                color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                    "ui.file_status_modified_fg".into(),
+                ),
+                priority: 50,
+            }],
             Path::new("/repo"),
             &HashMap::new(),
         );
 
-        let resolved = resolve_explorer_status(&path, false, true, &decorations, &git_statuses);
+        let resolved = resolve_explorer_status(&path, false, true, &decorations);
         assert!(matches!(resolved, Some(ResolvedExplorerStatus::Unsaved)));
     }
 
     #[test]
-    fn resolves_plugin_decoration_before_git_state() {
+    fn resolves_direct_decoration() {
         let path = PathBuf::from("/repo/file.rs");
         let decorations = FileExplorerDecorationCache::rebuild(
             vec![FileExplorerDecoration {
@@ -396,18 +328,8 @@ mod tests {
             Path::new("/repo"),
             &HashMap::new(),
         );
-        let git_statuses = FileExplorerGitStatusCache::rebuild(
-            vec![(
-                path.clone(),
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
-                },
-            )],
-            Path::new("/repo"),
-            &HashMap::new(),
-        );
 
-        let resolved = resolve_explorer_status(&path, false, false, &decorations, &git_statuses);
+        let resolved = resolve_explorer_status(&path, false, false, &decorations);
         assert!(matches!(
             resolved,
             Some(ResolvedExplorerStatus::Decoration(decoration)) if decoration.symbol == "P"
@@ -415,64 +337,44 @@ mod tests {
     }
 
     #[test]
-    fn row_status_exposes_bubbled_git_as_effective_git_status() {
-        let path = PathBuf::from("/repo/src");
-        let decorations = FileExplorerDecorationCache::default();
-        let git_statuses = FileExplorerGitStatusCache::rebuild(
-            vec![(
-                PathBuf::from("/repo/src/file.rs"),
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
+    fn lists_direct_paths_under_directory_in_sorted_order() {
+        let cache = FileExplorerDecorationCache::rebuild(
+            vec![
+                FileExplorerDecoration {
+                    path: PathBuf::from("/repo/src/zeta.ts"),
+                    symbol: "M".to_string(),
+                    color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                        "ui.file_status_modified_fg".into(),
+                    ),
+                    priority: 50,
                 },
-            )],
-            Path::new("/repo"),
-            &HashMap::new(),
-        );
-
-        let row_status =
-            ExplorerRowStatus::resolve(&path, true, false, &decorations, &git_statuses);
-        assert_eq!(
-            row_status.effective_git_status().map(|status| status.kind),
-            Some(GitStatusKind::Modified)
-        );
-    }
-
-    #[test]
-    fn row_status_keeps_git_name_coloring_when_plugin_badge_wins() {
-        let path = PathBuf::from("/repo/file.rs");
-        let decorations = FileExplorerDecorationCache::rebuild(
-            vec![FileExplorerDecoration {
-                path: path.clone(),
-                symbol: "P".to_string(),
-                color: fresh_core::api::OverlayColorSpec::ThemeKey(
-                    "ui.file_status_added_fg".into(),
-                ),
-                priority: 99,
-            }],
-            Path::new("/repo"),
-            &HashMap::new(),
-        );
-        let git_statuses = FileExplorerGitStatusCache::rebuild(
-            vec![(
-                path.clone(),
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
+                FileExplorerDecoration {
+                    path: PathBuf::from("/repo/src/nested/alpha.ts"),
+                    symbol: "A".to_string(),
+                    color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                        "ui.file_status_added_fg".into(),
+                    ),
+                    priority: 60,
                 },
-            )],
+                FileExplorerDecoration {
+                    path: PathBuf::from("/repo/README.md"),
+                    symbol: "M".to_string(),
+                    color: fresh_core::api::OverlayColorSpec::ThemeKey(
+                        "ui.file_status_modified_fg".into(),
+                    ),
+                    priority: 50,
+                },
+            ],
             Path::new("/repo"),
             &HashMap::new(),
         );
 
-        let row_status =
-            ExplorerRowStatus::resolve(&path, false, false, &decorations, &git_statuses);
-
-        assert!(matches!(
-            row_status.resolved(),
-            Some(ResolvedExplorerStatus::Decoration(decoration)) if decoration.symbol == "P"
-        ));
         assert_eq!(
-            row_status.effective_git_status().map(|status| status.kind),
-            Some(GitStatusKind::Modified)
+            cache.direct_paths_under(Path::new("/repo/src")),
+            vec![
+                PathBuf::from("/repo/src/nested/alpha.ts"),
+                PathBuf::from("/repo/src/zeta.ts"),
+            ]
         );
     }
 

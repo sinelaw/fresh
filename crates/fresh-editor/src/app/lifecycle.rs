@@ -258,9 +258,6 @@ impl Editor {
 
     /// Handle terminal focus gained event
     pub fn focus_gained(&mut self) {
-        self.active_window_mut().invalidate_file_explorer_status(
-            crate::app::file_explorer::FileExplorerGitStatusRefreshReason::FocusGained,
-        );
         self.plugin_manager.read().unwrap().run_hook(
             "focus_gained",
             crate::services::plugins::hooks::HookArgs::FocusGained {},

@@ -296,7 +296,6 @@ impl Editor {
                     is_focused,
                     &files_with_unsaved_changes,
                     &__win.file_explorer_decoration_cache,
-                    &__win.file_explorer_git_status_cache,
                     &__win.file_explorer_slot_override_cache,
                     &keybindings,
                     key_context_clone,
@@ -304,8 +303,6 @@ impl Editor {
                     close_button_hovered,
                     remote_connection.as_deref(),
                     cut_paths,
-                    self.config.file_explorer.show_file_icons,
-                    self.config.file_explorer.color_git_status_names,
                     &self.config.file_explorer.tree_indicator_collapsed,
                     &self.config.file_explorer.tree_indicator_expanded,
                 );

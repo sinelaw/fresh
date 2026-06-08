@@ -2322,30 +2322,20 @@ fn test_file_explorer_status_indicator_hover_tooltip() {
     // Find the row with modified.txt and the M indicator position
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
-    let (row, line) = lines
+    let (row, _line) = lines
         .iter()
         .enumerate()
         .find(|(_, l)| l.contains("modified.txt") && l.contains("M"))
         .expect("Should find modified.txt line");
 
-    // Find the column (character position, not byte position) of the M indicator
-    // The file explorer is on the left side, so look for M within first ~40 characters
-    let col = line
-        .chars()
-        .enumerate()
-        .find(|(i, c)| *c == 'M' && *i < 40)
-        .map(|(i, _)| i)
-        .expect("Should find M indicator") as u16;
+    // Ensure layout cache (explorer area, trailing-slot bounds) is current.
+    harness.render().unwrap();
 
-    // Move mouse to the status indicator position
-    // The tooltip should appear immediately on hover (no timer needed for file explorer)
-    harness.mouse_move(col, row as u16).unwrap();
-
-    // Wait for tooltip to appear in the rendered output
-    // Check for "Modified" text which appears in the tooltip explanation
-    harness
-        .wait_for_screen_contains("Modified - File has unstaged changes")
-        .unwrap();
+    wait_for_hover_tooltip(
+        &mut harness,
+        row as u16,
+        "Modified - File has unstaged changes",
+    );
 
     println!("Screen after hover:\n{}", harness.screen_to_string());
 }
@@ -2386,30 +2376,20 @@ fn test_file_explorer_directory_status_indicator_hover_tooltip() {
     // Find the row with subdir and the ● indicator position
     let screen = harness.screen_to_string();
     let lines: Vec<&str> = screen.lines().collect();
-    let (row, line) = lines
+    let (row, _line) = lines
         .iter()
         .enumerate()
         .find(|(_, l)| l.contains("subdir") && l.contains("●"))
         .expect("Should find subdir line");
 
-    // Find the column (character position) of the ● indicator
-    let col = line
-        .chars()
-        .enumerate()
-        .find(|(i, c)| *c == '●' && *i < 40)
-        .map(|(i, _)| i)
-        .expect("Should find ● indicator") as u16;
+    // Ensure layout cache (explorer area, trailing-slot bounds) is current.
+    harness.render().unwrap();
 
-    // Move mouse to the status indicator position
-    harness.mouse_move(col, row as u16).unwrap();
-
-    // Wait for tooltip to appear with list of modified files
+    wait_for_hover_tooltip(&mut harness, row as u16, "Modified files:");
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Modified files:")
-                && screen.contains("file1.txt")
-                && screen.contains("file2.txt")
+            screen.contains("file1.txt") && screen.contains("file2.txt")
         })
         .unwrap();
 
@@ -3568,19 +3548,6 @@ fn test_file_explorer_duplicate_file_creates_copy_sibling() {
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Disable the native explorer git-status refresh path so this regression
-    // proves the plugin hook path itself still works. The existing screen state
-    // stays blank because `alpha.txt` is clean; after duplicate, any `U` badge
-    // that appears must come from `git_explorer` reacting to
-    // `after_file_explorer_change`.
-    {
-        let window = harness.editor_mut().active_window_mut();
-        window.file_explorer_git_status_cache =
-            fresh::view::file_tree::FileExplorerGitStatusCache::default();
-        window.file_explorer_git_status_refresh_in_progress = true;
-        window.file_explorer_git_status_refresh_pending = false;
-    }
-
     harness.editor_mut().file_explorer_duplicate();
     harness
         .wait_until(|h| h.editor().working_dir().join("alpha copy.txt").exists())
@@ -3772,6 +3739,29 @@ fn test_file_explorer_copy_relative_path() {
     );
 }
 
+/// Wait for a hover tooltip string while scanning columns on an explorer row.
+fn wait_for_hover_tooltip(harness: &mut EditorTestHarness, row: u16, needle: &str) {
+    let needle = needle.to_string();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        // Status badges are right-aligned; scan the explorer width for the hit target.
+        for col in 0..40u16 {
+            harness.mouse_move(col, row).unwrap();
+            if harness.screen_to_string().contains(&needle) {
+                return;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting for hover tooltip {needle:?} on row {row}. Screen:\n{}",
+                harness.screen_to_string()
+            );
+        }
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// Locate the first rendered file-explorer row containing `name` and return its
 /// `(row, column)` in screen cells. Columns are counted in characters (not
 /// bytes) so the multi-byte tree connectors (`│`) don't skew the result.
@@ -3852,95 +3842,6 @@ fn test_file_explorer_duplicate_refreshes_git_decorations() {
                 .any(|line| line.contains("alpha copy.txt") && line.contains('U'))
         })
         .unwrap();
-}
-
-#[test]
-fn test_file_explorer_git_status_async_update_stays_with_origin_window() {
-    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
-    let root_a = harness.project_dir().unwrap();
-    fs::write(root_a.join("alpha.txt"), "alpha").unwrap();
-
-    harness.editor_mut().toggle_file_explorer();
-    let base_window = harness.editor().active_window_id();
-
-    let root_b = tempfile::tempdir().unwrap();
-    fs::write(root_b.path().join("beta.txt"), "beta").unwrap();
-
-    let win_b = harness
-        .editor_mut()
-        .create_window_at(root_b.path().to_path_buf(), "beta".into());
-    harness.editor_mut().set_active_window(win_b);
-    harness.editor_mut().toggle_file_explorer();
-
-    let cache_b = fresh::view::file_tree::FileExplorerGitStatusCache::rebuild(
-        vec![(
-            root_b.path().join("beta.txt"),
-            fresh::view::file_tree::FileExplorerGitStatus {
-                kind: fresh::view::file_tree::GitStatusKind::Untracked,
-            },
-        )],
-        root_b.path(),
-        &std::collections::HashMap::new(),
-    );
-    harness
-        .editor_mut()
-        .active_window_mut()
-        .file_explorer_git_status_cache = cache_b;
-
-    let cache_a = fresh::view::file_tree::FileExplorerGitStatusCache::rebuild(
-        vec![(
-            root_a.join("alpha.txt"),
-            fresh::view::file_tree::FileExplorerGitStatus {
-                kind: fresh::view::file_tree::GitStatusKind::Modified,
-            },
-        )],
-        &root_a,
-        &std::collections::HashMap::new(),
-    );
-
-    harness
-        .editor()
-        .session(base_window)
-        .expect("base window should still exist")
-        .bridge
-        .sender()
-        .send(
-            fresh::services::async_bridge::AsyncMessage::FileExplorerGitStatusUpdated {
-                window_id: base_window,
-                cache: cache_a,
-            },
-        )
-        .unwrap();
-
-    let _ = harness.editor_mut().process_async_messages();
-
-    let base_cache = &harness
-        .editor()
-        .session(base_window)
-        .expect("base window should still exist")
-        .file_explorer_git_status_cache;
-    assert_eq!(
-        base_cache
-            .direct_for_path(&root_a.join("alpha.txt"))
-            .map(|status| status.kind),
-        Some(fresh::view::file_tree::GitStatusKind::Modified)
-    );
-
-    let active_cache = &harness
-        .editor()
-        .session(win_b)
-        .expect("second window should still exist")
-        .file_explorer_git_status_cache;
-    assert_eq!(
-        active_cache
-            .direct_for_path(&root_b.path().join("beta.txt"))
-            .map(|status| status.kind),
-        Some(fresh::view::file_tree::GitStatusKind::Untracked)
-    );
-    assert_eq!(
-        active_cache.direct_for_path(&root_a.join("alpha.txt")),
-        None
-    );
 }
 
 /// Test that with `file_explorer.follow_active_buffer = true`, switching tabs

@@ -403,12 +403,6 @@ impl Editor {
                 AsyncMessage::FileExplorerExpandedToPath { window, view } => {
                     self.handle_file_explorer_expanded_to_path(window, view);
                 }
-                AsyncMessage::FileExplorerGitStatusUpdated { window_id, cache } => {
-                    self.handle_file_explorer_git_status_updated(window_id, cache);
-                }
-                AsyncMessage::FileExplorerGitStatusUpdated { window_id, cache } => {
-                    self.handle_file_explorer_git_status_updated(window_id, cache);
-                }
                 AsyncMessage::Plugin(plugin_msg) => {
                     use fresh_core::api::{JsCallbackId, PluginAsyncMessage};
                     match plugin_msg {

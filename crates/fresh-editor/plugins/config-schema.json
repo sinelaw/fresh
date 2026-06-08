@@ -188,7 +188,7 @@
     "active_keybinding_map": {
       "description": "Active keybinding map name",
       "$ref": "#/$defs/KeybindingMapOptions",
-      "default": "default"
+      "default": "macos"
     },
     "languages": {
       "description": "Per-language configuration overrides (tab size, formatters, etc.)",
@@ -1616,7 +1616,7 @@
           "default": {
             "max_memory_percent": 50,
             "max_cpu_percent": 90,
-            "enabled": true
+            "enabled": false
           },
           "x-section": "Advanced",
           "x-order": 15

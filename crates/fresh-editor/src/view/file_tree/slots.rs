@@ -5,11 +5,7 @@ use crate::view::theme::Theme;
 use fresh_core::api::OverlayColorSpec;
 use ratatui::style::Color;
 
-use super::{
-    cache::insert_with_aliases,
-    decorations::FileExplorerDecorationCache,
-    git_status::FileExplorerGitStatusCache,
-};
+use super::{cache::insert_with_aliases, decorations::FileExplorerDecorationCache};
 
 pub const COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH: u16 = 2;
 pub const DEFAULT_LEADING_SLOT_MIN_WIDTH: usize = 2;
@@ -66,11 +62,8 @@ pub struct ExplorerSlotContext<'a> {
     pub is_symlink: bool,
     pub is_hidden: bool,
     pub decorations: &'a FileExplorerDecorationCache,
-    pub git_statuses: &'a FileExplorerGitStatusCache,
     pub slot_overrides: &'a FileExplorerSlotOverrideCache,
     pub theme: &'a Theme,
-    pub show_file_icons: bool,
-    pub color_git_status_names: bool,
     pub neutral_fg: Color,
 }
 
@@ -95,13 +88,6 @@ pub struct ExplorerSlotProviders {
 impl ExplorerSlotProviders {
     pub fn resolver(self) -> ExplorerSlotResolver<'static> {
         ExplorerSlotResolver::new(self.leading, self.trailing)
-    }
-}
-
-pub fn compatibility_slot_providers() -> ExplorerSlotProviders {
-    ExplorerSlotProviders {
-        leading: &super::file_icons::COMPATIBILITY_LEADING_SLOT_PROVIDER,
-        trailing: &super::decorations::COMPATIBILITY_TRAILING_SLOT_PROVIDER,
     }
 }
 
@@ -211,9 +197,7 @@ impl FileExplorerSlotOverrideCache {
                     &slot.path,
                     &cached,
                     symlink_mappings,
-                    |map, path, value| {
-                        insert_best_cached(map, path, value, |entry| entry.priority)
-                    },
+                    |map, path, value| insert_best_cached(map, path, value, |entry| entry.priority),
                 );
             }
 
@@ -237,9 +221,7 @@ impl FileExplorerSlotOverrideCache {
                     &slot.path,
                     &cached,
                     symlink_mappings,
-                    |map, path, value| {
-                        insert_best_cached(map, path, value, |entry| entry.priority)
-                    },
+                    |map, path, value| insert_best_cached(map, path, value, |entry| entry.priority),
                 );
             }
 
@@ -253,9 +235,7 @@ impl FileExplorerSlotOverrideCache {
                     &slot.path,
                     &cached,
                     symlink_mappings,
-                    |map, path, value| {
-                        insert_best_cached(map, path, value, |entry| entry.priority)
-                    },
+                    |map, path, value| insert_best_cached(map, path, value, |entry| entry.priority),
                 );
             }
         }
@@ -290,15 +270,19 @@ pub static DEFAULT_LEADING_SLOT_PROVIDER: DefaultLeadingSlotProvider = DefaultLe
 
 impl ExplorerLeadingSlotProvider for DefaultLeadingSlotProvider {
     fn resolve(&self, context: &ExplorerSlotContext<'_>) -> Option<ExplorerLeadingSlotPayload> {
-        if let Some(override_entry) = context.slot_overrides.leading_override_for_path(context.path) {
-            return override_entry.slot.as_ref().map(|slot| ExplorerLeadingSlotPayload {
-                text: slot.text.clone(),
-                fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
-                min_width: slot.min_width,
-            });
-        }
-
-        super::file_icons::COMPATIBILITY_LEADING_SLOT_PROVIDER.resolve(context)
+        context
+            .slot_overrides
+            .leading_override_for_path(context.path)
+            .and_then(|override_entry| {
+                override_entry
+                    .slot
+                    .as_ref()
+                    .map(|slot| ExplorerLeadingSlotPayload {
+                        text: slot.text.clone(),
+                        fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
+                        min_width: slot.min_width,
+                    })
+            })
     }
 }
 
@@ -320,13 +304,20 @@ impl ExplorerTrailingSlotProvider for DefaultTrailingSlotProvider {
 
         ExplorerTrailingSlotResolution {
             payload: match override_trailing {
-                Some(override_entry) => override_entry.slot.as_ref().map(|slot| {
-                    ExplorerTrailingSlotPayload {
-                        text: slot.text.clone(),
-                        fg: resolve_overlay_color(&slot.color, context.theme, context.neutral_fg),
-                        tooltip: slot.tooltip.clone(),
-                    }
-                }),
+                Some(override_entry) => {
+                    override_entry
+                        .slot
+                        .as_ref()
+                        .map(|slot| ExplorerTrailingSlotPayload {
+                            text: slot.text.clone(),
+                            fg: resolve_overlay_color(
+                                &slot.color,
+                                context.theme,
+                                context.neutral_fg,
+                            ),
+                            tooltip: slot.tooltip.clone(),
+                        })
+                }
                 None => compatibility.payload,
             },
             name_color_hint: match override_name_color {
@@ -372,7 +363,6 @@ fn insert_best_cached<T, FPriority>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::file_tree::{FileExplorerGitStatus, GitStatusKind};
 
     #[test]
     fn slot_overrides_do_not_bubble_to_ancestors() {
@@ -406,13 +396,13 @@ mod tests {
     fn suppressed_trailing_and_name_color_block_compatibility_fallback() {
         let theme = Theme::load_builtin("dark").unwrap();
         let path = std::path::PathBuf::from("/repo/file.ts");
-        let git_statuses = FileExplorerGitStatusCache::rebuild(
-            vec![(
-                path.clone(),
-                FileExplorerGitStatus {
-                    kind: GitStatusKind::Modified,
-                },
-            )],
+        let decorations = FileExplorerDecorationCache::rebuild(
+            vec![fresh_core::file_explorer::FileExplorerDecoration {
+                path: path.clone(),
+                symbol: "M".to_string(),
+                color: OverlayColorSpec::ThemeKey("ui.file_status_modified_fg".into()),
+                priority: 50,
+            }],
             Path::new("/repo"),
             &std::collections::HashMap::new(),
         );
@@ -436,12 +426,9 @@ mod tests {
             has_unsaved: false,
             is_symlink: false,
             is_hidden: false,
-            decorations: &FileExplorerDecorationCache::default(),
-            git_statuses: &git_statuses,
+            decorations: &decorations,
             slot_overrides: &slot_overrides,
             theme: &theme,
-            show_file_icons: true,
-            color_git_status_names: true,
             neutral_fg: theme.editor_fg,
         };
 

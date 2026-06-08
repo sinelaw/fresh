@@ -620,14 +620,24 @@ clearFileExplorerDecorations(namespace: string): boolean
 
 #### `setFileExplorerSlots`
 
-Set file explorer slot overrides for a namespace. This is additive: any slot
-field a plugin leaves unset falls back to the editor's default compatibility
-providers, so current behaviour is preserved until explicitly overridden. Use
-`suppressLeading`, `suppressTrailing`, or `suppressNameColor` when you want to
-clear a default compatibility field instead of replacing it with a new value.
+Set file explorer slot overrides for a namespace. Each entry can override the
+leading icon, trailing badge, and/or name color for a path. Unset fields fall
+back to the editor default (no icon, no badge, default name color). Use
+`suppressLeading`, `suppressTrailing`, or `suppressNameColor` to explicitly
+clear a slot instead of replacing it.
 
 ```typescript
 setFileExplorerSlots(namespace: string, slots: FileExplorerSlotEntry[]): boolean
+```
+
+Example (git-style name coloring):
+
+```typescript
+editor.setFileExplorerSlots("git-status", [{
+  path: "/project/src/main.rs",
+  nameColor: { color: "ui.syntax.string" },
+  priority: 10,
+}]);
 ```
 
 **Parameters:**

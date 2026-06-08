@@ -1430,9 +1430,6 @@ impl Editor {
             return;
         };
         win.install_initialized_file_explorer(view, defaults);
-        win.invalidate_file_explorer_status(
-            crate::app::file_explorer::FileExplorerGitStatusRefreshReason::ExplorerInitialized,
-        );
         if is_active {
             self.set_status_message(t!("status.file_explorer_ready").to_string());
         }
@@ -1441,37 +1438,6 @@ impl Editor {
     /// Handle file explorer node toggle completed
     pub(super) fn handle_file_explorer_toggle_node(&mut self, node_id: NodeId) {
         tracing::debug!("File explorer toggle completed for node {:?}", node_id);
-    }
-
-    /// Handle background explorer git-status refresh completion.
-    pub(super) fn handle_file_explorer_git_status_updated(
-        &mut self,
-        window_id: fresh_core::WindowId,
-        cache: crate::view::file_tree::FileExplorerGitStatusCache,
-    ) {
-        let should_rerun = {
-            let Some(window) = self.windows.get_mut(&window_id) else {
-                return;
-            };
-            window.file_explorer_git_status_cache = cache;
-            window.file_explorer_git_status_refresh_in_progress = false;
-
-            if window.file_explorer_visible && window.file_explorer_git_status_refresh_pending {
-                window.file_explorer_git_status_refresh_pending = false;
-                true
-            } else {
-                window.file_explorer_git_status_refresh_pending = false;
-                false
-            }
-        };
-
-        if should_rerun {
-            if let Some(window) = self.windows.get_mut(&window_id) {
-                window.invalidate_file_explorer_status(
-                    crate::app::file_explorer::FileExplorerGitStatusRefreshReason::CoalescedFollowup,
-                );
-            }
-        }
     }
 
     /// Handle file explorer node refresh completed

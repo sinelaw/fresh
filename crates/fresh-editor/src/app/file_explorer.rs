@@ -3,7 +3,6 @@ use rust_i18n::t;
 
 use super::*;
 use crate::services::async_bridge::AsyncMessage;
-use crate::view::file_tree::FileExplorerGitStatusCache;
 use crate::view::file_tree::TreeNode;
 use std::path::{Path, PathBuf};
 
@@ -78,59 +77,6 @@ fn get_parent_node_id(
     }
 }
 
-fn compute_file_explorer_git_status_cache(
-    root: PathBuf,
-    symlink_mappings: std::collections::HashMap<PathBuf, PathBuf>,
-) -> FileExplorerGitStatusCache {
-    use crate::services::process_hidden::HideWindow;
-    use std::process::Command;
-
-    let repo_root_output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(&root)
-        .hide_window()
-        .output();
-    let Ok(repo_root_output) = repo_root_output else {
-        return FileExplorerGitStatusCache::default();
-    };
-    if !repo_root_output.status.success() {
-        return FileExplorerGitStatusCache::default();
-    }
-
-    let repo_root_text = String::from_utf8_lossy(&repo_root_output.stdout);
-    let repo_root = PathBuf::from(repo_root_text.trim());
-    if repo_root.as_os_str().is_empty() {
-        return FileExplorerGitStatusCache::default();
-    }
-
-    let status_output = Command::new("git")
-        .args(["status", "--porcelain", "-z"])
-        .current_dir(&repo_root)
-        .hide_window()
-        .output();
-    let Ok(status_output) = status_output else {
-        return FileExplorerGitStatusCache::default();
-    };
-    if !status_output.status.success() {
-        return FileExplorerGitStatusCache::default();
-    }
-
-    let statuses = crate::view::file_tree::parse_porcelain_z(&status_output.stdout, &repo_root);
-    FileExplorerGitStatusCache::rebuild(statuses, &root, &symlink_mappings)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FileExplorerGitStatusRefreshReason {
-    ExplorerShown,
-    ExplorerInitialized,
-    ExplorerNodeStateChanged,
-    ExplorerFilesystemChanged,
-    FileSaved,
-    GitIndexChanged,
-    FocusGained,
-    CoalescedFollowup,
-}
-
 impl Editor {
     pub fn file_explorer_visible(&self) -> bool {
         self.active_window().file_explorer_visible
@@ -167,10 +113,6 @@ impl Editor {
         if new_visible {
             if self.file_explorer().is_none() {
                 self.init_file_explorer();
-            } else {
-                self.active_window_mut().invalidate_file_explorer_status(
-                    FileExplorerGitStatusRefreshReason::ExplorerShown,
-                );
             }
             self.take_focus_for_file_explorer();
             self.set_status_message(t!("explorer.opened").to_string());
@@ -420,9 +362,6 @@ impl Editor {
                 let window = self.active_window_mut();
                 window.rebuild_file_explorer_decoration_cache();
                 window.rebuild_file_explorer_slot_override_cache();
-                window.invalidate_file_explorer_status(
-                    FileExplorerGitStatusRefreshReason::ExplorerNodeStateChanged,
-                );
             }
         }
     }
@@ -1443,9 +1382,6 @@ impl Editor {
     /// Multi-target operations call this once per refresh, not once per
     /// file.
     pub(super) fn notify_file_explorer_change(&mut self, path: &Path) {
-        self.active_window_mut().invalidate_file_explorer_status(
-            FileExplorerGitStatusRefreshReason::ExplorerFilesystemChanged,
-        );
         self.plugin_manager.read().unwrap().run_hook(
             "after_file_explorer_change",
             crate::services::plugins::hooks::HookArgs::AfterFileExplorerChange {
@@ -1928,79 +1864,6 @@ impl crate::app::window::Window {
                 &self.root,
                 &symlink_mappings,
             );
-    }
-
-    /// Invalidate the explorer's git-status snapshot and schedule a background
-    /// refresh if the current window can observe one.
-    ///
-    /// Callers still provide the explicit reason the snapshot may be stale, but
-    /// all refresh scheduling, coalescing, and fallback behavior flows through
-    /// this single coordinator entry point.
-    pub fn invalidate_file_explorer_status(&mut self, reason: FileExplorerGitStatusRefreshReason) {
-        if !self.file_explorer_visible {
-            self.file_explorer_git_status_refresh_pending = false;
-            return;
-        }
-
-        if self
-            .resources
-            .authority
-            .filesystem
-            .remote_connection_info()
-            .is_some()
-        {
-            self.file_explorer_git_status_cache = FileExplorerGitStatusCache::default();
-            self.file_explorer_git_status_refresh_in_progress = false;
-            self.file_explorer_git_status_refresh_pending = false;
-            return;
-        }
-
-        if self.file_explorer_git_status_refresh_in_progress {
-            self.file_explorer_git_status_refresh_pending = true;
-            tracing::trace!(
-                ?reason,
-                root = ?self.root,
-                "coalescing invalidated file explorer git status refresh"
-            );
-            return;
-        }
-
-        let Some(runtime) = self.resources.tokio_runtime.clone() else {
-            self.file_explorer_git_status_cache = FileExplorerGitStatusCache::default();
-            self.file_explorer_git_status_refresh_in_progress = false;
-            self.file_explorer_git_status_refresh_pending = false;
-            return;
-        };
-
-        let sender = self.bridge.sender();
-        let window_id = self.id;
-        let root = self.root.clone();
-        let symlink_mappings = self
-            .file_explorer
-            .as_ref()
-            .map(|fe| fe.collect_symlink_mappings())
-            .unwrap_or_default();
-        self.file_explorer_git_status_refresh_in_progress = true;
-        self.file_explorer_git_status_refresh_pending = false;
-        tracing::trace!(
-            ?reason,
-            root = ?self.root,
-            "scheduling invalidated file explorer git status refresh"
-        );
-
-        runtime.spawn(async move {
-            let cache = tokio::task::spawn_blocking(move || {
-                compute_file_explorer_git_status_cache(root, symlink_mappings)
-            })
-            .await
-            .unwrap_or_default();
-            let _ = sender.send(
-                crate::services::async_bridge::AsyncMessage::FileExplorerGitStatusUpdated {
-                    window_id,
-                    cache,
-                },
-            );
-        });
     }
 
     /// Read-only access to this window's file-explorer cut/copy clipboard.
