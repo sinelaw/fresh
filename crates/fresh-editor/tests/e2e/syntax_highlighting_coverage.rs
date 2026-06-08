@@ -216,6 +216,7 @@ test_highlighting_works!(test_highlight_editorconfig, "hello.editorconfig", 2);
 // --- Requested languages (from GitHub issues) ---
 test_highlighting_works!(test_highlight_kdl, "hello.kdl", 2);
 test_highlighting_works!(test_highlight_nushell, "hello.nu", 2);
+test_highlighting_works!(test_highlight_smali, "hello.smali", 2);
 
 // --- Web framework languages ---
 test_highlighting_works!(test_highlight_vue, "hello.vue", 2);
