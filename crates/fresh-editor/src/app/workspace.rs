@@ -733,13 +733,23 @@ impl crate::app::window::Window {
         self.terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
-        // Spawn the terminal with backing file for incremental scrollback.
-        // When the session persisted an agent command, re-run that exact
-        // argv as the PTY child (mirrors `spawn_terminal_session`) so the
-        // restored session comes back as its agent rather than a bare
-        // shell; otherwise fall back to the configured shell.
-        let wrapper_for_spawn = match terminal.command.as_ref() {
-            Some(argv) if !argv.is_empty() => {
+        // Decide what to run in the restored terminal:
+        //  1. an agent-resume argv (rejoin the conversation), when present
+        //     and resume is enabled — `claude --resume <id>` / `--continue`;
+        //  2. else the launch command (re-run the agent / shell);
+        //  3. else the configured shell.
+        // The resume argv runs as the PTY child through the authority's
+        // wrapper, exactly like a launch command (mirrors
+        // `spawn_terminal_session`).
+        let resume_argv = terminal
+            .agent_resume
+            .as_ref()
+            .map(|r| &r.argv)
+            .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
+        let spawn_argv =
+            resume_argv.or_else(|| terminal.command.as_ref().filter(|argv| !argv.is_empty()));
+        let wrapper_for_spawn = match spawn_argv {
+            Some(argv) => {
                 let (command, args) = argv.split_first().expect("non-empty argv");
                 crate::services::authority::TerminalWrapper {
                     command: command.clone(),
@@ -747,7 +757,7 @@ impl crate::app::window::Window {
                     manages_cwd: false,
                 }
             }
-            _ => self.resolved_terminal_wrapper(),
+            None => self.resolved_terminal_wrapper(),
         };
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
@@ -778,11 +788,17 @@ impl crate::app::window::Window {
             self.terminal_backing_files.remove(&predicted_id);
         }
 
-        // Carry the restore marker forward (even the empty-vec plain-shell
-        // marker) so a later save re-persists it and the session keeps
-        // restoring across multiple restarts.
+        // Carry the restore markers forward (even the empty-vec plain-shell
+        // marker) so a later save re-persists them and the session keeps
+        // restoring — and resuming — across multiple restarts.
         if let Some(argv) = terminal.command.as_ref() {
             self.terminal_commands.insert(terminal_id, argv.clone());
+        }
+        if let Some(resume) = terminal.agent_resume.as_ref() {
+            if !resume.argv.is_empty() {
+                self.terminal_resume_commands
+                    .insert(terminal_id, resume.argv.clone());
+            }
         }
 
         // Create buffer for this terminal
@@ -2075,6 +2091,11 @@ impl crate::app::window::Window {
                         root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
                     });
 
+                let agent_resume = self
+                    .terminal_resume_commands
+                    .get(&terminal_id)
+                    .filter(|argv| !argv.is_empty())
+                    .map(|argv| crate::workspace::AgentResume { argv: argv.clone() });
                 terminals.push(SerializedTerminalWorkspace {
                     terminal_index: idx,
                     cwd,
@@ -2084,6 +2105,7 @@ impl crate::app::window::Window {
                     log_path,
                     backing_path,
                     command,
+                    agent_resume,
                 });
             }
         }

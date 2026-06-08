@@ -6260,6 +6260,7 @@ impl JsEditorApi {
                 cwd: opts.cwd,
                 command: opts.command,
                 title: opts.title,
+                resume: opts.resume,
                 request_id: id,
             });
         Ok(id)

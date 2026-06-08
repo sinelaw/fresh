@@ -2235,6 +2235,9 @@ pub enum PluginCommand {
         cwd: Option<String>,
         command: Option<Vec<String>>,
         title: Option<String>,
+        /// Restore-time argv (agent resume); see
+        /// `CreateWindowWithTerminalOptions::resume`.
+        resume: Option<Vec<String>>,
         request_id: u64,
     },
 
@@ -4491,6 +4494,17 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub title: Option<String>,
+    /// Argv to run on *restore* instead of re-running `command`, when
+    /// the session is reopened after an editor restart. Used by
+    /// Orchestrator agent-resume: a session launched with
+    /// `claude --session-id <id>` sets `resume` to
+    /// `["claude", "--resume", "<id>"]` (or `["claude", "--continue"]`),
+    /// so a restored session rejoins its conversation rather than starting
+    /// a fresh agent. `None` keeps `command` as the restore command. The id
+    /// is a plain argv element — never interpolated into a shell string.
+    #[serde(default)]
+    #[ts(optional)]
+    pub resume: Option<Vec<String>>,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new

@@ -421,6 +421,27 @@ pub struct SerializedTerminalWorkspace {
     /// in workspaces written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<Vec<String>>,
+    /// Agent-resume spec: how to *rejoin* this terminal's agent session on
+    /// restore, as opposed to re-running its launch `command`. The
+    /// Orchestrator sets this so a session launched with
+    /// `claude --session-id <id>` resumes via `claude --resume <id>` (or
+    /// `claude --continue`). When present and resume is enabled, restore
+    /// runs this argv instead of `command`; otherwise it falls back to
+    /// `command`. Absent in older workspaces and for plain terminals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_resume: Option<AgentResume>,
+}
+
+/// How to rejoin a terminal's agent conversation on restore. A struct (not a
+/// bare argv) so it can grow — e.g. an env overlay for per-session config
+/// isolation, or a capture-provenance / policy field — without a breaking
+/// schema change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentResume {
+    /// Resolved resume argv, with any session id already substituted into
+    /// its own array slot (never a shell string). Run through the active
+    /// authority's terminal wrapper, exactly like a launch command.
+    pub argv: Vec<String>,
 }
 
 // ============================================================================

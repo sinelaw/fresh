@@ -195,6 +195,7 @@ fn new_session_atomic_api_seeds_terminal_as_only_tab() {
                 format!("printf {}; sleep 60", MARKER),
             ]),
             Some("agent".into()),
+            None,
         )
         .expect("create_window_with_terminal should succeed");
 

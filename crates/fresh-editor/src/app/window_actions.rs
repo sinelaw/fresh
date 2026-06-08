@@ -150,6 +150,7 @@ impl crate::app::Editor {
     ///
     /// `root` must be absolute; the plugin-command dispatcher
     /// validates this before reaching here.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_window_with_terminal(
         &mut self,
         root: PathBuf,
@@ -157,6 +158,7 @@ impl crate::app::Editor {
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
         title: Option<String>,
+        resume: Option<Vec<String>>,
     ) -> Result<(WindowId, fresh_core::TerminalId, fresh_core::BufferId), String> {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -217,8 +219,17 @@ impl crate::app::Editor {
         // Mark the freshly-spawned agent terminal restorable so workspace
         // capture persists it (with its command) and a later launch
         // re-runs it, instead of the session coming back as a blank pane.
+        // An explicit `resume` argv (agent-resume) supersedes the launch
+        // command on restore — see `restore_terminal_from_workspace`.
         if let Some(target) = self.windows.get_mut(&id) {
-            target.terminal_commands.insert(terminal_id, restore_command);
+            target
+                .terminal_commands
+                .insert(terminal_id, restore_command);
+            if let Some(resume_argv) = resume.filter(|a| !a.is_empty()) {
+                target
+                    .terminal_resume_commands
+                    .insert(terminal_id, resume_argv);
+            }
         }
 
         // The switch has now committed (the spawn succeeded and the active
@@ -681,7 +692,8 @@ impl crate::app::Editor {
         // The previous (local / other-remote) window keeps its own
         // `resources.authority`; Gap A restores it on switch-back.
         let saved_authority = std::mem::replace(&mut self.authority, authority);
-        match self.create_window_with_terminal(root.clone(), label, Some(root), command, None) {
+        match self.create_window_with_terminal(root.clone(), label, Some(root), command, None, None)
+        {
             Ok((window_id, _terminal, _buffer)) => {
                 self.session_keepalives.insert(window_id, keepalive);
                 // `create_window_with_terminal` writes the active pointer

@@ -730,10 +730,11 @@ impl Editor {
                 cwd,
                 command,
                 title,
+                resume,
                 request_id,
             } => {
                 self.handle_create_window_with_terminal(
-                    root, label, cwd, command, title, request_id,
+                    root, label, cwd, command, title, resume, request_id,
                 );
             }
             PluginCommand::SetActiveWindow { id } => {
@@ -3161,6 +3162,7 @@ impl Editor {
         self.refresh_lsp_status_popup_if_open();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_window_with_terminal(
         &mut self,
         root: std::path::PathBuf,
@@ -3168,6 +3170,7 @@ impl Editor {
         cwd: Option<String>,
         command: Option<Vec<String>>,
         title: Option<String>,
+        resume: Option<Vec<String>>,
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
@@ -3184,7 +3187,7 @@ impl Editor {
             return;
         }
         let cwd_buf = cwd.map(std::path::PathBuf::from);
-        match self.create_window_with_terminal(root, label, cwd_buf, command, title) {
+        match self.create_window_with_terminal(root, label, cwd_buf, command, title, resume) {
             Ok((window_id, terminal_id, buffer_id)) => {
                 let api_result = fresh_core::api::SessionWithTerminalResult {
                     window_id: window_id.0,

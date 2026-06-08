@@ -417,6 +417,7 @@ pub struct PartialTerminalConfig {
     pub jump_to_end_on_output: Option<bool>,
     pub shell: Option<crate::config::TerminalShellConfig>,
     pub skip_app_execution_alias: Option<bool>,
+    pub resume_agents: Option<bool>,
 }
 
 impl Merge for PartialTerminalConfig {
@@ -426,6 +427,7 @@ impl Merge for PartialTerminalConfig {
         self.shell.merge_from(&other.shell);
         self.skip_app_execution_alias
             .merge_from(&other.skip_app_execution_alias);
+        self.resume_agents.merge_from(&other.resume_agents);
     }
 }
 
@@ -904,6 +906,7 @@ impl From<&TerminalConfig> for PartialTerminalConfig {
             jump_to_end_on_output: Some(cfg.jump_to_end_on_output),
             shell: cfg.shell.clone(),
             skip_app_execution_alias: Some(cfg.skip_app_execution_alias),
+            resume_agents: Some(cfg.resume_agents),
         }
     }
 }
@@ -918,6 +921,7 @@ impl PartialTerminalConfig {
             skip_app_execution_alias: self
                 .skip_app_execution_alias
                 .unwrap_or(defaults.skip_app_execution_alias),
+            resume_agents: self.resume_agents.unwrap_or(defaults.resume_agents),
         }
     }
 }

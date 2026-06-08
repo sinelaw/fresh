@@ -670,6 +670,17 @@ type CreateWindowWithTerminalOptions = {
 	* when `command` is set, or "Terminal N" otherwise.
 	*/
 	title?: string;
+	/**
+	* Argv to run on *restore* instead of re-running `command`, when
+	* the session is reopened after an editor restart. Used by
+	* Orchestrator agent-resume: a session launched with
+	* `claude --session-id <id>` sets `resume` to
+	* `["claude", "--resume", "<id>"]` (or `["claude", "--continue"]`),
+	* so a restored session rejoins its conversation rather than starting
+	* a fresh agent. `None` keeps `command` as the restore command. The id
+	* is a plain argv element — never interpolated into a shell string.
+	*/
+	resume?: Array<string>;
 };
 type SessionWithTerminalResult = {
 	/**

@@ -639,6 +639,14 @@ pub struct Window {
     pub terminal_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
 
+    /// Argv to run on *restore* instead of re-running the launch command,
+    /// for terminals that carry an agent-resume spec (Orchestrator sets this
+    /// to e.g. `claude --resume <id>` / `claude --continue`). Persisted into
+    /// the workspace's `agent_resume`; absent for plain terminals, which
+    /// just re-run their launch command.
+    pub terminal_resume_commands:
+        std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
     /// Plugin-development workspace per buffer (temp dir + LSP
     /// configuration for plugin buffers). Buffer-keyed and buffers
     /// are per-window, so the workspace map follows.
@@ -1803,6 +1811,7 @@ impl Window {
             pending_dir_poll_rx: None,
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
+            terminal_resume_commands: std::collections::HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),

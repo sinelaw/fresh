@@ -1913,6 +1913,17 @@ pub struct TerminalConfig {
     /// `terminal.shell` is set explicitly.
     #[serde(default = "default_true")]
     pub skip_app_execution_alias: bool,
+
+    /// When restoring an Orchestrator agent session that recorded an
+    /// agent-resume spec (e.g. `claude --session-id <id>` → resume with
+    /// `claude --resume <id>`), rejoin the prior conversation instead of
+    /// re-running the launch command fresh. Default `true`.
+    ///
+    /// Set to `false` to always re-run the launch command on restore (the
+    /// pre-resume behaviour) — useful if you'd rather a restart start each
+    /// agent clean. No effect on sessions without a resume spec.
+    #[serde(default = "default_true")]
+    pub resume_agents: bool,
 }
 
 impl Default for TerminalConfig {
@@ -1921,6 +1932,7 @@ impl Default for TerminalConfig {
             jump_to_end_on_output: true,
             shell: None,
             skip_app_execution_alias: true,
+            resume_agents: true,
         }
     }
 }
