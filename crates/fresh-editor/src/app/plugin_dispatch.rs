@@ -1166,14 +1166,6 @@ impl Editor {
                 self.handle_show_action_popup(popup_id, title, message, actions);
             }
 
-            PluginCommand::ShowBanner { options } => {
-                self.handle_show_banner(options);
-            }
-
-            PluginCommand::DismissBanner { banner_id } => {
-                self.handle_dismiss_banner(&banner_id);
-            }
-
             PluginCommand::SetLspMenuContributions {
                 plugin_id,
                 language,
@@ -3007,57 +2999,6 @@ impl Editor {
                 serde_json::to_string(&result).unwrap_or_default(),
             );
         }
-    }
-
-    /// Enqueue a banner from a plugin. The `banner_id` (carried inside
-    /// `options`) is the routing key — plugins that listen for
-    /// `banner_result` filter by id. Side effects from enqueueing
-    /// (resolved/invalidated banners, active-banner change) are
-    /// surfaced via the standard hook channel; the dispatcher's
-    /// `processed_any_commands` signal triggers a re-render so the
-    /// banner area resizes immediately.
-    fn handle_show_banner(&mut self, options: fresh_core::api::BannerOptions) {
-        tracing::debug!(
-            "show_banner: id={}, priority={:?}, actions={}",
-            options.id,
-            options.priority,
-            options.actions.len()
-        );
-        let effects = self.banners.enqueue(options);
-        self.apply_banner_effects(effects);
-    }
-
-    /// Withdraw a banner from the queue (or active slot) by id. Used
-    /// when a plugin determines the question is moot on its own
-    /// (without firing an invalidation trigger).
-    fn handle_dismiss_banner(&mut self, banner_id: &str) {
-        let effects = self.banners.withdraw(banner_id);
-        self.apply_banner_effects(effects);
-    }
-
-    /// Translate `BannerEffects` into hook fires. The render loop
-    /// re-renders chrome on every dispatched plugin command, so we
-    /// don't need to manually invalidate layout here.
-    fn apply_banner_effects(&mut self, effects: crate::services::banners::BannerEffects) {
-        for outcome in effects.resolved {
-            self.plugin_manager.read().unwrap().run_hook(
-                "banner_result",
-                crate::services::plugins::hooks::HookArgs::BannerResult {
-                    banner_id: outcome.banner_id,
-                    action_id: outcome.action_id,
-                },
-            );
-        }
-        for inv in effects.invalidated {
-            self.plugin_manager.read().unwrap().run_hook(
-                "banner_invalidated",
-                crate::services::plugins::hooks::HookArgs::BannerInvalidated {
-                    banner_id: inv.banner_id,
-                    reason: inv.reason,
-                },
-            );
-        }
-        let _ = effects.active_changed; // re-render is handled by the dispatch loop
     }
 
     fn handle_show_action_popup(
