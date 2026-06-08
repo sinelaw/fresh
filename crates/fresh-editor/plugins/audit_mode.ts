@@ -220,6 +220,23 @@ interface ReviewState {
   // 1-indexed rows in the unified stream; hunkId pins the selection to
   // a single hunk (selections that cross hunks are rejected).
   lineSelection: { startRow: number; endRow: number; hunkId: string } | null;
+  // --- Composite-center architecture ---
+  // The center "diff" panel renders the focused file as a host composite
+  // buffer (OLD|NEW source buffers + a hunk-derived alignment), in unified
+  // or side-by-side layout. Viewport-only render over real buffers, bounded
+  // to one file regardless of changeset size.
+  reviewLayout: 'unified' | 'side-by-side';
+  centerComposite: {
+    fileKey: string;
+    compositeBufId: number;
+    oldBufId: number;
+    newBufId: number;
+    absPath: string;
+    isUntracked: boolean;
+    hunkLineMap: Array<{ oldStart: number; newStart: number }>;
+  } | null;
+  // Monotonic token guarding async center rebuilds (file-nav spam / watch).
+  centerBuildToken: number;
 }
 
 const state: ReviewState = {
@@ -264,6 +281,9 @@ const state: ReviewState = {
   stickyCurrentFile: null,
   diffViewportTopRow: 0,
   lineSelection: null,
+  reviewLayout: 'side-by-side',
+  centerComposite: null,
+  centerBuildToken: 0,
 };
 
 function fileKey(f: FileEntry): string { return `${f.path}\0${f.category}`; }
@@ -1727,14 +1747,13 @@ function updateMagitDisplay(): void {
     if (state.groupId === null) return;
     ensureFocusFile();
     editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
-    editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+    // The center is a host composite buffer for the focused file (async).
+    void buildCenterComposite();
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
     if (state.panelBuffers["files"] !== undefined) {
         editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
     }
     refreshStickyHeader(0);
-    applyFolds();
-    applyCursorLineOverlay('diff');
 }
 
 /**
@@ -3387,6 +3406,152 @@ interface CompositeDiffState {
 
 let activeCompositeDiffState: CompositeDiffState | null = null;
 
+// =============================================================================
+// Composite-center architecture
+// =============================================================================
+// The center "diff" panel shows the focused file as a host composite buffer
+// (OLD|NEW source buffers + a hunk-derived alignment), in unified or
+// side-by-side layout. Rendering is viewport-only over real buffers, so the
+// center stays responsive on changesets of any size.
+
+function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
+    return fileHunks.map(fh => {
+        let oldCount = 0, newCount = 0;
+        for (const line of fh.lines) {
+            if (line.startsWith('-')) oldCount++;
+            else if (line.startsWith('+')) newCount++;
+            else if (line.startsWith(' ')) { oldCount++; newCount++; }
+        }
+        return {
+            oldStart: Math.max(0, fh.oldRange.start - 1),
+            oldCount: oldCount || 1,
+            newStart: Math.max(0, fh.range.start - 1),
+            newCount: newCount || 1,
+        };
+    });
+}
+
+function teardownCenterComposite(): void {
+    const cc = state.centerComposite;
+    if (!cc) return;
+    try {
+        editor.closeCompositeBuffer(cc.compositeBufId);
+        editor.closeBuffer(cc.oldBufId);
+        editor.closeBuffer(cc.newBufId);
+    } catch { /* already gone */ }
+    state.centerComposite = null;
+}
+
+async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string; newContent: string; absPath: string }> {
+    const root = state.repoRoot || editor.getCwd() || "";
+    const absPath = root ? editor.pathJoin(root, file.path) : file.path;
+    let oldContent = "";
+    let newContent = "";
+    if (state.mode === 'range' && state.range) {
+        const showOld = await editor.spawnProcess("git", ["show", `${state.range.from}:${file.path}`]);
+        if (showOld.exit_code === 0) oldContent = showOld.stdout;
+        const showNew = await editor.spawnProcess("git", ["show", `${state.range.to}:${file.path}`]);
+        if (showNew.exit_code === 0) newContent = showNew.stdout;
+        return { oldContent, newContent, absPath };
+    }
+    if (file.category !== 'untracked' && file.status !== 'A') {
+        const show = await editor.spawnProcess("git", ["show", `HEAD:${file.path}`]);
+        if (show.exit_code === 0) oldContent = show.stdout;
+    }
+    if (file.status !== 'D') {
+        const read = await editor.readFile(absPath);
+        if (read !== null) newContent = read;
+    }
+    return { oldContent, newContent, absPath };
+}
+
+async function buildCenterComposite(): Promise<void> {
+    if (state.groupId === null) return;
+    ensureFocusFile();
+    const token = ++state.centerBuildToken;
+
+    const key = state.filesCurrentKey;
+    const file = key ? state.files.find(f => fileKey(f) === key) : undefined;
+    if (!file) {
+        teardownCenterComposite();
+        if (state.panelBuffers["diff"] !== undefined) {
+            editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
+            editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+        }
+        return;
+    }
+
+    const { oldContent, newContent, absPath } = await fetchFileVersions(file);
+    if (token !== state.centerBuildToken || state.groupId === null) return;
+
+    const fileHunks = state.hunks.filter(
+        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+    );
+    const compositeHunks = compositeHunksForFile(fileHunks);
+
+    const oldEntries: TextPropertyEntry[] = oldContent.split('\n').map((line, idx) => ({
+        text: line + '\n', properties: { type: 'line', lineNum: idx + 1 },
+    }));
+    const newEntries: TextPropertyEntry[] = newContent.split('\n').map((line, idx) => ({
+        text: line + '\n', properties: { type: 'line', lineNum: idx + 1 },
+    }));
+
+    const oldRes = await editor.createVirtualBuffer({
+        name: `*OLD:${file.path}*`, mode: "normal", readOnly: true,
+        entries: oldEntries, showLineNumbers: true, editingDisabled: true, hiddenFromTabs: true,
+    });
+    const newRes = await editor.createVirtualBuffer({
+        name: `*NEW:${file.path}*`, mode: "normal", readOnly: true,
+        entries: newEntries, showLineNumbers: true, editingDisabled: true, hiddenFromTabs: true,
+    });
+    if (token !== state.centerBuildToken || state.groupId === null) {
+        try { editor.closeBuffer(oldRes.bufferId); editor.closeBuffer(newRes.bufferId); } catch {}
+        return;
+    }
+
+    const layoutCfg = state.reviewLayout === 'side-by-side'
+        ? { type: "side-by-side", ratios: [0.5, 0.5], showSeparator: true }
+        : { type: "unified", showSeparator: false };
+
+    const compositeBufId = await editor.createCompositeBuffer({
+        name: `*Review: ${file.path}*`,
+        mode: "review-mode",
+        layout: layoutCfg as never,
+        sources: [
+            { bufferId: oldRes.bufferId, label: "OLD (HEAD)", editable: false, style: { gutterStyle: "diff-markers" } },
+            { bufferId: newRes.bufferId, label: "NEW (Working)", editable: false, style: { gutterStyle: "diff-markers" } },
+        ],
+        hunks: compositeHunks.length > 0 ? compositeHunks : null,
+        initialFocusHunk: compositeHunks.length > 0 ? 0 : undefined,
+    });
+    if (token !== state.centerBuildToken || state.groupId === null) {
+        try {
+            editor.closeCompositeBuffer(compositeBufId);
+            editor.closeBuffer(oldRes.bufferId); editor.closeBuffer(newRes.bufferId);
+        } catch {}
+        return;
+    }
+
+    teardownCenterComposite();
+    state.centerComposite = {
+        fileKey: key!,
+        compositeBufId,
+        oldBufId: oldRes.bufferId,
+        newBufId: newRes.bufferId,
+        absPath,
+        isUntracked: file.category === 'untracked',
+        hunkLineMap: fileHunks
+            .map(fh => ({ oldStart: fh.oldRange.start, newStart: fh.range.start }))
+            .sort((a, b) => a.oldStart - b.oldStart),
+    };
+    editor.setBufferGroupPanelBuffer(state.groupId, "diff", compositeBufId);
+    // createCompositeBuffer registers the composite as the active buffer of
+    // the host split; re-focus the group panel so the review group stays the
+    // active tab and the sidebar/comments/toolbar remain visible.
+    editor.focusBufferGroupPanel(state.groupId, "diff");
+    editor.flushLayout();
+}
+
 async function review_drill_down() {
     // In focus mode the sidebar's selected file is authoritative (the
     // cursor may be sitting on a header row); otherwise use the file the
@@ -3585,28 +3750,25 @@ registerHandler("review_drill_down", review_drill_down);
 // See docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.1.
 const AUTO_SPLIT_MIN_WIDTH = 140;
 
-function review_layout_split() {
-    if (state.splitView) return;
-    state.splitView = true;
-    updateMagitDisplay();
-    editor.setStatus(editor.t("status.split_view") || "Side-by-side view");
+function review_set_layout(layout: 'unified' | 'side-by-side'): void {
+    if (state.reviewLayout !== layout) {
+        state.reviewLayout = layout;
+        void buildCenterComposite();
+    }
+    editor.setStatus(
+        layout === 'side-by-side'
+            ? (editor.t("status.split_view") || "Side-by-side view")
+            : (editor.t("status.unified_view") || "Unified view")
+    );
 }
+function review_layout_split() { review_set_layout('side-by-side'); }
 registerHandler("review_layout_split", review_layout_split);
 
-function review_layout_stack() {
-    if (!state.splitView) {
-        editor.setStatus(editor.t("status.unified_view") || "Unified view");
-        return;
-    }
-    state.splitView = false;
-    updateMagitDisplay();
-    editor.setStatus(editor.t("status.unified_view") || "Unified view");
-}
+function review_layout_stack() { review_set_layout('unified'); }
 registerHandler("review_layout_stack", review_layout_stack);
 
-async function review_layout_auto() {
-    if (state.viewportWidth >= AUTO_SPLIT_MIN_WIDTH) await review_layout_split();
-    else review_layout_stack();
+function review_layout_auto() {
+    review_set_layout(state.viewportWidth >= AUTO_SPLIT_MIN_WIDTH ? 'side-by-side' : 'unified');
 }
 registerHandler("review_layout_auto", review_layout_auto);
 
@@ -3717,8 +3879,8 @@ function review_goto_file(delta: number) {
     const next = idx + delta;
     if (next < 0 || next >= vis.length) return;
     state.filesCurrentKey = fileKey(vis[next]);
+    // The center composite rebuilds for the new focus file and self-centers.
     updateMagitDisplay();
-    jumpDiffCursorToRow(1, { recenter: false });
 }
 function review_goto_next_file() { review_goto_file(1); }
 function review_goto_prev_file() { review_goto_file(-1); }
@@ -4645,6 +4807,7 @@ async function start_review_diff() {
 registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
+    teardownCenterComposite();
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
