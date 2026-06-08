@@ -78,6 +78,7 @@ mod stdin_stream;
 mod tab_drag;
 mod terminal;
 mod terminal_input;
+mod terminal_link;
 mod terminal_mouse;
 mod text_ops;
 mod theme_inspect;

@@ -40,6 +40,50 @@ impl Window {
         Some(self.forward_mouse_to_terminal(col, row, content_rect, mouse_event))
     }
 
+    /// Detect a clickable file-path link in the live terminal grid at the given
+    /// screen position.
+    ///
+    /// Returns the terminal buffer, the content-area-relative grid row, the
+    /// detected link (path + optional line/col + column span), and the
+    /// terminal's OSC 7 working directory (for resolving relative paths).
+    ///
+    /// Only fires in live terminal mode and *not* in alternate-screen mode
+    /// (where mouse events are forwarded to the running full-screen program).
+    /// The returned link is textual only — the caller resolves and checks it.
+    pub(crate) fn detect_terminal_link_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<(
+        BufferId,
+        u16,
+        crate::services::terminal::path_link::DetectedLink,
+        Option<std::path::PathBuf>,
+    )> {
+        if !self.terminal_mode {
+            return None;
+        }
+        let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
+        // Alternate-screen programs own the mouse; don't shadow their clicks.
+        if self.is_terminal_in_alternate_screen(buffer_id) {
+            return None;
+        }
+        let term_col = col.saturating_sub(content_rect.x) as usize;
+        let term_row = row.saturating_sub(content_rect.y);
+
+        let &terminal_id = self.terminal_buffers.get(&buffer_id)?;
+        let handle = self.terminal_manager.get(terminal_id)?;
+        let (line, cwd) = {
+            let state = handle.state.lock().ok()?;
+            let line: String = state.get_line(term_row).iter().map(|c| c.c).collect();
+            let cwd = state.cwd().map(|p| p.to_path_buf());
+            (line, cwd)
+        };
+
+        let link = crate::services::terminal::path_link::detect_link_at(&line, term_col)?;
+        Some((buffer_id, term_row, link, cwd))
+    }
+
     /// Get the terminal buffer and its content area if the mouse position is over a terminal buffer.
     /// Returns the buffer ID and content rect if found.
     fn get_terminal_content_area_at_position(

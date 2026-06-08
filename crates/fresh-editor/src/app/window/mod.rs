@@ -66,6 +66,18 @@ use std::sync::Arc;
 /// (`active_layout()`, `split_manager()`, `file_explorer()`, `lsp()`,
 /// `panel_ids()`, `file_mod_times()`, …). Cross-window access goes
 /// through `Editor.windows.get(&id)` directly.
+/// A clickable path-link highlighted under a Ctrl+hover in the live terminal
+/// grid. Coordinates are relative to the terminal content area.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalLinkHover {
+    /// The terminal buffer the link is in.
+    pub buffer_id: BufferId,
+    /// Grid row (0-based, within the content area) containing the link.
+    pub row: u16,
+    /// Column range (0-based char columns) the link spans, for underlining.
+    pub cols: std::ops::Range<usize>,
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -373,6 +385,12 @@ pub struct Window {
     /// mode when switched back to. Per-window because terminal
     /// buffers are per-window (Step 0d).
     pub terminal_mode_resume: std::collections::HashSet<BufferId>,
+
+    /// Path-link currently highlighted under a Ctrl+hover over the live
+    /// terminal grid. `Some` means the renderer underlines the given grid row
+    /// columns to signal it's clickable. Cleared when Ctrl is released or the
+    /// pointer leaves a resolvable path. See [`TerminalLinkHover`].
+    pub terminal_link_hover: Option<TerminalLinkHover>,
 
     /// Track which byte ranges have been seen per buffer (for the
     /// `lines_changed` plugin-hook optimisation). Keyed by `BufferId`,
@@ -1716,6 +1734,7 @@ impl Window {
             dock_cols: 0,
             preview: None,
             terminal_mode: false,
+            terminal_link_hover: None,
             terminal_mode_resume: std::collections::HashSet::new(),
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),

@@ -190,6 +190,13 @@ impl Editor {
             }
         }
 
+        // Ctrl+Click on a file path printed in the live terminal opens it in
+        // Fresh (jumping to any :line:col it encodes). Handled before normal
+        // click routing so it doesn't disturb cursor/selection state.
+        if let Some(result) = self.try_open_terminal_link(col, row, mouse_event) {
+            return result;
+        }
+
         // Dismiss theme info popup on any left-click; check if click is on the button first
         if self.active_window_mut().theme_info_popup.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -322,6 +329,12 @@ impl Editor {
                 // (preserve needs_render if already set, e.g., for GPM cursor updates)
                 let hover_changed = self.update_hover_target(col, row);
                 needs_render = needs_render || hover_changed;
+
+                // Ctrl+hover over a resolvable path in the live terminal
+                // underlines it to signal it's clickable.
+                let term_link_changed =
+                    self.update_terminal_link_hover(col, row, mouse_event.modifiers);
+                needs_render = needs_render || term_link_changed;
 
                 // Update theme info popup button highlight on hover
                 if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
