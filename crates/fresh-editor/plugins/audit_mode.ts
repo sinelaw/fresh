@@ -3631,7 +3631,17 @@ function refreshFocusedFile(): void {
     if (state.panelBuffers["files"] !== undefined) {
         editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
     }
-    refreshStickyHeader(0);
+    // Unified: scroll the newly-focused file into position and put the cursor
+    // on it, so navigating files actually moves the view to that file's diff
+    // (instead of leaving the cursor parked at the top while only the
+    // collapsed/expanded set changes). Side-by-side handles its own initial
+    // position via the composite's focus-hunk logic.
+    if (state.reviewLayout !== 'side-by-side' && state.filesCurrentKey
+        && state.fileHeaderRows[state.filesCurrentKey] !== undefined) {
+        jumpDiffCursorToRow(state.fileHeaderRows[state.filesCurrentKey]);
+    } else {
+        refreshStickyHeader(0);
+    }
 }
 
 async function review_drill_down() {
@@ -4159,15 +4169,16 @@ function review_next_hunk() {
         editor.compositeNextHunk(state.centerComposite.compositeBufId);
         return;
     }
-    if (state.hunks.length === 0) return;
-    const cur = visibleHunkIndexAtCursor();
-    // Find next hunk in global order — auto-expanding its file if needed.
-    if (cur < 0) {
-        jumpToGlobalHunk(0);
-        return;
+    // Navigate by the rendered hunk-header rows, not the global state.hunks
+    // index: in focus-only mode only the focused file's hunks are rendered,
+    // so a global index would point at an unrendered file's hunk and no-op.
+    const rows = state.hunkHeaderRows;
+    for (let i = 0; i < rows.length; i++) {
+        if (rows[i] > state.diffCursorRow) { jumpDiffCursorToRow(rows[i]); return; }
     }
-    if (cur + 1 >= state.hunks.length) return;
-    jumpToGlobalHunk(cur + 1);
+    // Past the last hunk of the focused file — advance to the next file
+    // (lands on its header; a further `n` steps into its first hunk).
+    if (state.focusOnly) review_goto_file(1);
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
@@ -4177,10 +4188,12 @@ function review_prev_hunk() {
         editor.compositePrevHunk(state.centerComposite.compositeBufId);
         return;
     }
-    if (state.hunks.length === 0) return;
-    const cur = visibleHunkIndexAtCursor();
-    if (cur <= 0) return;
-    jumpToGlobalHunk(cur - 1);
+    const rows = state.hunkHeaderRows;
+    for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i] < state.diffCursorRow) { jumpDiffCursorToRow(rows[i]); return; }
+    }
+    // Before the first hunk of the focused file — back up to the previous file.
+    if (state.focusOnly) review_goto_file(-1);
 }
 registerHandler("review_prev_hunk", review_prev_hunk);
 
