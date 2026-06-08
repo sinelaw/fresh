@@ -296,8 +296,11 @@ fn test_review_stash_shows_stashed_diff() {
         .unwrap();
     harness
         .wait_until(|h| {
+            // The stash review labels its panels with the stash ref
+            // (tab "*Review stash@{0}*", sticky "stash@{0} · main.rs"),
+            // and the changed file appears in the sidebar / diff.
             let s = h.screen_to_string();
-            s.contains("Review Diff (stash") && s.contains("main.rs")
+            s.contains("stash@{0}") && s.contains("main.rs")
         })
         .unwrap();
 }
