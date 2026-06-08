@@ -34,6 +34,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
@@ -95,6 +96,161 @@ impl EventListener for PtyWriteListener {
     }
 }
 
+/// Incremental scanner that extracts the working directory a shell reports via
+/// the OSC 7 escape sequence (`ESC ] 7 ; file://host/path BEL`, or terminated
+/// by `ST` = `ESC \`).
+///
+/// The terminal emulator we embed (`alacritty_terminal` 0.25 / `vte` 0.15) does
+/// not surface OSC 7 — its OSC dispatcher drops the sequence as "unhandled" and
+/// the `Handler` trait has no cwd hook — so we sniff it out of the raw PTY byte
+/// stream ourselves. Sequences can straddle PTY reads, so the scanner is a
+/// resumable state machine: callers feed every byte that flows to the emulator
+/// and collect a payload once a complete sequence terminates.
+#[derive(Debug, Default)]
+struct Osc7Scanner {
+    /// How many bytes of the introducer `ESC ] 7 ;` have matched so far (0..4).
+    intro_match: usize,
+    /// True once the introducer matched and we're accumulating the payload.
+    collecting: bool,
+    /// True when the previous collected byte was `ESC`, i.e. a possible start
+    /// of the `ST` (`ESC \`) string terminator.
+    saw_esc: bool,
+    /// Accumulated payload bytes (between the introducer and the terminator).
+    buf: Vec<u8>,
+}
+
+/// Introducer bytes for OSC 7: `ESC ] 7 ;`.
+const OSC7_INTRO: [u8; 4] = [0x1b, b']', b'7', b';'];
+/// Cap on the OSC 7 payload we'll buffer. A `file://` cwd URI is far shorter;
+/// anything longer is malformed (or not really OSC 7) and is abandoned so a
+/// stray `ESC ] 7 ;` without a terminator can't grow the buffer unboundedly.
+const OSC7_MAX_PAYLOAD: usize = 4096;
+
+impl Osc7Scanner {
+    /// Feed one chunk of PTY output. Returns the payload string of each OSC 7
+    /// sequence that *completes* within this chunk (usually zero or one).
+    fn feed(&mut self, data: &[u8], out: &mut Vec<String>) {
+        for &byte in data {
+            if self.collecting {
+                if self.saw_esc {
+                    // Inside the payload we only treat `ESC \` (ST) as a
+                    // terminator. Any other byte after ESC means the sequence
+                    // is malformed — abandon it rather than risk swallowing
+                    // unrelated output.
+                    self.saw_esc = false;
+                    if byte == b'\\' {
+                        self.finish(out);
+                    } else {
+                        self.reset();
+                    }
+                } else if byte == 0x07 {
+                    // BEL terminator.
+                    self.finish(out);
+                } else if byte == 0x1b {
+                    self.saw_esc = true;
+                } else if self.buf.len() >= OSC7_MAX_PAYLOAD {
+                    self.reset();
+                } else {
+                    self.buf.push(byte);
+                }
+            } else if byte == OSC7_INTRO[self.intro_match] {
+                self.intro_match += 1;
+                if self.intro_match == OSC7_INTRO.len() {
+                    self.collecting = true;
+                    self.intro_match = 0;
+                    self.buf.clear();
+                }
+            } else {
+                // Restart the introducer match. The introducer's only repeated
+                // prefix byte is its first (ESC), so a one-byte re-check
+                // suffices to avoid missing a sequence like `ESC ESC ] 7 ;`.
+                self.intro_match = usize::from(byte == OSC7_INTRO[0]);
+            }
+        }
+    }
+
+    /// Emit the collected payload and reset to searching.
+    fn finish(&mut self, out: &mut Vec<String>) {
+        if let Ok(s) = std::str::from_utf8(&self.buf) {
+            out.push(s.to_owned());
+        }
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.collecting = false;
+        self.saw_esc = false;
+        self.intro_match = 0;
+        self.buf.clear();
+    }
+}
+
+/// Parse the payload of an OSC 7 sequence into a working-directory path.
+///
+/// The conventional payload is a `file://host/path` URI (the host is usually
+/// the local hostname or empty), but some shells emit a bare absolute path.
+/// Percent-escapes in the URI form are decoded. Returns `None` for payloads
+/// that don't resolve to an absolute path.
+fn parse_osc7_path(payload: &str) -> Option<PathBuf> {
+    let raw = if let Some(rest) = payload.strip_prefix("file://") {
+        // Strip the authority (host) component: everything up to the first
+        // '/', which begins the absolute path.
+        let path_part = match rest.find('/') {
+            Some(idx) => &rest[idx..],
+            None => return None,
+        };
+        percent_decode(path_part)
+    } else {
+        // Bare path fallback (non-standard, but seen in the wild).
+        payload.to_owned()
+    };
+
+    if raw.is_empty() {
+        return None;
+    }
+
+    // On Windows a `file:///C:/dir` URI decodes to `/C:/dir`; drop the leading
+    // slash so it parses as a drive-absolute path.
+    #[cfg(windows)]
+    let raw = {
+        let bytes = raw.as_bytes();
+        if bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b':' {
+            raw[1..].to_owned()
+        } else {
+            raw
+        }
+    };
+
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// Decode `%XX` percent-escapes in an OSC 7 URI path. Invalid escapes are left
+/// verbatim. Operates on bytes so non-ASCII (already-UTF-8) paths survive.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Terminal state wrapping alacritty_terminal
 pub struct TerminalState {
     /// The terminal emulator
@@ -131,6 +287,12 @@ pub struct TerminalState {
     /// Pending title set by the program via OSC 0/1/2 (shared with the
     /// event listener). Drained in `process_output` into `terminal_title`.
     pending_title: Arc<Mutex<Option<String>>>,
+    /// Working directory most recently reported by the shell via OSC 7, used
+    /// to resolve relative paths the running program prints (e.g. for
+    /// Ctrl+Click to open). `None` until the shell emits OSC 7.
+    cwd: Option<PathBuf>,
+    /// Resumable scanner that extracts OSC 7 payloads from the raw PTY stream.
+    osc7: Osc7Scanner,
 }
 
 impl TerminalState {
@@ -159,7 +321,16 @@ impl TerminalState {
             backing_file_history_end: 0,
             pty_write_queue,
             pending_title,
+            cwd: None,
+            osc7: Osc7Scanner::default(),
         }
+    }
+
+    /// The terminal's current working directory as last reported by the shell
+    /// via OSC 7, if any. Tracks `cd` within the session (when the shell is
+    /// configured to emit OSC 7); `None` otherwise.
+    pub fn cwd(&self) -> Option<&std::path::Path> {
+        self.cwd.as_deref()
     }
 
     /// Drain any pending data that needs to be written back to the PTY.
@@ -180,6 +351,16 @@ impl TerminalState {
 
         let history_before = self.term.grid().history_size();
         let alt_before = self.term.mode().contains(TermMode::ALT_SCREEN);
+
+        // Sniff OSC 7 (working-directory reports) out of the raw stream before
+        // it reaches the emulator, which discards the sequence. Take the latest
+        // valid payload — only the final cwd in this chunk matters.
+        let mut osc7_payloads = Vec::new();
+        self.osc7.feed(data, &mut osc7_payloads);
+        if let Some(path) = osc7_payloads.iter().rev().find_map(|p| parse_osc7_path(p)) {
+            self.cwd = Some(path);
+        }
+
         self.parser.advance(&mut self.term, data);
         // The parser may have emitted OSC title events (0/1/2) into the
         // listener's pending slot during `advance`. Apply the latest so
@@ -1528,5 +1709,77 @@ mod tests {
         assert_eq!(state.title(), "second");
         // The printable bytes still landed on the grid.
         assert!(state.content_string().contains("helloworld"));
+    }
+
+    /// OSC 7 with a `file://host/path` payload, BEL-terminated, updates the
+    /// tracked cwd. The emulator still drops the sequence (no stray output).
+    #[test]
+    fn test_osc7_sets_cwd_bel_terminated() {
+        let mut state = TerminalState::new(80, 24);
+        assert_eq!(state.cwd(), None);
+        state.process_output(b"\x1b]7;file://myhost/home/user/project\x07ok");
+        assert_eq!(
+            state.cwd(),
+            Some(std::path::Path::new("/home/user/project"))
+        );
+        // The sequence itself must not leak onto the grid; only "ok" prints.
+        let content = state.content_string();
+        assert!(content.contains("ok"));
+        assert!(!content.contains("file://"));
+    }
+
+    /// OSC 7 terminated by ST (`ESC \`) is recognized too.
+    #[test]
+    fn test_osc7_st_terminated() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file://host/var/log\x1b\\");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/var/log")));
+    }
+
+    /// Percent-escapes in the OSC 7 path are decoded (spaces, etc.).
+    #[test]
+    fn test_osc7_percent_decoded() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file://host/home/user/my%20dir\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/home/user/my dir")));
+    }
+
+    /// An OSC 7 sequence split across two PTY reads is still captured — the
+    /// scanner state persists between `process_output` calls.
+    #[test]
+    fn test_osc7_split_across_reads() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file://host/home/u");
+        assert_eq!(state.cwd(), None);
+        state.process_output(b"ser/split\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/home/user/split")));
+    }
+
+    /// A later OSC 7 overrides an earlier one (tracks `cd`).
+    #[test]
+    fn test_osc7_updates_on_cd() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file://host/first\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/first")));
+        state.process_output(b"\x1b]7;file://host/second/dir\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/second/dir")));
+    }
+
+    /// A bare (non-`file://`) absolute path payload is accepted as a fallback.
+    #[test]
+    fn test_osc7_bare_path_fallback() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;/opt/work\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/opt/work")));
+    }
+
+    /// A relative or empty payload is rejected (cwd stays unchanged).
+    #[test]
+    fn test_osc7_rejects_relative() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file://host/good\x07");
+        state.process_output(b"\x1b]7;relative/path\x07");
+        // The relative payload is ignored; the previous valid cwd is kept.
+        assert_eq!(state.cwd(), Some(std::path::Path::new("/good")));
     }
 }
