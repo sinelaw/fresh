@@ -157,10 +157,16 @@ fn ctrl_click_resolves_path_via_osc7_cwd() {
     };
 
     // Emit OSC 7 for `osc7_dir`, then print a path that only resolves there.
-    let osc7 = format!(
-        "\x1b]7;file://host{}\x1b\\edit notes.txt now\n",
-        osc7_dir.path().display()
-    );
+    // Build a proper `file://host/<path>` URI with forward slashes so it's
+    // well-formed on Windows too (where the dir is `C:\...`): the parser strips
+    // the leading `/` before the drive.
+    let uri_path = osc7_dir
+        .path()
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string();
+    let osc7 = format!("\x1b]7;file://host/{uri_path}\x1b\\edit notes.txt now\n");
     open_terminal_with_output(&mut harness, osc7.as_bytes());
 
     harness.assert_screen_contains("edit notes.txt now");

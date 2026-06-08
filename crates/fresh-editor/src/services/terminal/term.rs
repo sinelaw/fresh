@@ -209,9 +209,10 @@ fn parse_osc7_path(payload: &str) -> Option<PathBuf> {
         return None;
     }
 
-    // On Windows a `file:///C:/dir` URI decodes to `/C:/dir`; drop the leading
-    // slash so it parses as a drive-absolute path.
-    #[cfg(windows)]
+    // A `file:///C:/dir` URI decodes to `/C:/dir`; drop the leading slash so it
+    // reads as a drive-absolute Windows path. Done unconditionally (not behind
+    // cfg) because Fresh may run on Linux while editing a Windows host, or vice
+    // versa — the OSC 7 payload's flavour follows the *shell's* OS, not ours.
     let raw = {
         let bytes = raw.as_bytes();
         if bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b':' {
@@ -221,12 +222,24 @@ fn parse_osc7_path(payload: &str) -> Option<PathBuf> {
         }
     };
 
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        Some(path)
+    // Accept the path if it's absolute in *either* convention. We can't use
+    // `Path::is_absolute()` — it's host-OS-specific, so it would reject a POSIX
+    // path on Windows (and a `C:\` path on Unix), discarding valid cwds from a
+    // remote shell of the other OS.
+    if is_osc7_absolute(&raw) {
+        Some(PathBuf::from(raw))
     } else {
         None
     }
+}
+
+/// Whether an OSC 7 path string is absolute in POSIX or Windows terms: a
+/// leading `/` (POSIX), a UNC `\\…` prefix, or a `X:` drive (Windows).
+fn is_osc7_absolute(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    s.starts_with('/')
+        || s.starts_with('\\')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
 }
 
 /// Decode `%XX` percent-escapes in an OSC 7 URI path. Invalid escapes are left
@@ -1763,6 +1776,17 @@ mod tests {
         assert_eq!(state.cwd(), Some(std::path::Path::new("/first")));
         state.process_output(b"\x1b]7;file://host/second/dir\x07");
         assert_eq!(state.cwd(), Some(std::path::Path::new("/second/dir")));
+    }
+
+    /// A Windows `file:///C:/dir` URI is parsed to a drive-absolute path. The
+    /// leading-slash strip and drive acceptance are host-OS-independent (a
+    /// remote Windows shell can report this while Fresh runs on Linux), so this
+    /// is asserted on every platform.
+    #[test]
+    fn test_osc7_windows_drive_path() {
+        let mut state = TerminalState::new(80, 24);
+        state.process_output(b"\x1b]7;file:///C:/Users/me/proj\x07");
+        assert_eq!(state.cwd(), Some(std::path::Path::new("C:/Users/me/proj")));
     }
 
     /// A bare (non-`file://`) absolute path payload is accepted as a fallback.
