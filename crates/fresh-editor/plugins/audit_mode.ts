@@ -2738,6 +2738,28 @@ function readPropsAtCursor(panel: 'files' | 'diff'): Record<string, unknown> | n
  * without a hunkId (e.g. the panel header) so commands like `s` still do
  * something useful.
  */
+/** The hunk under the cursor, working in both the text and composite center.
+ *  Async because the composite cursor is queried asynchronously. */
+async function getHunkAtCursor(): Promise<Hunk | null> {
+    const cc = state.centerComposite;
+    if (cc) {
+        const info = await getCompositeLineInfo();
+        if (info) {
+            const h = state.hunks.find(x => x.id === info.hunkId);
+            if (h) return h;
+        }
+        // Fallback: the focused file's first hunk.
+        const file = state.files.find(f => fileKey(f) === cc.fileKey);
+        if (file) {
+            return state.hunks.find(
+                h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+            ) || null;
+        }
+        return null;
+    }
+    return getHunkAtDiffCursor();
+}
+
 function getHunkAtDiffCursor(): Hunk | null {
     const props = propsAtCursorRow();
     const hunkId = props ? props["hunkId"] : undefined;
@@ -2779,6 +2801,7 @@ function fileHeaderUnderCursor(): FileEntry | null {
 async function review_stage_scope() {
     if (state.files.length === 0) return;
     if (state.lineSelection) { await applyLineSelection('stage'); return; }
+    if (state.centerComposite) { await stageHunk(await getHunkAtCursor()); return; }
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
         await stageFileEntry(headerFile);
@@ -2791,6 +2814,7 @@ registerHandler("review_stage_scope", review_stage_scope);
 async function review_unstage_scope() {
     if (state.files.length === 0) return;
     if (state.lineSelection) { await applyLineSelection('unstage'); return; }
+    if (state.centerComposite) { await unstageHunk(await getHunkAtCursor()); return; }
     const headerFile = fileHeaderUnderCursor();
     if (headerFile) {
         await unstageFileEntry(headerFile);
