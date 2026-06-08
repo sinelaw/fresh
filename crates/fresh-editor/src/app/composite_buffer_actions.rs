@@ -533,24 +533,13 @@ impl Editor {
             .event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
-        // Register with the active split so it appears in tabs
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&split_id)
-        {
-            view_state.add_buffer(buffer_id);
-        }
-
+        // NOTE: the composite is intentionally NOT auto-attached to the
+        // active split here. Callers place it explicitly — `showBuffer` for a
+        // standalone drill-down (which adds it to the active split via
+        // `set_active_buffer`), or `setBufferGroupPanelBuffer` for an in-panel
+        // review center. Attaching here too left the composite as a stray tab
+        // in the main split, spawning "[No Name]" tabs when it was later
+        // closed on a file switch.
         buffer_id
     }
 
