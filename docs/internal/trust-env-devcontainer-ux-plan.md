@@ -36,17 +36,25 @@ implicit defaults, clearer state at a glance*. If a proposed change would
    infers from context instead of asking.
 3. **Status beats prompts.** A status bar that tells you "what is
    happening" is worth ten prompts that ask "should this happen."
-4. **Inline beats modal.** When the editor does need an answer, it asks
-   in a banner that yields to whatever the user is doing — never a modal
-   that blocks the editor.
+4. **Ask rarely, ask concretely.** When the editor does need to ask, the
+   question is concrete (names the actual command/file), asked at the
+   right moment, and the user makes a clear choice. Modality is a tool
+   for forcing a clear choice on a question that genuinely needs one —
+   not an enemy. (We retracted an earlier formulation, "inline beats
+   modal," because what users actually hate about VS Code's trust modal
+   is the *abstract framing* and the *bad timing* — both fixable
+   without making the prompt non-modal. A concrete prompt at the right
+   moment IS the right surface; calling it "inline" wouldn't help.)
 5. **Do the right thing, make undo trivial.** A reversible default
    action beats an irreversible question. If venv activation can be
    undone with one keystroke, just activate.
 6. **Heavy actions confirm once, never again.** A devcontainer rebuild
    costs minutes — that deserves one confirmation per folder, ever, not
    per session or per `git pull`.
-7. **Errors are inline, not modal.** A build failure is a banner with a
-   "show logs" button, not a popup demanding attention.
+7. **Errors are concrete and actionable.** A build failure surfaces
+   inline with a "show logs" button — not as a generic "An error
+   occurred." Use the existing popup primitives, but make the message
+   say the actual thing.
 8. **Settings are the canonical way to change recurring behavior.** "I
    never want venv to auto-activate" is a config option, not a habit of
    dismissing prompts.
@@ -66,34 +74,37 @@ decision, started every server. Zero clicks. The user starts coding.
 
 ```
 ~/code/new-repo · .envrc detected · ts-server starting
-[Banner] This folder has a `.envrc`. Activate direnv?
-         [Activate] [Always here] [Not now] [Never here]
+
+[Popup] This folder has a `.envrc`. Activate direnv?
+        [Activate] [Always here] [Not now] [Never here]
 ```
 
 Trust is implicit from provenance. The TS server (unambiguous from
 `package.json`) starts. The `.envrc` is a genuinely new decision and
-gets a non-modal banner — the editor is fully usable, the banner waits.
+gets a modal popup. Picking "Not now" leaves a clickable chip in the
+status bar so the user has a visible way back to the decision.
 
 **Suspicious folder (`/tmp/from-zip`):**
 
 ```
 /tmp/x · restricted · 3 things would run here · LSPs off
-[Banner] This folder is outside your usual workspaces. It contains
-         `.envrc`, `Cargo.toml`, `build.rs` — code that runs at
-         project load. Review or trust?
-         [Review what runs] [Trust this folder] [Read-only mode]
+
+[Popup] This folder is outside your usual workspaces. It contains
+        `.envrc`, `Cargo.toml`, `build.rs` — code that runs at
+        project load. Review or trust?
+        [Review what runs] [Trust this folder] [Read-only mode]
 ```
 
 Framing is "outside your usual workspaces", not "MALWARE WARNING."
 "Read-only mode" is first-class — many users open random folders just
-to read code, and that path should require zero decisions.
+to read code, and that path should require zero further decisions.
 
 **Devcontainer project:**
 
 ```
-[Banner] This project has a dev container (`api-service`).
-         Use it? Building takes ~2 min.
-         [Use container] [Stay local for now]
+[Popup] This project has a dev container (`api-service`).
+        Use it? Building takes ~2 min.
+        [Use container] [Stay local for now]
 ```
 
 One question, one time per folder, ever. The decision persists. To
@@ -102,12 +113,13 @@ revisit: click the authority indicator in the status bar.
 **Trust required for an LSP, on a restricted folder:**
 
 ```
-[Banner] rust-analyzer can't run here (trust required).
-         [Trust this folder] [Show what it would run] [Dismiss]
+[Popup] rust-analyzer can't run here (trust required).
+        [Trust this folder] [Show what it would run] [Dismiss]
 ```
 
-Contextual — names the concrete tool. Non-modal. If dismissed, the
-status bar shows `LSP: held` so the user has a visible way back.
+Contextual — names the concrete tool. Dismissing it leaves an
+`LSP: held` chip in the status bar; clicking that chip re-opens the
+same prompt.
 
 **"What is the editor doing?" panel (one keystroke, e.g. `Alt+?`):**
 
@@ -128,32 +140,82 @@ nagging.
   usual workspaces" when novel, silent when familiar.
 - The "would you like to reopen in container?" popup, repeatedly.
   Replaced by one question per folder, ever.
-- The `(locked)` pill. Replaced by a status line that says *what* is
-  gated and *what to do*.
-- A modal workspace-trust dialog blocking the editor on open. Ever.
-- Stacked popups. Inline banners replace popups; the status bar replaces
-  ambient indicators.
-- The need to know what "Restricted mode" means. Either the editor is
-  doing what you expect (trusted) or it's not, and a banner explains
-  what's gated and offers the obvious next step.
+- A passive `(locked)` pill that doesn't tell you what to do. Replaced
+  by a clickable chip that re-opens the relevant prompt.
+- An abstract trust modal on open. We still use the modal popup
+  primitive — but the question is concrete, named, and at the right
+  moment.
+- Stacked popups. Existing core dedup logic (the
+  `PopupResolver::WorkspaceTrust` short-circuit at
+  `popup_dialogs.rs:1019-1025`) becomes the standard pattern for every
+  project-lifecycle popup.
+- The need to know what "Restricted mode" means as a *concept*.
+  Whenever it matters, a concrete popup or a status-bar chip names the
+  actual gated thing.
 
 ### Capabilities the editor needs to deliver this
 
-Not implementation detail, but capabilities that have to exist:
+Not implementation detail, but capabilities that have to exist. After
+auditing what's already in the codebase, most of these are
+*extensions* of existing infrastructure, not new primitives:
 
-- **Persistent memory of every decision per folder**, surviving across
-  sessions and machines (sync via dotfiles or a config service).
-- **Provenance awareness** — heuristics about whether a folder was
-  `git clone`d into a usual workspace, downloaded, or unzipped.
-- **Content fingerprinting** — `.envrc` allowed by hash, so editing it
-  re-asks; the same `.envrc` across multiple folders only asks once.
-- **A real status bar with click affordances** — the indicator *is* the
-  affordance, not a separate "click here to elevate" button.
-- **A banner system distinct from popups** — non-modal, dismissible,
-  persistent until acted on, at most one on screen at a time.
-- **An action log** — what the editor decided, when, and why. Visible.
-- **Settings that mean what they say** — "auto-activate direnv" actually
-  skips the banner.
+- **Persistent memory of every decision per folder.** Extend the
+  existing `TrustStore` schema (or add a sibling `decisions.json`) to
+  carry per-question outcomes alongside the trust level. Cross-
+  machine sync is a dotfiles/external-config-service problem; the
+  editor's job is to keep the on-disk format stable and
+  merge-friendly.
+- **Provenance awareness** — a small service that, given a workspace
+  path, returns a Trusted / Suspicious / Unknown verdict based on
+  parent-trust, git-remote host, "usual workspace" prefix patterns,
+  and OS-level downloaded-from-internet marks. The trust prompt
+  short-circuits on Trusted, framed as "outside your usual
+  workspaces" on Suspicious, neutral on Unknown.
+- **Content fingerprinting** — extend the per-decision record with
+  the marker file's SHA-256, so editing `.envrc` re-asks. Re-using
+  the same `.envrc` across folders only asks once if the hash matches.
+- **Clickable status-bar elements for plugin tokens.** The chrome
+  already has area tracking and click dispatch for built-in
+  indicators (`status_bar_lsp_area`, `status_bar_remote_area`,
+  `status_bar_warning_area`, …) wired through
+  `handle_click_status_bar` (`mouse_input.rs:2146`). Plugin
+  `RegisterStatusBarElement` lacks an area-tracking + click-dispatch
+  hook; adding one is a small extension to `StatusBarLayout` plus an
+  optional `on_click` field on the existing register command.
+- **Concrete framing in every prompt.** The existing trust modal is
+  fully implemented (`show_workspace_trust_popup` in
+  `popup_dialogs.rs`); it's currently dormant (the open-time call is
+  stubbed at line 977). Re-enable it with a body that names the
+  actual markers (`executable_content_markers` already returns them).
+- **An action log** — a structured "what did the editor decide?"
+  panel, with revisit buttons. New surface, not an extension of
+  anything existing. Worth doing because it's the safety net for
+  silent auto-activation.
+- **Settings that mean what they say** — "auto-activate direnv" is a
+  config flag the env-manager plugin checks before showing its prompt.
+  Already supported by the existing config system; just needs the
+  flag.
+
+Things we considered building but determined the existing
+infrastructure already covers:
+
+- ~~A new "banner" primitive distinct from popups.~~ The questions we
+  ask are project-lifecycle decisions that benefit from forced
+  choice; modal popups are the right surface. The non-modal feel
+  comes from "Not now" + clickable status-bar chip, not from a new
+  visual category.
+- ~~A new popup-arbitration queue / manager.~~ For the current scale
+  (three coordinating plugins), the existing
+  `action_popup_result` broadcast + per-plugin dedup checks (mirror
+  of the trust-modal `WorkspaceTrust` resolver short-circuit at
+  `popup_dialogs.rs:1019-1025`) already handle ordering and
+  invalidation. The manager pays off at 10+ plugins, not now.
+- ~~A unified "Workspace Decision Store" replacing all plugin global
+  state.~~ The split between `trust.json` and per-plugin global state
+  is fine in practice — different things stored in different places,
+  no actual disagreement. Standardizing the *naming convention*
+  (`<plugin>:<question>` ids) costs nothing and gives us coordination
+  without unification.
 
 ### Failure modes we have to design around
 
@@ -161,30 +223,40 @@ Not implementation detail, but capabilities that have to exist:
   status bar visibly changes; action log shows what happened; one
   keystroke undo.
 - **Under-eager refuse-to-help** leaves the user in a restricted folder
-  wondering why nothing works. Mitigation: banner is *always* present
-  when there's a gated decision pending — no silent restrictions.
+  wondering why nothing works. Mitigation: a clickable status-bar chip
+  is *always* present when there's a gated decision pending — no
+  silent restrictions.
 - **Persistent-decision regret**: user clicks "Trust always" and later
   wishes they hadn't. Mitigation: action log makes every decision
   visible and revisitable.
 - **Novel-folder false positive**: editor thinks a familiar folder is
   novel because the user reorganized their workspace. Mitigation:
-  provenance heuristics are advisory; worst case is one extra banner.
-- **Banner fatigue**: banners accumulate, become as bad as popups.
-  Mitigation: at most one banner on screen; secondary banners queue
-  silently and reveal as the user resolves the first.
+  provenance heuristics are advisory; worst case is one extra popup.
+- **Popup fatigue**: the same question fires every open. Mitigation:
+  persistent dismissal (`Never here`) + content-hash short-circuit
+  (no re-ask when the file is unchanged) means each unique question
+  is asked at most once.
 
 ### Why the rest of this doc exists
 
 The North Star is the target. The rules below are what we can ship on
-the current architecture in this PR + the next couple. They consciously
-trade some of the ideal (real provenance heuristics, content-hash
-fingerprinting, sync-across-machines memory, a banner system distinct
-from popups, an action log) for things that are tractable today
-(one-popup-at-a-time within a single open, per-folder memory in
-`trust.json`, the existing action-popup mechanism). When a future PR can
-move us closer to the ideal — e.g., replacing the activate popup with a
-non-modal banner — that PR should reference this section and explain
-which principle it advances.
+the current architecture in this PR + the next couple. They
+consciously trade some of the ideal (real provenance heuristics,
+content-hash fingerprinting, sync-across-machines memory, an action
+log, clickable plugin-token status-bar elements) for things that are
+tractable today (one-popup-at-a-time within a single open, per-folder
+memory in `trust.json`, the existing action-popup mechanism).
+
+What the rules below do *not* require is a new visual primitive. We
+considered a "non-modal banner" abstraction and rejected it after an
+audit: the cleaner answer is concrete framing in the existing modal
+popup + a clickable status-bar chip for "Not now" follow-up. See
+§"Capabilities the editor needs to deliver this" and §"Path from
+here to the North Star."
+
+When a future PR moves us closer to the ideal — e.g., wiring plugin
+status-bar tokens to dispatch click handlers — that PR should
+reference this section and explain which principle it advances.
 
 ## Phase 1 (this PR) vs. Phase 2 (follow-ups)
 
@@ -212,25 +284,28 @@ Phase 1 are called out inline.
 > Trust once, activate silently where safe, ask only when running shell —
 > and make the non-trusted state visible.
 
-This is the **near-term** goal — what the rules below collectively achieve
-on the current architecture. It is *not* the North Star; it is the
-shortest path toward the North Star that fits the existing popup,
-status-bar, and persistence primitives. The differences are deliberate:
+This is the **near-term** goal — what the rules below collectively
+achieve on the current architecture. It is *not* the North Star; it
+is the shortest path toward the North Star that fits the existing
+popup, status-bar, and persistence primitives. The differences are
+deliberate:
 
-- Today we still use modal action popups, not banners, because the banner
-  primitive doesn't exist. Once it does, every popup the rules below
-  describe should migrate to a banner.
-- Today we still ask about `.envrc` on first open instead of inferring
-  from provenance, because provenance heuristics don't exist. Once they
-  do, the combined trust+activate popup should be silent for clones into
-  trusted parents.
-- Today we still surface "(locked)" in the env pill, because clickable
-  status-bar elements with custom handlers don't exist. Once they do,
-  `(locked)` becomes a status-line affordance instead of a passive label.
+- Today we still ask about `.envrc` on first open instead of
+  inferring from provenance, because provenance heuristics don't
+  exist. Once they do, the combined trust+activate popup goes
+  silent for clones into trusted parents.
+- Today the env pill shows "(locked)" as a passive label because
+  the plugin status-bar token can't dispatch a click handler. Once
+  it can (small extension to `StatusBarLayout` + `handle_click_status_bar`),
+  clicking the pill opens the same trust-elevation popup.
+- Today the open-time trust modal at `popup_dialogs.rs:977` is
+  stubbed out as a WIP. Once re-enabled with concrete framing, the
+  abstract "this project can run code" question becomes "rust-
+  analyzer wants to run `cargo` here" — same modal, much better UX.
 
-Every "1" in the right column below is shorthand for "until banners exist
-and provenance heuristics exist." When they do, the column should read
-"0."
+Every "1" in the right column below is shorthand for "until
+provenance heuristics exist and the trust modal re-enables with
+concrete framing." When they do, the column drops toward "0."
 
 | Folder contents | Popups today | Popups after this plan |
 |---|---|---|
@@ -496,67 +571,81 @@ stones don't need to ship them.
 
 ## Path from here to the North Star
 
-The rules below land roughly 60–70% of the user-visible North Star UX on
-the existing primitives. To close the remaining gap, each of the
-following capability investments would compound — they unlock the
-*invisibility* that the North Star describes:
+After auditing the existing codebase, the gap between today and the
+North Star is smaller than it looked, because most of the supporting
+infrastructure is already there. The rules below land roughly 60–70%
+of the user-visible North Star UX on the existing popup primitive.
+The remaining 30–40% is a set of *extensions* to existing systems,
+not new primitives:
 
-1. **Non-modal banner system** (highest-leverage). Today every popup
-   blocks something — focus, input, the visual center of the screen.
-   The North Star asks for banners: an at-most-one persistent strip that
-   doesn't steal focus, has dismiss/act buttons, and queues. Once this
-   primitive exists, the env / devcontainer / trust-elevation prompts in
-   the rules below should migrate to it. The popup is reserved for the
-   handful of cases that genuinely need to interrupt (e.g., destructive
-   confirmations).
-2. **Provenance heuristics.** Today we treat every new folder identically
-   regardless of how it arrived on disk. The North Star wants
-   `git clone` into `~/code/` to be implicitly trusted, while
-   `/tmp/unzipped` is implicitly suspect. Heuristics worth investing in:
-   parent-folder trust (Rule 8 here, but framed as a heuristic not a
-   setting), origin-of-folder via git remote URL hostname, path prefix
-   patterns the user keeps clean code under, OS-level "downloaded from
-   the internet" marks. Each is fallible; combined with the action log
-   they're forgivable.
-3. **Per-marker content fingerprinting in core.** Rule 5 in this plan.
-   Beyond what Rule 5 covers: a global "I trust this `.envrc` hash"
-   ledger that spans folders (the same env script committed to ten
-   projects only asks once), and a "this file changed since I trusted
-   it" prompt that compares the new content side-by-side with the
-   trusted version.
-4. **Clickable status-bar elements with custom handlers.** Today the
-   env pill is informational; the chip in Rule 6 is informational; the
-   authority indicator is informational. The North Star wants every
-   status-bar indicator to *be* its own affordance. This needs a plugin
-   API for click handlers on registered status-bar elements (or a
-   core-side renderer that dispatches to a registered hook).
-5. **An action log / "what is the editor doing?" panel.** Distinct from
-   the existing status-message scrollback — a structured record of every
-   trust, env, and authority decision the editor has made for this
-   workspace, with timestamps and "revisit" buttons. This is what makes
-   silent auto-activation safe: the user can always audit. Without it,
-   silent activation feels like the editor lying.
-6. **Cross-machine sync for decisions.** The North Star assumes that
-   trusting a folder on machine A means it's trusted on machine B. Today
-   `trust.json` lives in the user's data dir, so this is an upstream
-   sync problem (dotfiles or a config service), not an editor problem —
-   but the editor should make the file easy to sync (stable schema,
-   merge-friendly format, documented location).
-7. **Read-only mode as a first-class trust level.** The North Star's
-   "Read-only mode" option for suspicious folders isn't in our trust
-   model today — we have Restricted (gates code execution) but not "no
-   writes, no edits even." Worth designing in: a fourth trust level
-   below Restricted, scoped to "I'm just reading."
+1. **Re-enable the dormant trust modal with concrete framing.**
+   `show_workspace_trust_popup` is fully implemented; the on-open
+   call is stubbed at `popup_dialogs.rs:977`. Replace the stub with
+   a real call whose title/body name the actual markers
+   (`executable_content_markers` already returns them) — "rust-
+   analyzer would run `cargo` here" rather than "this project can
+   run code." This is a code change, not new infrastructure.
+2. **Make plugin status-bar tokens clickable.** The chrome already
+   tracks click areas and dispatches actions for every built-in
+   indicator (LSP / remote / warning / message / line-ending /
+   encoding / language). Plugin-registered tokens carry a value but
+   no area, so a click on the env pill falls through. The fix is
+   small: add `plugin_token_areas: HashMap<String, (u16,u16,u16)>`
+   to `StatusBarLayout`, have the renderer record each rendered
+   plugin token's area, extend `handle_click_status_bar` to walk
+   that map, and add an optional `on_click` field to the existing
+   `RegisterStatusBarElement` command. With this, the trust chip,
+   env pill, and authority indicator all become first-class
+   affordances back to their decisions.
+3. **Provenance heuristics.** Genuinely new code, but bounded —
+   parent-folder trust (Rule 8 here), origin-of-folder via git
+   remote URL hostname, path prefix patterns the user keeps clean
+   code under, OS-level "downloaded from the internet" marks. The
+   trust prompt short-circuits on Trusted, framed as "outside your
+   usual workspaces" on Suspicious, neutral on Unknown.
+4. **Per-marker content fingerprinting** (Rule 5 here). Extend the
+   `TrustStore` JSON schema (or a sibling `decisions.json`) to
+   carry per-marker SHA-256 alongside the trust level. Editing
+   `.envrc` re-asks; unchanged file means no re-ask.
+5. **An action log / "what is the editor doing?" panel.** A
+   structured record of every trust, env, and authority decision
+   the editor has made for this workspace, with timestamps and
+   "revisit" buttons. Genuinely new surface. Worth doing because
+   it's the safety net for silent auto-activation.
+6. **Cross-machine sync for decisions.** Upstream concern
+   (dotfiles, config service). The editor's job is to keep
+   `trust.json` / `decisions.json` stable and merge-friendly.
+7. **Read-only mode as a first-class trust level.** Worth designing
+   in: a fourth trust level below Restricted, scoped to "I'm just
+   reading." Touches the trust enum and the gate; not large but not
+   trivial either.
 
-A reasonable sequencing: (1) banner system, (4) clickable status bar
-elements, (5) action log — these three together cover the majority of
-the user-visible North Star. (2) and (3) are background-only changes that
-make the experience feel magical without changing what's on screen. (6)
-and (7) are stretch goals.
+A reasonable sequencing: (1) re-enable trust modal with concrete
+framing, (2) clickable status-bar tokens, (5) action log — these
+three together cover the majority of the user-visible North Star.
+(3) and (4) are background-only changes that make the experience
+feel magical without changing what's on screen. (6) and (7) are
+stretch goals.
 
-The rules below ship without any of these; each subsequent PR that
-delivers one should reference this section and identify which North Star
-capability it unlocks.
+Things explicitly **not** on this list, after the audit:
+
+- ~~A new "banner" primitive distinct from popups.~~ Modal popups
+  with concrete framing are the right surface; non-modal feel comes
+  from "Not now" + clickable chip, not from a new visual category.
+- ~~A managed popup queue with priority and invalidation.~~ The
+  existing `action_popup_result` broadcast plus per-plugin dedup
+  (mirror the trust-modal short-circuit at `popup_dialogs.rs:1019`)
+  handle ordering and coordination at the current scale. Worth it
+  at 10+ coordinating plugins; not at 3.
+- ~~A unified "Workspace Decision Store" replacing all plugin
+  global state.~~ Different data in different places isn't
+  split-brain — it's separation of concerns. Standardize the
+  *naming* convention (`<plugin>:<question>`) and the persistence
+  story is already coherent.
+
+Each subsequent PR that delivers one of the seven capabilities above
+should reference this section and identify which capability it
+advances.
 
 ## Test plan
 
