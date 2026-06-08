@@ -203,12 +203,16 @@ fn test_review_filter_narrows_files() {
     init_tracing_from_env();
     let repo = repo_with_two_files();
     let mut harness = harness_for(&repo);
-    let screen = open_review_diff(&mut harness);
-    assert!(
-        screen.contains("main.rs") && screen.contains("widget.rs"),
-        "both files initially. Screen:\n{}",
-        screen
-    );
+    open_review_diff(&mut harness);
+    // The file sidebar populates asynchronously after the toolbar appears, so
+    // wait for both files rather than snapshotting a single (possibly early)
+    // frame.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("main.rs") && s.contains("widget.rs")
+        })
+        .unwrap();
 
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
@@ -426,18 +430,28 @@ fn test_review_side_by_side_shift_wheel_scrolls_horizontally() {
 
     // A line long enough to overflow a pane horizontally.
     let long = format!("fn wide() {{ let s = \"{}\"; }}", "p".repeat(160));
-    fs::write(repo.path.join("src/main.rs"), format!("fn changed() {{}}\n{long}\n")).unwrap();
+    fs::write(
+        repo.path.join("src/main.rs"),
+        format!("fn changed() {{}}\n{long}\n"),
+    )
+    .unwrap();
 
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
-    harness.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('1'), KeyModifiers::NONE)
+        .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))
         .unwrap();
 
     let shift_wheel = |h: &mut EditorTestHarness, down: bool| {
         h.send_mouse(MouseEvent {
-            kind: if down { MouseEventKind::ScrollDown } else { MouseEventKind::ScrollUp },
+            kind: if down {
+                MouseEventKind::ScrollDown
+            } else {
+                MouseEventKind::ScrollUp
+            },
             column: 90,
             row: 15,
             modifiers: KeyModifiers::SHIFT,
