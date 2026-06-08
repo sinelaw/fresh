@@ -39,4 +39,3 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     }
 }
 
-pub(crate) fn is_within(root: &Path, path: &Path) -> bool { normalize_path(path).starts_with(normalize_path(root)) }

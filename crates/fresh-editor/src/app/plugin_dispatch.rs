@@ -2642,14 +2642,26 @@ impl Editor {
         hidden_from_tabs: bool,
         request_id: Option<u64>,
     ) {
-        let buffer_id =
+        // Hidden-from-tabs buffers (e.g. composite source panes) must NOT be
+        // attached to the active split or made the active buffer: doing so
+        // pollutes the main tab bar and, when they're later closed, leaves
+        // auto-created "[No Name]" tabs behind. Create them detached.
+        let buffer_id = if hidden_from_tabs {
+            self.active_window_mut().create_virtual_buffer_detached(
+                name.clone(),
+                mode.clone(),
+                read_only,
+            )
+        } else {
             self.active_window_mut()
-                .create_virtual_buffer(name.clone(), mode.clone(), read_only);
+                .create_virtual_buffer(name.clone(), mode.clone(), read_only)
+        };
         tracing::info!(
-            "Created virtual buffer '{}' with mode '{}' (id={:?})",
+            "Created virtual buffer '{}' with mode '{}' (id={:?}, detached={})",
             name,
             mode,
-            buffer_id
+            buffer_id,
+            hidden_from_tabs
         );
 
         // TODO: show_line_numbers is duplicated between EditorState.margins and
@@ -2658,31 +2670,31 @@ impl Editor {
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
         self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
-        let active_split = self.split_manager().active_split();
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&active_split)
-        {
-            view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
-        }
-
-        // Apply hidden_from_tabs to buffer metadata
-        if hidden_from_tabs {
-            if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
-                meta.hidden_from_tabs = true;
+        if !hidden_from_tabs {
+            let active_split = self.split_manager().active_split();
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&active_split)
+            {
+                view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
             }
+        } else if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+            meta.hidden_from_tabs = true;
         }
 
         // Now set the content
         match self.set_virtual_buffer_content(buffer_id, entries) {
             Ok(()) => {
                 tracing::debug!("Set virtual buffer content for {:?}", buffer_id);
-                // Switch to the new buffer to display it
-                self.set_active_buffer(buffer_id);
-                tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
+                // Switch to the new buffer to display it — but only when it's
+                // attached (a detached hidden buffer must not steal the view).
+                if !hidden_from_tabs {
+                    self.set_active_buffer(buffer_id);
+                    tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
+                }
 
                 // Send response if request_id is present
                 if let Some(req_id) = request_id {
