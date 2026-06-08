@@ -212,6 +212,20 @@ pub(crate) fn render_content(
         let is_active = split_id == active_split_id;
         let is_inner_group_leaf = kind == RenderKind::InnerLeaf;
         let skip_content = kind == RenderKind::GroupTabBarOnly;
+        // For a buffer-group panel (inner leaf), `active_split()` returns the
+        // group's *outer* leaf, so `is_active` is never true for the panel
+        // itself. The panel is focused when the active split's
+        // `focused_group_leaf` points at this inner leaf. Used to gate the
+        // composite cursor so it doesn't linger after Tab moves focus away.
+        let panel_focused = if is_inner_group_leaf {
+            split_view_states
+                .as_deref()
+                .and_then(|svs| svs.get(&active_split_id))
+                .and_then(|vs| vs.focused_group_leaf)
+                .is_some_and(|fl| fl == split_id)
+        } else {
+            is_active
+        };
         let _ = main_split_id; // no longer needed below, kept for clarity
 
         // Suppress chrome (tab bar) for splits in buffer groups
@@ -466,7 +480,7 @@ pub(crate) fn render_content(
                         composite,
                         buffers,
                         theme,
-                        is_active,
+                        panel_focused,
                         view_state,
                         use_terminal_bg,
                         split_show_tilde,

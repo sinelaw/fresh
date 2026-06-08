@@ -31,7 +31,7 @@ pub(crate) fn render_composite_buffer(
     composite: &CompositeBuffer,
     buffers: &mut HashMap<BufferId, EditorState>,
     theme: &Theme,
-    _is_active: bool,
+    is_active: bool,
     view_state: &mut CompositeViewState,
     use_terminal_bg: bool,
     show_tilde: bool,
@@ -233,7 +233,10 @@ pub(crate) fn render_composite_buffer(
         }
 
         let aligned_row = &alignment.rows[display_row];
-        let is_cursor_row = display_row == cursor_row;
+        // Only paint the cursor row / cursor cell when this composite panel
+        // actually holds keyboard focus — otherwise the OLD/NEW cursor lingers
+        // visibly after Tab moves focus to the file list or comments panel.
+        let is_cursor_row = display_row == cursor_row && is_active;
         let selection_cols = view_state.selection_column_range(display_row);
 
         // Determine row background based on type (selection is character-level)
