@@ -1388,17 +1388,17 @@ function buildToolbar(W: number): TextPropertyEntry[] {
     const inRange = state.mode === 'range';
     const row1: HintItem[][] = [
         // The "how do I move around" group first: focus-cycle, file nav,
-        // hunk nav, layout — the keys a newcomer reaches for.
-        [{ key: "Tab", label: "focus" }, { key: ", .", label: "file" },
-         { key: "n p", label: "hunk" }, { key: "1 2", label: "split/stack" }],
+        // hunk nav — the keys a newcomer reaches for.
+        [{ key: "Tab", label: "focus" }, { key: ", .", label: "file" }],
+        [{ key: "n", label: "next hunk" }, { key: "p", label: "prev hunk" }],
         inRange
             ? [{ key: "v", label: "select" }, { key: "c", label: "comment" }]
             : [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" },
                { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
-        [{ key: "↑↓", label: "move in panel" }, { key: "Enter", label: "jump" },
-         { key: "Alt+o", label: "open file" }],
+        [{ key: "1 2", label: "split/stack" }, { key: "↑↓", label: "move in panel" },
+         { key: "Enter", label: "jump" }, { key: "Alt+o", label: "open file" }],
         inRange
             ? [{ key: "/", label: "filter" }, { key: "?", label: "help" },
                { key: "e", label: "export" }, { key: "q", label: "close" }]

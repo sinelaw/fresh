@@ -2361,12 +2361,11 @@ fn test_review_diff_untracked_directory_message() {
     );
 }
 
-/// Test that Tab toggles the collapse state of the file under the cursor
-/// in the unified diff stream. After Tab, the file's hunks should
-/// disappear (only the header remains, with a ▸ triangle); pressing Tab
-/// again restores the hunks.
+/// Tab cycles keyboard focus between the file list and the diff (and the
+/// comments panel when present); the focused panel shows a `▸` marker on its
+/// header. (Folding moved to `z a` / `z r` and Enter-on-header.)
 #[test]
-fn test_review_diff_tab_toggles_file_collapse() {
+fn test_review_diff_tab_cycles_focus() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -2375,9 +2374,8 @@ fn test_review_diff_tab_toggles_file_collapse() {
     repo.git_add_all();
     repo.git_commit("Initial commit");
 
-    // Modify main.rs to produce a hunk with a unique marker so we can
-    // tell when the file is expanded vs. collapsed.
-    repo.create_file("src/main.rs", "fn main() { /* COLLAPSE_MARKER */ }\n");
+    // One modified file so the review has content.
+    repo.create_file("src/main.rs", "fn main() { /* FOCUS_MARKER */ }\n");
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2391,54 +2389,24 @@ fn test_review_diff_tab_toggles_file_collapse() {
     harness.open_file(&main_rs_path).unwrap();
     harness.render().unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("COLLAPSE_MARKER"))
+        .wait_until(|h| h.screen_to_string().contains("FOCUS_MARKER"))
         .unwrap();
 
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
 
-    // Initially the file is expanded — the COLLAPSE_MARKER hunk content is visible.
-    assert!(
-        screen.contains("COLLAPSE_MARKER"),
-        "File content should be visible while expanded. Screen:\n{}",
-        screen
-    );
-
-    // Move cursor to the first hunk so Tab toggles the *file* (nearest
-    // collapsible ancestor of a hunk is file, then section). Without this
-    // the cursor lands on the section header row and Tab collapses the
-    // whole section instead of just the file.
+    // The diff panel holds focus initially; Tab moves focus to the FILES
+    // panel, which gains the ▸ focus marker on its header.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
         .unwrap();
-    harness.render().unwrap();
 
-    // Press Tab to toggle collapse on the file under the cursor.
+    // Tab again returns focus to the diff (no comments yet), clearing the
+    // FILES marker.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    let collapsed = harness.screen_to_string();
-    assert!(
-        !collapsed.contains("COLLAPSE_MARKER"),
-        "Hunk content should be hidden after Tab collapse. Screen:\n{}",
-        collapsed
-    );
-    // The file path itself stays as the header row.
-    assert!(
-        collapsed.contains("src/main.rs"),
-        "File header should still be visible after collapse. Screen:\n{}",
-        collapsed
-    );
-
-    // Press Tab again to expand.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    let expanded = harness.screen_to_string();
-    assert!(
-        expanded.contains("COLLAPSE_MARKER"),
-        "Hunk content should reappear after second Tab. Screen:\n{}",
-        expanded
-    );
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("▸FILES"))
+        .unwrap();
 }
 
 /// `z a` collapses every file in the unified stream; `z r` reveals
@@ -2510,15 +2478,12 @@ fn test_review_diff_collapse_all_and_expand_all() {
         .unwrap();
 }
 
-/// Regression test for the "Review Diff scroll jumps on collapse/expand"
-/// bug: when the user scrolls the diff cursor via `j` until it sits away
-/// from the re-centering point (roughly the top third of the viewport)
-/// and then presses `Tab` to toggle a fold, the viewport must not jump.
-/// Historically the Tab handler called `editor.scrollBufferToLine` after
-/// every fold toggle, forcing the header row to land at ~1/3 from the top
-/// — which yanked the viewport whenever the cursor was anywhere else.
+/// Switching keyboard focus to the FILES panel (Tab) must not scroll the
+/// diff viewport: when the diff cursor has been scrolled away from the
+/// re-centering point, a focus switch should leave the diff content exactly
+/// where it was.
 #[test]
-fn test_review_diff_tab_preserves_scroll_position() {
+fn test_review_diff_focus_switch_preserves_scroll() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     repo.setup_typical_project();
@@ -2588,19 +2553,19 @@ fn test_review_diff_tab_preserves_scroll_position() {
     let before = harness.screen_to_string();
     let top_before = diff_top_anchor(&before);
 
-    // Toggle the fold under the cursor. Without the fix this yanks the
-    // viewport so the cursor row re-centers at ~1/3 from the top, which
-    // changes what's rendered at the top of the diff pane.
+    // Switch focus to the FILES panel. This must not move the diff viewport.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
+        .unwrap();
 
     let after = harness.screen_to_string();
     let top_after = diff_top_anchor(&after);
 
     assert_eq!(
         top_before, top_after,
-        "Review Diff viewport scrolled unexpectedly after Tab. \
-         Toggling a fold must not re-center the viewport.\n\
+        "Review Diff viewport scrolled unexpectedly after a focus switch. \
+         Moving focus to the file list must not re-center the diff.\n\
          BEFORE:\n{}\n\nAFTER:\n{}",
         before, after
     );
