@@ -306,6 +306,34 @@ pub enum HookArgs {
         action_id: String,
     },
 
+    /// User resolved a banner (picked an action, dismissed with Esc, or
+    /// clicked the X). Distinct from `BannerInvalidated`, which fires
+    /// when the banner manager drops a banner because its invalidation
+    /// trigger matched (the user never interacted with it).
+    BannerResult {
+        /// The banner ID — matches the `id` of the original
+        /// `ShowBanner` request.
+        banner_id: String,
+        /// The chosen action's id, or `"dismissed"` if the user hit
+        /// Esc / clicked the close button.
+        action_id: String,
+    },
+
+    /// A banner the plugin had requested was dropped from the queue
+    /// before the user interacted with it — because one of its
+    /// `invalidate_on` triggers matched (trust elevated, authority
+    /// changed, etc.). The plugin should treat the question as moot:
+    /// don't retry, don't show a follow-up, just clean up any pending
+    /// state that referenced this banner.
+    BannerInvalidated {
+        /// The banner ID — matches the `id` of the original
+        /// `ShowBanner` request.
+        banner_id: String,
+        /// Short label for the trigger that fired (`"trust_reaches"`,
+        /// `"authority_changed"`, `"hook"`). For logging / debugging.
+        reason: String,
+    },
+
     /// Background process output (streaming)
     ProcessOutput {
         /// The process ID

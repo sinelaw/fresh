@@ -173,6 +173,124 @@ Not implementation detail, but capabilities that have to exist:
   Mitigation: at most one banner on screen; secondary banners queue
   silently and reveal as the user resolves the first.
 
+### Scope of the banner primitive (what is and isn't a banner)
+
+The banner system targets exactly one class of UI: **questions the
+editor needs the user to answer about the project lifecycle**, where
+modality is actively harmful. It is *not* a replacement for popups in
+general. Everything else (anchored info, anchored input, operational
+UI, state inspection) keeps its existing primitive — those primitives
+are correctly modal because they ARE the operation, not a question
+about one.
+
+The rule:
+
+> A banner is the right tool when the editor needs the user to decide
+> something about the project, the question is yes/no/maybe with a
+> small action set, and the user shouldn't be blocked from editing
+> while they think about it.
+
+| Surface | Should it become a banner? |
+|---|---|
+| Workspace trust modal | **Yes** |
+| Devcontainer "Reopen in container?" | **Yes** |
+| Devcontainer failed-attach recovery (Retry / Show Logs / Reopen Locally) | **Yes** |
+| env-manager combined trust+activate | **Yes** (the popup this PR added) |
+| env-manager trust-elevation follow-up | **Yes** |
+| Devcontainer CLI-not-found ("Copy: npm i ...") | **Yes** |
+| CLI "this file doesn't exist, create it?" on launch | **Yes** (only the yes/no subset; FYI strings are status-bar) |
+| LSP status popup (clicking the LSP indicator) | **No** — user-invoked tool; modal is correct |
+| LSP hover, completion, signature help, code actions | **No** — buffer-anchored, transient |
+| Hover / walkthrough notes | **No** — buffer-positional |
+| Orchestrator session picker / Live grep / Find-Replace / command palette | **No** — operational UI, IS the operation |
+| Settings dialog | **No** — multi-step configuration |
+| Tab context menu / session context menu | **No** — anchored to a UI element, dies with click |
+| Save-on-quit confirmation | **Probably yes eventually** — modal heritage is fine for now |
+
+A simple way to apply the rule: ask "*would the user resent being
+forced to stop editing for this?*" If yes, banner. If no (they
+explicitly invoked it, or it's anchored to where they were editing
+anyway), keep the existing primitive.
+
+### How banners interact with the existing popup primitives
+
+Spatial coexistence is naturally clean because each primitive lives in
+a different part of the screen:
+
+- Banner area is **top**, between the menu bar and the buffer. Empty =
+  no height penalty.
+- Modal dialogs (trust today) are **centered**.
+- Action popups are **bottom-right** (the migration target).
+- LSP hover / completion / signature help / code actions are **anchored
+  to the cursor**.
+- Prompts (command palette, find-replace, live grep) own the **bottom**
+  or a centered overlay.
+- Tab / session context menus are **anchored to the clicked element**.
+
+No popup ever overlaps the banner area; no arbitration layer needed.
+
+The load-bearing rule for **focus** is: *the banner never steals focus
+and never holds focus.* The buffer keeps focus the entire time. There
+is no "focused banner" state, no Tab navigation within the banner row,
+no Enter-to-confirm-selected-action. Interaction works in exactly two
+ways:
+
+- **Mouse click** on a button activates the action it labels.
+- **`Alt+<mnemonic>` from anywhere** activates the action whose
+  mnemonic matches. Each action has a mnemonic — by default the first
+  ASCII alphanumeric character of its label (rendered underlined for
+  discoverability); plugins can override with an explicit `mnemonic`
+  field when defaults would clash.
+
+This is the curses / TUI tradition (think `dialog --menu` or curses
+menubars) and it's the right model for non-modal: the buffer never
+loses focus, so the user can keep typing, and when they're ready to
+decide they press one chord. No focus-shifting key needed.
+
+Because focus never moves, no "popup vs banner focus arbitration"
+exists. A popup that holds focus (modal, completion, LSP status,
+command palette) consumes its key events normally. A banner that's on
+screen during that time is rendered but inert — the only way to invoke
+its actions is `Alt+<mnemonic>`, and modal popups intercept keystrokes
+before they reach the banner-mnemonic dispatcher.
+
+Dismissing the banner without picking an action: the buffer cannot
+just press Esc (that would conflict with editor Esc). Plugins that
+want a "dismiss" action include one explicitly (e.g. an action labeled
+"Dismiss" with mnemonic `D`). Mouse users get an `[×]` button on the
+banner's top-right that fires `action_id = "dismissed"`.
+
+Per-primitive cross-interaction:
+
+| Existing surface | What the banner does | What happens when this surface is up and a banner is enqueued |
+|---|---|---|
+| LSP status / hover / completion / signature help / code actions | Coexists; never blocks them | Banner enqueues; renders normally — none of these block other UI |
+| Tab / session context menus | Coexists; menus die on click anyway | Banner enqueues normally |
+| Command palette / Live Grep / Find-replace / Orchestrator picker | Coexists at top while the prompt owns the bottom | Banner enqueues; stays dormant until prompt is dismissed |
+| Centered modal (trust today, save-on-quit) | Banner is rendered, modal owns focus, banner is inert | Banner queues until modal resolves |
+| Action popups (devcontainer attach pre-migration, env activate pre-migration) | Both visible — banner top, popup bottom-right. Semantically ugly during migration; resolves once both flows are banners | Same — temporary overlap |
+
+The migration plan calls for converting every popup in the "Yes" column
+of the previous table to a banner, ending the bottom-right action-popup
+overlap. There is no plan to migrate any of the surfaces in this
+interaction table, because they correctly own focus while active.
+
+What this means we *don't* need to build:
+- A global popup-vs-banner arbitration layer (different screen regions,
+  different input mechanisms — they don't compete).
+- A new focus manager. The banner has *no* focus state. The existing
+  focus model is untouched.
+- Reworking any existing popup primitive.
+
+What this means we *do* need (and is not yet built in the foundation
+commit):
+- Banner render in `app/render.rs` between menu bar and main content.
+- Banner input handling: a global `Alt+<letter>` interceptor that
+  looks up `BannerManager::active()` and calls `resolve_mnemonic(c)`
+  when a banner is up. Gated on no popup owning the focus.
+- Mouse-area registration so clicks on banner action buttons (and the
+  `[×]` close glyph) route to `BannerManager::resolve_active`.
+
 ### Why the rest of this doc exists
 
 The North Star is the target. The rules below are what we can ship on

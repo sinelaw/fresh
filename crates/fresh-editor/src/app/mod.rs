@@ -528,6 +528,12 @@ pub struct Editor {
     /// Buffer mode registry (for buffer-local keybindings)
     mode_registry: ModeRegistry,
 
+    /// Non-modal banner queue. Owns the active banner and the per-
+    /// priority FIFOs. Banners render between the menu bar and the
+    /// buffer area; see `crate::services::banners` and
+    /// `docs/internal/trust-env-devcontainer-ux-plan.md` (North Star).
+    pub banners: crate::services::banners::BannerManager,
+
     /// Tokio runtime for async I/O tasks
     tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
 

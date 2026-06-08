@@ -249,6 +249,7 @@ impl Editor {
             restart_with_dir: None,
             last_window_title: None,
             mode_registry: ModeRegistry::new(),
+            banners: crate::services::banners::BannerManager::new(),
             pending_authority: None,
             pending_keepalive: None,
             remote_indicator_override: None,
