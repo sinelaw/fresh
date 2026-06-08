@@ -694,6 +694,13 @@ impl Editor {
         &self.active_window().root
     }
 
+    /// The directory context this editor was constructed against (config_dir,
+    /// data_dir, …). Exposed so e2e tests can wire trust stores and other
+    /// per-project state to the same locations the editor reads from.
+    pub fn dir_context(&self) -> &crate::config_io::DirectoryContext {
+        &self.dir_context
+    }
+
     /// The currently active `Session`. Always `WindowId(1)` until
     /// the multi-session migration step lands; until then this is
     /// effectively a typed wrapper around `working_dir`. New code

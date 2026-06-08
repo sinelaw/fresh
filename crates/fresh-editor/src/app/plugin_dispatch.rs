@@ -123,7 +123,7 @@ impl Editor {
     /// owns (clipboard, the full `windows` list, the memoized config
     /// JSON cache, `user_config_raw`, and `plugin_global_state`).
     #[cfg(feature = "plugins")]
-    pub(super) fn update_plugin_state_snapshot(&mut self) {
+    pub fn update_plugin_state_snapshot(&mut self) {
         let Some(snapshot_handle) = self.plugin_manager.read().unwrap().state_snapshot_handle()
         else {
             return;
