@@ -388,3 +388,74 @@ fn test_review_help_opens_and_q_closes() {
         })
         .unwrap();
 }
+
+/// The comments rail is narrow by default: the diff/comments separator sits
+/// well past the middle of an 160-column screen (comments ≈ 15%).
+#[test]
+fn test_review_comments_rail_is_narrow() {
+    init_tracing_from_env();
+    let repo = repo_with_modification();
+    let mut harness = harness_for(&repo);
+    let screen = open_review_diff(&mut harness);
+
+    // Find the row carrying the COMMENTS header and locate its column.
+    let row = screen
+        .lines()
+        .find(|l| l.contains("COMMENTS"))
+        .expect("a row with the COMMENTS header");
+    let comments_col = row.find("COMMENTS").unwrap();
+    assert!(
+        comments_col >= 130,
+        "COMMENTS rail should be narrow (start near the right edge of 160 cols), \
+         got column {comments_col}. Row:\n{row}"
+    );
+}
+
+/// Shift+mouse-wheel over the side-by-side area pans the composite
+/// horizontally, revealing content past the right edge of a pane.
+#[test]
+fn test_review_side_by_side_shift_wheel_scrolls_horizontally() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // A line long enough to overflow a pane horizontally.
+    let long = format!("fn wide() {{ let s = \"{}\"; }}", "p".repeat(160));
+    fs::write(repo.path.join("src/main.rs"), format!("fn changed() {{}}\n{long}\n")).unwrap();
+
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+    harness.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Side-by-side view"))
+        .unwrap();
+
+    let shift_wheel = |h: &mut EditorTestHarness, down: bool| {
+        h.send_mouse(MouseEvent {
+            kind: if down { MouseEventKind::ScrollDown } else { MouseEventKind::ScrollUp },
+            column: 90,
+            row: 15,
+            modifiers: KeyModifiers::SHIFT,
+        })
+        .unwrap();
+    };
+
+    // Pin to the left edge, snapshot, then pan right: the rendered composite
+    // must change (horizontal scroll moved the content).
+    for _ in 0..40 {
+        shift_wheel(&mut harness, false);
+    }
+    harness.render().unwrap();
+    let before = harness.screen_to_string();
+    for _ in 0..15 {
+        shift_wheel(&mut harness, true);
+    }
+    harness
+        .wait_until(|h| h.screen_to_string() != before)
+        .unwrap();
+}
