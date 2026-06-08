@@ -343,14 +343,14 @@ fn test_review_watch_toggle_status() {
     open_review_diff(&mut harness);
 
     harness
-        .send_key(KeyCode::Char('W'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('W'), KeyModifiers::SHIFT)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Watching for changes"))
         .unwrap();
 
     harness
-        .send_key(KeyCode::Char('W'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('W'), KeyModifiers::SHIFT)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("Watch off"))
