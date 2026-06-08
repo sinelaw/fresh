@@ -34,8 +34,17 @@ impl Editor {
             return None;
         }
 
-        let (_buffer_id, _term_row, link, term_cwd) =
-            self.active_window().detect_terminal_link_at(col, row)?;
+        // Try the live grid first, then the scrollback buffer view (only one
+        // of the two is showing for any given terminal).
+        let (link, term_cwd) = self
+            .active_window()
+            .detect_terminal_link_at(col, row)
+            .map(|(_, _, link, cwd)| (link, cwd))
+            .or_else(|| {
+                self.active_window()
+                    .detect_terminal_scrollback_link_at(col, row)
+                    .map(|(_, link, cwd)| (link, cwd))
+            })?;
         let resolved = self.resolve_terminal_path(&link.path, term_cwd.as_deref())?;
 
         // Clear the hover highlight now that we're acting on it.

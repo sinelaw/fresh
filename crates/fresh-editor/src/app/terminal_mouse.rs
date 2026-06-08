@@ -84,6 +84,97 @@ impl Window {
         Some((buffer_id, term_row, link, cwd))
     }
 
+    /// Detect a clickable file-path link in the terminal *scrollback* view at
+    /// the given screen position.
+    ///
+    /// The scrollback view is a normal read-only buffer (the synced terminal
+    /// history) shown only for the active terminal buffer when not in live
+    /// terminal mode. Clicks map through the standard screen→buffer-position
+    /// machinery; we then read the buffer line under the cursor and detect a
+    /// path link in it.
+    ///
+    /// Returns the terminal buffer, the detected link, and the terminal's
+    /// OSC 7 working directory (for resolving relative paths).
+    pub(crate) fn detect_terminal_scrollback_link_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<(
+        BufferId,
+        crate::services::terminal::path_link::DetectedLink,
+        Option<std::path::PathBuf>,
+    )> {
+        // Scrollback is rendered only for the active terminal buffer while not
+        // in live terminal mode (every other terminal view shows the grid).
+        if self.terminal_mode {
+            return None;
+        }
+        let active = self.active_buffer();
+        if !self.is_terminal_buffer(active) {
+            return None;
+        }
+
+        let (split_id, content_rect) =
+            self.layout_cache
+                .split_areas
+                .iter()
+                .find_map(|(sid, bid, rect, _, _, _)| {
+                    (*bid == active
+                        && col >= rect.x
+                        && col < rect.x + rect.width
+                        && row >= rect.y
+                        && row < rect.y + rect.height)
+                        .then_some((*sid, *rect))
+                })?;
+
+        let state = self.buffers.get(&active)?;
+        let gutter_width = state.margins.left_total_width() as u16;
+        let cached_mappings = self.layout_cache.view_line_mappings.get(&split_id).cloned();
+        let (fallback, compose_width) = self
+            .buffers
+            .splits()
+            .and_then(|(_, vs)| vs.get(&split_id))
+            .map(|vs| (vs.viewport.top_byte, vs.compose_width))
+            .unwrap_or((0, None));
+
+        // `allow_gutter_click = false`: a click in the gutter isn't on a path.
+        let byte_pos = crate::app::click_geometry::screen_to_buffer_position(
+            col,
+            row,
+            content_rect,
+            gutter_width,
+            &cached_mappings,
+            fallback,
+            false,
+            compose_width,
+        )?;
+
+        let pos = crate::model::buffer_position::byte_to_2d(&state.buffer, byte_pos);
+        let line_bytes = state.buffer.get_line(pos.line)?;
+        let line = String::from_utf8_lossy(&line_bytes);
+        let line = line.strip_suffix('\n').unwrap_or(&line);
+        // `pos.column` is a byte offset within the line; convert to a char
+        // column for the (char-indexed) detector.
+        let char_col = line
+            .char_indices()
+            .take_while(|(b, _)| *b < pos.column)
+            .count();
+
+        let link = crate::services::terminal::path_link::detect_link_at(line, char_col)?;
+        let cwd = self
+            .terminal_buffers
+            .get(&active)
+            .and_then(|tid| self.terminal_manager.get(*tid))
+            .and_then(|h| {
+                h.state
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.cwd().map(|p| p.to_path_buf()))
+            });
+
+        Some((active, link, cwd))
+    }
+
     /// Get the terminal buffer and its content area if the mouse position is over a terminal buffer.
     /// Returns the buffer ID and content rect if found.
     fn get_terminal_content_area_at_position(

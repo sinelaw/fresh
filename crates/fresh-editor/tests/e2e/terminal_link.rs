@@ -173,6 +173,46 @@ fn ctrl_click_resolves_path_via_osc7_cwd() {
     harness.assert_screen_contains("OSC7 RESOLVED CONTENT");
 }
 
+/// Ctrl+Click also works in the terminal *scrollback* view (the synced
+/// read-only buffer shown when not in live terminal mode).
+#[test]
+fn ctrl_click_opens_path_in_scrollback_view() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(
+        tmp.path().join("src/main.rs"),
+        "line one\nline two TARGET\nline three\n",
+    )
+    .unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    open_terminal_with_output(&mut harness, b"build error at src/main.rs:2:6 here\n");
+
+    // Leave live terminal mode: sync the grid to the scrollback buffer and
+    // drop terminal_mode, exactly as a scroll/click-away does.
+    let buffer_id = harness.editor().active_buffer_id();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .sync_terminal_to_buffer(buffer_id);
+    harness.editor_mut().active_window_mut().terminal_mode = false;
+    harness.render().unwrap();
+
+    // The path is shown by the normal buffer renderer now.
+    harness.assert_screen_contains("src/main.rs:2:6");
+
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    ctrl_left_click(&mut harness, col + 4, row);
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("line two TARGET");
+    harness.assert_screen_contains("Ln 2");
+}
+
 /// A Ctrl+Click on text that does *not* resolve to a real file is inert: no
 /// file opens, the terminal stays focused.
 #[test]
