@@ -544,9 +544,25 @@ for (const event of ["buffer_activated", "after_file_open", "focus_gained"]) {
 editor.on("status_bar_token_clicked", (data) => {
   if (data.plugin_name !== "env-manager") return;
   if (data.token_name === STATUS_TOKEN) {
-    // Drop any session "Not now" so the prompt actually re-appears.
+    // Click on the env pill is an explicit "I want to reconsider"
+    // gesture, so it bypasses both the session-only "Not now" and the
+    // persistent "Never here" dismissals — `maybeAutoActivate` would
+    // otherwise short-circuit on the persisted state and the chip
+    // would do nothing. Instead, surface the appropriate popup
+    // directly based on detected env + trust state. If there's no env
+    // detected at all, fall back to a status message so the click
+    // isn't silent.
+    const det = detect();
+    if (!det) {
+      editor.setStatus(editor.t("status.no_env_detected"));
+      return;
+    }
     envDismissedThisSession = false;
-    maybeAutoActivate();
+    if (isTrusted()) {
+      applyActivation(det);
+    } else {
+      showActivatePrompt(det);
+    }
   } else if (data.token_name === TRUST_TOKEN) {
     // If we have an env to activate, drive into the trust-elevation
     // popup for it; otherwise fall back to invoking the workspace

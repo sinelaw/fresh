@@ -1007,20 +1007,40 @@ impl Editor {
 
         let markers =
             crate::services::workspace_trust::executable_content_markers(self.working_dir());
-        if markers.is_empty() {
-            return; // plain text/docs, nothing to gate
+
+        // Categorize the markers so we can route to the right surface.
+        // Path-only envs (`.venv`, `venv`) are not modeled as a
+        // "would-run-shell" question — activation is a `PATH` prepend,
+        // not arbitrary user shell. The North Star treats them as
+        // "Cheap actions don't ask": auto-activate silently, undo via
+        // status pill. So path-only env *alone* doesn't trigger any
+        // prompt; we hand the workspace to env-manager as Trusted.
+        let path_only_env_markers = [".venv", "venv"];
+        let env_shell_markers = [".envrc", "mise.toml", ".mise.toml", ".tool-versions"];
+        let only_path_only_env = !markers.is_empty()
+            && markers
+                .iter()
+                .all(|m| path_only_env_markers.contains(&m.as_str()));
+        let has_env_shell = markers
+            .iter()
+            .any(|m| env_shell_markers.contains(&m.as_str()));
+
+        if markers.is_empty() || only_path_only_env {
+            // Nothing genuinely needs gating. Default to Trusted so the
+            // restricted chip doesn't appear, env-manager auto-activates
+            // any path-only env silently, and the user isn't blocked on
+            // a question that has no real downside.
+            self.authority
+                .workspace_trust
+                .set_level(crate::services::workspace_trust::TrustLevel::Trusted);
+            return;
         }
 
-        let has_env_shell = markers.iter().any(|m| {
-            matches!(
-                m.as_str(),
-                ".envrc" | "mise.toml" | ".mise.toml" | ".tool-versions"
-            )
-        });
-
-        // Both paths start the workspace in Restricted so the user makes
-        // an explicit decision. env-manager surfaces its own popup; the
-        // generic trust modal fires for everything else.
+        // For env-shell and other executable content, start Restricted
+        // and let the right surface ask. env-manager's combined "Trust
+        // this folder and activate?" popup is the more concrete framing
+        // for env-shell; the generic trust modal fires for everything
+        // else and names the actual markers in its body.
         self.authority
             .workspace_trust
             .set_level(crate::services::workspace_trust::TrustLevel::Restricted);
