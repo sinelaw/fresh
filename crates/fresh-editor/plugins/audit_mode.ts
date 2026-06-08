@@ -2481,8 +2481,10 @@ function review_enter_dispatch() {
         return;
     }
     // Side-by-side center: Enter opens the file version under the cursor
-    // (read-only HEAD on the OLD pane, working file on the NEW pane).
-    if (state.centerComposite) {
+    // (read-only HEAD on the OLD pane, working file on the NEW pane). Only
+    // when the diff panel actually holds focus — otherwise the composite
+    // isn't the active buffer and the cursor lookup is meaningless.
+    if (state.centerComposite && state.focusPanel === 'diff') {
         void review_center_open_at_cursor();
         return;
     }
