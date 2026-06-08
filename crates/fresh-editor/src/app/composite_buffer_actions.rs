@@ -282,14 +282,12 @@ impl crate::app::window::Window {
                 crate::model::buffer::LineNumber::Absolute(display_line);
         }
 
-        let active_split = self
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr)
-            .expect("window must have a populated split layout")
-            .active_split();
+        // Write the cursor column into the same leaf the composite is keyed
+        // under (`split_id`), not a recomputed `active_split()` — for the
+        // Review Diff group tab those differ and the status-bar column would
+        // land on the wrong leaf's view state.
         if let Some((_, vs_map)) = self.buffers.splits_mut() {
-            if let Some(view_state) = vs_map.get_mut(&active_split) {
+            if let Some(view_state) = vs_map.get_mut(&split_id) {
                 view_state.cursors.primary_mut().position = cursor_column;
             }
         }
@@ -351,23 +349,15 @@ impl crate::app::window::Window {
     /// window's active split. Used by keybinding handlers that don't
     /// carry a split id.
     pub fn composite_next_hunk_active(&mut self, buffer_id: BufferId) -> bool {
-        let split_id = self
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr)
-            .expect("window must have a populated split layout")
-            .active_split();
+        // Inner group leaf (see `handle_composite_action`): the composite
+        // lives in the focused group leaf, not the outer active split.
+        let split_id = self.effective_active_pair().0;
         self.composite_next_hunk(split_id, buffer_id)
     }
 
     /// `composite_prev_hunk` flavour for the active split.
     pub fn composite_prev_hunk_active(&mut self, buffer_id: BufferId) -> bool {
-        let split_id = self
-            .buffers
-            .splits()
-            .map(|(mgr, _)| mgr)
-            .expect("window must have a populated split layout")
-            .active_split();
+        let split_id = self.effective_active_pair().0;
         self.composite_prev_hunk(split_id, buffer_id)
     }
 
@@ -976,13 +966,13 @@ impl Editor {
     ) -> Option<bool> {
         use crate::input::keybindings::Action;
 
-        let split_id = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
+        // Resolve the leaf the composite actually lives in. The Review Diff
+        // panels are a group tab, so the focused composite is in an *inner*
+        // group leaf, not the outer `active_split()`. `effective_active_pair`
+        // descends into the focused group leaf (and matches how the renderer
+        // keys `composite_view_states`), so the lookups below hit. Using the
+        // outer `active_split()` here made every keyboard movement a no-op.
+        let split_id = self.active_window().effective_active_pair().0;
 
         // Verify this is a valid composite buffer
         let _composite = self.active_window().composite_buffers.get(&buffer_id)?;

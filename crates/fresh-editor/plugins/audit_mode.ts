@@ -4153,6 +4153,12 @@ function jumpToGlobalHunk(globalIdx: number) {
 
 function review_next_hunk() {
     if (state.groupId === null) return;
+    // Side-by-side: the active diff buffer is the composite, not the unified
+    // text stream, so delegate to the host's composite hunk navigation.
+    if (state.centerComposite) {
+        editor.compositeNextHunk(state.centerComposite.compositeBufId);
+        return;
+    }
     if (state.hunks.length === 0) return;
     const cur = visibleHunkIndexAtCursor();
     // Find next hunk in global order — auto-expanding its file if needed.
@@ -4167,6 +4173,10 @@ registerHandler("review_next_hunk", review_next_hunk);
 
 function review_prev_hunk() {
     if (state.groupId === null) return;
+    if (state.centerComposite) {
+        editor.compositePrevHunk(state.centerComposite.compositeBufId);
+        return;
+    }
     if (state.hunks.length === 0) return;
     const cur = visibleHunkIndexAtCursor();
     if (cur <= 0) return;
