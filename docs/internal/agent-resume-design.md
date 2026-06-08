@@ -1,7 +1,28 @@
 # Agent-aware session resume
 
-Status: **design**. Phase 0 (generic terminal-command persistence) is shipped;
-Phases 1–2 (agent resume) are not yet built. This document is the plan.
+Status: **Phases 0–2 shipped.** Phase 0 (terminal-command persistence) +
+Phase 1 (core resume seam) + Phase 2 (Orchestrator registry, strategies A & B)
+are implemented and tested. Phase 3 (New Session agent dropdown; broader
+registry) is the remaining work. This document is the plan and the as-built
+record.
+
+## As built (what's in the tree)
+
+- **Core seam:** `createWindowWithTerminal` takes a `resume` argv;
+  `SerializedTerminalWorkspace.agent_resume { argv }` persists it;
+  `restore_terminal_from_workspace` runs resume → launch command → shell, gated
+  by `terminal.resume_agents` (default true). The session id is a plain argv
+  element through the authority wrapper — no shell text, composes with remote
+  authorities. Tests: `restored_agent_terminal.rs`.
+- **Orchestrator registry** (`orchestrator.ts`, `AGENT_REGISTRY`): policy/data,
+  matched by argv0 basename.
+  - `claude` — **strategy A**: launch `claude … --session-id <uuid>`, resume
+    `claude --resume <uuid>`; `--continue` available as fallback.
+  - `aider` — **strategy B**: continue-only, resume `aider --restore-chat-history`.
+  - Unknown commands (plain `terminal`/shell, custom agents) pass through with
+    no resume — exactly the prior behaviour.
+  Verified end-to-end interactively with a fake `claude`: launch carried the
+  minted `--session-id`, and restore-on-dive ran `--resume <same uuid>`.
 
 ## Problem
 
@@ -154,12 +175,16 @@ sugar over the registry above; spec it when the registry lands.
 
 - **Phase 0 — DONE:** persist + re-run the launch `command`; degrade to
   backing-file. (commit 855f267, test 3444232.)
-- **Phase 1:** core resume-spec seam (persist a plugin-set resume argv + env;
-  replay on restore) + a stub-agent test. No registry yet.
-- **Phase 2:** `registerAgent` + Orchestrator provisioning for A and B + a
-  small, clearly-marked default registry; policy `Confirm`.
-- **Phase 3:** New Session agent dropdown; polish (staleness, authority-scope
-  enforcement, per-agent overrides).
+- **Phase 1 — DONE:** core resume-spec seam (persist a plugin-set resume argv;
+  replay on restore) + deterministic tests.
+- **Phase 2 — DONE:** Orchestrator `AGENT_REGISTRY` + provisioning for A
+  (`claude`) and B (`aider`); `terminal.resume_agents` master switch (default
+  true). Per-resume `Confirm`/`Never` policy is deferred — for these agents
+  resume is no more a side effect than the already-shipped fresh re-run, so a
+  master switch suffices for v1.
+- **Phase 3 — TODO:** New Session agent dropdown (below); broader registry;
+  polish (staleness, authority-scope enforcement, per-resume confirm, an env
+  overlay on `agent_resume` for B's per-session config isolation).
 
 ## Situating it
 

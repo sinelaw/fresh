@@ -4243,6 +4243,94 @@ function splitAgentCmd(s: string): string[] {
   return out;
 }
 
+// =============================================================================
+// Agent resume registry
+//
+// How known coding agents rejoin a prior conversation after an editor restart.
+// This is *policy/data*: the host core knows none of it — it just persists the
+// resolved `resume` argv and runs it on restore (see the `resume` option on
+// `createWindowWithTerminal` and `terminal.resume_agents`). Two strategies,
+// preferring the first when an agent supports it:
+//
+//   provision — mint a session id at launch (`<agent> … --session-id <uuid>`)
+//               and resume with it (`<agent> --resume <uuid>`). Precise: the id
+//               is ours from birth, so there's nothing to capture and no need
+//               to read the agent's private state. The uuid is a plain argv
+//               element, never interpolated into a shell string.
+//   continue  — resume the most recent session in the cwd (`<agent> --continue`),
+//               no id. Relies on the orchestrator's one-agent-per-worktree
+//               model, where "latest in this cwd" is unambiguous.
+//
+// Matched by argv0 basename. Flags are each agent's documented resume
+// interface; entries are easy to add and intended to become user-overridable.
+// `{id}` in a template is replaced with the minted uuid (array slot only).
+interface AgentResumeSpec {
+  provision?: { idFlag: string; resumeArgs: string[] };
+  continue?: { resumeArgs: string[] };
+}
+const AGENT_REGISTRY: Array<{ match: RegExp; spec: AgentResumeSpec }> = [
+  {
+    // Claude Code CLI: `--session-id <uuid>` pins the session at launch;
+    // `--resume <uuid>` rejoins it; `--continue` resumes the latest in cwd.
+    match: /^claude$/,
+    spec: {
+      provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
+      continue: { resumeArgs: ["--continue"] },
+    },
+  },
+  {
+    // aider keeps its conversation in the repo and reloads it with
+    // `--restore-chat-history`; it has no caller-supplied session id, so it's
+    // a continue-only (strategy B) agent.
+    match: /^aider$/,
+    spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
+  },
+];
+
+// A v4-style unique id for an agent session handle. Not security-sensitive
+// (it just names a conversation), so `Math.random` is fine — we never need
+// unpredictability, only uniqueness within a user's session store.
+function agentSessionUuid(): string {
+  const hex = "0123456789abcdef";
+  let s = "";
+  for (let i = 0; i < 32; i++) {
+    if (i === 8 || i === 12 || i === 16 || i === 20) s += "-";
+    if (i === 12) {
+      s += "4"; // version
+    } else if (i === 16) {
+      s += hex[8 + Math.floor(Math.random() * 4)]; // variant 8–b
+    } else {
+      s += hex[Math.floor(Math.random() * 16)];
+    }
+  }
+  return s;
+}
+
+// Resolve a user's agent argv into the argv to *launch* and the argv to run on
+// *restore* (resume), per the registry. Unknown commands (plain shells, custom
+// agents) pass through unchanged with no resume — i.e. today's behaviour.
+function resolveAgentLaunch(
+  argv: string[],
+): { launch: string[]; resume?: string[] } {
+  if (argv.length === 0) return { launch: argv };
+  const argv0 = argv[0];
+  const base = editor.pathBasename(argv0) || argv0;
+  const entry = AGENT_REGISTRY.find((e) => e.match.test(base));
+  if (!entry) return { launch: argv };
+  if (entry.spec.provision) {
+    const id = agentSessionUuid();
+    const { idFlag, resumeArgs } = entry.spec.provision;
+    return {
+      launch: [...argv, idFlag, id],
+      resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id))],
+    };
+  }
+  if (entry.spec.continue) {
+    return { launch: argv, resume: [argv0, ...entry.spec.continue.resumeArgs] };
+  }
+  return { launch: argv };
+}
+
 async function spawnCollect(
   command: string,
   args: string[],
@@ -5852,6 +5940,11 @@ async function submitForm(): Promise<void> {
   // terminal IS the new window's seed buffer, so the window is
   // born with a single tab.
   const argv = splitAgentCmd(cmd);
+  // If this is a known coding agent, provision it so a restart rejoins the
+  // conversation: `launch` may carry a minted `--session-id`, and `resume` is
+  // what restore runs instead of re-launching (see the agent registry). The
+  // host persists `resume` on the terminal; `terminal.resume_agents` gates it.
+  const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv);
   // Shared only when we neither created a worktree nor attached to an
   // existing linked one (i.e. a non-git dir or the repo's main tree).
   const sharedWorktree = !createWorktree && !isLinkedAttach;
@@ -5860,8 +5953,9 @@ async function submitForm(): Promise<void> {
       root,
       label: sessionName,
       cwd: root,
-      command: argv.length > 0 ? argv : undefined,
-      title: argv.length > 0 ? argv[0] : undefined,
+      command: launchArgv.length > 0 ? launchArgv : undefined,
+      title: launchArgv.length > 0 ? launchArgv[0] : undefined,
+      resume: resumeArgv,
     });
     const id = result.windowId;
     // `createWindowWithTerminal` already dove into the new window,
