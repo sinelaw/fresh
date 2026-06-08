@@ -136,6 +136,10 @@ interface ReviewState {
   viewportWidth: number;
   viewportHeight: number;
   focusPanel: 'files' | 'diff' | 'comments';
+  // Which composite pane (0 = OLD, 1 = NEW) the side-by-side diff focus is
+  // on. Tab steps files → OLD → NEW → comments; tracked here because the
+  // host exposes only a "toggle pane" action, not "set pane".
+  compositePane: 0 | 1;
   groupId: number | null;
   panelBuffers: Record<string, number>;
   // Caches populated each time the unified diff stream is rebuilt —
@@ -256,6 +260,7 @@ const state: ReviewState = {
   viewportWidth: 80,
   viewportHeight: 24,
   focusPanel: 'diff',
+  compositePane: 0,
   groupId: null,
   panelBuffers: {},
   hunkHeaderRows: [],
@@ -1556,8 +1561,6 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
  * truncated to fit the panel width. Empty state shows a dim "No comments
  * yet." line. Read-only in this step (interaction lands in Step 5/6).
  */
-// Sidebar width fraction (kept in sync with REVIEW_LAYOUT's files panel).
-const FILES_PANEL_RATIO = 0.16;
 
 /**
  * Build the file sidebar: one row per changed file, grouped by git
@@ -1596,7 +1599,6 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
         return entries;
     }
 
-    const panelW = Math.max(16, Math.floor(state.viewportWidth * FILES_PANEL_RATIO) - 1);
     // Per-file comment counts drive the `*N` badge.
     const commentCounts: Record<string, number> = {};
     for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
@@ -1631,11 +1633,10 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
         const glyph = file.status || ' ';
         const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
         const stats = `  +${counts.added} -${counts.removed}${badge}`;
-        // Budget for the name = panel width minus " X " prefix and stats;
-        // truncate from the left so the basename stays visible.
-        const nameBudget = Math.max(4, panelW - 3 - stats.length);
-        let name = file.path;
-        if (name.length > nameBudget) name = '…' + name.slice(-(nameBudget - 1));
+        // Print the full path (no truncation): the panel clips long lines at
+        // its right edge rather than wrapping, so widening the FILES panel
+        // (dragging the divider) progressively reveals the rest — no fixed
+        // width budget that goes stale on resize.
         row1++;
         const selected = key === state.filesCurrentKey;
         const style: Partial<OverlayOptions> = selected
@@ -1643,7 +1644,7 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             : {};
         state.filesPanelByRow[row1] = key;
         entries.push({
-            text: ` ${glyph} ${name}${stats}\n`,
+            text: ` ${glyph} ${file.path}${stats}\n`,
             style,
             properties: { type: "file", fileKey: key, filePath: file.path },
         });
@@ -2404,21 +2405,50 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     refreshFocusIndicators();
 }
 
+/** Focus the diff panel and make sure the composite's focused pane is `p`
+ *  (0 = OLD, 1 = NEW). The host only exposes a pane *toggle*, so with two
+ *  panes one InsertTab flips between them; `state.compositePane` tracks it. */
+function ensureCompositePane(p: 0 | 1): void {
+    if (!state.centerComposite) return;
+    if (state.focusPanel !== 'diff') reviewSetFocus('diff');
+    if (state.compositePane !== p) {
+        editor.executeAction("insert_tab"); // composite_focus_next (OLD<->NEW)
+        state.compositePane = p;
+    }
+    refreshFocusIndicators();
+}
+
 function review_focus_next(): void {
     if (state.groupId === null) return;
+    // Side-by-side: step OLD -> NEW within the diff before leaving it.
+    if (state.focusPanel === 'diff' && state.centerComposite && state.compositePane === 0) {
+        ensureCompositePane(1);
+        return;
+    }
     const order = reviewFocusOrder();
     let i = order.indexOf(state.focusPanel);
     if (i < 0) i = 0;
-    reviewSetFocus(order[(i + 1) % order.length]);
+    const next = order[(i + 1) % order.length];
+    reviewSetFocus(next);
+    // Entering the diff from the file list lands on OLD (the left pane).
+    if (next === 'diff' && state.centerComposite) ensureCompositePane(0);
 }
 registerHandler("review_focus_next", review_focus_next);
 
 function review_focus_prev(): void {
     if (state.groupId === null) return;
+    // Side-by-side: step NEW -> OLD within the diff before leaving it.
+    if (state.focusPanel === 'diff' && state.centerComposite && state.compositePane === 1) {
+        ensureCompositePane(0);
+        return;
+    }
     const order = reviewFocusOrder();
     let i = order.indexOf(state.focusPanel);
     if (i < 0) i = 0;
-    reviewSetFocus(order[(i - 1 + order.length) % order.length]);
+    const prev = order[(i - 1 + order.length) % order.length];
+    reviewSetFocus(prev);
+    // Entering the diff from the right (comments/files-wrap) lands on NEW.
+    if (prev === 'diff' && state.centerComposite) ensureCompositePane(1);
 }
 registerHandler("review_focus_prev", review_focus_prev);
 
@@ -2448,6 +2478,12 @@ registerHandler("review_comments_select_next", review_comments_select_next);
 function review_enter_dispatch() {
     if (state.focusPanel === 'comments') {
         review_open_selected_comment();
+        return;
+    }
+    // Side-by-side center: Enter opens the file version under the cursor
+    // (read-only HEAD on the OLD pane, working file on the NEW pane).
+    if (state.centerComposite) {
+        void review_center_open_at_cursor();
         return;
     }
     const props = propsAtCursorRow();
@@ -3657,6 +3693,8 @@ async function buildCenterComposite(): Promise<void> {
     // at a closed buffer — that's the empty-panel flicker and the stray
     // "[No Name]" tab (auto-created when the active panel buffer is closed).
     const prev = state.centerComposite;
+    // A freshly-created composite focuses pane 0 (OLD) by default.
+    state.compositePane = 0;
     state.centerComposite = {
         fileKey: key!,
         compositeBufId,
@@ -4287,10 +4325,10 @@ function currentHunkIndexForNav(): number {
 
 function review_next_hunk() {
     if (state.groupId === null) return;
-    // Side-by-side: the active diff buffer is the composite, not the unified
-    // text stream, so delegate to the host's composite hunk navigation.
+    // Side-by-side: the active diff buffer is the composite. Navigate within
+    // it, advancing to the next file when the focused file has no more hunks.
     if (state.centerComposite) {
-        editor.compositeNextHunk(state.centerComposite.compositeBufId);
+        void compositeHunkNav(1);
         return;
     }
     // Walk the global hunk list (focus-aware), auto-expanding/refocusing the
@@ -4307,7 +4345,7 @@ registerHandler("review_next_hunk", review_next_hunk);
 function review_prev_hunk() {
     if (state.groupId === null) return;
     if (state.centerComposite) {
-        editor.compositePrevHunk(state.centerComposite.compositeBufId);
+        void compositeHunkNav(-1);
         return;
     }
     if (state.hunks.length === 0) return;
@@ -4443,6 +4481,80 @@ async function review_diff_open_working_at_cursor() {
     await openWorkingFileAtCursor(info, st);
 }
 registerHandler("review_diff_open_working_at_cursor", review_diff_open_working_at_cursor);
+
+/** A `CompositeDiffState` view over the in-panel center composite, so the
+ *  side-by-side open helpers (HEAD-version / working-file) can be reused for
+ *  Enter in the embedded review side-by-side. */
+function centerCompositeDiffState(): CompositeDiffState | null {
+    const cc = state.centerComposite;
+    if (!cc) return null;
+    const file = state.files.find(f => fileKey(f) === cc.fileKey);
+    if (!file) return null;
+    return {
+        compositeBufferId: cc.compositeBufId,
+        oldBufferId: cc.oldBufId,
+        newBufferId: cc.newBufId,
+        filePath: file.path,
+        gitRoot: state.repoRoot,
+        absPath: cc.absPath,
+        isUntracked: cc.isUntracked,
+        hunkLineMap: cc.hunkLineMap,
+    };
+}
+
+/** Enter in the in-panel side-by-side center: open the file version for the
+ *  side under the cursor — read-only HEAD version on the OLD pane, the
+ *  editable working file on the NEW pane — exactly like the standalone
+ *  side-by-side view. */
+async function review_center_open_at_cursor(): Promise<void> {
+    const st = centerCompositeDiffState();
+    if (!st) return;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return;
+    if (info.focusedPane === 0) {
+        const oldLine0 = info.lines[0];
+        if (oldLine0 === null || oldLine0 === undefined) {
+            // Blank OLD side (a pure insertion) — open the working file.
+            await openWorkingFileAtCursor(info, st);
+            return;
+        }
+        await openHeadVersionReadOnly(st, oldLine0 + 1);
+    } else {
+        await openWorkingFileAtCursor(info, st);
+    }
+}
+registerHandler("review_center_open_at_cursor", review_center_open_at_cursor);
+
+/** Side-by-side n/p: move to the next/prev hunk within the focused file's
+ *  composite, advancing to the next/prev file when there are no more hunks in
+ *  that direction. */
+async function compositeHunkNav(dir: 1 | -1): Promise<void> {
+    const cc = state.centerComposite;
+    if (!cc) return;
+    const file = state.files.find(f => fileKey(f) === cc.fileKey);
+    if (!file) { review_goto_file(dir); return; }
+    const fileHunks = state.hunks.filter(
+        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+    );
+    if (fileHunks.length === 0) { review_goto_file(dir); return; }
+    const info = await editor.getCompositeCursorInfo();
+    const newL = info && info.lines[1] !== null && info.lines[1] !== undefined ? info.lines[1] + 1 : undefined;
+    const oldL = info && info.lines[0] !== null && info.lines[0] !== undefined ? info.lines[0] + 1 : undefined;
+    // Current hunk index = the last hunk whose start is at/above the cursor.
+    let curIdx = -1;
+    for (let i = 0; i < fileHunks.length; i++) {
+        const h = fileHunks[i];
+        if (newL !== undefined) { if (h.range.start <= newL) curIdx = i; }
+        else if (oldL !== undefined) { if (h.oldRange.start <= oldL) curIdx = i; }
+    }
+    const target = curIdx + dir;
+    if (target >= 0 && target < fileHunks.length) {
+        if (dir > 0) editor.compositeNextHunk(cc.compositeBufId);
+        else editor.compositePrevHunk(cc.compositeBufId);
+    } else {
+        review_goto_file(dir);
+    }
+}
 
 // Define the diff-view mode for the side-by-side composite buffer.
 //
