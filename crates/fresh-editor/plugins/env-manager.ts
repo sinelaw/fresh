@@ -53,6 +53,12 @@ const STATUS_TOKEN = "env";
 const POPUP_ACTIVATE = "env-manager-activate";
 const POPUP_TRUST_ELEVATE = "env-manager-trust-elevate";
 
+/// Devcontainer plugin's attach-popup id. We listen for its outcome on the
+/// shared `action_popup_result` channel so we can un-defer the env popup
+/// when the user declines the devcontainer attach — see the
+/// `onDevcontainerAttachResult` handler below.
+const DEVCONTAINER_ATTACH_POPUP_ID = "devcontainer-attach";
+
 interface ActionPopupResultData {
   popup_id: string;
   action_id: string;
@@ -179,6 +185,49 @@ function writeEnvDecision(value: EnvDecision): void {
  * restart re-asks. Separate from the persisted "Never here" decision so
  * users have a real difference between "later" and "stop asking forever". */
 let envDismissedThisSession = false;
+
+// === Cross-plugin: devcontainer decline observation ===
+//
+// `maybeAutoActivate` defers when a `devcontainer.json` is present on the
+// host so the devcontainer "Reopen in container?" popup goes first. The
+// risk this introduces — and that this section closes — is that the
+// devcontainer popup may *not actually appear* (the user previously
+// chose "Ignore always", or already attached and detached, or some
+// other skip-path in `devcontainer.ts:2729-2776`). Without a signal that
+// devcontainer is *not* going to prompt, the env popup would never
+// appear on the host, even though the user is staying local.
+//
+// Two pieces of state record what we've observed about devcontainer:
+//
+// - `devcontainerDismissedThisSession` (in-memory): set when the user
+//   picks any non-attach option in the devcontainer-attach popup this
+//   session. Re-running `maybeAutoActivate` after this flag is set
+//   bypasses the defer guard and lets the env popup surface
+//   immediately, in the same session.
+// - `devcontainer-decline:<cwd>` in plugin global state (persisted):
+//   set when the user picks "Ignore always" in the devcontainer popup.
+//   On the *next* open of the same folder, devcontainer reads its own
+//   persisted dismissal and silently skips the popup; without this
+//   observation, env-manager would defer to a popup that never comes.
+//   With it, env-manager proceeds straight to its own activate flow.
+//
+// We can't read devcontainer's own `attach:<cwd>` global state because
+// plugin global state is namespaced per plugin (see fresh.d.ts:2700-2710).
+// So we keep our own copy of the relevant observation, written when we
+// see the user's choice on the shared `action_popup_result` channel.
+let devcontainerDismissedThisSession = false;
+
+function devcontainerObservationKey(): string {
+  return "devcontainer-decline:" + editor.getCwd();
+}
+
+function readDevcontainerDeclined(): boolean {
+  return editor.getGlobalState(devcontainerObservationKey()) === "user_dismissed";
+}
+
+function writeDevcontainerDeclined(): void {
+  editor.setGlobalState(devcontainerObservationKey(), "user_dismissed");
+}
 
 // === Commands ===
 
@@ -321,11 +370,33 @@ function onTrustElevatePopup(data: ActionPopupResultData): void {
   // "cancel" / "dismissed" — no-op, leaves trust as-is.
 }
 
+/// Catch the devcontainer attach popup's outcome on the shared
+/// `action_popup_result` channel. Any non-attach action means the user is
+/// staying on the host, so we should un-defer and let the env popup
+/// surface in the same session. `dismiss_always` is also persisted so
+/// the next open of this folder doesn't re-defer (devcontainer will
+/// silently skip its popup that time).
+function onDevcontainerAttachResult(data: ActionPopupResultData): void {
+  if (data.action_id === "attach") {
+    // editor.setAuthority restarts the editor; env-manager re-runs
+    // inside the container via the post-restart `plugins_loaded`.
+    return;
+  }
+  devcontainerDismissedThisSession = true;
+  if (data.action_id === "dismiss_always") {
+    writeDevcontainerDeclined();
+  }
+  // Re-evaluate now that the defer barrier is gone.
+  maybeAutoActivate();
+}
+
 editor.on("action_popup_result", (data) => {
   if (data.popup_id === POPUP_ACTIVATE) {
     onActivatePopup(data);
   } else if (data.popup_id === POPUP_TRUST_ELEVATE) {
     onTrustElevatePopup(data);
+  } else if (data.popup_id === DEVCONTAINER_ATTACH_POPUP_ID) {
+    onDevcontainerAttachResult(data);
   }
 });
 
@@ -340,9 +411,14 @@ editor.on("action_popup_result", (data) => {
  *   of any prior decision (the activation is recorded but we don't re-prompt
  *   the user about a non-prompting flow). Path-only is intentionally
  *   exempt from the trust-gating popup; the snippet is just `PATH` setup.
- * - Shell env, devcontainer present, local authority → defer entirely.
- *   The devcontainer attach popup goes first; we re-run after the post-attach
- *   restart inside the container.
+ * - Shell env, devcontainer present, local authority, no observed
+ *   decline → defer entirely. The devcontainer attach popup goes first; we
+ *   re-run after the post-attach restart inside the container, or when the
+ *   user declines the devcontainer popup (see `onDevcontainerAttachResult`).
+ * - Shell env, devcontainer present but user already declined the attach
+ *   (this session or persistently) → fall through to the env flow on the
+ *   host. Defer is only valid while the devcontainer popup might still
+ *   appear; once it's clear it won't, the env popup should.
  * - Shell env, already activated → nothing (the env is live; user can reload).
  * - Shell env, prior "dismissed" decision → nothing (respect the user's "never here").
  * - Shell env, session-only dismissal → nothing this session.
@@ -364,8 +440,25 @@ function maybeAutoActivate(): void {
   // det.kind === "shell"
   if (editor.envActive()) return;
   if (devcontainerConfigPresent() && !authorityIsNonLocal()) {
-    editor.debug("env-manager: deferring to devcontainer plugin (config present, local authority)");
-    return;
+    // Only defer while the user might still see the devcontainer prompt.
+    // If they declined it earlier in this session, or persistently
+    // declined in a previous session (so devcontainer is silently
+    // skipping its popup), proceed to the env activate flow instead of
+    // waiting for a popup that will never appear.
+    if (devcontainerDismissedThisSession) {
+      editor.debug(
+        "env-manager: devcontainer dismissed this session — proceeding with env activate",
+      );
+    } else if (readDevcontainerDeclined()) {
+      editor.debug(
+        "env-manager: user previously declined devcontainer attach for this folder — proceeding with env activate",
+      );
+    } else {
+      editor.debug(
+        "env-manager: deferring to devcontainer plugin (config present, local authority)",
+      );
+      return;
+    }
   }
 
   const prior = readEnvDecision();
