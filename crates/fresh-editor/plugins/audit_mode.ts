@@ -135,7 +135,7 @@ interface ReviewState {
   emptyState: EmptyStateReason;
   viewportWidth: number;
   viewportHeight: number;
-  focusPanel: 'diff' | 'comments';
+  focusPanel: 'files' | 'diff' | 'comments';
   groupId: number | null;
   panelBuffers: Record<string, number>;
   // Caches populated each time the unified diff stream is rebuilt —
@@ -1561,6 +1561,14 @@ const FILES_PANEL_RATIO = 0.16;
  * highlighted. Populates `state.filesPanelByRow` so a click resolves back
  * to a file.
  */
+/** A one-glyph focus indicator for a panel header: `▸` when that panel holds
+ *  keyboard focus, a space otherwise. Keeps the three panels (files / diff /
+ *  comments) reading in the same visual language so arrow-key users can see
+ *  where input will land. */
+function focusMark(panel: 'files' | 'diff' | 'comments'): string {
+    return state.focusPanel === panel ? '▸' : ' ';
+}
+
 function buildFilesPanelEntries(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
     state.filesPanelByRow = {};
@@ -1568,7 +1576,7 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
     const headerLabel = (editor.t("panel.files") || "Files").toUpperCase()
         + (state.fileFilter ? `  /${state.fileFilter}` : "");
     entries.push({
-        text: ` ${headerLabel}\n`,
+        text: `${focusMark('files')}${headerLabel}\n`,
         style: { fg: STYLE_INVERSE_FG, bg: STYLE_INVERSE_BG, bold: true, extendToLineEnd: true },
         properties: { type: "header" },
     });
@@ -1650,7 +1658,7 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
 
     const headerLabel = (editor.t("panel.comments") || "Comments").toUpperCase();
     entries.push({
-        text: ` ${headerLabel}\n`,
+        text: `${focusMark('comments')}${headerLabel}\n`,
         style: {
             fg: STYLE_INVERSE_FG,
             bg: STYLE_INVERSE_BG,
@@ -1857,6 +1865,9 @@ function refreshStickyHeader(topVisibleRow: number): void {
         text = ` ${section} · ${filename}   +${counts.added} / -${counts.removed}`;
     }
 
+    // Prefix a focus marker so the diff panel reads as "focused" in the same
+    // visual language as the FILES / COMMENTS headers.
+    text = `${focusMark('diff')}${text.replace(/^ /, '')}`;
     const padded = (text.length > W ? text.slice(0, W) : text).padEnd(W) + "\n";
     editor.setPanelContent(state.groupId, "sticky", [{
         text: padded,
@@ -2337,7 +2348,7 @@ registerHandler("review_prev_comment", review_prev_comment);
  */
 function review_focus_comments() {
     if (state.groupId === null) return;
-    editor.focusBufferGroupPanel(state.groupId, "comments");
+    reviewSetFocus('comments');
     // Ensure the selection highlight shows immediately.
     if (state.commentsSelectedRow < 2 && state.comments.length > 0) {
         state.commentsSelectedRow = 2;
@@ -2345,6 +2356,44 @@ function review_focus_comments() {
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
 }
 registerHandler("review_focus_comments", review_focus_comments);
+
+/** The Tab/BackTab focus ring: file list → diff → comments → (wrap).
+ *  Comments join the ring only when there are comments to step through. */
+function reviewFocusOrder(): Array<'files' | 'diff' | 'comments'> {
+    const order: Array<'files' | 'diff' | 'comments'> = ['files', 'diff'];
+    if (state.comments.length > 0) order.push('comments');
+    return order;
+}
+
+/** Move keyboard focus to `panel` (native focus so mouse-click focus and
+ *  Tab focus share one source of truth) and refresh the focus markers. */
+function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
+    if (state.groupId === null) return;
+    editor.focusBufferGroupPanel(state.groupId, panel);
+    // Set eagerly too: the buffer_activated event that also sets this is
+    // async, but a key handler firing immediately after must see the new
+    // focus to route the next arrow correctly.
+    state.focusPanel = panel;
+    refreshFocusIndicators();
+}
+
+function review_focus_next(): void {
+    if (state.groupId === null) return;
+    const order = reviewFocusOrder();
+    let i = order.indexOf(state.focusPanel);
+    if (i < 0) i = 0;
+    reviewSetFocus(order[(i + 1) % order.length]);
+}
+registerHandler("review_focus_next", review_focus_next);
+
+function review_focus_prev(): void {
+    if (state.groupId === null) return;
+    const order = reviewFocusOrder();
+    let i = order.indexOf(state.focusPanel);
+    if (i < 0) i = 0;
+    reviewSetFocus(order[(i - 1 + order.length) % order.length]);
+}
+registerHandler("review_focus_prev", review_focus_prev);
 
 /**
  * Activate the currently-selected comment in the comments panel:
@@ -2603,6 +2652,7 @@ registerHandler("review_expand_all", review_expand_all);
 
 function review_nav_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
+    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
     editor.executeAction("move_up");
     if (state.lineSelection) {
         // executeAction has already moved the cursor; sync the selection.
@@ -2616,6 +2666,7 @@ registerHandler("review_nav_up", review_nav_up);
 
 function review_nav_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
+    if (state.focusPanel === 'files') { review_goto_file(1); return; }
     editor.executeAction("move_down");
     if (state.lineSelection) {
         state.lineSelection.endRow = state.lineSelection.endRow + 1;
@@ -2624,10 +2675,18 @@ function review_nav_down() {
 }
 registerHandler("review_nav_down", review_nav_down);
 
-function review_page_up() { editor.executeAction("move_page_up"); }
+function review_page_up() {
+    if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
+    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
+    editor.executeAction("move_page_up");
+}
 registerHandler("review_page_up", review_page_up);
 
-function review_page_down() { editor.executeAction("move_page_down"); }
+function review_page_down() {
+    if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
+    if (state.focusPanel === 'files') { review_goto_file(1); return; }
+    editor.executeAction("move_page_down");
+}
 registerHandler("review_page_down", review_page_down);
 // Home / End intentionally NOT overridden — the editor's native
 // "move to start/end of line" is exactly what we want here. Mapping
@@ -3627,6 +3686,11 @@ function renderCenter(): void {
  *  toolbar or the file-ordered comments panel. */
 function refreshFocusedFile(): void {
     if (state.groupId === null) return;
+    // renderCenter() focuses the diff panel as part of swapping buffers. When
+    // the user is driving file navigation from the FILES panel (arrows while
+    // it holds focus), keep focus there afterwards so the next arrow keeps
+    // moving the file selection instead of suddenly scrolling the diff.
+    const keepFocus = state.focusPanel;
     renderCenter();
     if (state.panelBuffers["files"] !== undefined) {
         editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
@@ -3641,6 +3705,13 @@ function refreshFocusedFile(): void {
         jumpDiffCursorToRow(state.fileHeaderRows[state.filesCurrentKey]);
     } else {
         refreshStickyHeader(0);
+    }
+    // Restore FILES-panel focus if that's where the user was (renderCenter
+    // focuses the diff). The diff cursor still scrolled to the new file above.
+    if (keepFocus === 'files' && state.panelBuffers["files"] !== undefined) {
+        editor.focusBufferGroupPanel(state.groupId, "files");
+        state.focusPanel = 'files';
+        refreshFocusIndicators();
     }
 }
 
@@ -3884,11 +3955,12 @@ async function review_help() {
     const rows: string[] = [
         " Review Diff — keyboard reference",
         "",
+        " Focus       Tab / S-Tab cycle focus: files → diff → comments",
+        "             ↑ ↓        move within the focused panel (j / k too)",
         " Navigate    n / p      next / prev hunk",
         "             , / .      prev / next file",
         "             ] / [      next / prev comment",
-        "             Tab        fold the file under the cursor",
-        "             z a / z r  fold all / unfold all",
+        "             z a / z r  fold all / unfold all (Enter folds one)",
         " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
         " View        a          show / hide inline notes",
         "             /          filter files (empty to clear)",
@@ -5222,15 +5294,33 @@ function on_review_buffer_activated(data: { buffer_id: number }): void {
     if (state.groupId === null) return;
     const diffId = state.panelBuffers["diff"];
     const commentsId = state.panelBuffers["comments"];
-    let newPanel: 'diff' | 'comments' | null = null;
-    if (data.buffer_id === diffId) newPanel = 'diff';
+    const filesId = state.panelBuffers["files"];
+    // In side-by-side the diff panel hosts the composite (its own buffer id),
+    // so treat that as the diff panel too.
+    const compositeId = state.centerComposite ? state.centerComposite.compositeBufId : -1;
+    let newPanel: 'files' | 'diff' | 'comments' | null = null;
+    if (data.buffer_id === diffId || data.buffer_id === compositeId) newPanel = 'diff';
     else if (data.buffer_id === commentsId) newPanel = 'comments';
+    else if (data.buffer_id === filesId) newPanel = 'files';
     if (newPanel === null || newPanel === state.focusPanel) return;
     state.focusPanel = newPanel;
-    // Re-render the comments panel so the selection highlight follows focus.
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    refreshFocusIndicators();
 }
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
+
+/** Re-render the three panel headers so the `▸` focus marker tracks the
+ *  currently-focused panel. Cheap: only header rows change. */
+function refreshFocusIndicators(): void {
+    if (state.groupId === null) return;
+    if (state.panelBuffers["files"] !== undefined) {
+        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+    }
+    if (state.panelBuffers["comments"] !== undefined) {
+        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    }
+    // The diff's "header" is the sticky bar; refresh it in place.
+    refreshStickyHeader(Math.max(0, state.diffCursorRow - 1));
+}
 
 /**
  * React to native cursor movement inside review panels.
@@ -6103,9 +6193,12 @@ editor.defineMode("review-mode", [
     ["/", "review_filter_files"],
     ["W", "review_toggle_watch"],
     ["?", "review_help"],
-    // Per-file collapse: Tab toggles the file under the cursor;
-    // `z a` collapses every file; `z r` reveals (expands) every file.
-    ["Tab", "review_toggle_file_collapse"],
+    // Tab / Shift-Tab cycle keyboard focus between the file list, the diff,
+    // and the comments panel; arrows then act on the focused panel.
+    ["Tab", "review_focus_next"],
+    ["BackTab", "review_focus_prev"],
+    // Fold: `z a` collapses every file; `z r` reveals (expands) every file;
+    // Enter on a file/section header toggles just that one.
     ["z a", "review_collapse_all"],
     ["z r", "review_expand_all"],
     // Visual line-selection mode for line-level stage/unstage/discard.
