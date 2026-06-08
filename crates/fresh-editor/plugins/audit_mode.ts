@@ -186,6 +186,9 @@ interface ReviewState {
   // Maps a 1-indexed row in the files sidebar -> file key. Lets clicks in
   // the sidebar resolve back to a FileEntry.
   filesPanelByRow: Record<number, string>;
+  // Byte offset of each file's row in the files panel buffer, so the panel
+  // can be scrolled to keep the selected file visible (B2).
+  filesPanelByteByKey: Record<string, number>;
   // File key currently highlighted in the sidebar (tracks the diff
   // viewport's top file). Lets the scroll handler skip a sidebar repaint
   // when the current file hasn't changed.
@@ -271,6 +274,7 @@ const state: ReviewState = {
   sectionHeaderRows: {},
   commentsByRow: {},
   filesPanelByRow: {},
+  filesPanelByteByKey: {},
   filesCurrentKey: null,
   showComments: true,
   fileFilter: "",
@@ -1383,21 +1387,23 @@ function buildToolbar(W: number): TextPropertyEntry[] {
     // cheapest honest thing to do.
     const inRange = state.mode === 'range';
     const row1: HintItem[][] = [
-        [{ key: "n", label: "next hunk" }, { key: "p", label: "prev hunk" },
-         { key: "]", label: "next cmt" }, { key: "[", label: "prev cmt" }],
+        // The "how do I move around" group first: focus-cycle, file nav,
+        // hunk nav, layout — the keys a newcomer reaches for.
+        [{ key: "Tab", label: "focus" }, { key: ", .", label: "file" },
+         { key: "n p", label: "hunk" }, { key: "1 2", label: "split/stack" }],
         inRange
             ? [{ key: "v", label: "select" }, { key: "c", label: "comment" }]
             : [{ key: "s", label: "stage" }, { key: "u", label: "unstage" }, { key: "d", label: "discard" },
-               { key: "v", label: "select" }, { key: "c", label: "comment" }],
+               { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
-        [{ key: "Tab", label: "fold" }, { key: "z a", label: "fold all" }, { key: "z r", label: "unfold all" }],
+        [{ key: "↑↓", label: "move in panel" }, { key: "Enter", label: "jump" },
+         { key: "Alt+o", label: "open file" }],
         inRange
-            ? [{ key: "Enter", label: "jump" }, { key: "Alt+o", label: "open file" },
+            ? [{ key: "/", label: "filter" }, { key: "?", label: "help" },
                { key: "e", label: "export" }, { key: "q", label: "close" }]
-            : [{ key: "S U D", label: "file-level" }, { key: "Enter", label: "jump" },
-               { key: "Alt+o", label: "open file" },
-               { key: "e", label: "export" }, { key: "q", label: "close" }],
+            : [{ key: "S U D", label: "file-level" }, { key: "/", label: "filter" },
+               { key: "?", label: "help" }, { key: "q", label: "close" }],
     ];
     return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
 }
@@ -1649,7 +1655,28 @@ function buildFilesPanelEntries(): TextPropertyEntry[] {
             properties: { type: "empty" },
         });
     }
+    // Record each file row's byte offset so the panel can be scrolled to keep
+    // the selected file visible (B2).
+    state.filesPanelByteByKey = {};
+    let acc = 0;
+    for (const e of entries) {
+        const fk = e.properties && (e.properties as Record<string, unknown>)["fileKey"];
+        if (typeof fk === 'string') state.filesPanelByteByKey[fk] = acc;
+        acc += getByteLength(e.text);
+    }
     return entries;
+}
+
+/** Scroll the FILES panel so the currently-selected file row stays visible.
+ *  Uses setBufferCursor (which runs ensure_cursor_visible) so the panel only
+ *  scrolls when the selection would otherwise be off-screen — no jumpy
+ *  re-centering when it is already in view. */
+function scrollFilesToSelected(): void {
+    if (state.groupId === null || !state.filesCurrentKey) return;
+    const filesId = state.panelBuffers["files"];
+    if (filesId === undefined) return;
+    const byte = state.filesPanelByteByKey[state.filesCurrentKey];
+    if (byte !== undefined) editor.setBufferCursor(filesId, byte);
 }
 
 function buildCommentsPanelEntries(): TextPropertyEntry[] {
@@ -3694,6 +3721,7 @@ function refreshFocusedFile(): void {
     renderCenter();
     if (state.panelBuffers["files"] !== undefined) {
         editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        scrollFilesToSelected();
     }
     // Unified: scroll the newly-focused file into position and put the cursor
     // on it, so navigating files actually moves the view to that file's diff
