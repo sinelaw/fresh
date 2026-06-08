@@ -4240,25 +4240,49 @@ function jumpToGlobalHunk(globalIdx: number) {
     if (globalIdx < 0 || globalIdx >= state.hunks.length) return;
     const target = state.hunks[globalIdx];
     const targetFileKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
-    let needRebuild = false;
-    // Auto-expand the section, file, AND hunk containing the target so
+    // Always expand any collapse on the target's section / file / hunk so
     // n/p never silently lands on an invisible row.
-    if (target.gitStatus && state.collapsedSections.has(target.gitStatus)) {
-        state.collapsedSections.delete(target.gitStatus);
-        needRebuild = true;
+    if (target.gitStatus) state.collapsedSections.delete(target.gitStatus);
+    state.collapsedFiles.delete(targetFileKey);
+    state.collapsedHunks.delete(target.id);
+    if (state.focusOnly && targetFileKey !== state.filesCurrentKey) {
+        // Focus-only mode renders just one file's body, so the target file
+        // must become the focused file before its hunk row exists. This is
+        // how `n`/`p` cross file boundaries in focus mode.
+        state.filesCurrentKey = targetFileKey;
+        refreshFocusedFile();
+    } else {
+        // Same (or non-focus) file: rebuild so the just-expanded rows render.
+        updateMagitDisplay();
     }
-    if (state.collapsedFiles.has(targetFileKey)) {
-        state.collapsedFiles.delete(targetFileKey);
-        needRebuild = true;
-    }
-    if (state.collapsedHunks.has(target.id)) {
-        state.collapsedHunks.delete(target.id);
-        needRebuild = true;
-    }
-    if (needRebuild) updateMagitDisplay();
     // Look up the target hunk's row directly — much simpler than counting.
     const row = state.hunkRowByHunkId[target.id];
     if (row !== undefined) jumpDiffCursorToRow(row);
+}
+
+/** Global index into `state.hunks` of the hunk at/before the cursor.
+ *  In focus-only mode only the focused file's hunks are rendered, so this
+ *  works off that file's hunks and falls back to "just before its first
+ *  hunk" when the cursor sits above them or the file is collapsed — so the
+ *  next `n` lands on the focused file's first hunk. Returns -1 when there
+ *  are no hunks at all. */
+function currentHunkIndexForNav(): number {
+    if (state.hunks.length === 0) return -1;
+    if (!state.focusOnly) return visibleHunkIndexAtCursor();
+    // Indices of the focused file's hunks, in global order.
+    const focusIdxs: number[] = [];
+    for (let i = 0; i < state.hunks.length; i++) {
+        const h = state.hunks[i];
+        if (fileKeyOf(h.file, h.gitStatus || 'unstaged') === state.filesCurrentKey) focusIdxs.push(i);
+    }
+    if (focusIdxs.length === 0) return -1;
+    // The focused file's hunk whose rendered row is the largest <= cursor.
+    let best = -1;
+    for (const gi of focusIdxs) {
+        const row = state.hunkRowByHunkId[state.hunks[gi].id];
+        if (row !== undefined && row <= state.diffCursorRow) best = gi;
+    }
+    return best >= 0 ? best : focusIdxs[0] - 1;
 }
 
 function review_next_hunk() {
@@ -4269,16 +4293,14 @@ function review_next_hunk() {
         editor.compositeNextHunk(state.centerComposite.compositeBufId);
         return;
     }
-    // Navigate by the rendered hunk-header rows, not the global state.hunks
-    // index: in focus-only mode only the focused file's hunks are rendered,
-    // so a global index would point at an unrendered file's hunk and no-op.
-    const rows = state.hunkHeaderRows;
-    for (let i = 0; i < rows.length; i++) {
-        if (rows[i] > state.diffCursorRow) { jumpDiffCursorToRow(rows[i]); return; }
-    }
-    // Past the last hunk of the focused file — advance to the next file
-    // (lands on its header; a further `n` steps into its first hunk).
-    if (state.focusOnly) review_goto_file(1);
+    // Walk the global hunk list (focus-aware), auto-expanding/refocusing the
+    // target file as needed — so `n` crosses file boundaries and reveals a
+    // collapsed file's hunks rather than no-op'ing.
+    if (state.hunks.length === 0) return;
+    const cur = currentHunkIndexForNav();
+    const next = cur + 1;
+    if (next >= state.hunks.length) return;
+    jumpToGlobalHunk(next);
 }
 registerHandler("review_next_hunk", review_next_hunk);
 
@@ -4288,12 +4310,9 @@ function review_prev_hunk() {
         editor.compositePrevHunk(state.centerComposite.compositeBufId);
         return;
     }
-    const rows = state.hunkHeaderRows;
-    for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i] < state.diffCursorRow) { jumpDiffCursorToRow(rows[i]); return; }
-    }
-    // Before the first hunk of the focused file — back up to the previous file.
-    if (state.focusOnly) review_goto_file(-1);
+    if (state.hunks.length === 0) return;
+    const cur = currentHunkIndexForNav();
+    if (cur > 0) jumpToGlobalHunk(cur - 1);
 }
 registerHandler("review_prev_hunk", review_prev_hunk);
 

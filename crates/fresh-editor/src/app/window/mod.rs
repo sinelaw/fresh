@@ -1314,15 +1314,6 @@ impl Window {
                     view_state.cursors.primary_mut().move_to(position, false);
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                 }
-                // Keep the buffer's reported cursor line in sync so the status
-                // bar's Ln reflects a plugin-driven jump immediately, rather
-                // than lagging until the next native cursor move. Native
-                // motion (move_up/down, goto) sets this too; without it a jump
-                // (e.g. review-diff hunk nav) leaves Ln on the old row.
-                if let Some(pos) = state.buffer.offset_to_position(position) {
-                    state.primary_cursor_line_number =
-                        crate::model::buffer::LineNumber::Absolute(pos.line);
-                }
             });
     }
 
