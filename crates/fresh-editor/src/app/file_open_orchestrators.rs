@@ -22,6 +22,77 @@ use crate::state::EditorState;
 use super::Editor;
 
 impl Editor {
+    /// Helper to jump to a line/column position in the active buffer.
+    ///
+    /// Lives here (not in the plugin-gated command module) so non-plugin
+    /// callers — e.g. Ctrl+Click-to-open from the terminal — can reach it in
+    /// builds compiled without the `plugins` feature.
+    pub(crate) fn jump_to_line_column(&mut self, line: Option<usize>, column: Option<usize>) {
+        // Convert 1-indexed line/column to byte position
+        let target_line = line.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+        let column_offset = column.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
+
+        let state = self.active_state_mut();
+        let mut iter = state.buffer.line_iterator(0, 80);
+        let mut target_byte = 0;
+
+        // Iterate through lines until we reach the target
+        for current_line in 0..=target_line {
+            if let Some((line_start, _)) = iter.next_line() {
+                if current_line == target_line {
+                    target_byte = line_start;
+                    break;
+                }
+            } else {
+                // Reached end of buffer before target line
+                break;
+            }
+        }
+
+        // Add the column offset to position within the line
+        // Column offset is byte offset from line start (matching git grep --column behavior)
+        let final_position = target_byte + column_offset;
+
+        // Ensure we don't go past the buffer end
+        let buffer_len = state.buffer.len();
+        let clamped_position = final_position.min(buffer_len);
+
+        // Update the cached line number so the status bar shows the correct
+        // position. Without this, the status bar reads a stale value from
+        // state.primary_cursor_line_number which was set before the jump.
+        state.primary_cursor_line_number = crate::model::buffer::LineNumber::Absolute(target_line);
+
+        // Funnel through the navigation primitive so the cursor is guaranteed
+        // visible in the viewport (#1689 — without this, jump_to_line_column
+        // could land off-screen if a prior scroll set skip_ensure_visible).
+        self.active_window_mut().jump_active_cursor_to(
+            clamped_position,
+            super::navigation::JumpOptions::navigation(),
+        );
+    }
+
+    /// Open a file (switching to an already-open buffer if any) and jump to the
+    /// given 1-based line/column if specified. Used by the OpenFileAtLocation
+    /// plugin command and by Ctrl+Click-to-open from the terminal.
+    pub(crate) fn handle_open_file_at_location(
+        &mut self,
+        path: std::path::PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> anyhow::Result<()> {
+        // Open the file (may switch to an already-open buffer)
+        if let Err(e) = self.open_file(&path) {
+            tracing::error!("Failed to open file at location: {}", e);
+            return Ok(());
+        }
+
+        // If line/column specified, jump to that location
+        if line.is_some() || column.is_some() {
+            self.jump_to_line_column(line, column);
+        }
+        Ok(())
+    }
+
     /// Open a file and return its buffer ID
     ///
     /// If the file doesn't exist, creates an unsaved buffer with that filename.
