@@ -4732,6 +4732,11 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
 
     editor.focusBufferGroupPanel(state.groupId!, "diff");
 
+    // Build the focused file's composite center explicitly now that the group
+    // is established + focused (the void build inside updateMagitDisplay can
+    // race group setup at first open, leaving the center blank).
+    await buildCenterComposite();
+
     editor.on("resize", onReviewDiffResize);
     updateReviewStatus();
     editor.on("buffer_activated", on_review_buffer_activated);
