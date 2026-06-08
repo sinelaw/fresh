@@ -182,9 +182,15 @@ sugar over the registry above; spec it when the registry lands.
   true). Per-resume `Confirm`/`Never` policy is deferred — for these agents
   resume is no more a side effect than the already-shipped fresh re-run, so a
   master switch suffices for v1.
-- **Phase 3 — TODO:** New Session agent dropdown (below); broader registry;
-  polish (staleness, authority-scope enforcement, per-resume confirm, an env
-  overlay on `agent_resume` for B's per-session config isolation).
+- **Phase 3 — agent dropdown DONE:** the New Session "Agent Command" field now
+  carries an `Agent:` preset row — `[ terminal ] [ claude ↻ ] [ aider ↻ ]
+  [ custom… ]`, built from `AGENT_REGISTRY`. `←/→` (mirroring the "Run in:"
+  tabs) or a click selects a preset and fills the command; `custom…` hands
+  focus to the always-editable field for a typed command; `↻` + the row hint
+  signal which agents resume across restarts (local backend, where resume is
+  wired). Remaining TODO: broader registry; remote-backend resume; staleness,
+  authority-scope enforcement, per-resume confirm, and an env overlay on
+  `agent_resume` for B's per-session config isolation.
 
 ## Situating it
 

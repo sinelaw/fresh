@@ -4086,6 +4086,13 @@ function rebuildFormFocusCycle(): void {
     }
     cycle.push("name", "cmd");
   }
+  // Make the agent presets keyboard-reachable: drop them just before the
+  // Agent Command field so Tab lands on the dropdown before the free-text
+  // input (mirrors how the "Run in:" tabs precede their fields).
+  const cmdIdx = cycle.indexOf("cmd");
+  if (cmdIdx >= 0) {
+    cycle.splice(cmdIdx, 0, ...agentPresets().map((p) => p.key));
+  }
   cycle.push("cancel", "create");
   formFocusCycle = cycle;
   if (formFocusIndex >= cycle.length) formFocusIndex = 0;
@@ -4268,10 +4275,14 @@ interface AgentResumeSpec {
   provision?: { idFlag: string; resumeArgs: string[] };
   continue?: { resumeArgs: string[] };
 }
-const AGENT_REGISTRY: Array<{ match: RegExp; spec: AgentResumeSpec }> = [
+// `id` is the command the New Session dropdown fills in and the basename the
+// matcher keys on; `match` lets a path/args form (e.g. `/usr/bin/claude --foo`)
+// still resolve to the entry.
+const AGENT_REGISTRY: Array<{ id: string; match: RegExp; spec: AgentResumeSpec }> = [
   {
     // Claude Code CLI: `--session-id <uuid>` pins the session at launch;
     // `--resume <uuid>` rejoins it; `--continue` resumes the latest in cwd.
+    id: "claude",
     match: /^claude$/,
     spec: {
       provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
@@ -4282,10 +4293,95 @@ const AGENT_REGISTRY: Array<{ match: RegExp; spec: AgentResumeSpec }> = [
     // aider keeps its conversation in the repo and reloads it with
     // `--restore-chat-history`; it has no caller-supplied session id, so it's
     // a continue-only (strategy B) agent.
+    id: "aider",
     match: /^aider$/,
     spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
   },
 ];
+
+// Presets for the New Session "Agent Command" dropdown: the plain shell
+// (default), every registry agent (which a restart will resume), and a
+// "custom…" entry that just hands focus to the free-text field so the user can
+// type any command. Built from the registry so adding an agent surfaces it in
+// the UI automatically. `custom` presets leave the command untouched.
+interface AgentPreset {
+  label: string;
+  cmd: string;
+  key: string;
+  resumes: boolean;
+  custom?: boolean;
+}
+function agentPresets(): AgentPreset[] {
+  const presets: AgentPreset[] = [
+    { label: "terminal", cmd: "", key: "agent-preset-terminal", resumes: false },
+  ];
+  for (const e of AGENT_REGISTRY) {
+    presets.push({
+      label: e.id,
+      cmd: e.id,
+      key: `agent-preset-${e.id}`,
+      resumes: true,
+    });
+  }
+  presets.push({
+    label: "custom…",
+    cmd: "",
+    key: "agent-preset-custom",
+    resumes: false,
+    custom: true,
+  });
+  return presets;
+}
+
+// Which preset the current command text corresponds to: an exact match on a
+// known agent / the empty shell, else "custom…" (covers a typed command or an
+// agent with extra args). Drives the dropdown's active highlight.
+function activeAgentPresetKey(): string {
+  const current = form ? form.cmd.value.trim() : "";
+  const match = agentPresets().find((p) => !p.custom && p.cmd === current);
+  return match ? match.key : "agent-preset-custom";
+}
+
+// Apply a dropdown choice: a normal preset fills the command field; the
+// "custom…" entry just moves focus to that field so the user can type, leaving
+// any existing text in place.
+function applyAgentPreset(p: AgentPreset): void {
+  if (!form) return;
+  if (p.custom) {
+    // Hand focus to the free-text field so the user can type a command.
+    // Focus must be set *after* the re-render — re-mounting the spec resets
+    // host focus, which would otherwise clobber the setFocusKey.
+    renderForm();
+    formPanel?.setFocusKey("cmd");
+    snapFormFocusTo("cmd");
+    return;
+  }
+  form.cmd.value = p.cmd;
+  form.cmd.cursor = p.cmd.length;
+  // The Text widget's content is host-authoritative; push the new value into
+  // it (re-rendering the spec alone won't change an already-mounted input).
+  formPanel?.setValue("cmd", form.cmd.value, form.cmd.cursor);
+  renderForm();
+}
+
+// ←/→ over the agent dropdown (mirrors the "Run in:" tabs' switchTabIfFocused):
+// when focus sits on a preset button, arrows move the selection and apply it.
+// Returns true if it consumed the key.
+function switchAgentIfFocused(delta: 1 | -1): boolean {
+  if (!form) return false;
+  const presets = agentPresets();
+  const idx = presets.findIndex((p) => p.key === formFocusedKey());
+  if (idx < 0) return false;
+  const next = (idx + delta + presets.length) % presets.length;
+  const target = presets[next];
+  applyAgentPreset(target);
+  // Keep focus on the row (unless the choice moved it to the text field).
+  if (!target.custom) {
+    formPanel?.setFocusKey(target.key);
+    snapFormFocusTo(target.key);
+  }
+  return true;
+}
 
 // A v4-style unique id for an agent session handle. Not security-sensitive
 // (it just names a conversation), so `Math.random` is fine — we never need
@@ -4688,6 +4784,35 @@ function backendTabsRow(): WidgetSpec {
   return row(...parts);
 }
 
+// "Agent:" preset row above the Agent Command field. One button per known
+// agent (plus the default plain `terminal`); picking one fills the command.
+// Agents that resume across restarts are tagged with `↻`, and the row spells
+// that out — so a user discovers both that `claude` is an option and that it
+// gets special session handling. The resume tag only shows for the local
+// backend, the one where resume is wired today.
+function agentPresetRow(): WidgetSpec {
+  const showsResume = !form || form.backend === "local";
+  const activeKey = activeAgentPresetKey();
+  const parts: WidgetSpec[] = [
+    {
+      kind: "raw",
+      entries: [styledRow([{ text: "Agent:", style: { fg: "ui.menu_disabled_fg" } }])],
+    },
+  ];
+  for (const p of agentPresets()) {
+    parts.push(spacer(1));
+    const label = p.resumes && showsResume ? `${p.label} ↻` : p.label;
+    parts.push(button(label, { key: p.key, intent: p.key === activeKey ? "primary" : undefined }));
+  }
+  parts.push(flexSpacer());
+  const hint = showsResume ? "←/→ choose · ↻ resumes on restart" : "←/→ choose";
+  parts.push({
+    kind: "raw",
+    entries: [styledRow([{ text: hint, style: { fg: "ui.menu_disabled_fg", italic: true } }])],
+  });
+  return row(...parts);
+}
+
 // Local backend: Project Path + worktree toggle + linked-worktree hint.
 function localBodyFields(): WidgetSpec[] {
   if (!form) return [];
@@ -5062,6 +5187,7 @@ function buildFormSpec(): WidgetSpec {
         key: "name",
       }),
     }),
+    agentPresetRow(),
     labeledSection({
       label: "Agent Command",
       child: text({
@@ -6194,10 +6320,12 @@ function switchTabIfFocused(delta: 1 | -1): boolean {
 }
 registerHandler("orchestrator_form_key_left", () => {
   if (switchTabIfFocused(-1)) return;
+  if (switchAgentIfFocused(-1)) return;
   dispatchFormKey("Left");
 });
 registerHandler("orchestrator_form_key_right", () => {
   if (switchTabIfFocused(1)) return;
+  if (switchAgentIfFocused(1)) return;
   dispatchFormKey("Right");
 });
 registerHandler("orchestrator_form_key_up", () => {
@@ -6502,6 +6630,14 @@ editor.on("widget_event", (e) => {
           formPanel.setFocusKey(firstField);
           snapFormFocusTo(firstField);
         }
+        return;
+      }
+      const preset = agentPresets().find((p) => p.key === e.widget_key);
+      if (preset && form) {
+        // Click on a dropdown choice: fill the command (or, for "custom…",
+        // hand focus to the free-text field). The field stays editable for
+        // arguments / custom agents either way.
+        applyAgentPreset(preset);
         return;
       }
       if (e.widget_key === "create") {
