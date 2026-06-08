@@ -10,6 +10,182 @@ live in `workspace-trust-sandbox-design.md`. This doc only specifies
 **when** prompts surface, **what** they say, and **how** the three features
 (trust / env / devcontainer) interact so the common case is 0–1 popup.
 
+## North Star — the ideal UX
+
+> **Open a folder. Things work. You start coding.**
+
+For the overwhelming majority of opens, that is the entire user-facing
+experience: no popup, no chip nagging, no "trust this folder?" The editor
+figures out the right thing from context, does it, and reflects what it
+did via the status bar. Modals are not the cost of admission for
+opening a project.
+
+The rules below are stepping stones toward this state. They're chosen
+because each is implementable on the architecture we have today — but the
+direction we want every change to push is *fewer interactions, more
+implicit defaults, clearer state at a glance*. If a proposed change would
+*add* a prompt to a happy path that today has none, reject it.
+
+### Principles, in priority order
+
+1. **Memory beats prompting.** If the user has opened this folder before,
+   the editor remembers what they decided. No re-asking.
+2. **Provenance beats asking.** A folder cloned into the user's usual
+   workspace from a host they've cloned from before is implicitly
+   trusted. A folder dropped into `/tmp/from-email/` is not. The editor
+   infers from context instead of asking.
+3. **Status beats prompts.** A status bar that tells you "what is
+   happening" is worth ten prompts that ask "should this happen."
+4. **Inline beats modal.** When the editor does need an answer, it asks
+   in a banner that yields to whatever the user is doing — never a modal
+   that blocks the editor.
+5. **Do the right thing, make undo trivial.** A reversible default
+   action beats an irreversible question. If venv activation can be
+   undone with one keystroke, just activate.
+6. **Heavy actions confirm once, never again.** A devcontainer rebuild
+   costs minutes — that deserves one confirmation per folder, ever, not
+   per session or per `git pull`.
+7. **Errors are inline, not modal.** A build failure is a banner with a
+   "show logs" button, not a popup demanding attention.
+8. **Settings are the canonical way to change recurring behavior.** "I
+   never want venv to auto-activate" is a config option, not a habit of
+   dismissing prompts.
+
+### What the user sees in the ideal world
+
+**Familiar project, second open onward:**
+
+```
+~/code/my-project · direnv ✓ · rust-analyzer ✓ · trusted
+```
+
+Status bar only. The editor recognized the folder, restored every
+decision, started every server. Zero clicks. The user starts coding.
+
+**New project from a familiar place (`git clone` into `~/code/`):**
+
+```
+~/code/new-repo · .envrc detected · ts-server starting
+[Banner] This folder has a `.envrc`. Activate direnv?
+         [Activate] [Always here] [Not now] [Never here]
+```
+
+Trust is implicit from provenance. The TS server (unambiguous from
+`package.json`) starts. The `.envrc` is a genuinely new decision and
+gets a non-modal banner — the editor is fully usable, the banner waits.
+
+**Suspicious folder (`/tmp/from-zip`):**
+
+```
+/tmp/x · restricted · 3 things would run here · LSPs off
+[Banner] This folder is outside your usual workspaces. It contains
+         `.envrc`, `Cargo.toml`, `build.rs` — code that runs at
+         project load. Review or trust?
+         [Review what runs] [Trust this folder] [Read-only mode]
+```
+
+Framing is "outside your usual workspaces", not "MALWARE WARNING."
+"Read-only mode" is first-class — many users open random folders just
+to read code, and that path should require zero decisions.
+
+**Devcontainer project:**
+
+```
+[Banner] This project has a dev container (`api-service`).
+         Use it? Building takes ~2 min.
+         [Use container] [Stay local for now]
+```
+
+One question, one time per folder, ever. The decision persists. To
+revisit: click the authority indicator in the status bar.
+
+**Trust required for an LSP, on a restricted folder:**
+
+```
+[Banner] rust-analyzer can't run here (trust required).
+         [Trust this folder] [Show what it would run] [Dismiss]
+```
+
+Contextual — names the concrete tool. Non-modal. If dismissed, the
+status bar shows `LSP: held` so the user has a visible way back.
+
+**"What is the editor doing?" panel (one keystroke, e.g. `Alt+?`):**
+
+```
+Project actions
+• Activated direnv (matched .envrc hash, allowed once)
+• Started rust-analyzer (Cargo.toml found)
+• Skipped: .devcontainer (you chose "stay local")
+[Revisit decisions] [Restrict this folder]
+```
+
+Every decision is visible and revisitable. Discoverability without
+nagging.
+
+### What disappears from the user's life
+
+- The phrase "Trust this folder?" Replaced by "this is outside your
+  usual workspaces" when novel, silent when familiar.
+- The "would you like to reopen in container?" popup, repeatedly.
+  Replaced by one question per folder, ever.
+- The `(locked)` pill. Replaced by a status line that says *what* is
+  gated and *what to do*.
+- A modal workspace-trust dialog blocking the editor on open. Ever.
+- Stacked popups. Inline banners replace popups; the status bar replaces
+  ambient indicators.
+- The need to know what "Restricted mode" means. Either the editor is
+  doing what you expect (trusted) or it's not, and a banner explains
+  what's gated and offers the obvious next step.
+
+### Capabilities the editor needs to deliver this
+
+Not implementation detail, but capabilities that have to exist:
+
+- **Persistent memory of every decision per folder**, surviving across
+  sessions and machines (sync via dotfiles or a config service).
+- **Provenance awareness** — heuristics about whether a folder was
+  `git clone`d into a usual workspace, downloaded, or unzipped.
+- **Content fingerprinting** — `.envrc` allowed by hash, so editing it
+  re-asks; the same `.envrc` across multiple folders only asks once.
+- **A real status bar with click affordances** — the indicator *is* the
+  affordance, not a separate "click here to elevate" button.
+- **A banner system distinct from popups** — non-modal, dismissible,
+  persistent until acted on, at most one on screen at a time.
+- **An action log** — what the editor decided, when, and why. Visible.
+- **Settings that mean what they say** — "auto-activate direnv" actually
+  skips the banner.
+
+### Failure modes we have to design around
+
+- **Over-eager auto-activate** wipes the user's `PATH`. Mitigation:
+  status bar visibly changes; action log shows what happened; one
+  keystroke undo.
+- **Under-eager refuse-to-help** leaves the user in a restricted folder
+  wondering why nothing works. Mitigation: banner is *always* present
+  when there's a gated decision pending — no silent restrictions.
+- **Persistent-decision regret**: user clicks "Trust always" and later
+  wishes they hadn't. Mitigation: action log makes every decision
+  visible and revisitable.
+- **Novel-folder false positive**: editor thinks a familiar folder is
+  novel because the user reorganized their workspace. Mitigation:
+  provenance heuristics are advisory; worst case is one extra banner.
+- **Banner fatigue**: banners accumulate, become as bad as popups.
+  Mitigation: at most one banner on screen; secondary banners queue
+  silently and reveal as the user resolves the first.
+
+### Why the rest of this doc exists
+
+The North Star is the target. The rules below are what we can ship on
+the current architecture in this PR + the next couple. They consciously
+trade some of the ideal (real provenance heuristics, content-hash
+fingerprinting, sync-across-machines memory, a banner system distinct
+from popups, an action log) for things that are tractable today
+(one-popup-at-a-time within a single open, per-folder memory in
+`trust.json`, the existing action-popup mechanism). When a future PR can
+move us closer to the ideal — e.g., replacing the activate popup with a
+non-modal banner — that PR should reference this section and explain
+which principle it advances.
+
 ## Phase 1 (this PR) vs. Phase 2 (follow-ups)
 
 Implementing all eight rules end-to-end touches the trust gate, persistence
@@ -31,10 +207,30 @@ changes are tracked as Phase 2.
 The rest of this document describes the full design. Items not yet wired in
 Phase 1 are called out inline.
 
-## Goal
+## Goal of the stepping-stone work
 
 > Trust once, activate silently where safe, ask only when running shell —
 > and make the non-trusted state visible.
+
+This is the **near-term** goal — what the rules below collectively achieve
+on the current architecture. It is *not* the North Star; it is the
+shortest path toward the North Star that fits the existing popup,
+status-bar, and persistence primitives. The differences are deliberate:
+
+- Today we still use modal action popups, not banners, because the banner
+  primitive doesn't exist. Once it does, every popup the rules below
+  describe should migrate to a banner.
+- Today we still ask about `.envrc` on first open instead of inferring
+  from provenance, because provenance heuristics don't exist. Once they
+  do, the combined trust+activate popup should be silent for clones into
+  trusted parents.
+- Today we still surface "(locked)" in the env pill, because clickable
+  status-bar elements with custom handlers don't exist. Once they do,
+  `(locked)` becomes a status-line affordance instead of a passive label.
+
+Every "1" in the right column below is shorthand for "until banners exist
+and provenance heuristics exist." When they do, the column should read
+"0."
 
 | Folder contents | Popups today | Popups after this plan |
 |---|---|---|
@@ -283,7 +479,7 @@ clones. The setting must be off by default because the entire point of
 trust is to gate cloning hostile content into trusted-ancestor directories
 (the documented VS Code attack pattern).
 
-## Non-goals
+## Non-goals (of this stepping-stone plan)
 
 - Changing the trust threat model or the sandboxed-execution semantics —
   see `workspace-trust-sandbox-design.md`.
@@ -291,6 +487,76 @@ trust is to gate cloning hostile content into trusted-ancestor directories
   authority changes are heavyweight.
 - File-watching `.envrc` for live reload during a session. Reload remains
   a manual `Env: Reload` command, as today.
+
+These are non-goals for *this* plan, not for the North Star. The ideal
+UX described at the top eventually subsumes some of these (file-watching
+for hash changes folds naturally into the content-fingerprint capability
+in §"Capabilities the editor needs to deliver this"). But the stepping
+stones don't need to ship them.
+
+## Path from here to the North Star
+
+The rules below land roughly 60–70% of the user-visible North Star UX on
+the existing primitives. To close the remaining gap, each of the
+following capability investments would compound — they unlock the
+*invisibility* that the North Star describes:
+
+1. **Non-modal banner system** (highest-leverage). Today every popup
+   blocks something — focus, input, the visual center of the screen.
+   The North Star asks for banners: an at-most-one persistent strip that
+   doesn't steal focus, has dismiss/act buttons, and queues. Once this
+   primitive exists, the env / devcontainer / trust-elevation prompts in
+   the rules below should migrate to it. The popup is reserved for the
+   handful of cases that genuinely need to interrupt (e.g., destructive
+   confirmations).
+2. **Provenance heuristics.** Today we treat every new folder identically
+   regardless of how it arrived on disk. The North Star wants
+   `git clone` into `~/code/` to be implicitly trusted, while
+   `/tmp/unzipped` is implicitly suspect. Heuristics worth investing in:
+   parent-folder trust (Rule 8 here, but framed as a heuristic not a
+   setting), origin-of-folder via git remote URL hostname, path prefix
+   patterns the user keeps clean code under, OS-level "downloaded from
+   the internet" marks. Each is fallible; combined with the action log
+   they're forgivable.
+3. **Per-marker content fingerprinting in core.** Rule 5 in this plan.
+   Beyond what Rule 5 covers: a global "I trust this `.envrc` hash"
+   ledger that spans folders (the same env script committed to ten
+   projects only asks once), and a "this file changed since I trusted
+   it" prompt that compares the new content side-by-side with the
+   trusted version.
+4. **Clickable status-bar elements with custom handlers.** Today the
+   env pill is informational; the chip in Rule 6 is informational; the
+   authority indicator is informational. The North Star wants every
+   status-bar indicator to *be* its own affordance. This needs a plugin
+   API for click handlers on registered status-bar elements (or a
+   core-side renderer that dispatches to a registered hook).
+5. **An action log / "what is the editor doing?" panel.** Distinct from
+   the existing status-message scrollback — a structured record of every
+   trust, env, and authority decision the editor has made for this
+   workspace, with timestamps and "revisit" buttons. This is what makes
+   silent auto-activation safe: the user can always audit. Without it,
+   silent activation feels like the editor lying.
+6. **Cross-machine sync for decisions.** The North Star assumes that
+   trusting a folder on machine A means it's trusted on machine B. Today
+   `trust.json` lives in the user's data dir, so this is an upstream
+   sync problem (dotfiles or a config service), not an editor problem —
+   but the editor should make the file easy to sync (stable schema,
+   merge-friendly format, documented location).
+7. **Read-only mode as a first-class trust level.** The North Star's
+   "Read-only mode" option for suspicious folders isn't in our trust
+   model today — we have Restricted (gates code execution) but not "no
+   writes, no edits even." Worth designing in: a fourth trust level
+   below Restricted, scoped to "I'm just reading."
+
+A reasonable sequencing: (1) banner system, (4) clickable status bar
+elements, (5) action log — these three together cover the majority of
+the user-visible North Star. (2) and (3) are background-only changes that
+make the experience feel magical without changing what's on screen. (6)
+and (7) are stretch goals.
+
+The rules below ship without any of these; each subsequent PR that
+delivers one should reference this section and identify which North Star
+capability it unlocks.
 
 ## Test plan
 
