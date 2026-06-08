@@ -14,9 +14,6 @@ Fresh brings the intuitive UX of VS Code and Sublime Text to the terminal. Stand
 
 Built for real-world performance: Fresh handles [multi-gigabyte files](https://noamlewis.com/blog/2025/12/09/how-fresh-loads-huge-files-fast) with negligible memory overhead and delivers consistently low-latency input, regardless of file size.
 
-> Change near top of README.
-
-
 ### Command Palette & Fuzzy Finder
 
 One shortcut to find files, run commands, switch buffers, and jump to any line.
