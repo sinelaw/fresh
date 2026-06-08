@@ -141,6 +141,14 @@ pub(crate) struct ChromeLayout {
     /// Status bar remote-authority indicator area (row, start_col, end_col)
     /// — clickable to open the remote-authority context menu.
     pub status_bar_remote_area: Option<(u16, u16, u16)>,
+    /// Plugin-registered status-bar token areas, keyed by
+    /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
+    /// by `handle_click_status_bar` which fires the
+    /// `status_bar_token_clicked` hook on a hit so the registering
+    /// plugin can react (typically by re-opening a deferred prompt).
+    /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
+    /// design context.
+    pub status_bar_plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing

@@ -306,6 +306,20 @@ pub enum HookArgs {
         action_id: String,
     },
 
+    /// User clicked a plugin-registered status-bar token. Fires
+    /// regardless of which plugin registered it; subscribers filter
+    /// by `plugin_name` + `token_name`. Plugins typically use this
+    /// to re-open a deferred prompt or surface the relevant
+    /// settings UI for what the token represents (e.g., trust chip
+    /// click → trust elevation popup, env pill click → env activate
+    /// popup).
+    StatusBarTokenClicked {
+        /// Plugin that originally called `RegisterStatusBarElement`.
+        plugin_name: String,
+        /// Token name within that plugin's namespace.
+        token_name: String,
+    },
+
     /// Background process output (streaming)
     ProcessOutput {
         /// The process ID

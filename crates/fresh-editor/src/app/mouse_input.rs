@@ -2380,6 +2380,29 @@ impl Editor {
                 return Some(self.handle_action(Action::ShowStatusLog));
             }
         }
+        // Plugin-registered tokens. Walk the per-frame map produced by
+        // `render_status_bar`; on a hit, fire `status_bar_token_clicked`
+        // so the registering plugin can react. We split the registry key
+        // (`"<plugin>:<token>"`) on the first colon — that's how
+        // `register_status_bar_element` builds it.
+        let plugin_areas = self.active_chrome().status_bar_plugin_token_areas.clone();
+        for (key, (r, s, e)) in plugin_areas {
+            if row == r && col >= s && col < e {
+                let (plugin_name, token_name) = match key.split_once(':') {
+                    Some((p, t)) => (p.to_string(), t.to_string()),
+                    None => (String::new(), key.clone()),
+                };
+                self.dismiss_menu_popups_for_prompt();
+                self.plugin_manager.read().unwrap().run_hook(
+                    "status_bar_token_clicked",
+                    crate::services::plugins::hooks::HookArgs::StatusBarTokenClicked {
+                        plugin_name,
+                        token_name,
+                    },
+                );
+                return Some(Ok(()));
+            }
+        }
         None
     }
 

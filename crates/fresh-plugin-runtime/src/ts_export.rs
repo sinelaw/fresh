@@ -631,6 +631,13 @@ interface HookEventMap {
 
   // ── UI events ────────────────────────────────────────────────────────────
   action_popup_result: { popup_id: string; action_id: string };
+  /**
+   * User clicked a plugin-registered status-bar token. Subscribers
+   * filter by `plugin_name` + `token_name`. Use this to re-open a
+   * deferred prompt or surface the relevant settings UI for whatever
+   * the token represents (e.g. trust chip → trust-elevation popup).
+   */
+  status_bar_token_clicked: { plugin_name: string; token_name: string };
   process_output: { process_id: number; data: string };
   language_changed: { buffer_id: number; language: string };
   theme_inspect_key: { theme_name: string; key: string };

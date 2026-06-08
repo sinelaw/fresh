@@ -1084,6 +1084,8 @@ impl Editor {
                 status_bar_layout.language_indicator;
             self.active_chrome_mut().status_bar_message_area = status_bar_layout.message_area;
             self.active_chrome_mut().status_bar_remote_area = status_bar_layout.remote_indicator;
+            self.active_chrome_mut().status_bar_plugin_token_areas =
+                status_bar_layout.plugin_token_areas;
         }
 
         // Render search options bar when in search prompt

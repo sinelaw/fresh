@@ -171,6 +171,11 @@ impl RemoteIndicatorOverride {
 struct RenderedElement {
     text: String,
     kind: ElementKind,
+    /// For `ElementKind::Custom` elements, the plugin-registered token
+    /// key (`"<plugin>:<token>"`) — preserved here so the layout pass
+    /// can record this element's screen area under the same key for
+    /// click dispatch. `None` for every built-in element kind.
+    token_key: Option<String>,
 }
 
 /// Three-state LSP status used by the status bar `Lsp` element.
@@ -267,6 +272,18 @@ pub struct StatusBarLayout {
     /// Remote authority indicator area (row, start_col, end_col) - clickable
     /// to open the remote-authority context menu.
     pub remote_indicator: Option<(u16, u16, u16)>,
+    /// Plugin-registered status-bar token areas, keyed by the
+    /// `"<plugin_name>:<token_name>"` registry key (same key the
+    /// editor uses in `status_bar_token_registry`). Populated by the
+    /// renderer when it draws each plugin token. Mouse click dispatch
+    /// (`handle_click_status_bar`) walks this map after the built-in
+    /// indicators; on a hit, it fires the `status_bar_token_clicked`
+    /// hook so the plugin can react. This is what makes the env
+    /// pill, trust chip, and any future plugin chip first-class
+    /// affordances back to their decisions — see
+    /// `docs/internal/trust-env-devcontainer-ux-plan.md`
+    /// §"Path from here to the North Star".
+    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -888,7 +905,11 @@ impl StatusBarRenderer {
                 } else {
                     ElementKind::Normal
                 };
-                Some(RenderedElement { text, kind })
+                Some(RenderedElement {
+                    text,
+                    kind,
+                    token_key: None,
+                })
             }
             StatusBarElement::Cursor => {
                 if !ctx.state.show_cursors {
@@ -906,6 +927,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text,
                     kind: ElementKind::Normal,
+                    token_key: None,
                 })
             }
             StatusBarElement::CursorCompact => {
@@ -924,6 +946,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text,
                     kind: ElementKind::Normal,
+                    token_key: None,
                 })
             }
             StatusBarElement::Diagnostics => {
@@ -957,6 +980,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: parts.join(" "),
                     kind: ElementKind::Normal,
+                    token_key: None,
                 })
             }
             StatusBarElement::CursorCount => {
@@ -966,6 +990,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: t!("status.cursors", count = ctx.cursors.count()).to_string(),
                     kind: ElementKind::Normal,
+                    token_key: None,
                 })
             }
             StatusBarElement::Messages => {
@@ -986,6 +1011,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: parts.join(" | "),
                     kind: ElementKind::Messages,
+                    token_key: None,
                 })
             }
             StatusBarElement::Chord => {
@@ -1003,15 +1029,18 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: format!("[{}]", chord_str),
                     kind: ElementKind::Normal,
+                    token_key: None,
                 })
             }
             StatusBarElement::LineEnding => Some(RenderedElement {
                 text: ctx.state.buffer.line_ending().display_name().to_string(),
                 kind: ElementKind::LineEnding,
+                token_key: None,
             }),
             StatusBarElement::Encoding => Some(RenderedElement {
                 text: ctx.state.buffer.encoding().display_name().to_string(),
                 kind: ElementKind::Encoding,
+                token_key: None,
             }),
             StatusBarElement::Language => {
                 let text = if ctx.state.language == "text"
@@ -1026,6 +1055,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text,
                     kind: ElementKind::Language,
+                    token_key: None,
                 })
             }
             StatusBarElement::Lsp => {
@@ -1035,6 +1065,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: ctx.lsp_status.to_string(),
                     kind: ElementKind::Lsp,
+                    token_key: None,
                 })
             }
             StatusBarElement::Warnings => {
@@ -1044,6 +1075,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: format!("[\u{26a0} {}]", ctx.general_warning_count),
                     kind: ElementKind::WarningBadge,
+                    token_key: None,
                 })
             }
             StatusBarElement::Update => {
@@ -1051,6 +1083,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: t!("status.update_available", version = version).to_string(),
                     kind: ElementKind::Update,
+                    token_key: None,
                 })
             }
             StatusBarElement::Palette => {
@@ -1064,6 +1097,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text: t!("status.palette", shortcut = shortcut).to_string(),
                     kind: ElementKind::Palette,
+                    token_key: None,
                 })
             }
             StatusBarElement::Clock => {
@@ -1072,6 +1106,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text,
                     kind: ElementKind::Clock,
+                    token_key: None,
                 })
             }
             StatusBarElement::RemoteIndicator => {
@@ -1098,6 +1133,7 @@ impl StatusBarRenderer {
                 Some(RenderedElement {
                     text,
                     kind: ElementKind::RemoteIndicator(state),
+                    token_key: None,
                 })
             }
             StatusBarElement::CustomToken(key) => {
@@ -1105,6 +1141,7 @@ impl StatusBarRenderer {
                     Some(RenderedElement {
                         text: value.clone(),
                         kind: ElementKind::Custom,
+                        token_key: Some(key.clone()),
                     })
                 } else {
                     None // Skip rendering if no value set
@@ -1263,10 +1300,16 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Map an ElementKind to the layout field it should populate.
+    /// Map a rendered element to the layout field(s) it should populate.
+    /// Built-in indicators get their dedicated `Option<(row, start_col,
+    /// end_col)>` slot. Plugin tokens (`ElementKind::Custom` carrying a
+    /// `token_key`) get an entry in `plugin_token_areas`, keyed by the
+    /// plugin's registry key — that's what `handle_click_status_bar`
+    /// uses to dispatch clicks back to the right plugin.
     fn update_layout_for_element(
         layout: &mut StatusBarLayout,
         kind: ElementKind,
+        token_key: Option<&str>,
         row: u16,
         start_col: u16,
         end_col: u16,
@@ -1282,6 +1325,13 @@ impl StatusBarRenderer {
             ElementKind::Messages => layout.message_area = Some((row, start_col, end_col)),
             ElementKind::RemoteIndicator(_) => {
                 layout.remote_indicator = Some((row, start_col, end_col))
+            }
+            ElementKind::Custom => {
+                if let Some(key) = token_key {
+                    layout
+                        .plugin_token_areas
+                        .insert(key.to_string(), (row, start_col, end_col));
+                }
             }
             _ => {}
         }
@@ -1354,10 +1404,15 @@ impl StatusBarRenderer {
     }
 
     /// Render a configured side (left/right) into styled per-element groups.
+    /// Each tuple carries the rendered spans, total width, the kind tag
+    /// (for layout/click-area routing of built-ins), and the plugin
+    /// token key (`Some` only for `ElementKind::Custom`) so the
+    /// placement loops can record the screen area under the same key
+    /// the plugin registered.
     fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
-    ) -> Vec<(Vec<Span<'static>>, usize, ElementKind)> {
+    ) -> Vec<(Vec<Span<'static>>, usize, ElementKind, Option<String>)> {
         let rendered: Vec<RenderedElement> = config_side
             .iter()
             .filter_map(|elem| Self::render_element(elem, ctx))
@@ -1372,9 +1427,10 @@ impl StatusBarRenderer {
             .into_iter()
             .map(|r| {
                 let kind = r.kind;
+                let token_key = r.token_key.clone();
                 let (spans, width) =
                     Self::element_spans(&r, theme, hover, warning_level, lsp_state);
-                (spans, width, kind)
+                (spans, width, kind, token_key)
             })
             .collect()
     }
@@ -1427,7 +1483,7 @@ impl StatusBarRenderer {
         // alongside that minimum left budget.  We never drop the *first*
         // right element so the user keeps at least one piece of right-side
         // status if any was configured.
-        let total_right_width: usize = right_items.iter().map(|(_, w, _)| *w).sum::<usize>()
+        let total_right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
             + separator_width * right_items.len().saturating_sub(1);
         let left_min_target = available_width
             .saturating_mul(2)
@@ -1448,7 +1504,7 @@ impl StatusBarRenderer {
             }
         }
 
-        let right_width: usize = right_items.iter().map(|(_, w, _)| *w).sum::<usize>()
+        let right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
             + separator_width * right_items.len().saturating_sub(1);
 
         let narrow = available_width < 15;
@@ -1466,7 +1522,7 @@ impl StatusBarRenderer {
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut used_left: usize = 0;
 
-        for (idx, (item_spans, width, kind)) in left_items.into_iter().enumerate() {
+        for (idx, (item_spans, width, kind, token_key)) in left_items.into_iter().enumerate() {
             let sep_width = if idx == 0 { 0 } else { separator_width };
             if used_left + sep_width >= left_max_width {
                 break;
@@ -1486,6 +1542,7 @@ impl StatusBarRenderer {
                 Self::update_layout_for_element(
                     &mut layout,
                     kind,
+                    token_key.as_deref(),
                     area.y,
                     area.x + start_col as u16,
                     area.x + (start_col + width) as u16,
@@ -1510,6 +1567,7 @@ impl StatusBarRenderer {
                 Self::update_layout_for_element(
                     &mut layout,
                     kind,
+                    token_key.as_deref(),
                     area.y,
                     area.x + start_col as u16,
                     area.x + (start_col + truncated_width) as u16,
@@ -1540,7 +1598,7 @@ impl StatusBarRenderer {
         }
 
         let mut current_col = area.x + col_offset as u16;
-        for (idx, (item_spans, width, kind)) in right_items.into_iter().enumerate() {
+        for (idx, (item_spans, width, kind, token_key)) in right_items.into_iter().enumerate() {
             if idx > 0 && separator_width > 0 {
                 spans.push(Span::styled(separator.to_string(), separator_style));
                 current_col += separator_width as u16;
@@ -1548,6 +1606,7 @@ impl StatusBarRenderer {
             Self::update_layout_for_element(
                 &mut layout,
                 kind,
+                token_key.as_deref(),
                 area.y,
                 current_col,
                 current_col + width as u16,
