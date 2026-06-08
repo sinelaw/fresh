@@ -1125,7 +1125,12 @@ impl GrammarRegistry {
                 by_name.insert(short.to_lowercase(), idx);
             }
             for ext in &entry.extensions {
-                by_extension.entry(ext.to_lowercase()).or_insert(idx);
+                let ext_key = ext.to_lowercase();
+                if entry.engines.syntect.is_none() && entry.engines.tree_sitter.is_some() {
+                    by_extension.insert(ext_key, idx);
+                } else {
+                    by_extension.entry(ext_key).or_insert(idx);
+                }
                 by_filename.entry(ext.clone()).or_insert(idx);
             }
             for filename in &entry.filenames {
@@ -2230,17 +2235,31 @@ mod tests {
     fn test_config_only_language_appears_in_catalog() {
         let mut registry = GrammarRegistry::default();
         let mut languages = std::collections::HashMap::new();
-        // "fish" isn't in syntect; grammar="fish" doesn't resolve either.
-        languages.insert("fish".to_string(), lang_cfg("fish", &["fish"], &[]));
+        languages.insert("elvish".to_string(), lang_cfg("elvish", &["elv"], &[]));
         registry.apply_language_config(&languages);
 
         let entry = registry
-            .find_by_name("fish")
-            .expect("fish should be in the catalog after apply_language_config");
+            .find_by_name("elvish")
+            .expect("elvish should be in the catalog after apply_language_config");
         assert!(entry.engines.syntect.is_none());
         assert!(entry.engines.tree_sitter.is_none());
+        assert_eq!(entry.language_id, "elvish");
+        assert!(entry.extensions.iter().any(|e| e == "elv"));
+    }
+
+    #[test]
+    fn test_fish_extension_prefers_tree_sitter_entry_over_bash_fallback() {
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_extension("fish")
+            .expect(".fish should resolve to a grammar entry");
+
         assert_eq!(entry.language_id, "fish");
-        assert!(entry.extensions.iter().any(|e| e == "fish"));
+        assert_eq!(entry.display_name, "Fish");
+        assert_eq!(
+            entry.engines.tree_sitter,
+            Some(fresh_languages::Language::Fish)
+        );
     }
 
     /// Config-declared extensions must override the built-in mapping. If the

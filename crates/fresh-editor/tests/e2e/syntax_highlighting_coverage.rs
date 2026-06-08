@@ -148,6 +148,7 @@ test_highlighting_works!(test_highlight_gitconfig, "hello.gitconfig", 2);
 
 // --- Alternate filenames/extensions that should work ---
 test_highlighting_works!(test_highlight_bash_ext, "hello.bash", 2);
+test_highlighting_works!(test_highlight_fish, "hello.fish", 2);
 test_highlighting_works!(test_highlight_zsh, "hello.zsh", 2);
 test_highlighting_works!(test_highlight_makefile, "Makefile", 2);
 test_highlighting_works!(test_highlight_gnumakefile, "GNUmakefile", 2);

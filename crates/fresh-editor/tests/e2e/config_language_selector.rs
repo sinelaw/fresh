@@ -1,8 +1,7 @@
 //! E2E tests for user-configured languages in the language selector popup.
 //!
-//! When a user configures a custom language (e.g. "fish") in config.json with
-//! a grammar that doesn't exist in syntect, the language should still appear
-//! in the Set Language popup, be marked as current when active, and be
+//! When a user configures a language in config.json, the language should still
+//! appear in the Set Language popup, be marked as current when active, and be
 //! selectable to switch to.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
@@ -43,7 +42,7 @@ fn make_fish_config() -> Config {
     config
 }
 
-/// Opening a .fish file with a "fish" language config should show "fish" in
+/// Opening a .fish file with a "fish" language config should show "Fish" in
 /// the status bar, and the Set Language popup should list "fish" as an option
 /// marked as current.
 #[test]
@@ -67,11 +66,11 @@ fn test_config_language_visible_in_set_language_popup() {
     harness.open_file(&fish_file).unwrap();
     harness.render().unwrap();
 
-    // The status bar should show "fish"
+    // The status bar should show the built-in Fish display name.
     let status_bar = harness.get_status_bar();
     assert!(
-        status_bar.contains("fish"),
-        "Status bar should show 'fish' for a .fish file. Got: {}",
+        status_bar.contains("Fish"),
+        "Status bar should show 'Fish' for a .fish file. Got: {}",
         status_bar
     );
 
@@ -84,11 +83,11 @@ fn test_config_language_visible_in_set_language_popup() {
     harness.type_text("fish").unwrap();
     harness.render().unwrap();
 
-    // The popup should show "fish" as an option
+    // The popup should show Fish as an option.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("fish"),
-        "Set Language popup should show 'fish' as a language option.\nScreen:\n{}",
+        screen.contains("Fish"),
+        "Set Language popup should show 'Fish' as a language option.\nScreen:\n{}",
         screen
     );
 
@@ -134,11 +133,11 @@ fn test_config_language_selector_does_not_select_bash_for_fish() {
     harness.open_file(&fish_file).unwrap();
     harness.render().unwrap();
 
-    // The status bar should show "fish", not "Bourne Again Shell (bash)"
+    // The status bar should show Fish, not "Bourne Again Shell (bash)".
     let status_bar = harness.get_status_bar();
     assert!(
-        status_bar.contains("fish"),
-        "Status bar should show 'fish', not bash. Got: {}",
+        status_bar.contains("Fish"),
+        "Status bar should show 'Fish', not bash. Got: {}",
         status_bar
     );
     assert!(
@@ -159,10 +158,10 @@ fn test_config_language_selector_does_not_select_bash_for_fish() {
 
     let screen = harness.screen_to_string();
 
-    // "fish" should appear with "(current)" annotation in the description
+    // Fish should appear with "(current)" annotation in the description.
     assert!(
-        screen.contains("fish") && screen.contains("current"),
-        "fish should be listed and marked as current in the Set Language popup.\nScreen:\n{}",
+        screen.contains("Fish") && screen.contains("current"),
+        "Fish should be listed and marked as current in the Set Language popup.\nScreen:\n{}",
         screen
     );
 
@@ -188,8 +187,8 @@ fn test_config_language_selector_does_not_select_bash_for_fish() {
     harness.render().unwrap();
 }
 
-/// Selecting "fish" from the Set Language popup should set the language to
-/// "fish" and the status bar should update accordingly.
+/// Selecting Fish from the Set Language popup should set the language to the
+/// Fish entry and the status bar should update accordingly.
 #[test]
 fn test_select_config_language_from_popup_updates_status_bar() {
     let config = make_fish_config();
@@ -232,11 +231,11 @@ fn test_select_config_language_from_popup_updates_status_bar() {
         .unwrap();
     harness.render().unwrap();
 
-    // Status bar should now show "fish"
+    // Status bar should now show Fish.
     let status_bar = harness.get_status_bar();
     assert!(
-        status_bar.contains("fish"),
-        "After selecting fish, status bar should show 'fish'. Got: {}",
+        status_bar.contains("Fish"),
+        "After selecting Fish, status bar should show 'Fish'. Got: {}",
         status_bar
     );
 
@@ -250,8 +249,8 @@ fn test_select_config_language_from_popup_updates_status_bar() {
 
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("fish") && screen.contains("current"),
-        "After switching to fish, the Set Language popup should show fish as current.\nScreen:\n{}",
+        screen.contains("Fish") && screen.contains("current"),
+        "After switching to Fish, the Set Language popup should show Fish as current.\nScreen:\n{}",
         screen
     );
 
