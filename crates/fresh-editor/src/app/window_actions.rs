@@ -179,6 +179,11 @@ impl crate::app::Editor {
         let previous_id = self.active_window;
         self.active_window = id;
 
+        // The argv to re-run if this session is restored. `None` (plain
+        // shell) is recorded as an empty vec: a present entry — even empty —
+        // marks this as a restorable *session* terminal (re-spawn it on
+        // restore), distinct from a throwaway ephemeral build/exec shell.
+        let restore_command = command.clone().unwrap_or_default();
         let spawn_result = {
             let target = self
                 .windows
@@ -208,6 +213,13 @@ impl crate::app::Editor {
                 return Err(e);
             }
         };
+
+        // Mark the freshly-spawned agent terminal restorable so workspace
+        // capture persists it (with its command) and a later launch
+        // re-runs it, instead of the session coming back as a blank pane.
+        if let Some(target) = self.windows.get_mut(&id) {
+            target.terminal_commands.insert(terminal_id, restore_command);
+        }
 
         // The switch has now committed (the spawn succeeded and the active
         // pointer stays on the new window). This path wrote `active_window`

@@ -631,6 +631,14 @@ pub struct Window {
     /// user-opened terminals are absent and persist as before.
     pub ephemeral_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
 
+    /// Argv each terminal was spawned with, when it ran a command other
+    /// than the plain shell (e.g. an Orchestrator agent). Captured at spawn
+    /// and persisted into the workspace so a restored session re-runs the
+    /// same command rather than coming back as a bare shell. Terminals
+    /// spawned as a plain shell have no entry.
+    pub terminal_commands:
+        std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
     /// Plugin-development workspace per buffer (temp dir + LSP
     /// configuration for plugin buffers). Buffer-keyed and buffers
     /// are per-window, so the workspace map follows.
@@ -1794,6 +1802,7 @@ impl Window {
             pending_file_poll_rx: None,
             pending_dir_poll_rx: None,
             ephemeral_terminals: std::collections::HashSet::new(),
+            terminal_commands: std::collections::HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),

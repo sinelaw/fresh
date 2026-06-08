@@ -414,6 +414,13 @@ pub struct SerializedTerminalWorkspace {
     pub rows: u16,
     pub log_path: PathBuf,
     pub backing_path: PathBuf,
+    /// Argv this terminal was spawned with (e.g. an Orchestrator agent
+    /// command), or `None` for a plain shell. Persisted so a restored
+    /// session re-runs its agent instead of coming back as a bare shell —
+    /// the live PTY is ephemeral and isn't otherwise reproducible. Absent
+    /// in workspaces written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
 }
 
 // ============================================================================

@@ -733,8 +733,22 @@ impl crate::app::window::Window {
         self.terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
-        // Spawn the terminal with backing file for incremental scrollback
-        let wrapper_for_spawn = self.resolved_terminal_wrapper();
+        // Spawn the terminal with backing file for incremental scrollback.
+        // When the session persisted an agent command, re-run that exact
+        // argv as the PTY child (mirrors `spawn_terminal_session`) so the
+        // restored session comes back as its agent rather than a bare
+        // shell; otherwise fall back to the configured shell.
+        let wrapper_for_spawn = match terminal.command.as_ref() {
+            Some(argv) if !argv.is_empty() => {
+                let (command, args) = argv.split_first().expect("non-empty argv");
+                crate::services::authority::TerminalWrapper {
+                    command: command.clone(),
+                    args: args.to_vec(),
+                    manages_cwd: false,
+                }
+            }
+            _ => self.resolved_terminal_wrapper(),
+        };
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
@@ -762,6 +776,13 @@ impl crate::app::window::Window {
                 .insert(terminal_id, backing_path.clone());
             self.terminal_log_files.remove(&predicted_id);
             self.terminal_backing_files.remove(&predicted_id);
+        }
+
+        // Carry the restore marker forward (even the empty-vec plain-shell
+        // marker) so a later save re-persists it and the session keeps
+        // restoring across multiple restarts.
+        if let Some(argv) = terminal.command.as_ref() {
+            self.terminal_commands.insert(terminal_id, argv.clone());
         }
 
         // Create buffer for this terminal
@@ -2016,7 +2037,15 @@ impl crate::app::window::Window {
         let mut seen = HashSet::new();
         for terminal_id in self.terminal_buffers.values().copied() {
             if seen.insert(terminal_id) {
-                if self.ephemeral_terminals.contains(&terminal_id) {
+                let command = self.terminal_commands.get(&terminal_id).cloned();
+                // Ephemeral terminals (plugin tool UIs, agent shells) are
+                // normally dropped on save. An ephemeral terminal that
+                // carries a spawn command is the exception: it's an agent
+                // session whose defining process we *can* reproduce, so we
+                // persist a record (with the command) and re-run it on
+                // restore. Commandless ephemerals (build output, exec
+                // shells) stay transient.
+                if self.ephemeral_terminals.contains(&terminal_id) && command.is_none() {
                     continue;
                 }
                 let idx = terminals.len();
@@ -2054,6 +2083,7 @@ impl crate::app::window::Window {
                     rows,
                     log_path,
                     backing_path,
+                    command,
                 });
             }
         }
