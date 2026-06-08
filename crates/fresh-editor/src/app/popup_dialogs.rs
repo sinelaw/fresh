@@ -976,23 +976,25 @@ impl Editor {
     /// and the session server) so the prompt fires regardless of launch mode.
     pub fn maybe_prompt_workspace_trust(&mut self) {
         // Phase 1 of the trust+env+devcontainer UX plan (see
-        // `docs/internal/trust-env-devcontainer-ux-plan.md`): the centered trust
-        // modal is still suppressed on open while the sandboxed-execution model
-        // (`docs/internal/workspace-trust-sandbox-design.md`) is finalized.
-        // Instead, we set the initial trust *level* based on what the folder
-        // contains, so the env-manager plugin can deliver the right UX:
+        // `docs/internal/trust-env-devcontainer-ux-plan.md`): when the
+        // workspace is undecided AND has executable content, two paths:
         //
-        // - Project has env-shell markers (`.envrc`/`mise.toml`/`.tool-versions`)
-        //   and no prior decision → start as **Restricted**. The env-manager
-        //   plugin notices the un-trusted state and surfaces its combined
-        //   "Trust this folder and activate?" popup, which is one decision for
-        //   what is logically one intent. Picking "Trust & activate" dispatches
-        //   the `workspace_trust_trust` action, which records the decision and
-        //   raises the level to Trusted.
-        // - Everything else (path-only env like `.venv`, project manifests,
-        //   devcontainer) → start as **Trusted**, preserving today's WIP
-        //   behavior. Auto-activation for `.venv` happens silently; the
-        //   devcontainer attach popup fires independently from its plugin.
+        // - The folder has env-shell markers (`.envrc`/`mise.toml`/
+        //   `.tool-versions`) — start as Restricted and let the
+        //   env-manager plugin's combined "Trust this folder and
+        //   activate?" popup do the asking, because that prompt is the
+        //   most concrete framing of the decision (it names the
+        //   specific env). The user's "Trust & activate" choice
+        //   dispatches `workspace_trust_trust`, which records the
+        //   decision and raises the level to Trusted.
+        //
+        // - Any other executable content (project manifests, devcontainer-
+        //   only, .NET solution/project files, …) — fire the core trust
+        //   modal here, with concrete framing: the popup names the
+        //   *specific* markers that triggered it (Cargo.toml, build.rs,
+        //   App.sln, devcontainer.json…) rather than the abstract
+        //   "this project can run code on your machine." Start as
+        //   Restricted while waiting for the user to choose.
         //
         // A decision the user explicitly recorded is always honored — this
         // branch only fires for undecided projects.
@@ -1005,6 +1007,10 @@ impl Editor {
 
         let markers =
             crate::services::workspace_trust::executable_content_markers(self.working_dir());
+        if markers.is_empty() {
+            return; // plain text/docs, nothing to gate
+        }
+
         let has_env_shell = markers.iter().any(|m| {
             matches!(
                 m.as_str(),
@@ -1012,18 +1018,19 @@ impl Editor {
             )
         });
 
-        let initial_level = if has_env_shell {
-            // Stay restricted so the env-manager plugin's combined popup
-            // surfaces. The popup elevates to Trusted on "Trust & activate".
-            crate::services::workspace_trust::TrustLevel::Restricted
-        } else {
-            // No shell-env risk — keep the WIP "default to Trusted" behavior
-            // so existing tooling (LSP, build, devcontainer attach) is
-            // un-gated until the full sandboxed-execution model lands.
-            crate::services::workspace_trust::TrustLevel::Trusted
-        };
+        // Both paths start the workspace in Restricted so the user makes
+        // an explicit decision. env-manager surfaces its own popup; the
+        // generic trust modal fires for everything else.
+        self.authority
+            .workspace_trust
+            .set_level(crate::services::workspace_trust::TrustLevel::Restricted);
 
-        self.authority.workspace_trust.set_level(initial_level);
+        if !has_env_shell {
+            // Non-cancellable on open: the choice has to be made, but
+            // any concrete option resolves it. (`Esc` is inert on the
+            // forced-choice variant; user must pick a row.)
+            self.show_workspace_trust_popup(false);
+        }
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this
