@@ -2001,11 +2001,11 @@ function on_review_mouse_click(data: {
         if (key) {
             const file = state.files.find(f => fileKey(f) === key);
             if (file) {
-                if (state.focusOnly && key !== state.filesCurrentKey) {
-                    // Focus mode: switch the center to the clicked file.
+                if (state.focusOnly) {
+                    // Focus mode: switch the center to the clicked file
+                    // (light refresh — center + sidebar + sticky only).
                     state.filesCurrentKey = key;
-                    updateMagitDisplay();
-                    jumpDiffCursorToRow(1, { recenter: false });
+                    refreshFocusedFile();
                 } else {
                     jumpToFile(file);
                 }
@@ -3566,7 +3566,11 @@ async function buildCenterComposite(): Promise<void> {
         return;
     }
 
-    teardownCenterComposite();
+    // Swap the NEW composite into the panel FIRST, then tear down the OLD.
+    // Closing the old before swapping leaves the panel momentarily pointing
+    // at a closed buffer — that's the empty-panel flicker and the stray
+    // "[No Name]" tab (auto-created when the active panel buffer is closed).
+    const prev = state.centerComposite;
     state.centerComposite = {
         fileKey: key!,
         compositeBufId,
@@ -3583,6 +3587,13 @@ async function buildCenterComposite(): Promise<void> {
     // the host split; re-focus the group panel so the review group stays the
     // active tab and the sidebar/comments/toolbar remain visible.
     editor.focusBufferGroupPanel(state.groupId, "diff");
+    if (prev) {
+        try {
+            editor.closeCompositeBuffer(prev.compositeBufId);
+            editor.closeBuffer(prev.oldBufId);
+            editor.closeBuffer(prev.newBufId);
+        } catch { /* already gone */ }
+    }
     editor.flushLayout();
 }
 
@@ -3609,6 +3620,18 @@ function renderCenter(): void {
         applyFolds();
         applyCursorLineOverlay('diff');
     }
+}
+
+/** Light refresh after the focused file changes (nav / sidebar click):
+ *  rebuild only the center + sidebar highlight + sticky, not the static
+ *  toolbar or the file-ordered comments panel. */
+function refreshFocusedFile(): void {
+    if (state.groupId === null) return;
+    renderCenter();
+    if (state.panelBuffers["files"] !== undefined) {
+        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+    }
+    refreshStickyHeader(0);
 }
 
 async function review_drill_down() {
@@ -3938,8 +3961,10 @@ function review_goto_file(delta: number) {
     const next = idx + delta;
     if (next < 0 || next >= vis.length) return;
     state.filesCurrentKey = fileKey(vis[next]);
-    // The center composite rebuilds for the new focus file and self-centers.
-    updateMagitDisplay();
+    // Light refresh: only the center + sidebar highlight + sticky change on a
+    // file switch — rebuilding the toolbar/comments panels too would add
+    // avoidable flicker.
+    refreshFocusedFile();
 }
 function review_goto_next_file() { review_goto_file(1); }
 function review_goto_prev_file() { review_goto_file(-1); }
