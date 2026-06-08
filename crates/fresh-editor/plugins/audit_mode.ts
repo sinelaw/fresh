@@ -2417,6 +2417,10 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     // async, but a key handler firing immediately after must see the new
     // focus to route the next arrow correctly.
     state.focusPanel = panel;
+    // Pin the FILES cursor to the start of the selected row. Without this the
+    // panel keeps whatever column the hidden cursor last had, and focusing it
+    // can scroll the sidebar horizontally to a long path's end-of-line.
+    if (panel === 'files') scrollFilesToSelected();
     refreshFocusIndicators();
 }
 

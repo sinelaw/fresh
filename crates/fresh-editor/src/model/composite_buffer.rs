@@ -296,7 +296,10 @@ impl LineAlignment {
                         '-' => {
                             rows.push(AlignedRow {
                                 pane_lines: vec![
-                                    Some(SourceLineRef { line: o, byte_range: 0..0 }),
+                                    Some(SourceLineRef {
+                                        line: o,
+                                        byte_range: 0..0,
+                                    }),
                                     None,
                                 ],
                                 row_type: RowType::Deletion,
@@ -307,7 +310,10 @@ impl LineAlignment {
                             rows.push(AlignedRow {
                                 pane_lines: vec![
                                     None,
-                                    Some(SourceLineRef { line: n, byte_range: 0..0 }),
+                                    Some(SourceLineRef {
+                                        line: n,
+                                        byte_range: 0..0,
+                                    }),
                                 ],
                                 row_type: RowType::Addition,
                             });

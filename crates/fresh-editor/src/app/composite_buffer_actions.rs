@@ -1280,7 +1280,10 @@ impl Editor {
         if let Some(hunk_configs) = hunks {
             let diff_hunks: Vec<DiffHunk> = hunk_configs
                 .into_iter()
-                .map(|h| DiffHunk::new(h.old_start, h.old_count, h.new_start, h.new_count).with_ops(h.ops))
+                .map(|h| {
+                    DiffHunk::new(h.old_start, h.old_count, h.new_start, h.new_count)
+                        .with_ops(h.ops)
+                })
                 .collect();
 
             // Get line counts from source buffers
@@ -1361,7 +1364,10 @@ impl Editor {
         if let Some(composite) = self.active_window().composite_buffers.get(&buffer_id) {
             let diff_hunks: Vec<DiffHunk> = hunk_configs
                 .into_iter()
-                .map(|h| DiffHunk::new(h.old_start, h.old_count, h.new_start, h.new_count).with_ops(h.ops))
+                .map(|h| {
+                    DiffHunk::new(h.old_start, h.old_count, h.new_start, h.new_count)
+                        .with_ops(h.ops)
+                })
                 .collect();
 
             // Get line counts from source buffers
