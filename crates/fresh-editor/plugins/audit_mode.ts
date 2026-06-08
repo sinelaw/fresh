@@ -1803,14 +1803,23 @@ function refreshStickyHeader(topVisibleRow: number): void {
     let style: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
 
     // topVisibleRow is 0-indexed; fileHeaderRows are 1-indexed.
-    const top1 = topVisibleRow + 1;
     let bestFile: FileEntry | null = null;
-    let bestRow = 0;
-    for (const f of state.files) {
-        const row = state.fileHeaderRows[fileKey(f)];
-        if (row !== undefined && row <= top1 && row > bestRow) {
-            bestRow = row;
-            bestFile = f;
+    if (state.focusOnly) {
+        // Focus mode: the current file is the explicit nav target
+        // (`filesCurrentKey`), not whatever happens to be scrolled to the
+        // top. Re-deriving from scroll here fought file navigation (after
+        // `,`/`.` the top-visible header would clobber the focus) and broke
+        // the composite center, which has no in-buffer file headers at all.
+        bestFile = state.files.find(f => fileKey(f) === state.filesCurrentKey) ?? null;
+    } else {
+        const top1 = topVisibleRow + 1;
+        let bestRow = 0;
+        for (const f of state.files) {
+            const row = state.fileHeaderRows[fileKey(f)];
+            if (row !== undefined && row <= top1 && row > bestRow) {
+                bestRow = row;
+                bestFile = f;
+            }
         }
     }
 
@@ -1859,14 +1868,16 @@ function refreshStickyHeader(topVisibleRow: number): void {
         properties: { type: "sticky-header" },
     }]);
 
-    // Keep the sidebar's highlighted file in sync with the diff's top
-    // file. Only repaint when the current file actually changed so
-    // scrolling within one file doesn't rebuild the sidebar.
-    const curKey = bestFile ? fileKey(bestFile) : null;
-    if (curKey !== state.filesCurrentKey) {
-        state.filesCurrentKey = curKey;
-        if (state.panelBuffers["files"] !== undefined) {
-            editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+    // Legacy multi-file-stream mode only: keep the sidebar's highlighted
+    // file in sync with the diff's top file. In focus mode the current file
+    // is driven by explicit navigation, so we must NOT re-derive it here.
+    if (!state.focusOnly) {
+        const curKey = bestFile ? fileKey(bestFile) : null;
+        if (curKey !== state.filesCurrentKey) {
+            state.filesCurrentKey = curKey;
+            if (state.panelBuffers["files"] !== undefined) {
+                editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+            }
         }
     }
 }
