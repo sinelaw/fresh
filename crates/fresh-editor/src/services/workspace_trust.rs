@@ -168,6 +168,16 @@ impl WorkspaceTrust {
         }
     }
 
+    /// Set the in-memory level WITHOUT persisting. Used to seed an
+    /// "initial level" while we wait for the user to explicitly choose
+    /// (e.g., the open-time trust modal): the gate consults this level
+    /// for any spawn that happens while the modal is up, but if the
+    /// user cancels (quits) without picking a row, the on-disk store
+    /// stays undecided and the modal fires again next open.
+    pub fn set_level_transient(&self, level: TrustLevel) {
+        self.level.store(level.as_u8(), Ordering::Relaxed);
+    }
+
     /// Update the workspace root after a working-directory change. Only the
     /// containment roots move here; the per-project store is swapped
     /// separately via [`Self::set_store`] (the caller knows the new project's

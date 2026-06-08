@@ -1029,21 +1029,27 @@ impl Editor {
             // Nothing genuinely needs gating. Default to Trusted so the
             // restricted chip doesn't appear, env-manager auto-activates
             // any path-only env silently, and the user isn't blocked on
-            // a question that has no real downside.
+            // a question that has no real downside. Persist this — it's
+            // the same decision we'd record if the user had explicitly
+            // confirmed.
             self.authority
                 .workspace_trust
                 .set_level(crate::services::workspace_trust::TrustLevel::Trusted);
             return;
         }
 
-        // For env-shell and other executable content, start Restricted
-        // and let the right surface ask. env-manager's combined "Trust
-        // this folder and activate?" popup is the more concrete framing
-        // for env-shell; the generic trust modal fires for everything
-        // else and names the actual markers in its body.
+        // For env-shell and other executable content, seed Restricted
+        // *in memory only* — `set_level_transient` does not write to
+        // disk. The on-disk store stays undecided until the user picks
+        // a concrete option in the surfaced prompt. That preserves the
+        // contract: cancelling (quit) leaves the project undecided so
+        // the prompt fires again next time, while any deliberate
+        // choice (env-manager's "Trust & activate" / "Never here" or
+        // the core modal's three radios) writes the decision through
+        // via `set_level`.
         self.authority
             .workspace_trust
-            .set_level(crate::services::workspace_trust::TrustLevel::Restricted);
+            .set_level_transient(crate::services::workspace_trust::TrustLevel::Restricted);
 
         if !has_env_shell {
             // Non-cancellable on open: the choice has to be made, but
