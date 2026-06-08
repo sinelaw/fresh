@@ -4620,10 +4620,22 @@ async function getCompositeLineInfo(): Promise<PendingCommentInfo | null> {
     const fileHunks = state.hunks.filter(
         h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
     );
-    const hunk = fileHunks.find(h =>
+    let hunk = fileHunks.find(h =>
         (newLine !== undefined && newLine >= h.range.start && newLine <= h.range.end) ||
         (oldLine !== undefined && oldLine >= h.oldRange.start && oldLine <= h.oldRange.end)
     );
+    if (!hunk && fileHunks.length > 0) {
+        // The side-by-side composite shows the whole file, so the cursor can
+        // sit on a context line outside every hunk. Allow commenting there by
+        // anchoring to the nearest hunk (the comment is still recorded against
+        // a real line and listed in the comments panel) — "comment anywhere".
+        const pos = newLine ?? oldLine ?? 0;
+        hunk = fileHunks.reduce((best, h) => {
+            const hStart = newLine !== undefined ? h.range.start : h.oldRange.start;
+            const bStart = newLine !== undefined ? best.range.start : best.oldRange.start;
+            return Math.abs(hStart - pos) < Math.abs(bStart - pos) ? h : best;
+        }, fileHunks[0]);
+    }
     if (!hunk) return null;
     return { hunkId: hunk.id, file: file.path, lineType, oldLine, newLine, lineContent: undefined };
 }
