@@ -28,6 +28,7 @@ pub mod devcontainer_usability_repros;
 pub mod diagnostics_panel_bugs;
 pub mod diagnostics_panel_jump;
 pub mod diff_cursor;
+pub mod env_manager;
 pub mod find_file;
 pub mod git;
 pub mod git_log_split_tab_focus;
