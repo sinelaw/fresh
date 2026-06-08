@@ -4194,6 +4194,10 @@ editor.on("after_file_save", () => {
  * diff jump around whenever the user is reading anywhere else.
  */
 function jumpDiffCursorToRow(row: number, options?: { recenter?: boolean }): void {
+    // In side-by-side the unified diff text buffer isn't mounted (the
+    // composite occupies the diff panel), so moving its cursor is a no-op
+    // that logs a "no splits found" warning. Skip it.
+    if (state.centerComposite) return;
     const diffId = state.panelBuffers["diff"];
     if (diffId === undefined) return;
     const idx = row - 1;
