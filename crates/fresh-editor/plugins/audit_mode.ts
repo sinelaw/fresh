@@ -4261,6 +4261,35 @@ interface PendingCommentInfo {
  * unless the cursor is on a real diff line (`add` / `remove` / `context`)
  * — comments are always line-based, never hunk-level.
  */
+/** Composite-center equivalent of getCurrentLineInfo: maps the composite
+ *  cursor (old/new source line) onto the focused file's hunk + line. */
+async function getCompositeLineInfo(): Promise<PendingCommentInfo | null> {
+    const cc = state.centerComposite;
+    if (!cc) return null;
+    const file = state.files.find(f => fileKey(f) === cc.fileKey);
+    if (!file) return null;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return null;
+    const oldL = info.lines[0];
+    const newL = info.lines[1];
+    const oldLine = (oldL !== null && oldL !== undefined) ? oldL + 1 : undefined;
+    const newLine = (newL !== null && newL !== undefined) ? newL + 1 : undefined;
+    if (oldLine === undefined && newLine === undefined) return null;
+    const lineType: 'add' | 'remove' | 'context' =
+        (newLine !== undefined && oldLine === undefined) ? 'add'
+            : (oldLine !== undefined && newLine === undefined) ? 'remove'
+                : 'context';
+    const fileHunks = state.hunks.filter(
+        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+    );
+    const hunk = fileHunks.find(h =>
+        (newLine !== undefined && newLine >= h.range.start && newLine <= h.range.end) ||
+        (oldLine !== undefined && oldLine >= h.oldRange.start && oldLine <= h.oldRange.end)
+    );
+    if (!hunk) return null;
+    return { hunkId: hunk.id, file: file.path, lineType, oldLine, newLine, lineContent: undefined };
+}
+
 function getCurrentLineInfo(): PendingCommentInfo | null {
     if (state.files.length === 0) return null;
     const props = propsAtCursorRow();
@@ -4311,6 +4340,36 @@ function findCommentAtCursor(): ReviewComment | null {
 }
 
 async function review_add_comment() {
+    // Composite center: map the composite cursor onto the focused file's
+    // hunk/line and add (or edit) a comment there.
+    if (state.centerComposite) {
+        const info = await getCompositeLineInfo();
+        if (!info) {
+            editor.setStatus(
+                editor.t("status.comment_needs_line") ||
+                    "Position cursor on a diff line to add a comment"
+            );
+            return;
+        }
+        const existing = state.comments.find(c =>
+            c.hunk_id === info.hunkId && (
+                (c.line_type === 'add' && c.new_line === info.newLine) ||
+                (c.line_type === 'remove' && c.old_line === info.oldLine) ||
+                (c.line_type === 'context' && c.new_line === info.newLine)
+            )
+        ) || null;
+        pendingCommentInfo = info;
+        editingCommentId = existing?.id || null;
+        const lineRef = info.lineType === 'add' && info.newLine ? `+${info.newLine}`
+            : info.lineType === 'remove' && info.oldLine ? `-${info.oldLine}`
+            : `${info.newLine ?? info.oldLine}`;
+        const label = existing
+            ? (editor.t("prompt.edit_comment", { line: lineRef }) || `Edit comment on ${lineRef}: `)
+            : editor.t("prompt.comment", { line: lineRef });
+        if (existing) editor.startPromptWithInitial(label, "review-comment", existing.text);
+        else editor.startPrompt(label, "review-comment");
+        return;
+    }
     // If the cursor is sitting on an existing comment row, edit it
     // directly — `c` doubles as "edit this comment" so the user
     // doesn't have to first move back to the diff line.
