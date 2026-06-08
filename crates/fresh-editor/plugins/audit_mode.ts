@@ -281,7 +281,7 @@ const state: ReviewState = {
   stickyCurrentFile: null,
   diffViewportTopRow: 0,
   lineSelection: null,
-  reviewLayout: 'side-by-side',
+  reviewLayout: 'unified',
   centerComposite: null,
   centerBuildToken: 0,
 };
@@ -1747,8 +1747,7 @@ function updateMagitDisplay(): void {
     if (state.groupId === null) return;
     ensureFocusFile();
     editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
-    // The center is a host composite buffer for the focused file (async).
-    void buildCenterComposite();
+    renderCenter();
     editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
     if (state.panelBuffers["files"] !== undefined) {
         editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
@@ -3576,6 +3575,31 @@ async function buildCenterComposite(): Promise<void> {
     editor.flushLayout();
 }
 
+/** Render the center panel for the current layout: side-by-side uses the
+ *  host composite (efficient, full-file context); unified uses the focused-
+ *  file text buffer (interleaved, syntax-highlighted, inline comment boxes).
+ *  Comment-add / staging dispatch on `state.centerComposite` (set iff the
+ *  composite is showing). */
+function renderCenter(): void {
+    if (state.groupId === null) return;
+    if (state.reviewLayout === 'side-by-side') {
+        void buildCenterComposite();
+        return;
+    }
+    // Unified (default): the focused-file plugin-text buffer.
+    // Bump the build token so any in-flight side-by-side build is superseded
+    // and won't swap a composite back in after we switch to unified.
+    state.centerBuildToken++;
+    teardownCenterComposite();
+    if (state.panelBuffers["diff"] !== undefined) {
+        editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
+        editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+        applyFolds();
+        applyCursorLineOverlay('diff');
+    }
+}
+
 async function review_drill_down() {
     // In focus mode the sidebar's selected file is authoritative (the
     // cursor may be sitting on a header row); otherwise use the file the
@@ -3777,7 +3801,7 @@ const AUTO_SPLIT_MIN_WIDTH = 140;
 function review_set_layout(layout: 'unified' | 'side-by-side'): void {
     if (state.reviewLayout !== layout) {
         state.reviewLayout = layout;
-        void buildCenterComposite();
+        renderCenter();
     }
     editor.setStatus(
         layout === 'side-by-side'
@@ -4814,11 +4838,6 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     updateMagitDisplay();
 
     editor.focusBufferGroupPanel(state.groupId!, "diff");
-
-    // Build the focused file's composite center explicitly now that the group
-    // is established + focused (the void build inside updateMagitDisplay can
-    // race group setup at first open, leaving the center blank).
-    await buildCenterComposite();
 
     editor.on("resize", onReviewDiffResize);
     updateReviewStatus();
