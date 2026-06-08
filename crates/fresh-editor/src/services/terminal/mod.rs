@@ -48,6 +48,7 @@
 //! - `../app/session.rs`: Session save/restore integration
 
 pub mod manager;
+pub mod path_link;
 pub mod pty;
 pub mod term;
 #[cfg(windows)]
