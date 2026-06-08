@@ -13,9 +13,33 @@ in `crates/fresh-editor/src/view/ui/split_rendering/orchestration/mod.rs`.
 
 ---
 
+## Resolution log
+
+- **A1 — FIXED** (commit `6093f61`): the composite handlers resolved the
+  panel leaf via `active_split()` (outer group leaf) instead of
+  `effective_active_pair()` (focused inner leaf), so the
+  `composite_view_states` lookup missed and all keyboard movement / hunk nav
+  was dropped. Side-by-side now scrolls (Up/Down/PageUp/PageDown) and `n`/`p`
+  navigate hunks.
+- **A2 — CORRECTED + FIXED** (commit `2c397c4`): `n`/`p` were not "doing
+  nothing" — they moved the highlight + scrolled, but (a) the status-bar `Ln`
+  lagged and (b) in focus-only mode they used the *global* `state.hunks`
+  index, so when the focused file was not the first, the jump targeted an
+  unrendered file and no-op'd. Now navigate by the rendered `hunkHeaderRows`
+  (advancing to the next/prev file at boundaries), and
+  `set_buffer_cursor_in_splits` updates `primary_cursor_line_number` so `Ln`
+  is correct immediately.
+- **B1 — FIXED** (commit `2c397c4`): navigating files (`,`/`.`) now scrolls
+  the focused file into position and puts the cursor on its header.
+
+Remaining: A3, A4, B2, B3 (side-by-side scroll-to-top refinement), C1–C3,
+D1–D3.
+
+---
+
 ## A. Broken behavior (functional bugs)
 
-### A1. Side-by-side: keyboard cursor movement is completely frozen
+### A1. Side-by-side: keyboard cursor movement is completely frozen  — FIXED (6093f61)
 `Up`/`Down`/`j`/`k`/`PageUp`/`PageDown` do nothing in split view — the
 cursor stays at `Ln 1, Col 1` and the composite never scrolls, so anything
 below the first viewport is unreachable. Unified mode moves fine.
