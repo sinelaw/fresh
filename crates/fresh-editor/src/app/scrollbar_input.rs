@@ -145,6 +145,26 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
+        // Composite (side-by-side) buffers render from per-pane horizontal
+        // offsets in their own view state, not the split's viewport — scroll
+        // all panes together so Shift+wheel pans the OLD│NEW columns.
+        if self.is_composite_buffer(buffer_id) {
+            let columns = delta.unsigned_abs() as usize;
+            if let Some(vs) = self
+                .composite_view_states
+                .get_mut(&(target_split, buffer_id))
+            {
+                for pv in &mut vs.pane_viewports {
+                    pv.left_column = if delta < 0 {
+                        pv.left_column.saturating_sub(columns)
+                    } else {
+                        pv.left_column.saturating_add(columns)
+                    };
+                }
+            }
+            return Ok(());
+        }
+
         if let Some(view_state) = self
             .split_view_states_mut()
             .expect("active window must have a populated split layout")
