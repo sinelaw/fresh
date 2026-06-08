@@ -2,6 +2,8 @@
 // from Explorer / a Start-Menu shortcut does not flash a console window.
 // The TUI build (no `gui` feature) keeps the default "console" subsystem.
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+#[cfg(all(windows, feature = "gui"))]
+use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
@@ -3365,7 +3367,7 @@ fn dump_config_command(args: &Args) -> AnyhowResult<()> {
 /// Route non-interactive subcommands. Returns `Some(result)` if a subcommand
 /// was handled so the caller can propagate it; returns `None` for an
 /// interactive editor launch.
-fn run_if_subcommand(args: &Args) -> Option<AnyhowResult<()>> {
+fn run_if_subcommand(args: &Args, console_available: bool) -> Option<AnyhowResult<()>> {
     if args.show_paths {
         return Some(show_paths_command());
     }
@@ -3405,7 +3407,7 @@ fn run_if_subcommand(args: &Args) -> Option<AnyhowResult<()>> {
         return Some(run_attach_command(args));
     }
     #[cfg(feature = "gui")]
-    if args.gui {
+    if !console_available || args.gui {
         return Some(fresh::gui::run_gui(
             &args.files,
             args.no_plugins,
@@ -3661,6 +3663,12 @@ fn build_localized_cli_command() -> clap::Command {
 }
 
 fn real_main() -> AnyhowResult<()> {
+    // Early check, otherwise terminal check would fail.
+    #[cfg(all(windows, feature = "gui"))]
+    let console_available = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
+    #[cfg(not(all(windows, feature = "gui")))]
+    let console_available = true;
+
     // Enable backtraces for error reporting if not already set.
     // Errors that crash the editor are bugs — backtraces help diagnose them.
     if std::env::var_os("RUST_BACKTRACE").is_none() {
@@ -3696,7 +3704,7 @@ fn real_main() -> AnyhowResult<()> {
         std::env::set_var("FRESH_INTERACTIVE", "1");
     }
 
-    if let Some(result) = run_if_subcommand(&args) {
+    if let Some(result) = run_if_subcommand(&args, console_available) {
         return result;
     }
 
