@@ -15,25 +15,40 @@ in `crates/fresh-editor/src/view/ui/split_rendering/orchestration/mod.rs`.
 
 ## Resolution log
 
-- **A1 — FIXED** (commit `6093f61`): the composite handlers resolved the
-  panel leaf via `active_split()` (outer group leaf) instead of
-  `effective_active_pair()` (focused inner leaf), so the
-  `composite_view_states` lookup missed and all keyboard movement / hunk nav
-  was dropped. Side-by-side now scrolls (Up/Down/PageUp/PageDown) and `n`/`p`
-  navigate hunks.
-- **A2 — CORRECTED + FIXED** (commit `2c397c4`): `n`/`p` were not "doing
-  nothing" — they moved the highlight + scrolled, but (a) the status-bar `Ln`
-  lagged and (b) in focus-only mode they used the *global* `state.hunks`
-  index, so when the focused file was not the first, the jump targeted an
-  unrendered file and no-op'd. Now navigate by the rendered `hunkHeaderRows`
-  (advancing to the next/prev file at boundaries), and
-  `set_buffer_cursor_in_splits` updates `primary_cursor_line_number` so `Ln`
-  is correct immediately.
-- **B1 — FIXED** (commit `2c397c4`): navigating files (`,`/`.`) now scrolls
-  the focused file into position and puts the cursor on its header.
+- **A1 — FIXED** (`6093f61`): composite handlers resolved the panel leaf via
+  `active_split()` (outer group leaf) instead of `effective_active_pair()`
+  (focused inner leaf), so the `composite_view_states` lookup missed and all
+  keyboard movement / hunk nav was dropped. Side-by-side now scrolls
+  (Up/Down/PageUp/PageDown) and `n`/`p` navigate hunks.
+- **A2 — CORRECTED + FIXED** (`2c397c4`): `n`/`p` weren't "doing nothing" —
+  they moved the highlight + scrolled, but (a) the status-bar `Ln` lagged and
+  (b) in focus-only mode they used the *global* `state.hunks` index, so when
+  the focused file wasn't first the jump targeted an unrendered file and
+  no-op'd. Now navigate by the rendered `hunkHeaderRows` (advancing files at
+  boundaries); `set_buffer_cursor_in_splits` updates `primary_cursor_line_number`
+  so `Ln` is correct immediately.
+- **A3 — FIXED (test)** (`260316c`): the stash review feature works; the e2e
+  test asserted a title string (`"Review Diff (stash"`) that is never
+  rendered (panels are labelled with the stash ref), so it timed out at 180s
+  on every platform. Assertion corrected to the actually-rendered strings.
+- **A4 — FIXED** (`f876884`): the `[⚠]` bump came from the composite fold on
+  `Tab`; `Tab` is now focus-switch, so it no longer fires.
+- **B1 — FIXED** (`2c397c4`): navigating files (`,`/`.`) scrolls the focused
+  file into position and puts the cursor on its header.
+- **B2 — FIXED** (`HEAD`): the FILES panel scrolls to keep the selected file
+  visible when the changeset is taller than the sidebar.
+- **C1/C2/C3 — FIXED** (`f876884`): `Tab`/`Shift-Tab` cycle focus
+  files → diff → comments; arrows/PageUp/PageDown act on the focused panel; a
+  `▸` marker on the focused panel header shows where input lands.
+- **D1 — FIXED** (`HEAD`): toolbar legend now leads with the nav keys
+  (Tab/`,`/`.`/`n`/`p`/`1`/`2`/`↑↓`).
+- **D3 — FIXED** (`f876884`): help text updated to match (Tab = focus, not
+  fold).
 
-Remaining: A3, A4, B2, B3 (side-by-side scroll-to-top refinement), C1–C3,
-D1–D3.
+Remaining: **B3** (side-by-side already scrolls to the first hunk via the
+composite's focus-hunk logic — largely covered by A1; revisit only if a
+specific case misbehaves) and **D2** (`?` help opens in a new tab and steals
+focus — should be an overlay or restore focus on close).
 
 ---
 
