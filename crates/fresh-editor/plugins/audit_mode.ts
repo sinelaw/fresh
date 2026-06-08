@@ -140,6 +140,10 @@ interface ReviewState {
   // on. Tab steps files → OLD → NEW → comments; tracked here because the
   // host exposes only a "toggle pane" action, not "set pane".
   compositePane: 0 | 1;
+  // Index of the focused hunk within the side-by-side composite's file.
+  // Tracked synchronously so rapid n/p can't race the async cursor lookup
+  // (the composite always opens focused on hunk 0).
+  compositeHunkIdx: number;
   groupId: number | null;
   panelBuffers: Record<string, number>;
   // Caches populated each time the unified diff stream is rebuilt —
@@ -261,6 +265,7 @@ const state: ReviewState = {
   viewportHeight: 24,
   focusPanel: 'diff',
   compositePane: 0,
+  compositeHunkIdx: 0,
   groupId: null,
   panelBuffers: {},
   hunkHeaderRows: [],
@@ -3695,8 +3700,9 @@ async function buildCenterComposite(): Promise<void> {
     // at a closed buffer — that's the empty-panel flicker and the stray
     // "[No Name]" tab (auto-created when the active panel buffer is closed).
     const prev = state.centerComposite;
-    // A freshly-created composite focuses pane 0 (OLD) by default.
+    // A freshly-created composite focuses pane 0 (OLD) and hunk 0 by default.
     state.compositePane = 0;
+    state.compositeHunkIdx = 0;
     state.centerComposite = {
         fileKey: key!,
         compositeBufId,
@@ -4334,7 +4340,7 @@ function review_next_hunk() {
     // Side-by-side: the active diff buffer is the composite. Navigate within
     // it, advancing to the next file when the focused file has no more hunks.
     if (state.centerComposite) {
-        void compositeHunkNav(1);
+        enqueueCompositeNav(1);
         return;
     }
     // Walk the global hunk list (focus-aware), auto-expanding/refocusing the
@@ -4351,7 +4357,7 @@ registerHandler("review_next_hunk", review_next_hunk);
 function review_prev_hunk() {
     if (state.groupId === null) return;
     if (state.centerComposite) {
-        void compositeHunkNav(-1);
+        enqueueCompositeNav(-1);
         return;
     }
     if (state.hunks.length === 0) return;
@@ -4534,32 +4540,50 @@ registerHandler("review_center_open_at_cursor", review_center_open_at_cursor);
 /** Side-by-side n/p: move to the next/prev hunk within the focused file's
  *  composite, advancing to the next/prev file when there are no more hunks in
  *  that direction. */
+// Serialize side-by-side hunk navigation. compositeHunkNav reads the
+// composite cursor asynchronously (getCompositeCursorInfo); if rapid n/p
+// presses ran it concurrently they'd all observe the SAME stale cursor,
+// each conclude "no more hunks", and skip whole files. Chaining the calls
+// guarantees each press sees the cursor left by the previous one.
+let compositeNavChain: Promise<void> = Promise.resolve();
+function enqueueCompositeNav(dir: 1 | -1): void {
+    compositeNavChain = compositeNavChain.then(() => compositeHunkNav(dir)).catch(() => {});
+}
+
 async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     const cc = state.centerComposite;
-    if (!cc) return;
-    const file = state.files.find(f => fileKey(f) === cc.fileKey);
-    if (!file) { review_goto_file(dir); return; }
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
-    if (fileHunks.length === 0) { review_goto_file(dir); return; }
-    const info = await editor.getCompositeCursorInfo();
-    const newL = info && info.lines[1] !== null && info.lines[1] !== undefined ? info.lines[1] + 1 : undefined;
-    const oldL = info && info.lines[0] !== null && info.lines[0] !== undefined ? info.lines[0] + 1 : undefined;
-    // Current hunk index = the last hunk whose start is at/above the cursor.
-    let curIdx = -1;
-    for (let i = 0; i < fileHunks.length; i++) {
-        const h = fileHunks[i];
-        if (newL !== undefined) { if (h.range.start <= newL) curIdx = i; }
-        else if (oldL !== undefined) { if (h.oldRange.start <= oldL) curIdx = i; }
+    if (cc) {
+        const file = state.files.find(f => fileKey(f) === cc.fileKey);
+        const fileHunks = file ? state.hunks.filter(
+            h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
+        ) : [];
+        const target = state.compositeHunkIdx + dir;
+        if (target >= 0 && target < fileHunks.length) {
+            // Within the focused file: step the composite hunk cursor and
+            // advance our tracked index in lockstep (synchronous — no race).
+            state.compositeHunkIdx = target;
+            if (dir > 0) editor.compositeNextHunk(cc.compositeBufId);
+            else editor.compositePrevHunk(cc.compositeBufId);
+            return;
+        }
     }
-    const target = curIdx + dir;
-    if (target >= 0 && target < fileHunks.length) {
-        if (dir > 0) editor.compositeNextHunk(cc.compositeBufId);
-        else editor.compositePrevHunk(cc.compositeBufId);
-    } else {
-        review_goto_file(dir);
+    // No more hunks in this file → move to the next/prev file. Await the
+    // rebuild so a following (serialized) n/p sees the new composite, not the
+    // old one (the source of the file-skipping race).
+    ensureFocusFile();
+    const vis = visibleFiles();
+    if (vis.length === 0) return;
+    let idx = vis.findIndex(f => fileKey(f) === state.filesCurrentKey);
+    if (idx < 0) idx = 0;
+    const next = idx + dir;
+    if (next < 0 || next >= vis.length) return;
+    state.filesCurrentKey = fileKey(vis[next]);
+    await buildCenterComposite(); // rebuilds the composite, resets compositeHunkIdx = 0
+    if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
+        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        scrollFilesToSelected();
     }
+    refreshStickyHeader(0);
 }
 
 // Define the diff-view mode for the side-by-side composite buffer.
