@@ -531,4 +531,33 @@ for (const event of ["buffer_activated", "after_file_open", "focus_gained"]) {
   editor.on(event, "env_refresh_status");
 }
 
+// === Clickable chips ===
+//
+// The status-bar pills env-manager registers (`env` and `trust`) become
+// first-class affordances back to their decisions. Clicking the env pill
+// re-runs `maybeAutoActivate`, which re-opens the activate prompt if a
+// pending decision remains. Clicking the trust chip routes through the
+// same flow but skips the silent path (the user clicked specifically
+// because they want to act on trust). These are the "Status beats
+// prompts" callbacks — the indicator is the affordance, not just a
+// passive label.
+editor.on("status_bar_token_clicked", (data) => {
+  if (data.plugin_name !== "env-manager") return;
+  if (data.token_name === STATUS_TOKEN) {
+    // Drop any session "Not now" so the prompt actually re-appears.
+    envDismissedThisSession = false;
+    maybeAutoActivate();
+  } else if (data.token_name === TRUST_TOKEN) {
+    // If we have an env to activate, drive into the trust-elevation
+    // popup for it; otherwise fall back to invoking the workspace
+    // trust prompt directly so the user can still elevate.
+    const det = detect();
+    if (det && !isTrusted()) {
+      showTrustElevatePrompt(det);
+    } else {
+      editor.executeActions([{ action: "workspace_trust_prompt", count: 1 }]);
+    }
+  }
+});
+
 refreshStatus();
