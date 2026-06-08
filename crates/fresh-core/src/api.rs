@@ -907,6 +907,14 @@ pub struct CompositeHunk {
     #[serde(rename = "newCount")]
     #[ts(rename = "newCount")]
     pub new_count: usize,
+    /// Per-line operations for the hunk, in git order: one char per line —
+    /// `' '` context, `'-'` deletion (old only), `'+'` addition (new only).
+    /// When present, the side-by-side alignment follows git's classification
+    /// exactly (unchanged lines stay paired); when absent, the host falls back
+    /// to a positional pairing. Optional for backward compatibility.
+    #[serde(default, rename = "ops")]
+    #[ts(rename = "ops", optional)]
+    pub ops: Option<String>,
 }
 
 /// Options for creating a composite buffer (used by plugin API)

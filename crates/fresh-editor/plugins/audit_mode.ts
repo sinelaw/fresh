@@ -3587,6 +3587,42 @@ let activeCompositeDiffState: CompositeDiffState | null = null;
 // side-by-side layout. Rendering is viewport-only over real buffers, so the
 // center stays responsive on changesets of any size.
 
+/** Per-line ops string for a hunk in git order (' ' context, '-' old, '+'
+ *  new), so the host aligns unchanged lines identically instead of zipping
+ *  positionally. */
+function hunkOps(fh: Hunk): string {
+    let ops = '';
+    for (const line of fh.lines) {
+        if (line.startsWith('-')) ops += '-';
+        else if (line.startsWith('+')) ops += '+';
+        else if (line.startsWith(' ')) ops += ' ';
+        // '\' (no-newline) and blanks are skipped
+    }
+    return ops;
+}
+
+/** Split file content into display lines, dropping the single empty trailing
+ *  "line" produced by a final newline. That phantom line has no ViewLine in
+ *  the composite, so leaving it in logs "ViewLine missing" when scrolled into
+ *  view at end-of-file. */
+function contentToLines(content: string): string[] {
+    const lines = content.split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+}
+
+/** Build composite source-buffer entries from file content. The last line
+ *  gets no trailing newline so the buffer's line count matches the number of
+ *  real lines — otherwise a trailing '\n' adds a phantom empty line with no
+ *  ViewLine, which logs "ViewLine missing" when scrolled to the bottom. */
+function contentToEntries(content: string): TextPropertyEntry[] {
+    const lines = contentToLines(content);
+    return lines.map((line, idx) => ({
+        text: idx < lines.length - 1 ? line + '\n' : line,
+        properties: { type: 'line', lineNum: idx + 1 },
+    }));
+}
+
 function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
     return fileHunks.map(fh => {
         let oldCount = 0, newCount = 0;
@@ -3600,6 +3636,7 @@ function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
             oldCount: oldCount || 1,
             newStart: Math.max(0, fh.range.start - 1),
             newCount: newCount || 1,
+            ops: hunkOps(fh),
         };
     });
 }
@@ -3662,12 +3699,8 @@ async function buildCenterComposite(): Promise<void> {
     );
     const compositeHunks = compositeHunksForFile(fileHunks);
 
-    const oldEntries: TextPropertyEntry[] = oldContent.split('\n').map((line, idx) => ({
-        text: line + '\n', properties: { type: 'line', lineNum: idx + 1 },
-    }));
-    const newEntries: TextPropertyEntry[] = newContent.split('\n').map((line, idx) => ({
-        text: line + '\n', properties: { type: 'line', lineNum: idx + 1 },
-    }));
+    const oldEntries: TextPropertyEntry[] = contentToEntries(oldContent);
+    const newEntries: TextPropertyEntry[] = contentToEntries(newContent);
 
     const oldRes = await editor.createVirtualBuffer({
         name: `*OLD:${file.path}*`, mode: "normal", readOnly: true,
@@ -3875,18 +3908,8 @@ async function review_drill_down() {
     }
 
     // Create virtual buffers for old and new content
-    const oldLines = oldContent.split('\n');
-    const newLines = newContent.split('\n');
-
-    const oldEntries: TextPropertyEntry[] = oldLines.map((line, idx) => ({
-        text: line + '\n',
-        properties: { type: 'line', lineNum: idx + 1 }
-    }));
-
-    const newEntries: TextPropertyEntry[] = newLines.map((line, idx) => ({
-        text: line + '\n',
-        properties: { type: 'line', lineNum: idx + 1 }
-    }));
+    const oldEntries: TextPropertyEntry[] = contentToEntries(oldContent);
+    const newEntries: TextPropertyEntry[] = contentToEntries(newContent);
 
     // Create source buffers (hidden from tabs, used by composite)
     const oldResult = await editor.createVirtualBuffer({
@@ -3923,7 +3946,8 @@ async function review_drill_down() {
             oldStart: Math.max(0, fh.oldRange.start - 1),
             oldCount: oldCount || 1,
             newStart: Math.max(0, fh.range.start - 1),
-            newCount: newCount || 1
+            newCount: newCount || 1,
+            ops: hunkOps(fh)
         };
     });
 
@@ -5756,18 +5780,8 @@ async function side_by_side_diff_current_file() {
     }
 
     // Create virtual buffers for old and new content
-    const oldLines = oldContent.split('\n');
-    const newLines = newContent.split('\n');
-
-    const oldEntries: TextPropertyEntry[] = oldLines.map((line, idx) => ({
-        text: line + '\n',
-        properties: { type: 'line', lineNum: idx + 1 }
-    }));
-
-    const newEntries: TextPropertyEntry[] = newLines.map((line, idx) => ({
-        text: line + '\n',
-        properties: { type: 'line', lineNum: idx + 1 }
-    }));
+    const oldEntries: TextPropertyEntry[] = contentToEntries(oldContent);
+    const newEntries: TextPropertyEntry[] = contentToEntries(newContent);
 
     // Create source buffers (hidden from tabs, used by composite)
     const oldResult = await editor.createVirtualBuffer({
@@ -5797,7 +5811,8 @@ async function side_by_side_diff_current_file() {
         oldStart: Math.max(0, h.oldRange.start - 1),  // Convert to 0-indexed (0 for new files)
         oldCount: Math.max(1, h.oldRange.end - h.oldRange.start + 1),
         newStart: Math.max(0, h.range.start - 1),     // Convert to 0-indexed
-        newCount: h.range.end - h.range.start + 1
+        newCount: h.range.end - h.range.start + 1,
+        ops: hunkOps(h)
     }));
 
     // Create composite buffer with side-by-side layout

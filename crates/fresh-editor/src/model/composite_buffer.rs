@@ -279,43 +279,82 @@ impl LineAlignment {
             let old_end = hunk.old_start + hunk.old_count;
             let new_end = hunk.new_start + hunk.new_count;
 
-            // Use a simple alignment: pair lines where possible, then pad
-            let old_hunk_lines = old_end - hunk.old_start;
-            let new_hunk_lines = new_end - hunk.new_start;
-            let max_lines = old_hunk_lines.max(new_hunk_lines);
+            if let Some(ops) = hunk.ops.as_deref() {
+                // Follow git's per-line classification so unchanged lines stay
+                // paired (a pure insertion shows blank-left / +line-right and
+                // leaves the surrounding code aligned), instead of a naive
+                // positional zip that mis-pairs shifted-but-identical lines.
+                let mut o = hunk.old_start;
+                let mut n = hunk.new_start;
+                for op in ops.chars() {
+                    match op {
+                        ' ' => {
+                            rows.push(AlignedRow::context(o, n));
+                            o += 1;
+                            n += 1;
+                        }
+                        '-' => {
+                            rows.push(AlignedRow {
+                                pane_lines: vec![
+                                    Some(SourceLineRef { line: o, byte_range: 0..0 }),
+                                    None,
+                                ],
+                                row_type: RowType::Deletion,
+                            });
+                            o += 1;
+                        }
+                        '+' => {
+                            rows.push(AlignedRow {
+                                pane_lines: vec![
+                                    None,
+                                    Some(SourceLineRef { line: n, byte_range: 0..0 }),
+                                ],
+                                row_type: RowType::Addition,
+                            });
+                            n += 1;
+                        }
+                        _ => {} // ignore '\' (no-newline marker) and stray chars
+                    }
+                }
+            } else {
+                // No per-line ops: fall back to a simple positional pairing.
+                let old_hunk_lines = old_end - hunk.old_start;
+                let new_hunk_lines = new_end - hunk.new_start;
+                let max_lines = old_hunk_lines.max(new_hunk_lines);
 
-            for i in 0..max_lines {
-                let old_idx = if i < old_hunk_lines {
-                    Some(hunk.old_start + i)
-                } else {
-                    None
-                };
-                let new_idx = if i < new_hunk_lines {
-                    Some(hunk.new_start + i)
-                } else {
-                    None
-                };
+                for i in 0..max_lines {
+                    let old_idx = if i < old_hunk_lines {
+                        Some(hunk.old_start + i)
+                    } else {
+                        None
+                    };
+                    let new_idx = if i < new_hunk_lines {
+                        Some(hunk.new_start + i)
+                    } else {
+                        None
+                    };
 
-                let row_type = match (old_idx, new_idx) {
-                    (Some(_), Some(_)) => RowType::Modification,
-                    (Some(_), None) => RowType::Deletion,
-                    (None, Some(_)) => RowType::Addition,
-                    (None, None) => continue,
-                };
+                    let row_type = match (old_idx, new_idx) {
+                        (Some(_), Some(_)) => RowType::Modification,
+                        (Some(_), None) => RowType::Deletion,
+                        (None, Some(_)) => RowType::Addition,
+                        (None, None) => continue,
+                    };
 
-                rows.push(AlignedRow {
-                    pane_lines: vec![
-                        old_idx.map(|l| SourceLineRef {
-                            line: l,
-                            byte_range: 0..0,
-                        }),
-                        new_idx.map(|l| SourceLineRef {
-                            line: l,
-                            byte_range: 0..0,
-                        }),
-                    ],
-                    row_type,
-                });
+                    rows.push(AlignedRow {
+                        pane_lines: vec![
+                            old_idx.map(|l| SourceLineRef {
+                                line: l,
+                                byte_range: 0..0,
+                            }),
+                            new_idx.map(|l| SourceLineRef {
+                                line: l,
+                                byte_range: 0..0,
+                            }),
+                        ],
+                        row_type,
+                    });
+                }
             }
 
             old_line = old_end;
@@ -478,6 +517,10 @@ pub struct DiffHunk {
     pub new_count: usize,
     /// Optional header text (function context)
     pub header: Option<String>,
+    /// Per-line operations in git order (`' '`/`'-'`/`'+'`). When set, the
+    /// alignment follows git's classification so unchanged lines stay paired
+    /// instead of being positionally zipped.
+    pub ops: Option<String>,
 }
 
 impl DiffHunk {
@@ -489,7 +532,14 @@ impl DiffHunk {
             new_start,
             new_count,
             header: None,
+            ops: None,
         }
+    }
+
+    /// Attach per-line operations (`' '`/`'-'`/`'+'`).
+    pub fn with_ops(mut self, ops: Option<String>) -> Self {
+        self.ops = ops;
+        self
     }
 
     /// Set the header text
