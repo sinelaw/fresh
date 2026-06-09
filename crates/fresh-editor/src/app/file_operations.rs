@@ -830,6 +830,15 @@ impl Editor {
             }
         }
 
+        // External git operations (commit, pull, checkout, …) update
+        // `.git/index` without touching expanded directories. Fire the
+        // explorer-change hook so git_explorer rescans and clears stale
+        // status badges (#1431).
+        if git_index_changed {
+            let cwd = self.working_dir().to_path_buf();
+            self.notify_file_explorer_change(&cwd);
+        }
+
         true
     }
 

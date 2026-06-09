@@ -373,6 +373,7 @@ pub struct Config {
 
     /// Active keybinding map name
     #[serde(default = "default_keybinding_map_name")]
+    #[schemars(default = "default_keybinding_map_schema")]
     pub active_keybinding_map: KeybindingMapName,
 
     /// Per-language configuration overrides (tab size, formatters, etc.)
@@ -424,6 +425,12 @@ fn default_keybinding_map_name() -> KeybindingMapName {
     } else {
         KeybindingMapName("default".to_string())
     }
+}
+
+/// Schema-stable default for `active_keybinding_map`.
+/// Runtime defaults are platform-specific; JSON Schema must not vary by OS.
+fn default_keybinding_map_schema() -> KeybindingMapName {
+    KeybindingMapName("default".to_string())
 }
 
 fn default_theme_name() -> ThemeName {

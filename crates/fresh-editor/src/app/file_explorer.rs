@@ -1748,8 +1748,8 @@ impl crate::app::window::Window {
                     root.join(&decoration.path)
                 };
                 let path = crate::app::normalize_path(&path);
-                if path.starts_with(&root) {
-                    decoration.path = path;
+                if crate::app::explorer_path_under_root(&path, &root) {
+                    decoration.path = crate::app::normalize_explorer_plugin_path(&path, &root);
                     Some(decoration)
                 } else {
                     None
@@ -1786,8 +1786,8 @@ impl crate::app::window::Window {
                     root.join(&slot.path)
                 };
                 let path = crate::app::normalize_path(&path);
-                if path.starts_with(&root) {
-                    slot.path = path;
+                if crate::app::explorer_path_under_root(&path, &root) {
+                    slot.path = crate::app::normalize_explorer_plugin_path(&path, &root);
                     Some(slot)
                 } else {
                     None

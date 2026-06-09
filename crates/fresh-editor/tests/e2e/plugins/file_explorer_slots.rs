@@ -48,12 +48,18 @@ editor.on("editor_initialized", () => {
         EditorTestHarness::with_config_and_working_dir(120, 40, config, project_root.clone())
             .unwrap();
 
+    // Drain any plugin commands queued during `editor_initialized` (for
+    // example `setFileExplorerSlots`) before we open the explorer.
+    harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
     harness
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_screen_contains("File Explorer").unwrap();
+    harness.wait_for_screen_contains("foo.txt").unwrap();
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             h.screen_to_string()
                 .lines()
                 .any(|line| line.contains("foo.txt") && line.contains('◆'))

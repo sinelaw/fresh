@@ -69,6 +69,16 @@ fn default_true() -> bool {
     true
 }
 
+/// Schema-stable default for nested `process_limits` objects.
+/// `ProcessLimits::default()` is platform-specific; JSON Schema must not vary by OS.
+fn process_limits_schema_default() -> ProcessLimits {
+    ProcessLimits {
+        max_memory_percent: Some(50),
+        max_cpu_percent: Some(90),
+        enabled: true,
+    }
+}
+
 impl Default for ProcessLimits {
     fn default() -> Self {
         Self {
@@ -331,7 +341,10 @@ pub struct LspServerConfig {
 
     /// Process resource limits (memory and CPU)
     #[serde(default)]
-    #[schemars(extend("x-section" = "Advanced", "x-order" = 15))]
+    #[schemars(
+        default = "process_limits_schema_default",
+        extend("x-section" = "Advanced", "x-order" = 15)
+    )]
     pub process_limits: ProcessLimits,
 }
 
