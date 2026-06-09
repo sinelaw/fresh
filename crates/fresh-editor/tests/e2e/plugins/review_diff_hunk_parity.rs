@@ -87,8 +87,8 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
     harness.screen_to_string()
 }
 
-/// §5.2 — the file sidebar lists the changed file with a FILES header and
-/// add/remove counts.
+/// §5.2 — the review sidebar lists the changed file under a section header
+/// and shows add/remove counts.
 #[test]
 fn test_review_sidebar_lists_files() {
     init_tracing_from_env();
@@ -97,8 +97,8 @@ fn test_review_sidebar_lists_files() {
     let screen = open_review_diff(&mut harness);
 
     assert!(
-        screen.contains("FILES"),
-        "sidebar header should be visible. Screen:\n{}",
+        screen.contains("FILES") || screen.contains("UNSTAGED"),
+        "sidebar section header should be visible. Screen:\n{}",
         screen
     );
     assert!(

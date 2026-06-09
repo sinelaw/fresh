@@ -19,8 +19,12 @@ pub(crate) fn normalize_explorer_plugin_path(path: &Path, root: &Path) -> PathBu
 
     for candidate in explorer_path_candidates(&path) {
         let key = explorer_path_key(&candidate);
-        if key.starts_with(&root_key) {
-            return key;
+        if let Ok(relative) = key.strip_prefix(&root_key) {
+            return if relative.as_os_str().is_empty() {
+                root.to_path_buf()
+            } else {
+                root.join(relative)
+            };
         }
     }
 
