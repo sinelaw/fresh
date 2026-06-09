@@ -377,6 +377,22 @@ fn dock_list_scrollbar_shows_on_focus_or_hover() {
         "the dock list scrollbar must hide when the dock loses focus"
     );
 
+    // The active session renders as the seamless tab (its divider is scooped
+    // away). When shown, the scrollbar must paint *over* that tab rather than
+    // be erased by it: on the active card's row the scrollbar column differs
+    // between focused (bar over the tab) and blurred (bar hidden, tab open).
+    let active_row = row_of(&h, "alphaproj") as u16;
+    assert!(
+        (8..30).contains(&active_row),
+        "active card row {active_row} fell outside the sampled range"
+    );
+    let active_idx = (active_row - 8) as usize;
+    assert_ne!(
+        focused[active_idx], blurred[active_idx],
+        "the scrollbar must show over the active card's seamless tab, not be \
+         obscured by the tab border"
+    );
+
     // Hover over the (blurred) list → the bar reappears.
     h.mouse_move(2, 15).unwrap();
     let hovered = snapshot(&h);

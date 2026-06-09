@@ -4194,6 +4194,26 @@ impl Editor {
         }
         self.preview_window_id = saved_preview;
 
+        // Dock "seamless tab (missing wall)": erase the right-edge divider
+        // across the active session card's rows and scoop it away with
+        // rounded corners just above and below, so the active card reads as
+        // merging into the editor to its right (a file-folder / browser
+        // tab). Painted over the wall the block drew and the card entries —
+        // but BEFORE the scrollbar below, so a visible scrollbar paints on
+        // top of (rather than being erased by) the tab's border cells.
+        // No-op for non-dock panels and for an empty dock.
+        if is_dock {
+            paint_dock_seamless_active_tab(
+                frame,
+                overlay_rect,
+                inner,
+                &entries,
+                max_rows,
+                dock_border_fg,
+                theme.suggestion_bg,
+            );
+        }
+
         // Paint a draggable scrollbar over the rightmost column of each
         // overflowing list, reusing the canonical `render_scrollbar` /
         // `ScrollbarState` (same path as the keybinding editor &
@@ -4328,24 +4348,6 @@ impl Editor {
             let cx = inner.x + inner.width.saturating_sub(1);
             let cy = inner.y + inner.height.saturating_sub(1);
             frame.set_cursor_position((cx, cy));
-        }
-
-        // Dock "seamless tab (missing wall)": erase the right-edge divider
-        // across the active session card's rows and scoop it away with
-        // rounded corners just above and below, so the active card reads as
-        // merging into the editor to its right (a file-folder / browser
-        // tab). Painted last so it sits over the wall the block drew and any
-        // scrollbar. No-op for non-dock panels and for an empty dock.
-        if is_dock {
-            paint_dock_seamless_active_tab(
-                frame,
-                overlay_rect,
-                inner,
-                &entries,
-                max_rows,
-                dock_border_fg,
-                theme.suggestion_bg,
-            );
         }
 
         if let Some(fwp) = self.panel_mut(slot) {
