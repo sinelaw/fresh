@@ -4200,6 +4200,15 @@ impl Editor {
         // settings dialog). Record each track's screen rect + state so
         // the mouse handlers can hit-test press/drag against it.
         let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
+        // The dock's list scrollbars are overlay-style: shown only while the
+        // dock is focused (its keyboard up/down/click navigate the list) or
+        // the pointer is over the list, and hidden otherwise. Every other
+        // panel keeps its scrollbar always visible. `pointer` is the last
+        // cursor cell; hover-reveal needs motion reporting (`mouse_hover_enabled`).
+        let dock_overlay_scrollbar = is_dock;
+        let hover_enabled = self.config.editor.mouse_hover_enabled;
+        let pointer = self.active_window().mouse_cursor_position;
+        let mut scrollbar_hover_zones: Vec<ratatui::layout::Rect> = Vec::new();
         {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
             let colors = ScrollbarColors::from_theme(&theme);
@@ -4227,6 +4236,31 @@ impl Editor {
                     width: 1,
                     height: sb_h,
                 };
+                // Hover zone = the list's whole visible region; hovering it
+                // anywhere reveals the bar. Recorded every draw so the
+                // mouse-move handler can re-render on enter/leave.
+                let zone = ratatui::layout::Rect {
+                    x: inner.x,
+                    y: sb_y,
+                    width: inner.width,
+                    height: sb_h,
+                };
+                scrollbar_hover_zones.push(zone);
+                let pointer_in_zone = pointer.is_some_and(|(px, py)| {
+                    px >= zone.x
+                        && px < zone.x + zone.width
+                        && py >= zone.y
+                        && py < zone.y + zone.height
+                });
+                let show =
+                    !dock_overlay_scrollbar || panel_focused || (hover_enabled && pointer_in_zone);
+                if !show {
+                    // Hidden: skip painting and recording a draggable track —
+                    // an invisible bar shouldn't be grabbable. (The pointer
+                    // can't be on the track without being in the zone, so a
+                    // visible bar is always available before a press lands.)
+                    continue;
+                }
                 let state = ScrollbarState::new(region.total, region.visible, region.scroll);
                 render_scrollbar(frame, sb_rect, &state, &colors);
                 scrollbar_tracks.push(super::WidgetScrollbarTrack {
@@ -4317,6 +4351,7 @@ impl Editor {
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
             fwp.scrollbar_tracks = scrollbar_tracks;
+            fwp.scrollbar_hover_zones = scrollbar_hover_zones;
         }
     }
 

@@ -325,6 +325,76 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     );
 }
 
+/// The dock's session-list scrollbar is overlay-style: shown while the dock
+/// is focused (keyboard up/down/click navigate the list) or the pointer is
+/// over the list, and hidden otherwise. With enough sessions to overflow the
+/// list, the scrollbar column's cells change with focus/hover. The bar paints
+/// background-coloured cells (no glyph), so this asserts on cell styles.
+/// Drives only keyboard + mouse motion and asserts on rendered output per
+/// CONTRIBUTING §2.
+#[test]
+fn dock_list_scrollbar_shows_on_focus_or_hover() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let parent = root.parent().unwrap().to_path_buf();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Enough extra sessions to overflow the dock list (cards are several rows
+    // tall, so a handful exceed the visible height and force a scrollbar).
+    for i in 0..8 {
+        let dir = parent.join(format!("proj{i}"));
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, format!("proj{i}"));
+    }
+    h.render().unwrap();
+    open_dock(&mut h); // the dock mounts focused
+
+    // The divider sits at the dock's right edge; the list's overlay scrollbar
+    // occupies the column two to its left (one editor-side gutter between).
+    let wall_col = {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    let sb_col = wall_col.saturating_sub(2);
+    // Styles of the scrollbar column across the list rows; the bar's presence
+    // shows up as a change here (it paints background-coloured cells).
+    let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
+        (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
+    };
+
+    // Focused on mount → the bar is shown.
+    let focused = snapshot(&h);
+
+    // Alt+O hands focus to the editor; the dock blurs and (no hover yet) the
+    // bar hides.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.assert_screen_contains("Orchestrator");
+    let blurred = snapshot(&h);
+    assert_ne!(
+        focused, blurred,
+        "the dock list scrollbar must hide when the dock loses focus"
+    );
+
+    // Hover over the (blurred) list → the bar reappears.
+    h.mouse_move(2, 15).unwrap();
+    let hovered = snapshot(&h);
+    assert_ne!(
+        blurred, hovered,
+        "the dock list scrollbar must appear while the pointer is over the list"
+    );
+
+    // Move the pointer off the list (into the editor, right of the divider) →
+    // the bar hides again, matching the blurred-and-unhovered state.
+    h.mouse_move(wall_col + 8, 15).unwrap();
+    let left = snapshot(&h);
+    assert_eq!(
+        blurred, left,
+        "the dock list scrollbar must hide once the pointer leaves the list"
+    );
+}
+
 #[test]
 fn mouse_click_on_dock_new_button_opens_form() {
     let (_tmp, root) = setup_project("alphaproj");

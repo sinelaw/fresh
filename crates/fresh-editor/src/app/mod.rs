@@ -1157,6 +1157,15 @@ pub(crate) struct FloatingWidgetState {
     /// Inner rect (frame interior) of the last draw — used by the
     /// click hit-test to map terminal coords back to buffer coords.
     pub last_inner_rect: Option<ratatui::layout::Rect>,
+    /// Screen-space regions (one per overflowing list) over which the
+    /// pointer reveals that list's overlay scrollbar. Refreshed every
+    /// draw alongside `scrollbar_tracks`; empty when no list overflows.
+    /// Only the dock populates this — its scrollbars are hover-revealed.
+    pub scrollbar_hover_zones: Vec<ratatui::layout::Rect>,
+    /// Whether the pointer was last seen inside a `scrollbar_hover_zone`.
+    /// Memoised so the mouse-move handler only forces a re-render on the
+    /// enter/leave transition rather than on every motion event.
+    pub scrollbar_zone_hovered: bool,
     /// When true, a `Centered` panel renders over the *entire* frame
     /// (covering the dimmed left dock) instead of being confined to the
     /// chrome area beside the dock. Set via `FloatingPanelControl{op:
@@ -1680,6 +1689,8 @@ mod tests {
             scrollbar_mouse: Default::default(),
             scrollbar_drag_key: None,
             last_inner_rect: None,
+            scrollbar_hover_zones: Vec::new(),
+            scrollbar_zone_hovered: false,
             fullscreen: false,
         }
     }
