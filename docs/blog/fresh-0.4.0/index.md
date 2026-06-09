@@ -15,6 +15,8 @@ A dozen point releases since 0.3.0, and the through-line is **working across man
 
 Fresh can now juggle several independent sessions in one process. The **Orchestrator Dock** is a persistent, non-modal left column that lists every session — each row showing working/idle status, project, branch, a git summary, and a PR badge. `Alt+O` toggles focus to the dock; the arrow keys *live-switch* the active session as you move; right-click a row for Visit / Archive / Delete. Spin up new sessions from the **New Session** dialog (a type selector for Local / SSH / Kubernetes / Devcontainer), attach to existing git worktrees, or run bulk actions across a multi-select.
 
+Every session keeps running on its own — in the demo below, two of them each run a (fake) coding agent in a terminal while a third holds a file explorer open. Bounce between the two agents and each has kept working: new log lines have streamed in and the spinner is still turning, captured mid-stride.
+
 <div class="showcase-demo">
   <img src="./orchestrator-dock/showcase.gif" alt="Orchestrator dock demo" />
 </div>

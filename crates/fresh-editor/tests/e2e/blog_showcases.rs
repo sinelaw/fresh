@@ -54,6 +54,26 @@ fn hold_key(h: &mut EditorTestHarness, s: &mut BlogShowcase, key: &str, count: u
         .unwrap();
 }
 
+/// Hold on a live terminal for `count` frames, sleeping real wall-clock time
+/// between them so the PTY child (e.g. the fake Coding Agent) keeps running
+/// and its output advances — the spinner turns and new log lines arrive across
+/// successive captured frames.
+fn animate(
+    h: &mut EditorTestHarness,
+    s: &mut BlogShowcase,
+    key: Option<&str>,
+    count: usize,
+    sleep_ms: u64,
+    frame_ms: u32,
+) {
+    for _ in 0..count {
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+        h.tick_and_render().unwrap();
+        let c = h.screen_cursor_position();
+        s.capture_frame(h.buffer(), c, key, None, frame_ms).unwrap();
+    }
+}
+
 /// Auto-hide the active window's bottom prompt line. The test harness force-
 /// enables it (`show_prompt_line = true`) for layout-stable assertions, which
 /// reserves a blank row at the very bottom and floats the status bar up one
@@ -3771,13 +3791,14 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     let temp = tempfile::TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
 
-    // Three projects in three languages, each a git repo (so the dock shows a
-    // branch) with a distinctive file. The differing syntax highlighting makes
-    // each live-switch unmistakable.
-    let mk_repo = |name: &str, rel: &str, content: &str| -> std::path::PathBuf {
+    // Each session is its own git repo (so the dock shows a branch).
+    let mk_repo = |name: &str, files: &[(&str, &str)]| -> std::path::PathBuf {
         let root = base.join(name);
-        std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
-        std::fs::write(root.join(rel), content).unwrap();
+        for (rel, content) in files {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, content).unwrap();
+        }
         let run = |args: &[&str]| {
             let out = git_command(&root).args(args).output().unwrap();
             assert!(
@@ -3793,50 +3814,50 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
         root
     };
 
-    let api_root = mk_repo(
-        "api",
-        "src/main.rs",
-        "// api gateway — routes requests to services.\n\
-         fn main() {\n\
-         \x20   let router = Router::new();\n\
-         \x20   router.listen(8080);\n\
-         }\n",
+    // Two services, each with a couple of source files, plus an infra repo.
+    // Sorted dock order: build-auth, build-pay, infra.
+    let auth_root = mk_repo(
+        "build-auth",
+        &[
+            (
+                "src/auth.rs",
+                "pub fn validate_token(t: &str) -> bool {\n    !t.is_empty()\n}\n",
+            ),
+            ("src/session.rs", "pub struct Session;\n"),
+        ],
     );
-    let web_root = mk_repo(
-        "web",
-        "src/app.ts",
-        "// web dashboard front-end.\n\
-         export function App(): View {\n\
-         \x20   const data = useStore();\n\
-         \x20   return render(data);\n\
-         }\n",
+    let pay_root = mk_repo(
+        "build-pay",
+        &[
+            (
+                "src/payment.rs",
+                "pub fn charge(cents: u64) -> bool {\n    cents > 0\n}\n",
+            ),
+            ("src/billing.rs", "pub struct Invoice;\n"),
+        ],
     );
     let infra_root = mk_repo(
         "infra",
-        "deploy.yaml",
-        "# infra: production deployment.\n\
-         kind: Deployment\n\
-         metadata:\n\
-         \x20 name: api\n\
-         spec:\n\
-         \x20 replicas: 3\n",
+        &[(
+            "deploy.yaml",
+            "# infra: production deployment.\n\
+             kind: Deployment\n\
+             metadata:\n\
+             \x20 name: api\n\
+             spec:\n\
+             \x20 replicas: 3\n",
+        )],
     );
 
-    // A fake "coding agent" the web session's terminal runs — just colourful,
-    // agent-looking output so the terminal pane reads as a live tool.
-    std::fs::write(
-        web_root.join("agent.sh"),
-        "#!/bin/sh\n\
-         printf '\\033[1;36m\\342\\226\\266 coding-agent\\033[0m  session web\\n'\n\
-         printf '  \\033[2mindexed 24 files\\033[0m\\n'\n\
-         printf '  \\033[32m\\342\\234\\216 edit\\033[0m  src/app.ts  (+12 -3)\\n'\n\
-         printf '  \\033[32m\\342\\234\\223 tests\\033[0m 18/18 passing\\n'\n\
-         printf '\\033[2m\\342\\200\\272 awaiting task\\342\\200\\246 \\033[0m'\n",
-    )
-    .unwrap();
+    // Drop the fake Coding Agent into each service repo so its terminal can run
+    // `python3 coding_agent.py <name>`.
+    let agent_src =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/coding_agent.py");
+    std::fs::copy(&agent_src, auth_root.join("coding_agent.py")).unwrap();
+    std::fs::copy(&agent_src, pay_root.join("coding_agent.py")).unwrap();
 
     // The orchestrator plugin lives in the launch project's plugins dir.
-    let plugins_dir = api_root.join("plugins");
+    let plugins_dir = auth_root.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "orchestrator");
@@ -3848,7 +3869,7 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     cfg.editor.animations = false;
     cfg.editor.cursor_jump_animation = false;
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(130, 34, cfg, api_root.clone()).unwrap();
+        EditorTestHarness::with_config_and_working_dir(130, 34, cfg, auth_root.clone()).unwrap();
     h.tick_and_render().unwrap();
     h.wait_until(|h| {
         let reg = h.editor().command_registry().read().unwrap();
@@ -3858,35 +3879,32 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     })
     .unwrap();
 
-    // Each session gets a *different* layout — that's the point: the windows
-    // are independent. We build each layout while its window is active.
+    // Start a Coding Agent in a window's terminal: open a source file (so the
+    // session isn't trivial), then a terminal, then run the agent in it.
+    fn start_agent(h: &mut EditorTestHarness, file: &std::path::Path, project: &str) {
+        hide_prompt_line(h);
+        h.open_file(file).unwrap();
+        h.editor_mut().open_terminal();
+        h.tick_and_render().unwrap();
+        h.type_text(&format!("python3 coding_agent.py {project}"))
+            .unwrap();
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        h.tick_and_render().unwrap();
+    }
 
-    // api (launch): a single buffer.
-    let api_win = h.editor().active_window_id();
-    h.open_file(&api_root.join("src/main.rs")).unwrap();
-    hide_prompt_line(&mut h);
+    // build-auth (launch): a Coding Agent working on the auth service.
+    let auth_win = h.editor().active_window_id();
+    start_agent(&mut h, &auth_root.join("src/auth.rs"), "auth-service");
 
-    // web: a coding-agent terminal on the left, the source file split off to
-    // the right.
-    let web_win = h
+    // build-pay: a *second* Coding Agent, running independently.
+    let pay_win = h
         .editor_mut()
-        .create_window_at(web_root.clone(), "web".to_string());
-    h.editor_mut().set_active_window(web_win);
-    hide_prompt_line(&mut h);
-    h.open_file(&web_root.join("src/app.ts")).unwrap();
-    h.editor_mut().open_terminal();
-    h.tick_and_render().unwrap();
-    // Run the fake agent in the terminal pane.
-    h.type_text("sh agent.sh").unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    h.tick_and_render().unwrap();
-    // Split vertically and show the source file in the new (right) pane.
-    h.editor_mut().split_pane_vertical();
-    h.open_file(&web_root.join("src/app.ts")).unwrap();
-    h.tick_and_render().unwrap();
+        .create_window_at(pay_root.clone(), "build-pay".to_string());
+    h.editor_mut().set_active_window(pay_win);
+    start_agent(&mut h, &pay_root.join("src/payment.rs"), "payment-api");
 
-    // infra: the file explorer expanded beside the manifest.
+    // infra: the file explorer expanded beside the manifest (a third, different
+    // layout to underline that the windows are independent).
     let infra_win = h
         .editor_mut()
         .create_window_at(infra_root.clone(), "infra".to_string());
@@ -3896,21 +3914,26 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     h.editor_mut().toggle_file_explorer();
     h.tick_and_render().unwrap();
 
-    // Back to the launch (api) session to start the tour.
-    h.editor_mut().set_active_window(api_win);
-    h.tick_and_render().unwrap();
+    // Let both agents run for a beat so each has an established log before we
+    // start filming.
+    h.editor_mut().set_active_window(auth_win);
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(180));
+        h.tick_and_render().unwrap();
+    }
 
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/orchestrator-dock",
         "The Orchestrator Dock",
         "A persistent, non-modal left-column session switcher. Every session in \
-         one process keeps its own independent layout — a single buffer, a \
-         coding-agent terminal split beside a file, an expanded file explorer — \
-         and the arrow keys live-switch between them.",
+         one process runs independently — here two terminals each run a Coding \
+         Agent and a third keeps a file explorer open. Switch between the agents \
+         and each has kept working: new log lines and a live spinner, captured \
+         mid-stride.",
     );
 
-    // Open on the api session (Rust).
-    hold(&mut h, &mut s, 5, 80);
+    // Open on the auth agent.
+    animate(&mut h, &mut s, None, 4, 170, 85);
 
     // --- Toggle the dock open. ----------------------------------------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -3924,34 +3947,41 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     // Dock mounts, lists all three sessions, and takes keyboard focus.
     h.wait_until(|h| {
         let scr = h.screen_to_string();
-        scr.contains("api")
-            && scr.contains("web")
+        scr.contains("build-auth")
+            && scr.contains("build-pay")
             && scr.contains("infra")
             && h.editor().is_dock_focused()
     })
     .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 140);
-    hold(&mut h, &mut s, 6, 100);
+    animate(&mut h, &mut s, None, 6, 170, 85);
 
-    // --- Live-switch with the arrows. Each press flips the active session;
-    //     the editor on the right swaps to that session's buffer. Detect the
-    //     switch by the active window's root, which is order-independent. ----
-    let switch = |h: &mut EditorTestHarness, s: &mut BlogShowcase, key: KeyCode, label: &str| {
+    // --- Live-switch with the arrows. The agents keep running while off-
+    //     screen, so bouncing between them shows each one further along. ------
+    let do_switch = |h: &mut EditorTestHarness, key: KeyCode| {
         let prev = h.editor().active_window().root.clone();
         h.send_key(key, KeyModifiers::NONE).unwrap();
         h.wait_until(|h| h.editor().active_window().root != prev)
             .unwrap();
-        snap(h, s, Some(label), 160);
-        hold(h, s, 8, 110);
     };
 
-    // api → infra (explorer) → web (agent terminal + split) → infra → api.
-    switch(&mut h, &mut s, KeyCode::Down, "↓");
-    switch(&mut h, &mut s, KeyCode::Down, "↓");
-    switch(&mut h, &mut s, KeyCode::Up, "↑");
-    switch(&mut h, &mut s, KeyCode::Up, "↑");
+    // auth → pay (other agent) → auth (further along) → pay (further along).
+    do_switch(&mut h, KeyCode::Down);
+    snap(&mut h, &mut s, Some("↓"), 120);
+    animate(&mut h, &mut s, None, 7, 170, 85);
 
-    hold(&mut h, &mut s, 4, 100);
+    do_switch(&mut h, KeyCode::Up);
+    snap(&mut h, &mut s, Some("↑"), 120);
+    animate(&mut h, &mut s, None, 7, 170, 85);
+
+    do_switch(&mut h, KeyCode::Down);
+    snap(&mut h, &mut s, Some("↓"), 120);
+    animate(&mut h, &mut s, None, 7, 170, 85);
+
+    // → infra (the file explorer session) to close on the third layout.
+    do_switch(&mut h, KeyCode::Down);
+    snap(&mut h, &mut s, Some("↓"), 160);
+    hold(&mut h, &mut s, 6, 100);
 
     s.finalize().unwrap();
 }
