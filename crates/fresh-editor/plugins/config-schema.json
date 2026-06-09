@@ -91,6 +91,7 @@
         "default_line_ending": "lf",
         "trim_trailing_whitespace_on_save": false,
         "ensure_final_newline_on_save": false,
+        "auto_read_only": true,
         "highlight_matching_brackets": true,
         "rainbow_brackets": true,
         "completion_popup_auto_show": false,
@@ -574,6 +575,12 @@
           "description": "Ensure files end with a newline when saving.\nDefault: false",
           "type": "boolean",
           "default": false,
+          "x-section": "Editing"
+        },
+        "auto_read_only": {
+          "description": "Automatically open files in read-only mode when they are not\nwritable on disk (filesystem permissions) or live in a\nlibrary/vendor directory (rustup toolchains, node_modules,\n/usr/include, /nix/store, ...). When disabled, such files open\neditable; saving may still fail unless permissions allow it.\nBinary files always open read-only regardless of this setting.\nDefault: true",
+          "type": "boolean",
+          "default": true,
           "x-section": "Editing"
         },
         "highlight_matching_brackets": {

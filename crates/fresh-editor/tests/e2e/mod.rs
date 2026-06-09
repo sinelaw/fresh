@@ -3,6 +3,7 @@ pub mod action_popup_global;
 pub mod altgr_shift;
 pub mod ansi_cursor;
 pub mod auto_indent;
+pub mod auto_read_only;
 pub mod auto_revert;
 pub mod bash_profile_editing;
 pub mod basic;

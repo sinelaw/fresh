@@ -183,6 +183,7 @@ pub struct PartialEditorConfig {
     pub default_line_ending: Option<LineEndingOption>,
     pub trim_trailing_whitespace_on_save: Option<bool>,
     pub ensure_final_newline_on_save: Option<bool>,
+    pub auto_read_only: Option<bool>,
     pub highlight_matching_brackets: Option<bool>,
     pub rainbow_brackets: Option<bool>,
     pub cursor_style: Option<CursorStyle>,
@@ -282,6 +283,7 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.trim_trailing_whitespace_on_save);
         self.ensure_final_newline_on_save
             .merge_from(&other.ensure_final_newline_on_save);
+        self.auto_read_only.merge_from(&other.auto_read_only);
         self.highlight_matching_brackets
             .merge_from(&other.highlight_matching_brackets);
         self.rainbow_brackets.merge_from(&other.rainbow_brackets);
@@ -604,6 +606,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             default_line_ending: Some(cfg.default_line_ending.clone()),
             trim_trailing_whitespace_on_save: Some(cfg.trim_trailing_whitespace_on_save),
             ensure_final_newline_on_save: Some(cfg.ensure_final_newline_on_save),
+            auto_read_only: Some(cfg.auto_read_only),
             highlight_matching_brackets: Some(cfg.highlight_matching_brackets),
             rainbow_brackets: Some(cfg.rainbow_brackets),
             cursor_style: Some(cfg.cursor_style),
@@ -741,6 +744,7 @@ impl PartialEditorConfig {
             ensure_final_newline_on_save: self
                 .ensure_final_newline_on_save
                 .unwrap_or(defaults.ensure_final_newline_on_save),
+            auto_read_only: self.auto_read_only.unwrap_or(defaults.auto_read_only),
             highlight_matching_brackets: self
                 .highlight_matching_brackets
                 .unwrap_or(defaults.highlight_matching_brackets),

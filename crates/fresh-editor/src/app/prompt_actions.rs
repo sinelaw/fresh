@@ -758,6 +758,7 @@ impl Editor {
                     &full_path,
                     self.working_dir(),
                     self.authority().path_translation.as_ref(),
+                    self.config.editor.auto_read_only,
                 );
                 let active_buffer = self.active_buffer();
                 self.active_window_mut()

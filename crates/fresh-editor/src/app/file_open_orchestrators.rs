@@ -320,6 +320,7 @@ impl Editor {
             &display_path,
             self.working_dir(),
             self.authority().path_translation.as_ref(),
+            self.config.editor.auto_read_only,
         );
         self.active_window_mut()
             .buffer_metadata
@@ -509,6 +510,7 @@ impl Editor {
             &display_path,
             self.working_dir(),
             self.authority().path_translation.as_ref(),
+            self.config.editor.auto_read_only,
         );
         self.active_window_mut()
             .buffer_metadata
@@ -1075,6 +1077,7 @@ impl crate::app::window::Window {
             &display_path,
             &self.root,
             self.authority().path_translation.as_ref(),
+            self.resources.config.editor.auto_read_only,
         );
 
         // Mark binary files in metadata and disable LSP
@@ -1084,8 +1087,13 @@ impl crate::app::window::Window {
             metadata.disable_lsp(t!("buffer.binary_file").to_string());
         }
 
-        // Check if the file is read-only on disk (filesystem permissions)
-        if file_exists && !metadata.read_only && !self.authority().filesystem.is_writable(path) {
+        // Check if the file is read-only on disk (filesystem permissions),
+        // unless the user opted out of automatic read-only via config
+        if file_exists
+            && !metadata.read_only
+            && self.resources.config.editor.auto_read_only
+            && !self.authority().filesystem.is_writable(path)
+        {
             metadata.read_only = true;
         }
 

@@ -186,11 +186,15 @@ impl BufferMetadata {
     /// * `path_translation` - Active authority's host↔remote workspace mapping;
     ///   used to build the LSP-facing `file_uri` so an in-container LSP sees
     ///   in-container paths. `None` for local/SSH authorities.
+    /// * `auto_read_only` - Whether library/vendor paths should be marked
+    ///   read-only (the `editor.auto_read_only` config option). When `false`,
+    ///   library detection is skipped and the buffer opens editable.
     pub fn with_file(
         canonical_path: PathBuf,
         display_path: &Path,
         working_dir: &Path,
         path_translation: Option<&crate::services::authority::PathTranslation>,
+        auto_read_only: bool,
     ) -> Self {
         // Compute URI from the absolute path. When the active authority
         // has a host↔remote mapping (devcontainer attach), this is
@@ -211,7 +215,8 @@ impl BufferMetadata {
         // user-visible path are in a library directory. This prevents symlinked dotfiles
         // (e.g., ~/.bash_profile -> /nix/store/...) from being marked read-only when
         // the user explicitly opened a non-library path (issue #1469).
-        let is_library = Self::is_library_path(&canonical_path, working_dir)
+        let is_library = auto_read_only
+            && Self::is_library_path(&canonical_path, working_dir)
             && Self::is_library_path(display_path, working_dir);
 
         Self {

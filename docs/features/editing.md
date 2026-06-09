@@ -39,7 +39,7 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 
 ## Read-Only Mode
 
-Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override.
+Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
 
 ## Whitespace Indicators
 

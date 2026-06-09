@@ -1078,6 +1078,17 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Editing"))]
     pub ensure_final_newline_on_save: bool,
 
+    /// Automatically open files in read-only mode when they are not
+    /// writable on disk (filesystem permissions) or live in a
+    /// library/vendor directory (rustup toolchains, node_modules,
+    /// /usr/include, /nix/store, ...). When disabled, such files open
+    /// editable; saving may still fail unless permissions allow it.
+    /// Binary files always open read-only regardless of this setting.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub auto_read_only: bool,
+
     // ===== Bracket Matching =====
     /// Highlight matching bracket pairs when cursor is on a bracket.
     /// Default: true
@@ -1498,6 +1509,7 @@ impl Default for EditorConfig {
             default_line_ending: LineEndingOption::default(),
             trim_trailing_whitespace_on_save: false,
             ensure_final_newline_on_save: false,
+            auto_read_only: true,
             highlight_matching_brackets: true,
             rainbow_brackets: true,
             cursor_style: CursorStyle::default(),

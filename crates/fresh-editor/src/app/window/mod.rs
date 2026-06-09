@@ -2683,6 +2683,7 @@ impl Window {
             &display_path,
             &self.root,
             self.authority().path_translation.as_ref(),
+            self.config().editor.auto_read_only,
         );
         self.buffer_metadata.insert(buffer_id, metadata);
 
