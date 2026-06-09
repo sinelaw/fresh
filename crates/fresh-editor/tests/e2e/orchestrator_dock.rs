@@ -411,6 +411,62 @@ fn dock_list_scrollbar_shows_on_focus_or_hover() {
     );
 }
 
+/// Regression: the dock's overlay scrollbar must follow a panel-global hover
+/// memo, not the active window's stored cursor position. That cursor is kept
+/// per editor window, so paging through sessions with next/prev-window used
+/// to swap in each window's stale cursor — flickering the bar on for some
+/// sessions and off for others even though the dock was blurred and the
+/// pointer never moved. A blurred, unhovered dock must keep the bar hidden
+/// regardless of any window's stored cursor.
+#[test]
+fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let parent = root.parent().unwrap().to_path_buf();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    for i in 0..8 {
+        let dir = parent.join(format!("proj{i}"));
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, format!("proj{i}"));
+    }
+    h.render().unwrap();
+    open_dock(&mut h);
+    // Blur the dock so the main view owns the keyboard, as it is while paging
+    // windows with next/prev-window.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.assert_screen_contains("Orchestrator");
+
+    let wall_col = {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    let sb_col = wall_col.saturating_sub(2);
+    let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
+        (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
+    };
+
+    // Blurred and unhovered → the bar is hidden.
+    let hidden = snapshot(&h);
+
+    // Plant a stale per-window cursor INSIDE the dock list region, as if this
+    // window had last seen the pointer there. No mouse-move event fires, so
+    // the global hover memo stays false.
+    h.editor_mut().active_window_mut().mouse_cursor_position = Some((2, 15));
+    h.render().unwrap();
+
+    // The bar must stay hidden: visibility follows the global hover memo, not
+    // the active window's stored cursor.
+    assert_eq!(
+        hidden,
+        snapshot(&h),
+        "a blurred, unhovered dock must keep its scrollbar hidden regardless \
+         of the active window's stored cursor position"
+    );
+}
+
 #[test]
 fn mouse_click_on_dock_new_button_opens_form() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -1594,33 +1650,35 @@ fn creating_session_moves_dock_highlight_to_new_session() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // Row of the (first) line mentioning `needle`, if any.
-    let line_row = |h: &EditorTestHarness, needle: &str| -> Option<u16> {
-        h.screen_to_string()
-            .lines()
-            .position(|l| l.contains(needle))
-            .map(|r| r as u16)
+    // Row of the (first) DOCK line mentioning `needle` — i.e. where `needle`
+    // starts left of the divider. Scoping to the dock column is essential:
+    // "plainwork" also shows in the still-open modal's "Project:" line and,
+    // once the new session is active, in its terminal's shell prompt (the cwd
+    // path) in the main view — both right of the divider. Matching those
+    // would read the wall on the wrong row and hang the wait.
+    let dock_row = |h: &EditorTestHarness, needle: &str| -> Option<u16> {
+        let wc = wall_col(h);
+        h.screen_to_string().lines().enumerate().find_map(|(r, l)| {
+            let byte = l.find(needle)?;
+            let col = l[..byte].chars().count() as u16;
+            (col < wc).then_some(r as u16)
+        })
     };
 
-    // The new session appears and becomes the active card; its row's wall is
-    // scooped away (the seamless tab). The spawn + active-window switch +
-    // dock refresh are async — and "plainwork" also appears in the still-open
-    // modal's "Project:" line — so wait until the modal has closed AND the
-    // divider has vanished from the new session's dock row.
+    // The new session appears in the dock and becomes the active card; its
+    // row's wall is scooped away (the seamless tab). The spawn + active-window
+    // switch + dock refresh are async, so wait until the new session's dock
+    // card shows and its divider has vanished.
     h.wait_until(|h| {
-        let s = h.screen_to_string();
-        if s.contains("Create Session") || s.contains("Creating session") {
-            return false;
-        }
         let wc = wall_col(h);
-        line_row(h, "plainwork").is_some_and(|r| h.get_cell(wc, r).as_deref() != Some("│"))
+        dock_row(h, "plainwork").is_some_and(|r| h.get_cell(wc, r).as_deref() != Some("│"))
     })
     .unwrap();
 
     let screen = h.screen_to_string();
     let wc = wall_col(&h);
     let alpha_row =
-        line_row(&h, "alphaproj").expect("the original session row should still be listed");
+        dock_row(&h, "alphaproj").expect("the original session row should still be listed");
     assert_eq!(
         h.get_cell(wc, alpha_row).as_deref(),
         Some("│"),

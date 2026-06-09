@@ -355,26 +355,24 @@ impl Editor {
 
                 // The dock's overlay scrollbar follows the pointer: reveal it
                 // while the mouse is over the sessions list, hide it otherwise.
-                // Re-render only on the enter/leave transition (not every
-                // motion) so it fades in/out without churn.
-                if self.config.editor.mouse_hover_enabled {
-                    let now_over = self
-                        .dock
-                        .as_ref()
-                        .map(|d| {
-                            d.scrollbar_hover_zones.iter().any(|z| {
-                                col >= z.x
-                                    && col < z.x + z.width
-                                    && row >= z.y
-                                    && row < z.y + z.height
-                            })
+                // Tracked off the actual motion events we receive (not gated on
+                // `mouse_hover_enabled`, which only governs terminal-level mode
+                // 1003 — and is off by default on Windows): if a Moved event
+                // arrives, use it. Re-render only on the enter/leave transition
+                // (not every motion) so it fades in/out without churn.
+                let now_over = self
+                    .dock
+                    .as_ref()
+                    .map(|d| {
+                        d.scrollbar_hover_zones.iter().any(|z| {
+                            col >= z.x && col < z.x + z.width && row >= z.y && row < z.y + z.height
                         })
-                        .unwrap_or(false);
-                    if let Some(d) = self.dock.as_mut() {
-                        if d.scrollbar_zone_hovered != now_over {
-                            d.scrollbar_zone_hovered = now_over;
-                            needs_render = true;
-                        }
+                    })
+                    .unwrap_or(false);
+                if let Some(d) = self.dock.as_mut() {
+                    if d.scrollbar_zone_hovered != now_over {
+                        d.scrollbar_zone_hovered = now_over;
+                        needs_render = true;
                     }
                 }
             }

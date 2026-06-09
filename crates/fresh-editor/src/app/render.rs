@@ -4035,6 +4035,7 @@ impl Editor {
             scroll_regions,
             placement,
             panel_focused,
+            scrollbar_zone_hovered,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4046,6 +4047,7 @@ impl Editor {
                 fwp.scroll_regions.clone(),
                 fwp.placement,
                 fwp.focused,
+                fwp.scrollbar_zone_hovered,
             ),
             None => return,
         };
@@ -4223,11 +4225,15 @@ impl Editor {
         // The dock's list scrollbars are overlay-style: shown only while the
         // dock is focused (its keyboard up/down/click navigate the list) or
         // the pointer is over the list, and hidden otherwise. Every other
-        // panel keeps its scrollbar always visible. `pointer` is the last
-        // cursor cell; hover-reveal needs motion reporting (`mouse_hover_enabled`).
+        // panel keeps its scrollbar always visible.
+        //
+        // Hover is read from the panel-global `scrollbar_zone_hovered` memo
+        // (maintained by the mouse-move handler), NOT from a per-window
+        // cursor position: the latter is stored per editor window, so paging
+        // through sessions with next/prev-window would swap in each window's
+        // stale cursor and flicker the bar on for some sessions and off for
+        // others even though the pointer never moved.
         let dock_overlay_scrollbar = is_dock;
-        let hover_enabled = self.config.editor.mouse_hover_enabled;
-        let pointer = self.active_window().mouse_cursor_position;
         let mut scrollbar_hover_zones: Vec<ratatui::layout::Rect> = Vec::new();
         {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
@@ -4266,14 +4272,7 @@ impl Editor {
                     height: sb_h,
                 };
                 scrollbar_hover_zones.push(zone);
-                let pointer_in_zone = pointer.is_some_and(|(px, py)| {
-                    px >= zone.x
-                        && px < zone.x + zone.width
-                        && py >= zone.y
-                        && py < zone.y + zone.height
-                });
-                let show =
-                    !dock_overlay_scrollbar || panel_focused || (hover_enabled && pointer_in_zone);
+                let show = !dock_overlay_scrollbar || panel_focused || scrollbar_zone_hovered;
                 if !show {
                     // Hidden: skip painting and recording a draggable track —
                     // an invisible bar shouldn't be grabbable. (The pointer
