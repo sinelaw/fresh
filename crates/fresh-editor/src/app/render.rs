@@ -4296,6 +4296,24 @@ impl Editor {
             frame.set_cursor_position((cx, cy));
         }
 
+        // Dock "seamless tab (missing wall)": erase the right-edge divider
+        // across the active session card's rows and scoop it away with
+        // rounded corners just above and below, so the active card reads as
+        // merging into the editor to its right (a file-folder / browser
+        // tab). Painted last so it sits over the wall the block drew and any
+        // scrollbar. No-op for non-dock panels and for an empty dock.
+        if is_dock {
+            paint_dock_seamless_active_tab(
+                frame,
+                overlay_rect,
+                inner,
+                &entries,
+                max_rows,
+                dock_border_fg,
+                theme.suggestion_bg,
+            );
+        }
+
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
             fwp.scrollbar_tracks = scrollbar_tracks;
@@ -4347,6 +4365,109 @@ impl Editor {
             style = style.add_modifier(m);
         }
         style
+    }
+}
+
+/// Paint the dock's "seamless tab (missing wall)" treatment for the
+/// active session card.
+///
+/// The dock normally draws a full-height right-edge divider (the
+/// "wall") separating its column from the editor. For the active
+/// session — the one mirrored in the main view — we erase the wall
+/// across the card's rows and scoop the divider away with rounded
+/// corners just above and below it, so the card visually merges into
+/// the editor to its right:
+///
+/// ```text
+///                    │   <- wall (untouched) above
+/// ╭──────────────────╯   <- top edge scoops up into the wall
+/// │  session (active)     <- right side open: flows into the editor
+/// ╰──────────────────╮   <- bottom edge scoops down into the wall
+///                    │   <- wall resumes below
+/// ```
+///
+/// The active card is located by the heavy box glyphs that
+/// `mark_selected_card` stamps onto exactly one card's rows; its first
+/// and last such rows bound the band. No-ops when no card is selected
+/// (e.g. an empty dock) so the plain wall stands.
+fn paint_dock_seamless_active_tab(
+    frame: &mut ratatui::Frame,
+    overlay_rect: ratatui::layout::Rect,
+    inner: ratatui::layout::Rect,
+    entries: &[fresh_core::text_property::TextPropertyEntry],
+    max_rows: usize,
+    border_fg: ratatui::style::Color,
+    bg: ratatui::style::Color,
+) {
+    // Rows of the (single) selected card carry the heavy box glyphs that
+    // `mark_selected_card` stamps — the corners on its border rows and the
+    // `┃` bars on its content rows. No other dock row uses them.
+    fn is_active_card_row(s: &str) -> bool {
+        s.chars().any(|c| matches!(c, '┏' | '┓' | '┗' | '┛' | '┃'))
+    }
+    fn set_cell(
+        frame: &mut ratatui::Frame,
+        x: u16,
+        y: u16,
+        sym: &str,
+        fg: ratatui::style::Color,
+        bg: ratatui::style::Color,
+    ) {
+        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+            cell.set_symbol(sym);
+            cell.set_fg(fg);
+            cell.set_bg(bg);
+        }
+    }
+
+    // Locate the active card's contiguous row band.
+    let mut top: Option<usize> = None;
+    let mut bot = 0usize;
+    for (i, e) in entries.iter().take(max_rows).enumerate() {
+        if is_active_card_row(&e.text) {
+            top.get_or_insert(i);
+            bot = i;
+        }
+    }
+    let Some(top) = top else { return };
+    // Need a top border, at least one content row, and a bottom border.
+    if bot < top + 2 {
+        return;
+    }
+
+    // `inner.x` is the dock's left edge; the wall sits one column past the
+    // inner area (the block's `Borders::RIGHT`).
+    let wall_x = overlay_rect.x + overlay_rect.width.saturating_sub(1);
+    let left_x = inner.x;
+    if wall_x <= left_x + 1 {
+        return;
+    }
+    let top_y = inner.y + top as u16;
+    let bot_y = inner.y + bot as u16;
+
+    // Top edge of the tab: ╭───…───╯  (╯ scoops up into the wall above).
+    set_cell(frame, left_x, top_y, "╭", border_fg, bg);
+    for x in (left_x + 1)..wall_x {
+        set_cell(frame, x, top_y, "─", border_fg, bg);
+    }
+    set_cell(frame, wall_x, top_y, "╯", border_fg, bg);
+
+    // Bottom edge: ╰───…───╮  (╮ scoops down into the wall below).
+    set_cell(frame, left_x, bot_y, "╰", border_fg, bg);
+    for x in (left_x + 1)..wall_x {
+        set_cell(frame, x, bot_y, "─", border_fg, bg);
+    }
+    set_cell(frame, wall_x, bot_y, "╮", border_fg, bg);
+
+    // Content rows: keep the left border, open the right — erase the card's
+    // own right border, the gutter, and the wall — so the row flows into the
+    // editor with no divider.
+    for r in (top + 1)..bot {
+        let y = inner.y + r as u16;
+        set_cell(frame, left_x, y, "│", border_fg, bg);
+        for x in wall_x.saturating_sub(2)..=wall_x {
+            set_cell(frame, x, y, " ", border_fg, bg);
+        }
     }
 }
 

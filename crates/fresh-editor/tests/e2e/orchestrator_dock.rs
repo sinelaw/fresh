@@ -243,6 +243,88 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     );
 }
 
+/// The active session's card wears the "seamless tab": its rows have the
+/// dock's right-edge divider scooped away so the card visually merges into
+/// the editor, while every other card stays walled off by the divider. And
+/// the tab tracks the active session — switching the active window moves it.
+///
+/// Uses two windows + a live active-window switch (no session spawn), so it
+/// exercises the rendering directly. Drives only the keyboard and asserts on
+/// rendered cells per CONTRIBUTING §2.
+#[test]
+fn active_session_card_is_a_seamless_tab_and_follows_focus() {
+    let (_tmp_a, root_a) = setup_project("aaa_project");
+    let parent = root_a.parent().unwrap().to_path_buf();
+    let root_b = parent.join("zzz_project");
+    fs::create_dir(&root_b).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&root_b)
+        .status()
+        .unwrap()
+        .success());
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root_b.clone(), "zzz_project".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("aaa_project") && s.contains("zzz_project")
+    })
+    .unwrap();
+
+    // The dock's right-edge divider column, sampled on the toolbar row (row
+    // 0), which is never part of a card so the wall always stands there.
+    let wall_col = |h: &EditorTestHarness| -> u16 {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    // True when the divider is scooped away on `name`'s card row (the
+    // seamless tab); false when the wall `│` still stands there.
+    let wall_open_on = |h: &EditorTestHarness, name: &str| -> bool {
+        let wc = wall_col(h);
+        let row = row_of(h, name) as u16;
+        h.get_cell(wc, row).as_deref() != Some("│")
+    };
+
+    // aaa_project is the launch (active) session: its card is the seamless
+    // tab (divider scooped away); zzz_project is walled off.
+    assert!(
+        wall_open_on(&h, "aaa_project"),
+        "the active session's card must drop the divider (seamless tab):\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        !wall_open_on(&h, "zzz_project"),
+        "an inactive session's card must keep the divider:\n{}",
+        h.screen_to_string()
+    );
+
+    // Arrow down live-switches the active window to zzz_project; the tab must
+    // follow it — zzz opens, aaa re-walls.
+    let pre = h.screen_to_string();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string() != pre).unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    assert!(
+        wall_open_on(&h, "zzz_project"),
+        "the seamless tab must follow the active session onto zzz_project:\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        !wall_open_on(&h, "aaa_project"),
+        "the previously-active aaa_project must regain its divider:\n{}",
+        h.screen_to_string()
+    );
+}
+
 #[test]
 fn mouse_click_on_dock_new_button_opens_form() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -1372,10 +1454,11 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
 /// highlight onto the new session. It becomes the active window, and the
 /// dock — a passive mirror once focus dives into the new terminal — must
 /// re-point at it instead of stranding the highlight on the previously
-/// active row. We read this off the *selected card border*: the highlighted
-/// card uses heavy box glyphs (a `┃` down each side), unselected cards keep
-/// the light `│`. After creation the new session's card must be the heavy
-/// one and the old session's must not.
+/// active row. We read this off the *seamless tab*: the active session's
+/// card scoops the dock's right-edge divider away (its rows have no `│`
+/// wall — they flow into the editor), while inactive cards keep the wall.
+/// After creation the new session's card must be the seamless one and the
+/// old session's must keep its divider.
 #[test]
 fn creating_session_moves_dock_highlight_to_new_session() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -1417,24 +1500,45 @@ fn creating_session_moves_dock_highlight_to_new_session() {
         .expect("Create Session button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
-    // The new session appears and becomes the highlighted (heavy-border)
-    // card; the spawn + active-window switch + dock refresh are async, so
-    // wait until the highlight has actually migrated onto it.
-    h.wait_until(|h| {
+    // The dock's right-edge divider, sampled on the toolbar row (row 0),
+    // which is never part of a session card so the wall always stands there.
+    let wall_col = |h: &EditorTestHarness| -> u16 {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    // Row of the (first) line mentioning `needle`, if any.
+    let line_row = |h: &EditorTestHarness, needle: &str| -> Option<u16> {
         h.screen_to_string()
             .lines()
-            .any(|l| l.contains("plainwork") && l.starts_with('┃'))
+            .position(|l| l.contains(needle))
+            .map(|r| r as u16)
+    };
+
+    // The new session appears and becomes the active card; its row's wall is
+    // scooped away (the seamless tab). The spawn + active-window switch +
+    // dock refresh are async — and "plainwork" also appears in the still-open
+    // modal's "Project:" line — so wait until the modal has closed AND the
+    // divider has vanished from the new session's dock row.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        if s.contains("Create Session") || s.contains("Creating session") {
+            return false;
+        }
+        let wc = wall_col(h);
+        line_row(h, "plainwork").is_some_and(|r| h.get_cell(wc, r).as_deref() != Some("│"))
     })
     .unwrap();
 
     let screen = h.screen_to_string();
-    let alpha_line = screen
-        .lines()
-        .find(|l| l.contains("alphaproj"))
-        .expect("the original session row should still be listed");
-    assert!(
-        !alpha_line.starts_with('┃'),
-        "the previously-active session must drop the heavy highlight border:\n{screen}"
+    let wc = wall_col(&h);
+    let alpha_row =
+        line_row(&h, "alphaproj").expect("the original session row should still be listed");
+    assert_eq!(
+        h.get_cell(wc, alpha_row).as_deref(),
+        Some("│"),
+        "the previously-active session must keep the dock divider (no seamless tab):\n{screen}"
     );
 }
 
