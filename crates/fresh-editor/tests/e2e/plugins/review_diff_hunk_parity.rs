@@ -400,7 +400,14 @@ fn test_review_comments_rail_is_narrow() {
     init_tracing_from_env();
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
+
+    // The comments rail is populated asynchronously after the hint bar
+    // appears — wait for its header rather than reading the first frame.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    let screen = harness.screen_to_string();
 
     // Find the row carrying the COMMENTS header and locate its column.
     let row = screen
