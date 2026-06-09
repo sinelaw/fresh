@@ -3307,105 +3307,105 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     );
 
     // Open on the local session: a local Rust file, "Local" in the status bar.
-    hold(&mut h, &mut s, 5, 160);
+    hold(&mut h, &mut s, 5, 80);
 
     // --- Open the New Session dialog via the command palette. ---------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    snap(&mut h, &mut s, Some("Ctrl+P"), 160);
+    snap(&mut h, &mut s, Some("Ctrl+P"), 80);
 
     for ch in "New Session".chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 55);
+        snap(&mut h, &mut s, Some(&ch.to_string()), 28);
     }
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
         .unwrap();
-    hold(&mut h, &mut s, 2, 120);
+    hold(&mut h, &mut s, 2, 60);
 
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
         .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 220);
-    hold(&mut h, &mut s, 4, 150);
+    snap(&mut h, &mut s, Some("Enter"), 110);
+    hold(&mut h, &mut s, 4, 75);
 
     // --- Switch to the SSH backend by clicking the "Run in: … SSH" tab. -----
     let (ssh_col, ssh_row) = h
         .find_text_on_screen("SSH")
         .expect("the 'Run in:' tab row should offer an SSH backend");
-    snap_mouse(&mut h, &mut s, None, (ssh_col, ssh_row), 200);
+    snap_mouse(&mut h, &mut s, None, (ssh_col, ssh_row), 100);
     h.mouse_click(ssh_col, ssh_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Remote Path"))
         .unwrap();
-    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 180);
-    hold(&mut h, &mut s, 2, 110);
+    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 90);
+    hold(&mut h, &mut s, 2, 55);
 
     // Enter on the already-active SSH tab dives into the first field (Host).
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 130);
+    snap(&mut h, &mut s, Some("Enter"), 65);
 
     // --- Host: the fake hostname + the throwaway sshd's port. ---------------
     let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);
     for ch in host_value.chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 38);
+        snap(&mut h, &mut s, Some(&ch.to_string()), 20);
     }
-    hold(&mut h, &mut s, 2, 110);
+    hold(&mut h, &mut s, 2, 55);
 
     // --- The remaining fields fill in quickly (they're the "plumbing"; the
     //     host is the star). Each lands its whole value in one go. -----------
     // Remote Path: where the session is rooted on the remote.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 90);
+    snap(&mut h, &mut s, Some("Tab"), 45);
     h.type_text(&server.work.to_string_lossy()).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 120);
+    snap(&mut h, &mut s, None, 60);
 
     // Identity file: the keypair authorized on the demo sshd.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 90);
+    snap(&mut h, &mut s, Some("Tab"), 45);
     h.type_text(&server.identity.to_string_lossy()).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 120);
+    snap(&mut h, &mut s, None, 60);
 
     // SSH options: a throwaway known_hosts so the demo leaves no trace in the
     // user's ~/.ssh (and to show the free-form options field).
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 90);
+    snap(&mut h, &mut s, Some("Tab"), 45);
     h.type_text(&format!(
         "-o UserKnownHostsFile={}",
         server.known_hosts.to_string_lossy()
     ))
     .unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 120);
+    snap(&mut h, &mut s, None, 60);
 
     // Session name.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 90);
+    snap(&mut h, &mut s, Some("Tab"), 45);
     h.type_text("deploy-box").unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, None, 150);
-    hold(&mut h, &mut s, 2, 120);
+    snap(&mut h, &mut s, None, 75);
+    hold(&mut h, &mut s, 2, 60);
 
     // --- Submit: click "Create Session". ------------------------------------
     let (create_col, create_row) = h
         .find_text_on_screen("Create Session")
         .expect("the form should offer a 'Create Session' button");
-    snap_mouse(&mut h, &mut s, None, (create_col, create_row), 160);
+    snap_mouse(&mut h, &mut s, None, (create_col, create_row), 80);
     h.mouse_click(create_col, create_row).unwrap();
     h.render().unwrap();
     // The disabled "Connecting…" view flashes up while ssh handshakes + the
     // Python agent boots on the remote — kept brief so the connect feels snappy.
-    snap_mouse(&mut h, &mut s, Some("Click"), (create_col, create_row), 150);
-    hold(&mut h, &mut s, 2, 110);
+    snap_mouse(&mut h, &mut s, Some("Click"), (create_col, create_row), 75);
+    hold(&mut h, &mut s, 2, 55);
 
     // --- Wait for the attach to resolve. On success the form panel is
     //     unmounted (its header disappears) and the born-attached remote
@@ -3431,7 +3431,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
             .contains(&server.work.to_string_lossy().into_owned())
     })
     .unwrap();
-    hold(&mut h, &mut s, 3, 160);
+    hold(&mut h, &mut s, 3, 80);
 
     // --- Open a remote file in a buffer. Quick Open (Ctrl+P → Backspace to
     //     drop the `>` command prefix) fuzzy-finds files through the SSH
@@ -3439,25 +3439,25 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    snap(&mut h, &mut s, Some("Ctrl+P"), 200);
+    snap(&mut h, &mut s, Some("Ctrl+P"), 100);
     h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Bksp"), 150);
+    snap(&mut h, &mut s, Some("Bksp"), 75);
     for ch in "app".chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 90);
+        snap(&mut h, &mut s, Some(&ch.to_string()), 45);
     }
     // The remote file finder lists `app.py` (served over SSH).
     h.wait_until(|h| h.screen_to_string().contains("app.py"))
         .unwrap();
-    hold(&mut h, &mut s, 2, 150);
+    hold(&mut h, &mut s, 2, 75);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // Wait for the remote file's contents to render in the buffer.
     h.wait_until(|h| h.screen_to_string().contains("deployment service"))
         .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 280);
-    hold(&mut h, &mut s, 7, 200);
+    snap(&mut h, &mut s, Some("Enter"), 140);
+    hold(&mut h, &mut s, 7, 100);
 
     // --- Show the persistent Orchestrator dock: the left column lists every
     //     session — the local launch session and the remote `deploy-box`. ----
@@ -3467,7 +3467,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.type_text("Toggle Dock").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
-    snap(&mut h, &mut s, Some("Toggle Dock"), 220);
+    snap(&mut h, &mut s, Some("Toggle Dock"), 110);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // The dock mounts and takes keyboard focus (polling avoids the focus race).
     h.wait_until(|h| {
@@ -3475,8 +3475,8 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
         s.contains("deploy-box") && s.contains("local-app") && h.editor().is_dock_focused()
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 260);
-    hold(&mut h, &mut s, 6, 200);
+    snap(&mut h, &mut s, Some("Enter"), 130);
+    hold(&mut h, &mut s, 6, 100);
 
     // --- Switch to the local session: ↑ moves the dock selection off the
     //     active remote session onto the local one, live-swapping the editor
@@ -3484,8 +3484,8 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("runs on this machine"))
         .unwrap();
-    snap(&mut h, &mut s, Some("↑"), 280);
-    hold(&mut h, &mut s, 10, 200);
+    snap(&mut h, &mut s, Some("↑"), 140);
+    hold(&mut h, &mut s, 10, 100);
 
     s.finalize().unwrap();
 
@@ -3623,34 +3623,34 @@ fn blog_showcase_fresh_0_4_0_universal_search() {
          scope toolbar, and a live syntax-highlighted preview.",
     );
 
-    hold(&mut h, &mut s, 5, 160);
+    hold(&mut h, &mut s, 5, 80);
 
     // --- Open the Live Grep overlay from the palette. -----------------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    snap(&mut h, &mut s, Some("Ctrl+P"), 160);
+    snap(&mut h, &mut s, Some("Ctrl+P"), 80);
     h.type_text("Live Grep").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Live Grep (Find in Files)"))
         .unwrap();
-    snap(&mut h, &mut s, None, 160);
+    snap(&mut h, &mut s, None, 80);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // The overlay's scope toolbar paints "Search in:".
     h.wait_until(|h| h.screen_to_string().contains("Search in:"))
         .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 220);
-    hold(&mut h, &mut s, 3, 150);
+    snap(&mut h, &mut s, Some("Enter"), 110);
+    hold(&mut h, &mut s, 3, 75);
 
     // --- Type a query that recurs across every source file. -----------------
     for ch in "config".chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some(&ch.to_string()), 70);
+        snap(&mut h, &mut s, Some(&ch.to_string()), 35);
     }
     // Results stream in; the preview pane shows the first match's file.
     h.wait_until(|h| h.screen_to_string().contains("src/config.rs"))
         .unwrap();
-    hold(&mut h, &mut s, 5, 180);
+    hold(&mut h, &mut s, 5, 90);
 
     // --- Word vs. substring: Alt+O flips whole-word matching. Wait for the
     //     re-search to settle so we paint the new (smaller) result set rather
@@ -3662,16 +3662,16 @@ fn blog_showcase_fresh_0_4_0_universal_search() {
         scr.contains("src/server.rs") && !scr.contains("Searching")
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Alt+O"), 280);
-    hold(&mut h, &mut s, 5, 200);
+    snap(&mut h, &mut s, Some("Alt+O"), 140);
+    hold(&mut h, &mut s, 5, 100);
 
     // --- Navigate results: the preview pane hops between files as the
     //     selection moves down onto a source match. --------------------------
     for _ in 0..3 {
         h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
-        snap(&mut h, &mut s, Some("↓"), 260);
-        hold(&mut h, &mut s, 2, 150);
+        snap(&mut h, &mut s, Some("↓"), 130);
+        hold(&mut h, &mut s, 2, 75);
     }
 
     // --- Enter jumps to the highlighted match: the overlay closes and the
@@ -3682,8 +3682,8 @@ fn blog_showcase_fresh_0_4_0_universal_search() {
         !scr.contains("search in:") && scr.contains("resume")
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 320);
-    hold(&mut h, &mut s, 8, 200);
+    snap(&mut h, &mut s, Some("Enter"), 160);
+    hold(&mut h, &mut s, 8, 100);
 
     s.finalize().unwrap();
 }
@@ -3818,7 +3818,7 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     );
 
     // Open on the api session (Rust).
-    hold(&mut h, &mut s, 5, 160);
+    hold(&mut h, &mut s, 5, 80);
 
     // --- Toggle the dock open. ----------------------------------------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -3827,7 +3827,7 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     h.type_text("Toggle Dock").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
-    snap(&mut h, &mut s, Some("Toggle Dock"), 220);
+    snap(&mut h, &mut s, Some("Toggle Dock"), 110);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // Dock mounts, lists all three sessions, and takes keyboard focus.
     h.wait_until(|h| {
@@ -3838,8 +3838,8 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
             && h.editor().is_dock_focused()
     })
     .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 280);
-    hold(&mut h, &mut s, 6, 200);
+    snap(&mut h, &mut s, Some("Enter"), 140);
+    hold(&mut h, &mut s, 6, 100);
 
     // --- Live-switch with the arrows. Each press flips the active session;
     //     the editor on the right swaps to that session's buffer. Detect the
@@ -3849,15 +3849,15 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
         h.send_key(key, KeyModifiers::NONE).unwrap();
         h.wait_until(|h| h.editor().active_window().root != prev)
             .unwrap();
-        snap(h, s, Some(label), 320);
-        hold(h, s, 6, 200);
+        snap(h, s, Some(label), 160);
+        hold(h, s, 6, 100);
     };
 
     switch(&mut h, &mut s, KeyCode::Down, "↓");
     switch(&mut h, &mut s, KeyCode::Down, "↓");
     switch(&mut h, &mut s, KeyCode::Up, "↑");
 
-    hold(&mut h, &mut s, 4, 200);
+    hold(&mut h, &mut s, 4, 100);
 
     s.finalize().unwrap();
 }
