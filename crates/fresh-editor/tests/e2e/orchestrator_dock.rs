@@ -360,6 +360,63 @@ fn next_window_keeps_dock_order_stable_and_highlight_correct() {
     }
 }
 
+/// Next/Prev Window must cycle through exactly the sessions the dock currently
+/// shows — when a filter hides some windows, paging must skip them. The dock
+/// publishes its filtered visible list as the window cycle order; core honours
+/// it. Drives the dock's search filter, then the public `next_window`, and
+/// asserts the active window only ever lands on a visible (matching) session.
+#[test]
+fn next_window_cycles_only_dock_visible_sessions() {
+    let (_tmp, root) = setup_project("base");
+    let parent = root.parent().unwrap().to_path_buf();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 40, Default::default(), root.clone())
+            .unwrap();
+    // Two windows that match the filter and two that don't (plus the launch
+    // "base" window, also non-matching).
+    for name in ["keepA", "keepB", "dropC", "dropD"] {
+        let dir = parent.join(name);
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, name.to_string());
+    }
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        ["keepA", "keepB", "dropC", "dropD"]
+            .iter()
+            .all(|l| s.contains(l))
+    })
+    .unwrap();
+
+    // Focus the dock filter ("/") and narrow to the "keep" sessions. The dock
+    // republishes its visible list as the cycle order on every filter change.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("keep").unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("keepA") && s.contains("keepB") && !s.contains("dropC") && !s.contains("dropD")
+    })
+    .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    // Cycle with the public command (not the palette, which would blur the
+    // dock and clear the search). Every landing must be a visible session —
+    // never the filtered-out "dropC"/"dropD" or the launch "base".
+    for _ in 0..6 {
+        h.editor_mut().next_window();
+        h.render().unwrap();
+        h.wait_until_stable(|_| true).unwrap();
+        let active = h.editor().active_window().label.clone();
+        assert!(
+            active == "keepA" || active == "keepB",
+            "Next Window landed on a filtered-out session {active:?}; it must cycle only the \
+             dock's visible list (keepA/keepB):\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
 /// The active session's card wears the "seamless tab": its rows have the
 /// dock's right-edge divider scooped away so the card visually merges into
 /// the editor, while every other card stays walled off by the divider. And
@@ -442,15 +499,14 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     );
 }
 
-/// The dock's session-list scrollbar is overlay-style: shown while the dock
-/// is focused (keyboard up/down/click navigate the list) or the pointer is
-/// over the list, and hidden otherwise. With enough sessions to overflow the
-/// list, the scrollbar column's cells change with focus/hover. The bar paints
-/// background-coloured cells (no glyph), so this asserts on cell styles.
-/// Drives only keyboard + mouse motion and asserts on rendered output per
-/// CONTRIBUTING §2.
+/// The dock's session-list scrollbar is overlay-style: shown ONLY while the
+/// pointer is over the list, and hidden otherwise — even when the list holds
+/// keyboard focus. With enough sessions to overflow the list, the scrollbar
+/// column's cells change with hover alone. The bar paints background-coloured
+/// cells (no glyph), so this asserts on cell styles. Drives only mouse motion
+/// and asserts on rendered output per CONTRIBUTING §2.
 #[test]
-fn dock_list_scrollbar_shows_on_focus_or_hover() {
+fn dock_list_scrollbar_shows_only_on_hover() {
     let (_tmp, root) = setup_project("alphaproj");
     let parent = root.parent().unwrap().to_path_buf();
     let mut h =
@@ -464,40 +520,41 @@ fn dock_list_scrollbar_shows_on_focus_or_hover() {
         h.editor_mut().create_window_at(dir, format!("proj{i}"));
     }
     h.render().unwrap();
-    open_dock(&mut h); // the dock mounts focused
+    open_dock(&mut h); // the dock mounts focused (keyboard on the list)
 
     // The divider sits at the dock's right edge; the list's overlay scrollbar
-    // occupies the column two to its left (one editor-side gutter between).
+    // sits one column to its left (nudged into the gutter, hugging the edge).
     let wall_col = {
         let cols = h.screen_row_text(0).chars().count() as u16;
         (0..cols)
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    let sb_col = wall_col.saturating_sub(2);
+    // The dock nudges its scrollbar into the gutter, one column left of the
+    // divider (adjacent to the edge).
+    let sb_col = wall_col.saturating_sub(1);
     // Styles of the scrollbar column across the list rows; the bar's presence
     // shows up as a change here (it paints background-coloured cells).
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };
 
-    // Focused on mount → the bar is shown.
-    let focused = snapshot(&h);
+    // Focused on mount but NOT hovered → the bar is hidden. (Focus alone must
+    // not reveal it.)
+    let idle_focused = snapshot(&h);
 
-    // Alt+O hands focus to the editor; the dock blurs and (no hover yet) the
-    // bar hides.
-    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("Orchestrator");
-    let blurred = snapshot(&h);
+    // Hover over the list → the bar appears.
+    h.mouse_move(2, 15).unwrap();
+    let hovered = snapshot(&h);
     assert_ne!(
-        focused, blurred,
-        "the dock list scrollbar must hide when the dock loses focus"
+        idle_focused, hovered,
+        "the dock list scrollbar must appear while the pointer is over the list"
     );
 
     // The active session renders as the seamless tab (its divider is scooped
     // away). When shown, the scrollbar must paint *over* that tab rather than
-    // be erased by it: on the active card's row the scrollbar column differs
-    // between focused (bar over the tab) and blurred (bar hidden, tab open).
+    // be erased by it: the active card's scrollbar cell differs between
+    // hovered (bar over the tab) and idle (bar hidden, tab open).
     let active_row = row_of(&h, "alphaproj") as u16;
     assert!(
         (8..30).contains(&active_row),
@@ -505,26 +562,21 @@ fn dock_list_scrollbar_shows_on_focus_or_hover() {
     );
     let active_idx = (active_row - 8) as usize;
     assert_ne!(
-        focused[active_idx], blurred[active_idx],
+        idle_focused[active_idx], hovered[active_idx],
         "the scrollbar must show over the active card's seamless tab, not be \
          obscured by the tab border"
     );
 
-    // Hover over the (blurred) list → the bar reappears.
-    h.mouse_move(2, 15).unwrap();
-    let hovered = snapshot(&h);
-    assert_ne!(
-        blurred, hovered,
-        "the dock list scrollbar must appear while the pointer is over the list"
-    );
-
     // Move the pointer off the list (into the editor, right of the divider) →
-    // the bar hides again, matching the blurred-and-unhovered state.
+    // the bar hides again, matching the focused-but-unhovered state. This is
+    // the key behaviour: keyboard focus stays on the list, yet the bar hides
+    // because the pointer left the list.
     h.mouse_move(wall_col + 8, 15).unwrap();
     let left = snapshot(&h);
     assert_eq!(
-        blurred, left,
-        "the dock list scrollbar must hide once the pointer leaves the list"
+        idle_focused, left,
+        "the dock list scrollbar must hide once the pointer leaves the list, \
+         even though keyboard focus is still on the list"
     );
 }
 
@@ -560,7 +612,9 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    let sb_col = wall_col.saturating_sub(2);
+    // The dock nudges its scrollbar into the gutter, one column left of the
+    // divider (adjacent to the edge).
+    let sb_col = wall_col.saturating_sub(1);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };

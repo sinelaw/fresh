@@ -514,11 +514,34 @@ impl crate::app::Editor {
     /// `prev_window` so both directions stay in sync if the
     /// underlying ordering changes (e.g. user-controlled reorder).
     fn cycle_active_window(&mut self, delta: isize) {
-        let mut ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        // A plugin (the orchestrator dock) may constrain cycling to a
+        // specific ordered subset — the windows currently visible in its
+        // session list — so Next/Prev Window walks exactly that list rather
+        // than every open window. Ids no longer open are dropped, preserving
+        // the given order. An empty result (or no override) falls back to the
+        // default: every window, ordered by id.
+        let override_ids: Option<Vec<WindowId>> = self
+            .window_cycle_order
+            .as_ref()
+            .map(|order| {
+                order
+                    .iter()
+                    .copied()
+                    .filter(|id| self.windows.contains_key(id))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|kept| !kept.is_empty());
+        let ids: Vec<WindowId> = match override_ids {
+            Some(kept) => kept,
+            None => {
+                let mut all: Vec<WindowId> = self.windows.keys().copied().collect();
+                all.sort_by_key(|id| id.0);
+                all
+            }
+        };
         if ids.len() <= 1 {
             return;
         }
-        ids.sort_by_key(|id| id.0);
         let current_pos = match ids.iter().position(|id| *id == self.active_window) {
             Some(pos) => pos as isize,
             None => 0,

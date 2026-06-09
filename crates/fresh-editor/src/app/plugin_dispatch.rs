@@ -743,6 +743,9 @@ impl Editor {
             PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
                 self.set_active_window_animated(id, &from_edge);
             }
+            PluginCommand::SetWindowCycleOrder { ids } => {
+                self.window_cycle_order = if ids.is_empty() { None } else { Some(ids) };
+            }
             PluginCommand::CloseWindow { id } => {
                 let _ = self.close_window(id);
             }

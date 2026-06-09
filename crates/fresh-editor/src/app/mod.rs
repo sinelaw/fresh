@@ -704,6 +704,14 @@ pub struct Editor {
     #[allow(dead_code)]
     pub(crate) next_window_id: u64,
 
+    /// Optional plugin-provided order/subset for the Next/Prev Window
+    /// commands. When `Some`, those commands cycle through exactly these
+    /// window ids in this order (ids no longer open are skipped); when
+    /// `None`, the default (every window, by id) applies. Set by the
+    /// orchestrator dock so paging windows visits exactly the sessions
+    /// the dock currently shows. See `cycle_active_window`.
+    pub(crate) window_cycle_order: Option<Vec<fresh_core::WindowId>>,
+
     // LSP request-tracking state (next_lsp_request_id,
     // pending_*_requests, *_in_flight, completion_items,
     // dabbrev_state, etc.) all moved onto `Window` in Step 0k.

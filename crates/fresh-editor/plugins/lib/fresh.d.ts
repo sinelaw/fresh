@@ -2696,6 +2696,13 @@ interface EditorAPI {
 	*/
 	setActiveWindowAnimated(id: number, fromEdge: string): boolean;
 	/**
+	* Restrict (and order) the windows that Next/Prev Window cycle
+	* through to `ids`, in this order. An empty array clears the
+	* override (back to every window, by id). Non-open ids are skipped
+	* at cycle time. See `PluginCommand::SetWindowCycleOrder`.
+	*/
+	setWindowCycleOrder(ids: number[]): boolean;
+	/**
 	* Close session `id`. Refuses to close the active session or
 	* the base session (id 1). Logs and no-ops on failure.
 	*/

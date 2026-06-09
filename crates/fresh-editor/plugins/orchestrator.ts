@@ -2307,6 +2307,15 @@ function refreshOpenDialog(): void {
   if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
+  // `filteredIds` is the single source of truth for the dock's visible list.
+  // While the dock is open, make Next/Prev Window cycle through exactly that
+  // list (its live windows, in display order) instead of every open window —
+  // so paging sessions matches what the dock shows. Discovered worktrees
+  // (negative ids) aren't windows, so they're dropped here; the host also
+  // skips any id that isn't currently open. Cleared in `closeOpenDialog`.
+  if (dockMode) {
+    editor.setWindowCycleOrder(openDialog.filteredIds.filter((id) => id > 0));
+  }
 }
 
 // Move the dock's highlighted row onto the active window. Used when the
@@ -2721,11 +2730,15 @@ function closeOpenDialog(): void {
     openPanel = null;
   }
   // If a dock was kept behind the picker, hand control back to it rather
-  // than dropping to the bare editor.
+  // than dropping to the bare editor. (It re-publishes its own cycle order
+  // on the next refresh, so leave the override in place here.)
   if (restoreDockBehindPicker()) return;
   openDialog = null;
   dockMode = false;
   dockBlurred = false;
+  // The dock is gone — restore the default Next/Prev Window cycling (every
+  // window, by id).
+  editor.setWindowCycleOrder([]);
   editor.setEditorMode(null);
 }
 

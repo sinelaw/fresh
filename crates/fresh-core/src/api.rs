@@ -2255,6 +2255,15 @@ pub enum PluginCommand {
     /// arrowing up/down the session list wipes the window up/down.
     SetActiveWindowAnimated { id: WindowId, from_edge: String },
 
+    /// Restrict — and order — the windows that the Next/Prev Window
+    /// commands cycle through to exactly `ids`, in this order. An empty
+    /// list clears the override, restoring the default (every window,
+    /// ordered by id). Ids that aren't currently open are skipped at
+    /// cycle time. Used by the orchestrator dock so paging windows visits
+    /// exactly the sessions the dock currently shows (its filtered list),
+    /// in the same order, instead of every open window.
+    SetWindowCycleOrder { ids: Vec<WindowId> },
+
     /// Close a session and drop its associated state. Refuses to
     /// close the currently active session — the caller must switch
     /// first. Fires `session_closed` on success.

@@ -218,6 +218,7 @@ impl Editor {
             remote_attach_cancels: std::collections::HashMap::new(),
             active_window: parts.active_window,
             next_window_id: parts.next_window_id,
+            window_cycle_order: None,
             command_registry: parts.command_registry,
             quick_open_registry: parts.quick_open_registry,
             plugin_manager: parts.plugin_manager,

@@ -4222,10 +4222,10 @@ impl Editor {
         // settings dialog). Record each track's screen rect + state so
         // the mouse handlers can hit-test press/drag against it.
         let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
-        // The dock's list scrollbars are overlay-style: shown only while the
-        // dock is focused (its keyboard up/down/click navigate the list) or
-        // the pointer is over the list, and hidden otherwise. Every other
-        // panel keeps its scrollbar always visible.
+        // The dock's list scrollbars are overlay-style: shown ONLY while the
+        // pointer is over the list, and hidden otherwise — even when the list
+        // holds keyboard focus. Every other panel keeps its scrollbar always
+        // visible.
         //
         // Hover is read from the panel-global `scrollbar_zone_hovered` memo
         // (maintained by the mouse-move handler), NOT from a per-window
@@ -4242,11 +4242,20 @@ impl Editor {
                 // Scrollbar column = right edge of the list's column,
                 // clamped inside the panel. Height = visible rows,
                 // clamped to the panel bottom.
-                let sb_x = inner
+                let mut sb_x = inner
                     .x
                     .saturating_add(region.col_in_row as u16)
                     .saturating_add((region.width_cols.saturating_sub(1)) as u16)
                     .min(inner.x + inner.width.saturating_sub(1));
+                // The dock reserves an editor-side gutter between the list and
+                // its divider; nudge its scrollbar one column right into that
+                // gutter so it hugs the divider/edge instead of floating a
+                // column inboard. Still clamped inside the panel.
+                if dock_overlay_scrollbar {
+                    sb_x = sb_x
+                        .saturating_add(1)
+                        .min(inner.x + inner.width.saturating_sub(1));
+                }
                 let sb_y = inner.y.saturating_add(region.buffer_row as u16);
                 if sb_y >= inner.y + inner.height {
                     continue;
@@ -4272,7 +4281,7 @@ impl Editor {
                     height: sb_h,
                 };
                 scrollbar_hover_zones.push(zone);
-                let show = !dock_overlay_scrollbar || panel_focused || scrollbar_zone_hovered;
+                let show = !dock_overlay_scrollbar || scrollbar_zone_hovered;
                 if !show {
                     // Hidden: skip painting and recording a draggable track —
                     // an invisible bar shouldn't be grabbable. (The pointer

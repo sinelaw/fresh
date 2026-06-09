@@ -4451,6 +4451,23 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Restrict (and order) the windows that Next/Prev Window cycle
+    /// through to `ids`, in this order. An empty array clears the
+    /// override (back to every window, by id). Non-open ids are skipped
+    /// at cycle time. See `PluginCommand::SetWindowCycleOrder`.
+    #[qjs(rename = "setWindowCycleOrder")]
+    pub fn set_window_cycle_order(&self, ids: Vec<i64>) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetWindowCycleOrder {
+                ids: ids
+                    .into_iter()
+                    .filter(|n| *n > 0)
+                    .map(|n| fresh_core::WindowId(n as u64))
+                    .collect(),
+            })
+            .is_ok()
+    }
+
     /// Close session `id`. Refuses to close the active session or
     /// the base session (id 1). Logs and no-ops on failure.
     pub fn close_window(&self, id: u64) -> bool {
