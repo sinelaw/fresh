@@ -238,6 +238,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_overwrite_mode",
+        desc_key: "cmd.toggle_overwrite_mode_desc",
+        action: || Action::ToggleOverwriteMode,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.format_buffer",
         desc_key: "cmd.format_buffer_desc",
         action: || Action::FormatBuffer,

@@ -606,6 +606,11 @@ pub struct Window {
     /// when it's showing a buffer view.
     pub overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
 
+    /// Whether overwrite (type-over) mode is active: typed characters
+    /// replace the character under the cursor instead of inserting.
+    pub overwrite_mode: bool,
+
+
     /// Tracks rapid file-change events for debouncing the auto-revert
     /// reload trigger.
     pub file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
@@ -1969,6 +1974,7 @@ impl Window {
             pending_search_range: None,
             live_grep_last_state: None,
             overlay_preview_state: None,
+            overwrite_mode: false,
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
             pending_async_prompt_callback: None,

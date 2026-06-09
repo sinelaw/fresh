@@ -183,6 +183,20 @@ impl CursorStyle {
         }
     }
 
+    /// The cursor style used to signal overwrite (type-over) mode, derived
+    /// from the configured insert-mode style so the two are always visually
+    /// distinct: underline-based styles flip to a block, everything else
+    /// (default, block, bar) flips to an underline, preserving blink where
+    /// it's known.
+    pub fn overwrite_variant(self) -> Self {
+        match self {
+            Self::BlinkingUnderline => Self::BlinkingBlock,
+            Self::SteadyUnderline => Self::SteadyBlock,
+            Self::SteadyBlock | Self::SteadyBar => Self::SteadyUnderline,
+            Self::Default | Self::BlinkingBlock | Self::BlinkingBar => Self::BlinkingUnderline,
+        }
+    }
+
     /// Parse from string (for command palette)
     pub fn parse(s: &str) -> Option<Self> {
         match s {
@@ -8189,6 +8203,31 @@ mod tests {
         assert_eq!(cfg.tree_indicator_collapsed, "+");
         // Expanded was not set; should fall back to default.
         assert_eq!(cfg.tree_indicator_expanded, "▼");
+    }
+
+    #[test]
+    fn test_cursor_style_overwrite_variant_always_differs_in_shape() {
+        // The overwrite cursor must be visually distinct from the configured
+        // insert-mode cursor for every possible base style (issue #1300).
+        // "Shape" here ignores blink: block vs bar vs underline vs default.
+        fn shape(style: CursorStyle) -> &'static str {
+            match style {
+                CursorStyle::Default => "default",
+                CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock => "block",
+                CursorStyle::BlinkingBar | CursorStyle::SteadyBar => "bar",
+                CursorStyle::BlinkingUnderline | CursorStyle::SteadyUnderline => "underline",
+            }
+        }
+
+        for name in CursorStyle::OPTIONS {
+            let base = CursorStyle::parse(name).unwrap();
+            let overwrite = base.overwrite_variant();
+            assert_ne!(
+                shape(base),
+                shape(overwrite),
+                "overwrite variant of {name} must have a different shape"
+            );
+        }
     }
 
     // --- Wire format acceptance ---------------------------------------
