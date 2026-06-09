@@ -54,6 +54,15 @@ fn hold_key(h: &mut EditorTestHarness, s: &mut BlogShowcase, key: &str, count: u
         .unwrap();
 }
 
+/// Auto-hide the active window's bottom prompt line. The test harness force-
+/// enables it (`show_prompt_line = true`) for layout-stable assertions, which
+/// reserves a blank row at the very bottom and floats the status bar up one
+/// line. Showcases want the user-facing default look — status bar flush to the
+/// bottom, prompt line appearing only while a (non-overlay) prompt is open.
+fn hide_prompt_line(h: &mut EditorTestHarness) {
+    h.editor_mut().active_window_mut().prompt_line_visible = false;
+}
+
 /// Create a standard Rust project for demos
 fn create_demo_project(project_dir: &std::path::Path) {
     fs::create_dir_all(project_dir.join("src")).unwrap();
@@ -3295,6 +3304,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     .unwrap();
     // Open the local file so the launch session has content to show.
     h.open_file(&workspace.join("src/main.rs")).unwrap();
+    hide_prompt_line(&mut h);
 
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/ssh-session",
@@ -3431,7 +3441,40 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
             .contains(&server.work.to_string_lossy().into_owned())
     })
     .unwrap();
+    hide_prompt_line(&mut h);
     hold(&mut h, &mut s, 3, 80);
+
+    // --- Run a couple of commands in the integrated terminal. They execute on
+    //     the *remote* host over the SSH link (`python3 app.py` runs the remote
+    //     deploy script and prints its output). ------------------------------
+    for cmd in ["ls", "python3 app.py"] {
+        h.type_text(cmd).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(180));
+        h.tick_and_render().unwrap();
+        snap(&mut h, &mut s, Some(cmd), 120);
+        hold(&mut h, &mut s, 1, 80);
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        h.tick_and_render().unwrap();
+        snap(&mut h, &mut s, Some("Enter"), 140);
+        hold(&mut h, &mut s, 3, 90);
+    }
+
+    // --- Expand the file explorer. It's rooted on the SSH authority, so the
+    //     panel is titled with the remote host (`[demo-box]`) and the tree
+    //     lists the workspace served over the connection. ---------------------
+    let explorer_title = format!("[{}]", sup::DEMO_HOST);
+    h.editor_mut().toggle_file_explorer();
+    // Wait for the remote directory listing to land in the tree.
+    h.wait_until(|h| h.screen_to_string().contains(&explorer_title))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    h.tick_and_render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+B"), 200);
+    hold(&mut h, &mut s, 6, 110);
+    // Close it again so the upcoming dock owns the left column.
+    h.editor_mut().toggle_file_explorer();
+    h.tick_and_render().unwrap();
 
     // --- Open a remote file in a buffer. Quick Open (Ctrl+P → Backspace to
     //     drop the `>` command prefix) fuzzy-finds files through the SSH
@@ -3606,6 +3649,7 @@ fn blog_showcase_fresh_0_4_0_universal_search() {
         EditorTestHarness::with_config_and_working_dir(140, 34, Default::default(), root.clone())
             .unwrap();
     h.open_file(&root.join("src/server.rs")).unwrap();
+    hide_prompt_line(&mut h);
     h.render().unwrap();
     h.wait_until(|h| {
         let reg = h.editor().command_registry().read().unwrap();
@@ -3709,6 +3753,19 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
         eprintln!("Skipping orchestrator-dock showcase: git not installed");
         return;
     }
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping orchestrator-dock showcase: PTY not available");
+        return;
+    }
 
     fresh::i18n::set_locale("en");
     let temp = tempfile::TempDir::new().unwrap();
@@ -3765,6 +3822,19 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
          \x20 replicas: 3\n",
     );
 
+    // A fake "coding agent" the web session's terminal runs — just colourful,
+    // agent-looking output so the terminal pane reads as a live tool.
+    std::fs::write(
+        web_root.join("agent.sh"),
+        "#!/bin/sh\n\
+         printf '\\033[1;36m\\342\\226\\266 coding-agent\\033[0m  session web\\n'\n\
+         printf '  \\033[2mindexed 24 files\\033[0m\\n'\n\
+         printf '  \\033[32m\\342\\234\\216 edit\\033[0m  src/app.ts  (+12 -3)\\n'\n\
+         printf '  \\033[32m\\342\\234\\223 tests\\033[0m 18/18 passing\\n'\n\
+         printf '\\033[2m\\342\\200\\272 awaiting task\\342\\200\\246 \\033[0m'\n",
+    )
+    .unwrap();
+
     // The orchestrator plugin lives in the launch project's plugins dir.
     let plugins_dir = api_root.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
@@ -3788,22 +3858,43 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     })
     .unwrap();
 
-    // Launch session: open its file. This is the window we start (and end) on.
+    // Each session gets a *different* layout — that's the point: the windows
+    // are independent. We build each layout while its window is active.
+
+    // api (launch): a single buffer.
     let api_win = h.editor().active_window_id();
     h.open_file(&api_root.join("src/main.rs")).unwrap();
+    hide_prompt_line(&mut h);
 
-    // Two more sessions, each rooted in its project with its own file open.
+    // web: a coding-agent terminal on the left, the source file split off to
+    // the right.
     let web_win = h
         .editor_mut()
         .create_window_at(web_root.clone(), "web".to_string());
     h.editor_mut().set_active_window(web_win);
+    hide_prompt_line(&mut h);
     h.open_file(&web_root.join("src/app.ts")).unwrap();
+    h.editor_mut().open_terminal();
+    h.tick_and_render().unwrap();
+    // Run the fake agent in the terminal pane.
+    h.type_text("sh agent.sh").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    h.tick_and_render().unwrap();
+    // Split vertically and show the source file in the new (right) pane.
+    h.editor_mut().split_pane_vertical();
+    h.open_file(&web_root.join("src/app.ts")).unwrap();
+    h.tick_and_render().unwrap();
 
+    // infra: the file explorer expanded beside the manifest.
     let infra_win = h
         .editor_mut()
         .create_window_at(infra_root.clone(), "infra".to_string());
     h.editor_mut().set_active_window(infra_win);
+    hide_prompt_line(&mut h);
     h.open_file(&infra_root.join("deploy.yaml")).unwrap();
+    h.editor_mut().toggle_file_explorer();
+    h.tick_and_render().unwrap();
 
     // Back to the launch (api) session to start the tour.
     h.editor_mut().set_active_window(api_win);
@@ -3812,9 +3903,10 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/orchestrator-dock",
         "The Orchestrator Dock",
-        "A persistent, non-modal left-column session switcher: every session in \
-         one process, each row showing project, branch, and status. The arrow \
-         keys live-switch the active session.",
+        "A persistent, non-modal left-column session switcher. Every session in \
+         one process keeps its own independent layout — a single buffer, a \
+         coding-agent terminal split beside a file, an expanded file explorer — \
+         and the arrow keys live-switch between them.",
     );
 
     // Open on the api session (Rust).
@@ -3850,11 +3942,13 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
         h.wait_until(|h| h.editor().active_window().root != prev)
             .unwrap();
         snap(h, s, Some(label), 160);
-        hold(h, s, 6, 100);
+        hold(h, s, 8, 110);
     };
 
+    // api → infra (explorer) → web (agent terminal + split) → infra → api.
     switch(&mut h, &mut s, KeyCode::Down, "↓");
     switch(&mut h, &mut s, KeyCode::Down, "↓");
+    switch(&mut h, &mut s, KeyCode::Up, "↑");
     switch(&mut h, &mut s, KeyCode::Up, "↑");
 
     hold(&mut h, &mut s, 4, 100);
