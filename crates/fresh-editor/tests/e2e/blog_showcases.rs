@@ -12,7 +12,7 @@
 
 use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
-use crate::common::git_test_helper::GitTestRepo;
+use crate::common::git_test_helper::{git_command, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
@@ -3218,7 +3218,7 @@ mod ssh_session_showcase_support {
 #[cfg(all(target_os = "linux", feature = "plugins"))]
 #[test]
 #[ignore]
-fn blog_showcase_fresh_0_3_10_ssh_session() {
+fn blog_showcase_fresh_0_4_0_ssh_session() {
     use ssh_session_showcase_support as sup;
 
     // --- Environment gates: skip (not fail) when prerequisites are absent. --
@@ -3297,7 +3297,7 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
     h.open_file(&workspace.join("src/main.rs")).unwrap();
 
     let mut s = BlogShowcase::new(
-        "fresh-0.3.10/ssh-session",
+        "fresh-0.4.0/ssh-session",
         "New SSH Session",
         "Start a remote SSH session from the Orchestrator's New Session dialog: \
          pick the SSH backend and point it at a host. Fresh attaches its \
@@ -3491,4 +3491,373 @@ fn blog_showcase_fresh_0_3_10_ssh_session() {
 
     // Keep the server alive until all frames are captured.
     drop(server);
+}
+
+// =========================================================================
+// Blog Post: Universal Search (0.4.0)
+// =========================================================================
+
+/// Universal Search — Live Grep grown into a multi-scope search overlay:
+/// project files (git-grep), open buffers, and terminal scrollback, with
+/// Word/Regex modes, a clickable scope toolbar, and a live syntax-highlighted
+/// preview pane. Drives the overlay against a real git repo so the git-grep
+/// provider is selected and only tracked source files surface (the plugin
+/// dir is left untracked, so it never clutters the results).
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_universal_search() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping universal-search showcase: git not installed");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap().join("proj");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+
+    // A small, readable project. `config` (lowercase) recurs across all three
+    // source files, so a single query lands matches in each and the preview
+    // pane hops between files as we navigate.
+    std::fs::write(
+        root.join("src/server.rs"),
+        "// HTTP server entry point.\n\
+         pub fn start_server(port: u16) {\n\
+         \x20   let config = load_config();\n\
+         \x20   println!(\"server listening on {port}\");\n\
+         \x20   handle_requests(&config);\n\
+         }\n\
+         \n\
+         fn load_config() -> Config {\n\
+         \x20   Config::default()\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/config.rs"),
+        "pub struct Config {\n\
+         \x20   pub timeout: u32,\n\
+         }\n\
+         \n\
+         impl Config {\n\
+         \x20   pub fn default() -> Self {\n\
+         \x20       Config { timeout: 30 }\n\
+         \x20   }\n\
+         \n\
+         \x20   pub fn validate_config(&self) -> bool {\n\
+         \x20       self.timeout > 0\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/handlers.rs"),
+        "use crate::config::Config;\n\
+         \n\
+         pub fn handle_requests(config: &Config) {\n\
+         \x20   for _ in 0..config.timeout {\n\
+         \x20       route_request();\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn route_request() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("README.md"),
+        "# proj\n\nRun the server with `cargo run`. config lives in src/config.rs.\n",
+    )
+    .unwrap();
+
+    let run_git = |args: &[&str]| {
+        let out = git_command(&root).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run_git(&["init", "--quiet", "-b", "main"]);
+    run_git(&[
+        "add",
+        "src/server.rs",
+        "src/config.rs",
+        "src/handlers.rs",
+        "README.md",
+    ]);
+    run_git(&["commit", "--quiet", "-m", "seed"]);
+
+    // Plugins are copied *after* the commit and never staged, so git-grep
+    // (which only reports tracked files) never surfaces plugin sources.
+    let plugins_dir = root.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    // 140 cols so the overlay paints its results + live preview split.
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(140, 34, Default::default(), root.clone())
+            .unwrap();
+    h.open_file(&root.join("src/server.rs")).unwrap();
+    h.render().unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name().starts_with("Live Grep"))
+    })
+    .unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/universal-search",
+        "Universal Search",
+        "Live Grep grew into a multi-scope search overlay — project files, open \
+         buffers, and terminal scrollback — with Word/Regex modes, a clickable \
+         scope toolbar, and a live syntax-highlighted preview.",
+    );
+
+    hold(&mut h, &mut s, 5, 160);
+
+    // --- Open the Live Grep overlay from the palette. -----------------------
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 160);
+    h.type_text("Live Grep").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Live Grep (Find in Files)"))
+        .unwrap();
+    snap(&mut h, &mut s, None, 160);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The overlay's scope toolbar paints "Search in:".
+    h.wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 220);
+    hold(&mut h, &mut s, 3, 150);
+
+    // --- Type a query that recurs across every source file. -----------------
+    for ch in "config".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some(&ch.to_string()), 70);
+    }
+    // Results stream in; the preview pane shows the first match's file.
+    h.wait_until(|h| h.screen_to_string().contains("src/config.rs"))
+        .unwrap();
+    hold(&mut h, &mut s, 5, 180);
+
+    // --- Word vs. substring: Alt+O flips whole-word matching. Wait for the
+    //     re-search to settle so we paint the new (smaller) result set rather
+    //     than the transient "Searching…". `validate_config` drops out — its
+    //     `config` isn't a whole word. ----------------------------------------
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("src/server.rs") && !scr.contains("Searching")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Alt+O"), 280);
+    hold(&mut h, &mut s, 5, 200);
+
+    // --- Navigate results: the preview pane hops between files as the
+    //     selection moves down onto a source match. --------------------------
+    for _ in 0..3 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↓"), 260);
+        hold(&mut h, &mut s, 2, 150);
+    }
+
+    // --- Enter jumps to the highlighted match: the overlay closes and the
+    //     file opens at that line (a "resume search" hint confirms the jump). -
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let scr = h.screen_to_string().to_lowercase();
+        !scr.contains("search in:") && scr.contains("resume")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 320);
+    hold(&mut h, &mut s, 8, 200);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post: The Orchestrator Dock (0.4.0)
+// =========================================================================
+
+/// Orchestrator Dock — the persistent, non-modal left-column session
+/// switcher. Sets up three project sessions (each with its own file open),
+/// toggles the dock, and live-switches between them with the arrow keys so
+/// the editor on the right swaps to each session's buffer.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping orchestrator-dock showcase: git not installed");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::TempDir::new().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+
+    // Three projects in three languages, each a git repo (so the dock shows a
+    // branch) with a distinctive file. The differing syntax highlighting makes
+    // each live-switch unmistakable.
+    let mk_repo = |name: &str, rel: &str, content: &str| -> std::path::PathBuf {
+        let root = base.join(name);
+        std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
+        std::fs::write(root.join(rel), content).unwrap();
+        let run = |args: &[&str]| {
+            let out = git_command(&root).args(args).output().unwrap();
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "--quiet", "-b", "main"]);
+        run(&["add", "-A"]);
+        run(&["commit", "--quiet", "-m", "init"]);
+        root
+    };
+
+    let api_root = mk_repo(
+        "api",
+        "src/main.rs",
+        "// api gateway — routes requests to services.\n\
+         fn main() {\n\
+         \x20   let router = Router::new();\n\
+         \x20   router.listen(8080);\n\
+         }\n",
+    );
+    let web_root = mk_repo(
+        "web",
+        "src/app.ts",
+        "// web dashboard front-end.\n\
+         export function App(): View {\n\
+         \x20   const data = useStore();\n\
+         \x20   return render(data);\n\
+         }\n",
+    );
+    let infra_root = mk_repo(
+        "infra",
+        "deploy.yaml",
+        "# infra: production deployment.\n\
+         kind: Deployment\n\
+         metadata:\n\
+         \x20 name: api\n\
+         spec:\n\
+         \x20 replicas: 3\n",
+    );
+
+    // The orchestrator plugin lives in the launch project's plugins dir.
+    let plugins_dir = api_root.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    // Animations off so the dock's live-switch slide doesn't freeze
+    // mid-transition under the test clock (it would capture a half-slid,
+    // doubled frame). The switch is instant and clean instead.
+    let mut cfg = fresh::config::Config::default();
+    cfg.editor.animations = false;
+    cfg.editor.cursor_jump_animation = false;
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(130, 34, cfg, api_root.clone()).unwrap();
+    h.tick_and_render().unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Orchestrator: Toggle Dock")
+    })
+    .unwrap();
+
+    // Launch session: open its file. This is the window we start (and end) on.
+    let api_win = h.editor().active_window_id();
+    h.open_file(&api_root.join("src/main.rs")).unwrap();
+
+    // Two more sessions, each rooted in its project with its own file open.
+    let web_win = h
+        .editor_mut()
+        .create_window_at(web_root.clone(), "web".to_string());
+    h.editor_mut().set_active_window(web_win);
+    h.open_file(&web_root.join("src/app.ts")).unwrap();
+
+    let infra_win = h
+        .editor_mut()
+        .create_window_at(infra_root.clone(), "infra".to_string());
+    h.editor_mut().set_active_window(infra_win);
+    h.open_file(&infra_root.join("deploy.yaml")).unwrap();
+
+    // Back to the launch (api) session to start the tour.
+    h.editor_mut().set_active_window(api_win);
+    h.tick_and_render().unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/orchestrator-dock",
+        "The Orchestrator Dock",
+        "A persistent, non-modal left-column session switcher: every session in \
+         one process, each row showing project, branch, and status. The arrow \
+         keys live-switch the active session.",
+    );
+
+    // Open on the api session (Rust).
+    hold(&mut h, &mut s, 5, 160);
+
+    // --- Toggle the dock open. ----------------------------------------------
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Toggle Dock"), 220);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Dock mounts, lists all three sessions, and takes keyboard focus.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("api")
+            && scr.contains("web")
+            && scr.contains("infra")
+            && h.editor().is_dock_focused()
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 280);
+    hold(&mut h, &mut s, 6, 200);
+
+    // --- Live-switch with the arrows. Each press flips the active session;
+    //     the editor on the right swaps to that session's buffer. Detect the
+    //     switch by the active window's root, which is order-independent. ----
+    let switch = |h: &mut EditorTestHarness, s: &mut BlogShowcase, key: KeyCode, label: &str| {
+        let prev = h.editor().active_window().root.clone();
+        h.send_key(key, KeyModifiers::NONE).unwrap();
+        h.wait_until(|h| h.editor().active_window().root != prev)
+            .unwrap();
+        snap(h, s, Some(label), 320);
+        hold(h, s, 6, 200);
+    };
+
+    switch(&mut h, &mut s, KeyCode::Down, "↓");
+    switch(&mut h, &mut s, KeyCode::Down, "↓");
+    switch(&mut h, &mut s, KeyCode::Up, "↑");
+
+    hold(&mut h, &mut s, 4, 200);
+
+    s.finalize().unwrap();
 }
