@@ -277,6 +277,11 @@ line doesn't indent the next line:
 > Note: patterns are written in a JSON string, so backslashes must be escaped
 > (`\\s`, `\\{`).
 
+These patterns are the same mechanism Fresh's built-in languages use, grouped
+into **families** (curly-brace, Python, Ruby-like, …). To add a language to
+Fresh's source tree — or to understand which family yours resembles — see
+[Adding a Built-in Language](/development/adding-languages).
+
 ### Set a Default Language for Unrecognized Files
 
 When Fresh opens a file whose type it cannot detect (no matching extension, filename, or glob pattern), it shows it as "Plain Text" with no syntax highlighting. Set `default_language` to the name of any entry in the `languages` map and unrecognized files will use that language's full configuration — useful for `.conf`, `.rc`, `.rules`, and other config files that Fresh doesn't recognize.

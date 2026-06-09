@@ -1,5 +1,12 @@
 # Language & Syntax Highlighting Support Review
 
+> **New to adding languages?** Start with
+> [Adding a Built-in Language](../development/adding-languages.md) — the
+> step-by-step contributor guide (published in the docs site) covering how
+> auto-indent works, the language families, and every way to add support. This
+> document is the per-language *support matrix* and a reference for the
+> grammar-catalog lookup API.
+
 ## How Syntax Highlighting Works in Fresh
 
 Fresh keeps every known language in a **unified grammar catalog**
@@ -32,6 +39,11 @@ one place: `HighlightEngine::from_entry`.
 
 ### Adding a language
 
+Highlighting and auto-indentation are independent systems — add either without
+the other. Full walkthrough: [Adding a Built-in Language](../development/adding-languages.md).
+
+**Highlighting:**
+
 - **New syntect grammar** — drop a `.sublime-syntax` into
   `crates/fresh-editor/src/grammars/` and register it in
   `GrammarRegistry::add_embedded_grammars`. The catalog picks it up on the
@@ -42,6 +54,20 @@ one place: `HighlightEngine::from_entry`.
 - **User config mapping** — edit `~/.config/fresh/config.toml`
   `[languages]` section. Extensions, exact filenames, and globs all merge
   through `apply_language_config` into the catalog.
+
+**Auto-indentation** (separate from highlighting — see
+[Adding a Built-in Language](../development/adding-languages.md) for the three-tier dispatch and family
+details):
+
+- **Existing family** — add the language id to `family_for_id` in
+  `primitives/indent_rules.rs` (one line). Families: `CurlyBrace`, `Python`,
+  `RubyLike`, `LuaLike`, `BashLike`, `PascalLike`. This covers most languages and
+  needs no tree-sitter grammar.
+- **Custom rules from config** — `[languages.<id>.indent]` regex patterns in
+  `config.toml`; an omitted pattern inherits from the language's family. See the
+  [configuration doc](../configuration/index.md#customize-auto-indentation).
+- **AST indent** — only for bundled tree-sitter grammars: add
+  `queries/<lang>/indents.scm` (kept in parity with the rules tier).
 
 ---
 

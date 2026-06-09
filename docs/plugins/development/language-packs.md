@@ -2,6 +2,12 @@
 
 Language packs add syntax highlighting, language configuration, and LSP support for new languages in Fresh.
 
+> Want to add a language *inside* Fresh's source tree (a built-in family, an
+> embedded grammar, or a tree-sitter parser) rather than ship a pack? See the
+> contributor guide [Adding a Built-in Language](/development/adding-languages),
+> which explains how auto-indent and the language families work. This page covers
+> the user-facing pack path, which needs no recompile.
+
 ## Quick Start
 
 Use the CLI to scaffold a new language pack:

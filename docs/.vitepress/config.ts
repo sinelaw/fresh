@@ -126,6 +126,7 @@ export default defineConfig({
         text: "Developer Docs",
         items: [
           { text: "Architecture", link: "/architecture" },
+          { text: "Adding a Language", link: "/development/adding-languages" },
           { text: "WASM Compatibility", link: "/wasm" },
           { text: "QuickJS Migration", link: "/quickjs" },
           {

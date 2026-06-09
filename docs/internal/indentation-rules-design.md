@@ -1,5 +1,14 @@
 # VS Code–Style Indentation Rules — Design
 
+> **Status:** implemented (see the Rollout section). This is the *design
+> rationale*; for a how-to on adding a language and the current data model, read
+> [Adding a Built-in Language](../development/adding-languages.md). The "Data
+> model" and "Families" snippets below describe the original plan — the shipped
+> `IndentRulesDef` makes `increase`/`decrease` optional, replaces the planned
+> `unindented` field with `self_close` plus an `indentation_significant` flag, and
+> ships no `Markup` family. The authoritative shape is the source in
+> `crates/fresh-editor/src/primitives/indent_rules.rs`.
+
 ## Motivation
 
 Today Fresh has two auto-indent tiers:
