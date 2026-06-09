@@ -192,6 +192,26 @@ interface PrInfo {
 
 const orchestratorSessions = new Map<number, AgentSession>();
 
+// Permanent display slot for each session, keyed by its canonical root
+// (NOT its id — a discovered worktree keeps its slot when it opens and its
+// negative id is swapped for a live window id). The dock orders rows by
+// this slot ALONE, so the list never reshuffles: a row's position is fixed
+// the first time its root is seen and never depends on the session's label,
+// project, activity state, or which window is currently active. New roots
+// append at the bottom. See `stableOrderKey` / the dock branch of
+// `filterSessions`.
+const rootDisplayOrder = new Map<string, number>();
+let nextRootDisplayOrder = 0;
+function stableOrderKey(s: AgentSession): number {
+  const key = normRoot(s.root);
+  let order = rootDisplayOrder.get(key);
+  if (order === undefined) {
+    order = nextRootDisplayOrder++;
+    rootDisplayOrder.set(key, order);
+  }
+  return order;
+}
+
 // Facet to stamp onto the next born-attached remote window when it surfaces in
 // `reconcileSessions` (via the core `window_created` hook). Set just before
 // `attachRemoteAgent({ window: true })`, consumed by the first new live window.
@@ -969,6 +989,11 @@ function filterSessions(needle: string): number[] {
   const hideTrivial = openDialog?.hideTrivial ?? false;
   const cur = currentProjectKey();
   let allIds = Array.from(orchestratorSessions.keys());
+  // Lock in each session's permanent display slot up front, in Map
+  // insertion (first-seen) order, before any filtering or sorting. This
+  // fixes the dock's row order the first time a session appears so it never
+  // reshuffles afterward (see `stableOrderKey`).
+  for (const id of allIds) stableOrderKey(orchestratorSessions.get(id)!);
   // "Show all worktrees" is opt-in: by default the discovered on-disk
   // worktree rows are filtered out.
   if (!showWorktrees) {
@@ -1050,7 +1075,17 @@ function filterSessions(needle: string): number[] {
   };
 
   if (!needle) {
-    const ids = allIds.slice().sort(byProjectThenStable);
+    // The dock orders ONLY by each session's permanent slot — no project
+    // grouping, no current-project pinning, no label/state keys — so the
+    // list never reorders as the active window switches or a session's
+    // fields change. The modal picker (opened fresh each time) keeps the
+    // grouped, current-project-first browse order.
+    const comparator = dockMode
+      ? (a: number, b: number) =>
+          stableOrderKey(orchestratorSessions.get(a)!) -
+          stableOrderKey(orchestratorSessions.get(b)!)
+      : byProjectThenStable;
+    const ids = allIds.slice().sort(comparator);
     if (scope === "current") {
       return ids.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === cur);
     }

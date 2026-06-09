@@ -243,6 +243,123 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     );
 }
 
+/// Invoke a command from the command palette by name + Enter, then wait for
+/// the palette to close.
+fn run_palette_command(h: &mut EditorTestHarness, command: &str) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text(command).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains(command))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+}
+
+/// Regression: cycling the active window with Next Window (the dock blurred,
+/// keyboard in the editor) must NOT reorder the dock list, and the highlight
+/// (the active session's seamless tab) must land on the session the editor
+/// actually switched to — never a stale or wrong row. The dock orders rows by
+/// a permanent first-seen slot, so the order is fixed no matter how the active
+/// window changes.
+#[test]
+fn next_window_keeps_dock_order_stable_and_highlight_correct() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let parent = root.parent().unwrap().to_path_buf();
+    // A tall terminal so all cards fit without scrolling — this isolates
+    // "order changed" from "list scrolled to follow the selection".
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 50, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    // The launch window's label (its dock card name) — captured rather than
+    // assumed.
+    let launch_label = h.editor().active_window().label.clone();
+    // Four more windows in their own dirs (names == dir basenames so each
+    // label is unique and searchable in the dock column).
+    let mut labels = vec![launch_label.clone()];
+    for name in ["projB", "projC", "projD", "projE"] {
+        let dir = parent.join(name);
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, name.to_string());
+        labels.push(name.to_string());
+    }
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        labels
+            .iter()
+            .all(|l| h.screen_to_string().contains(l.as_str()))
+    })
+    .unwrap();
+    // Blur the dock: focus dives to the editor, the scenario in which the
+    // user pages windows.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.assert_screen_contains("Orchestrator");
+
+    let wall_col = |h: &EditorTestHarness| -> u16 {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    // The dock row of `label`'s card (where the name sits left of the divider).
+    let dock_row = |h: &EditorTestHarness, label: &str| -> u16 {
+        let wc = wall_col(h);
+        h.screen_to_string()
+            .lines()
+            .enumerate()
+            .find_map(|(r, l)| {
+                let b = l.find(label)?;
+                (l[..b].chars().count() < wc as usize).then_some(r as u16)
+            })
+            .unwrap_or_else(|| panic!("dock card for {label} not found:\n{}", h.screen_to_string()))
+    };
+    // The labels in dock display order (top to bottom).
+    let order = |h: &EditorTestHarness| -> Vec<String> {
+        let mut v: Vec<String> = labels.clone();
+        v.sort_by_key(|l| dock_row(h, l));
+        v
+    };
+
+    let baseline = order(&h);
+
+    // Cycle forward through every window (and wrap once). After each switch
+    // the order must be byte-for-byte identical, and exactly the active
+    // session's card must wear the seamless tab.
+    for _ in 0..labels.len() + 1 {
+        run_palette_command(&mut h, "Next Window");
+        h.wait_until_stable(|_| true).unwrap();
+
+        assert_eq!(
+            order(&h),
+            baseline,
+            "dock list reordered after Next Window:\n{}",
+            h.screen_to_string()
+        );
+
+        let active_label = h.editor().active_window().label.clone();
+        let wc = wall_col(&h);
+        for label in &labels {
+            let r = dock_row(&h, label);
+            let wall_open = h.get_cell(wc, r).as_deref() != Some("│");
+            if *label == active_label {
+                assert!(
+                    wall_open,
+                    "active session {label} must wear the seamless tab (divider scooped away):\n{}",
+                    h.screen_to_string()
+                );
+            } else {
+                assert!(
+                    !wall_open,
+                    "inactive session {label} must keep its divider (only the active card is the \
+                     tab); active is {active_label}:\n{}",
+                    h.screen_to_string()
+                );
+            }
+        }
+    }
+}
+
 /// The active session's card wears the "seamless tab": its rows have the
 /// dock's right-edge divider scooped away so the card visually merges into
 /// the editor, while every other card stays walled off by the divider. And
