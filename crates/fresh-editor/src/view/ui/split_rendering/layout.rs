@@ -22,7 +22,6 @@ use std::collections::HashMap;
 /// Anchor describing where to start rendering within a slice of view lines.
 pub(super) struct ViewAnchor {
     pub start_line_idx: usize,
-    pub start_line_skip: usize,
 }
 
 /// Layout for compose (centered page) mode: the effective render area and
@@ -185,8 +184,7 @@ pub(super) fn resolve_view_preferences(
     }
 }
 
-/// Resolve the first line index and skip count for rendering, given the
-/// viewport's top byte.
+/// Resolve the first line index for rendering, given the viewport's top byte.
 pub(super) fn calculate_view_anchor(view_lines: &[ViewLine], top_byte: usize) -> ViewAnchor {
     for (idx, line) in view_lines.iter().enumerate() {
         if let Some(first_source) = line.char_source_bytes.iter().find_map(|m| *m) {
@@ -205,16 +203,12 @@ pub(super) fn calculate_view_anchor(view_lines: &[ViewLine], top_byte: usize) ->
                 }
                 return ViewAnchor {
                     start_line_idx: start_idx,
-                    start_line_skip: 0,
                 };
             }
         }
     }
 
-    ViewAnchor {
-        start_line_idx: 0,
-        start_line_skip: 0,
-    }
+    ViewAnchor { start_line_idx: 0 }
 }
 
 /// Compute the compose-mode layout for a given area.
