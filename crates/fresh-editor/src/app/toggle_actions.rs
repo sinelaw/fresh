@@ -366,6 +366,7 @@ impl Editor {
         if old_theme != self.config.theme {
             if let Some(theme) = self.theme_registry.get_cloned(&self.config.theme) {
                 *self.theme.write().unwrap() = theme;
+                self.start_theme_transition_animation();
                 tracing::info!("Theme changed to '{}'", self.config.theme.0);
             } else {
                 tracing::error!("Theme '{}' not found", self.config.theme.0);

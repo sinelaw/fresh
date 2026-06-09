@@ -6,7 +6,8 @@
 //! active effects from the render clock. The layer knows nothing about
 //! virtual buffers; callers resolve areas and pass them in.
 //!
-//! Current effects: `SlideIn` only. Easing is an implementation detail.
+//! Current effects: `SlideIn`, `CursorJump`, `ColorTransition`. Easing is
+//! an implementation detail.
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -46,6 +47,12 @@ pub enum AnimationKind {
         cursor_color: Color,
         bg_color: Color,
     },
+    /// Crossfade every cell's fg/bg color from what was on screen last
+    /// frame to the freshly painted colors. Glyphs are untouched — only
+    /// colors interpolate — so a theme switch melts into the new palette
+    /// instead of flipping. Cells whose colors can't be resolved to RGB
+    /// (`Reset` / indexed) switch instantly.
+    ColorTransition { duration: Duration },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -346,6 +353,80 @@ impl FrameEffect for CursorJump {
     }
 }
 
+/// Color-transition effect. Snapshots the previous frame (the colors the
+/// user was looking at before the switch) and, on every render while
+/// running, re-tints the freshly painted buffer: each cell's fg/bg is the
+/// blend of its old color and its new color at the eased progress. The
+/// paint pass keeps drawing pure new-theme colors underneath, so content
+/// changes mid-transition (typing, cursor) stay live; only the tint lags.
+pub struct ColorTransition {
+    duration: Duration,
+    before: Option<SlideSnapshot>,
+}
+
+impl ColorTransition {
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            duration,
+            before: None,
+        }
+    }
+}
+
+impl FrameEffect for ColorTransition {
+    fn capture_before(&mut self, buf: &Buffer, area: Rect) {
+        if self.before.is_none() {
+            self.before = Some(SlideIn::snapshot_area(buf, area));
+        }
+    }
+
+    fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
+        let t = if self.duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
+        };
+        // Final frame: the buffer already holds pure new-theme colors, so
+        // leave it untouched and report Done (same contract as CursorJump —
+        // no further redraw is scheduled after the runner drops us).
+        if t >= 1.0 {
+            return EffectStatus::Done;
+        }
+        // Nothing to fade from: no frame was rendered before the switch,
+        // or a resize invalidated the snapshot. Snap to the new colors.
+        let Some(before) = self.before.as_ref().filter(|b| b.area == area) else {
+            return EffectStatus::Done;
+        };
+
+        let eased = ease_out_cubic(t);
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let idx = dy as usize * area.width as usize + dx as usize;
+                let old = &before.cells[idx];
+                let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy)) else {
+                    continue;
+                };
+                if let (Some(new_rgb), Some(old_rgb)) =
+                    (color_to_rgb(cell.fg), color_to_rgb(old.fg))
+                {
+                    if new_rgb != old_rgb {
+                        cell.set_fg(blend_rgb(new_rgb, old_rgb, eased));
+                    }
+                }
+                if let (Some(new_rgb), Some(old_rgb)) =
+                    (color_to_rgb(cell.bg), color_to_rgb(old.bg))
+                {
+                    if new_rgb != old_rgb {
+                        cell.set_bg(blend_rgb(new_rgb, old_rgb, eased));
+                    }
+                }
+            }
+        }
+
+        EffectStatus::Running
+    }
+}
+
 fn blend_rgb(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> Color {
     let a = alpha.clamp(0.0, 1.0);
     let mix = |f: u8, b: u8| -> u8 {
@@ -470,6 +551,11 @@ impl AnimationRunner {
                     Duration::ZERO,
                     duration,
                 ),
+                AnimationKind::ColorTransition { duration } => (
+                    Box::new(ColorTransition::new(duration)),
+                    Duration::ZERO,
+                    duration,
+                ),
             };
         self.total_started += 1;
         self.active.push(ActiveEffect {
@@ -550,6 +636,14 @@ impl AnimationRunner {
 
     pub fn next_deadline(&self) -> Option<Instant> {
         self.active.iter().map(|e| e.deadline).min()
+    }
+
+    /// Area of the cached last-frame buffer, i.e. the full screen as of
+    /// the previous render. `None` until the first frame has been drawn.
+    /// Full-screen effects (theme color transition) use this as their
+    /// Rect so callers don't need to thread the terminal size through.
+    pub fn last_frame_area(&self) -> Option<Rect> {
+        self.last_frame.as_ref().map(|b| b.area)
     }
 
     /// True if `(col, row)` falls inside the area of any running effect.
@@ -996,6 +1090,185 @@ mod tests {
             "cursor jump should complete after duration"
         );
         let _ = id;
+    }
+
+    fn paint_colors(buf: &mut Buffer, area: Rect, fg: Color, bg: Color) {
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                if let Some(cell) = buf.cell_mut((area.x + dx, area.y + dy)) {
+                    cell.set_symbol("x");
+                    cell.set_fg(fg);
+                    cell.set_bg(bg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn color_transition_starts_at_old_colors() {
+        let area = Rect::new(0, 0, 3, 2);
+        let mut old = make_buf(3, 2);
+        paint_colors(
+            &mut old,
+            area,
+            Color::Rgb(200, 100, 0),
+            Color::Rgb(10, 20, 30),
+        );
+        let mut new = make_buf(3, 2);
+        paint_colors(
+            &mut new,
+            area,
+            Color::Rgb(0, 100, 200),
+            Color::Rgb(90, 80, 70),
+        );
+
+        let mut effect = ColorTransition::new(Duration::from_millis(100));
+        effect.capture_before(&old, area);
+        let status = effect.apply(&mut new, area, Duration::ZERO);
+        assert_eq!(status, EffectStatus::Running);
+        let cell = new.cell((0, 0)).unwrap();
+        assert_eq!(cell.fg, Color::Rgb(200, 100, 0), "t=0 shows old fg");
+        assert_eq!(cell.bg, Color::Rgb(10, 20, 30), "t=0 shows old bg");
+        assert_eq!(cell.symbol(), "x", "glyphs are not touched");
+    }
+
+    #[test]
+    fn color_transition_blends_mid_flight() {
+        let area = Rect::new(0, 0, 2, 2);
+        let mut old = make_buf(2, 2);
+        paint_colors(&mut old, area, Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 0));
+        let mut new = make_buf(2, 2);
+        paint_colors(
+            &mut new,
+            area,
+            Color::Rgb(0, 0, 0),
+            Color::Rgb(255, 255, 255),
+        );
+
+        let mut effect = ColorTransition::new(Duration::from_millis(100));
+        effect.capture_before(&old, area);
+        let status = effect.apply(&mut new, area, Duration::from_millis(50));
+        assert_eq!(status, EffectStatus::Running);
+        let cell = new.cell((1, 1)).unwrap();
+        match cell.fg {
+            Color::Rgb(r, g, b) => {
+                assert!(r > 0 && r < 255, "fg red mid-blend, got {}", r);
+                assert_eq!((g, b), (0, 0));
+            }
+            other => panic!("expected RGB fg, got {:?}", other),
+        }
+        match cell.bg {
+            Color::Rgb(r, g, b) => {
+                assert!(r > 0 && r < 255, "bg mid-blend, got {}", r);
+                assert_eq!(r, g);
+                assert_eq!(g, b);
+            }
+            other => panic!("expected RGB bg, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn color_transition_final_frame_is_untouched() {
+        // At t>=duration the buffer must keep its pure new-theme colors —
+        // the runner drops the effect after this call and no further
+        // redraw is scheduled, so any tint painted now would stick.
+        let area = Rect::new(0, 0, 2, 2);
+        let mut old = make_buf(2, 2);
+        paint_colors(&mut old, area, Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 0));
+        let mut new = make_buf(2, 2);
+        paint_colors(&mut new, area, Color::Rgb(1, 2, 3), Color::Rgb(4, 5, 6));
+
+        let mut effect = ColorTransition::new(Duration::from_millis(100));
+        effect.capture_before(&old, area);
+        let status = effect.apply(&mut new, area, Duration::from_millis(100));
+        assert_eq!(status, EffectStatus::Done);
+        let cell = new.cell((0, 1)).unwrap();
+        assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
+        assert_eq!(cell.bg, Color::Rgb(4, 5, 6));
+    }
+
+    #[test]
+    fn color_transition_without_before_snapshot_is_done() {
+        let area = Rect::new(0, 0, 2, 2);
+        let mut new = make_buf(2, 2);
+        paint_colors(&mut new, area, Color::Rgb(1, 2, 3), Color::Rgb(4, 5, 6));
+
+        let mut effect = ColorTransition::new(Duration::from_millis(100));
+        let status = effect.apply(&mut new, area, Duration::ZERO);
+        assert_eq!(status, EffectStatus::Done, "no old frame — snap to new");
+        let cell = new.cell((0, 0)).unwrap();
+        assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
+        assert_eq!(cell.bg, Color::Rgb(4, 5, 6));
+    }
+
+    #[test]
+    fn color_transition_leaves_unresolvable_colors_alone() {
+        // Reset has no RGB equivalent — those cells must flip instantly
+        // rather than blend through a bogus fallback color.
+        let area = Rect::new(0, 0, 1, 1);
+        let mut old = make_buf(1, 1);
+        paint_colors(&mut old, area, Color::Reset, Color::Rgb(0, 0, 0));
+        let mut new = make_buf(1, 1);
+        paint_colors(&mut new, area, Color::Rgb(10, 10, 10), Color::Reset);
+
+        let mut effect = ColorTransition::new(Duration::from_millis(100));
+        effect.capture_before(&old, area);
+        effect.apply(&mut new, area, Duration::from_millis(50));
+        let cell = new.cell((0, 0)).unwrap();
+        assert_eq!(
+            cell.fg,
+            Color::Rgb(10, 10, 10),
+            "old fg was Reset — no blend"
+        );
+        assert_eq!(cell.bg, Color::Reset, "new bg is Reset — no blend");
+    }
+
+    #[test]
+    fn color_transition_through_runner_uses_cached_frame() {
+        // Frame 1: old-theme colors, no effects — runner caches the frame.
+        let area = Rect::new(0, 0, 3, 2);
+        let mut runner = AnimationRunner::new();
+        let mut frame1 = make_buf(3, 2);
+        paint_colors(
+            &mut frame1,
+            area,
+            Color::Rgb(255, 0, 0),
+            Color::Rgb(0, 0, 255),
+        );
+        runner.apply_all(&mut frame1);
+        assert_eq!(runner.last_frame_area(), Some(area));
+
+        // Frame 2: theme switched — start the transition, capture the old
+        // frame from the cache, paint new-theme colors, apply. Right after
+        // start (t≈0) the visible colors must still be (close to) the old
+        // ones, not the new ones.
+        runner.start(
+            area,
+            AnimationKind::ColorTransition {
+                duration: Duration::from_secs(3600),
+            },
+        );
+        runner.capture_before_all();
+        let mut frame2 = make_buf(3, 2);
+        paint_colors(
+            &mut frame2,
+            area,
+            Color::Rgb(0, 255, 0),
+            Color::Rgb(255, 255, 0),
+        );
+        runner.apply_all(&mut frame2);
+        assert!(runner.is_active());
+
+        let cell = frame2.cell((1, 1)).unwrap();
+        let Color::Rgb(r, g, _) = cell.fg else {
+            panic!("expected RGB fg, got {:?}", cell.fg);
+        };
+        assert!(
+            r > 200 && g < 55,
+            "right after start the fg should still be mostly the old red, got ({}, {})",
+            r,
+            g
+        );
     }
 
     #[test]

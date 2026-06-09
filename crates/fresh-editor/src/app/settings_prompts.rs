@@ -403,11 +403,36 @@ impl Editor {
         }
     }
 
+    /// Kick off a full-screen color-transition animation so the theme
+    /// switch crossfades into the new palette instead of flipping. Call
+    /// right after swapping `self.theme`: the effect snapshots the
+    /// previous frame (old colors) at the top of the next render and
+    /// blends every cell's fg/bg toward the freshly painted new colors.
+    ///
+    /// No-op when animations are disabled in config or nothing has been
+    /// rendered yet (there is no old frame to fade from).
+    pub(crate) fn start_theme_transition_animation(&mut self) {
+        if !self.config.editor.animations {
+            return;
+        }
+        let animations = &mut self.active_window_mut().animations;
+        let Some(area) = animations.last_frame_area() else {
+            return;
+        };
+        animations.start(
+            area,
+            crate::view::animation::AnimationKind::ColorTransition {
+                duration: std::time::Duration::from_millis(200),
+            },
+        );
+    }
+
     /// Apply a theme by key (or name for backward compat) and persist to config
     pub(super) fn apply_theme(&mut self, key_or_name: &str) {
         if !key_or_name.is_empty() {
             if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 *self.theme.write().unwrap() = theme;
+                self.start_theme_transition_animation();
 
                 // Set terminal cursor color to match theme
                 self.theme.read().unwrap().set_terminal_cursor_color();
@@ -519,6 +544,10 @@ impl Editor {
             if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 if theme.name != self.theme.read().unwrap().name {
                     *self.theme.write().unwrap() = theme;
+                    // Crossfade previews too — rapid navigation is fine:
+                    // a new transition replaces the in-flight one and
+                    // fades from whatever is on screen right now.
+                    self.start_theme_transition_animation();
                     self.theme.read().unwrap().set_terminal_cursor_color();
                     self.reapply_all_overlays();
                 }
