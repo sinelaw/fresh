@@ -512,6 +512,14 @@ impl WaveEffect {
     const WORD_CAP: usize = 14;
     // Water tops out at this fraction of the view height, then undulates.
     const MAX_LEVEL_FRAC: f32 = 0.5;
+    // Seconds for the water to climb to its level; then it just undulates.
+    const RISE_SECS: f32 = 1.6;
+    // Swell amplitude builds forever: base + growth·seconds (capped). As it
+    // grows the crests reach higher and higher, washing over — and flinging
+    // off — words further and further up the view.
+    const AMP_BASE: f32 = 0.4;
+    const AMP_GROWTH: f32 = 0.6; // per second
+    const AMP_MAX: f32 = 12.0;
 
     // Surface = sum of three sine components with distinct wavelengths
     // (spatial wavenumber k = 2π / wavelength_in_cols) and distinct slow
@@ -526,7 +534,7 @@ impl WaveEffect {
     const W1: f32 = 1.95; // 0.31 Hz
     const W2: f32 = 2.95; // 0.47 Hz
     const W3: f32 = 1.19; // 0.19 Hz
-    // Whole-surface vertical heave.
+                          // Whole-surface vertical heave.
     const W_SWING: f32 = 1.70; // 0.27 Hz
     const SWING_A: f32 = 1.6;
     // Extra undulating layers drawn inside the body, each on its own phase.
@@ -628,29 +636,17 @@ impl WaveEffect {
         self.initialized = true;
     }
 
-    /// Water height (rows above the bottom edge) and swell-amplitude scale
-    /// at `elapsed`. The level rises slowly to ~half the view, holds there
-    /// undulating, then ebbs near the very end for a clean hand-back to the
-    /// live UI. Amplitude builds up over the rise and then holds steady.
+    /// Water height (rows above the bottom edge) and swell-amplitude at
+    /// `elapsed`. The level climbs to ~half the view over `RISE_SECS` and
+    /// then just holds, undulating. The amplitude keeps growing with time
+    /// (capped), so the swells build and reach ever-higher words. Driven by
+    /// absolute wall-clock so it's independent of the (long) safety
+    /// duration; the show really ends when the user dismisses it.
     fn level_amp(&self, elapsed: Duration) -> (f32, f32) {
-        let p = if self.duration.is_zero() {
-            1.0
-        } else {
-            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
-        };
-        const RISE_END: f32 = 0.16;
-        const EBB_START: f32 = 0.88;
-        let frac = if p < RISE_END {
-            smoothstep(p / RISE_END)
-        } else if p < EBB_START {
-            1.0
-        } else {
-            1.0 - smoothstep((p - EBB_START) / (1.0 - EBB_START))
-        };
-        let max_level = Self::MAX_LEVEL_FRAC * self.area.height as f32;
-        let level = frac * max_level;
-        // Amplitude grows as the water climbs, then stays steady (calm pond).
-        let amp = 0.3 + 0.95 * smoothstep((p / RISE_END).min(1.0));
+        let secs = elapsed.as_secs_f32();
+        let frac = smoothstep((secs / Self::RISE_SECS).min(1.0));
+        let level = frac * Self::MAX_LEVEL_FRAC * self.area.height as f32;
+        let amp = (Self::AMP_BASE + Self::AMP_GROWTH * secs).min(Self::AMP_MAX);
         (level, amp)
     }
 
@@ -674,28 +670,42 @@ impl WaveEffect {
 
     /// Advance physics by `dt` seconds at time `t`.
     fn step(&mut self, dt: f32, t: f32, water_top_mean: f32, amp: f32) {
-        // Launch any word the undulating surface has just washed over. The
-        // whole word gets one shared velocity so it flies as a unit.
+        // Launch any word whose row the wave crest has *visibly* reached.
+        // A word only flies when the highest point of the surface over its
+        // own columns rises to its row (the painted waterline covers the
+        // word's cell) — not merely when the mean level is near. The whole
+        // word gets one shared velocity so it flies off as a unit.
+        let mut to_launch: Vec<(usize, f32, f32)> = Vec::new();
         for wi in 0..self.words.len() {
             if self.words[wi].launched {
                 continue;
             }
-            let (cx, wy) = (self.words[wi].center_x, self.words[wi].home_y);
-            let surf = Self::surface_at(cx, t, water_top_mean, amp);
-            if surf <= wy {
-                let r = hash01(cx, wy);
-                let r2 = hash01(wy, cx);
+            let w = &self.words[wi];
+            let mut crest = f32::INFINITY;
+            for &pi in &w.members {
+                let s = Self::surface_at(self.particles[pi].home_x, t, water_top_mean, amp);
+                if s < crest {
+                    crest = s;
+                }
+            }
+            // `crest <= row + 0.5` matches the paint rule that turns a cell
+            // to water (y + 0.5 >= surf), so launch == visibly submerged.
+            if crest <= w.home_y + 0.5 {
+                let r = hash01(w.center_x, w.home_y);
+                let r2 = hash01(w.home_y, w.center_x);
                 let vy0 = -(Self::LAUNCH_UP_MIN + r * Self::LAUNCH_UP_VAR);
                 let vx0 = (r2 - 0.5) * 2.0 * Self::LAUNCH_SIDE;
-                self.words[wi].launched = true;
-                let members = std::mem::take(&mut self.words[wi].members);
-                for &pi in &members {
-                    let p = &mut self.particles[pi];
-                    p.state = PState::Flying;
-                    p.vx = vx0;
-                    p.vy = vy0;
-                }
-                self.words[wi].members = members;
+                to_launch.push((wi, vx0, vy0));
+            }
+        }
+        for (wi, vx0, vy0) in to_launch {
+            self.words[wi].launched = true;
+            for k in 0..self.words[wi].members.len() {
+                let pi = self.words[wi].members[k];
+                let p = &mut self.particles[pi];
+                p.state = PState::Flying;
+                p.vx = vx0;
+                p.vy = vy0;
             }
         }
 
@@ -850,8 +860,8 @@ impl WaveEffect {
             for dx in 0..area.width {
                 let x = dx as f32;
                 let surf = Self::surface_at(x, t, water_top_mean, amp);
-                let ly = water_top_mean - Self::undulation(x, t, lp, amp) - Self::swing(t, amp)
-                    + base;
+                let ly =
+                    water_top_mean - Self::undulation(x, t, lp, amp) - Self::swing(t, amp) + base;
                 // Keep the layer strictly inside the body.
                 if ly <= surf + 0.6 || ly < 0.0 || ly >= h {
                     continue;
@@ -861,8 +871,8 @@ impl WaveEffect {
                     continue;
                 }
                 if let Some(dst) = buf.cell_mut((area.x + dx, area.y + row as u16)) {
-                    let gi = ((x * 0.4 + t * 1.2 + layer as f32).floor() as i64).rem_euclid(3)
-                        as usize;
+                    let gi =
+                        ((x * 0.4 + t * 1.2 + layer as f32).floor() as i64).rem_euclid(3) as usize;
                     dst.set_symbol(CREST[gi]);
                     dst.set_fg(fg);
                 }
@@ -998,6 +1008,10 @@ struct ActiveEffect {
     effect: Box<dyn FrameEffect + Send>,
     status: EffectStatus,
     deadline: Instant,
+    /// An interactive, runs-until-dismissed effect (the wave). Such effects
+    /// are torn down by the next key press or mouse move rather than a
+    /// timer; `cancel_dismissable` removes them.
+    dismissable: bool,
 }
 
 pub struct AnimationRunner {
@@ -1088,6 +1102,7 @@ impl AnimationRunner {
                     duration,
                 ),
             };
+        let dismissable = matches!(kind, AnimationKind::Wave { .. });
         self.total_started += 1;
         self.active.push(ActiveEffect {
             id,
@@ -1097,11 +1112,23 @@ impl AnimationRunner {
             effect,
             status: EffectStatus::Running,
             deadline: now + delay + duration,
+            dismissable,
         });
     }
 
     pub fn cancel(&mut self, id: AnimationId) {
         self.active.retain(|e| e.id != id);
+    }
+
+    /// True if an interactive, dismiss-on-input effect (the wave) is
+    /// running.
+    pub fn has_dismissable(&self) -> bool {
+        self.active.iter().any(|e| e.dismissable)
+    }
+
+    /// Tear down any interactive, dismiss-on-input effect (the wave).
+    pub fn cancel_dismissable(&mut self) {
+        self.active.retain(|e| !e.dismissable);
     }
 
     /// Let each active effect snapshot the "before" state of its Rect
@@ -1811,17 +1838,19 @@ mod tests {
         let mut buf = make_buf(8, 6);
         paint(&mut buf, area, 'A', Color::Rgb(200, 200, 200));
 
-        let mut effect = WaveEffect::new(Duration::from_millis(500));
+        let mut effect = WaveEffect::new(Duration::from_secs(600));
         // First apply initializes (snapshot) and paints t≈0.
         let s0 = effect.apply(&mut buf, area, Duration::ZERO);
         assert_eq!(s0, EffectStatus::Running);
         // Every cell was ink ('A'), so we get one particle per cell.
         assert_eq!(effect.particles.len(), (area.width * area.height) as usize);
 
-        // Drive to mid-flight, where the water has risen well up the view
-        // and kicked the lower rows. The buffer should no longer be all 'A'.
-        effect.apply(&mut buf, area, Duration::from_millis(120));
-        effect.apply(&mut buf, area, Duration::from_millis(240));
+        // Drive past the rise, where the water has climbed to ~half the
+        // view and the swell has flung off the lower rows. The buffer
+        // should no longer be all 'A'.
+        for ms in [400u64, 900, 1500, 2200, 3000] {
+            effect.apply(&mut buf, area, Duration::from_millis(ms));
+        }
         let mut non_a = 0;
         for dy in 0..area.height {
             for dx in 0..area.width {

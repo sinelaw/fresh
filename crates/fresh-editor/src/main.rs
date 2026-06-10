@@ -4441,6 +4441,21 @@ where
         let (event, next) = coalesce_mouse_moves(event)?;
         pending_event = next;
 
+        // The interactive wave animation runs until the user does anything:
+        // the first key press or mouse activity dismisses it and is consumed
+        // (it only stops the show, it doesn't also act on the editor).
+        if editor.wave_animation_active() {
+            let dismiss = matches!(
+                event,
+                CrosstermEvent::Key(k) if k.kind == KeyEventKind::Press
+            ) || matches!(event, CrosstermEvent::Mouse(_));
+            if dismiss {
+                editor.cancel_wave_animation();
+                needs_render = true;
+                continue;
+            }
+        }
+
         // Event debug dialog receives ALL RAW events (before any translation or processing)
         // This is essential for diagnosing terminal keybinding issues
         if editor.active_window().is_event_debug_active() {

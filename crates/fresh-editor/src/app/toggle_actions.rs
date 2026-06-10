@@ -61,13 +61,31 @@ impl Editor {
         if area.width == 0 || area.height == 0 {
             return;
         }
+        // Long safety duration: the wave runs until the user dismisses it
+        // (any key / mouse), so this is just an upper bound, not the show's
+        // real length.
         self.active_window_mut().animations.start(
             area,
             crate::view::animation::AnimationKind::Wave {
-                duration: std::time::Duration::from_millis(6000),
+                duration: std::time::Duration::from_secs(600),
             },
         );
         self.set_status_message(t!("wave.triggered").to_string());
+    }
+
+    /// Whether the interactive wave animation is currently running in any
+    /// window (it persists until the user presses a key or moves the mouse).
+    pub fn wave_animation_active(&self) -> bool {
+        self.windows
+            .values()
+            .any(|w| w.animations.has_dismissable())
+    }
+
+    /// Dismiss the wave animation everywhere it's running.
+    pub fn cancel_wave_animation(&mut self) {
+        for w in self.windows.values_mut() {
+            w.animations.cancel_dismissable();
+        }
     }
 
     /// Toggle menu bar visibility.

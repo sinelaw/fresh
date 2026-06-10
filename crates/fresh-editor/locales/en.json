@@ -1434,7 +1434,7 @@
   "toggle.inlay_hints_enabled": "Inlay hints enabled",
   "toggle.line_numbers_hidden": "Line numbers hidden",
   "toggle.line_numbers_shown": "Line numbers shown",
-  "wave.triggered": "🌊 Wave!",
+  "wave.triggered": "🌊 Wave! — press any key or move the mouse to stop",
   "toggle.scroll_sync_enabled": "Scroll sync enabled",
   "toggle.scroll_sync_disabled": "Scroll sync disabled",
   "toggle.file_explorer_side_left": "File explorer moved to the left",
