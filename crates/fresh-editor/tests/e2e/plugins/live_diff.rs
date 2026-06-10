@@ -913,3 +913,121 @@ fn test_live_diff_removed_line_not_split_per_char_at_tiny_width() {
          row (#2177). Screen:\n{screen}"
     );
 }
+
+/// Find the row containing `needle` and return `(y, x_of_needle_start)`.
+/// Assumes single-width ASCII content (each cell is one char).
+fn find_text_cell(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
+    for y in 0..buf.area.height {
+        let mut row = String::new();
+        for x in 0..buf.area.width {
+            row.push_str(buf[(x, y)].symbol());
+        }
+        if let Some(idx) = row.find(needle) {
+            return Some((y, idx as u16));
+        }
+    }
+    None
+}
+
+/// True when the cell at `(x, y)` carries both the bold and underline
+/// modifiers — the word-level diff emphasis used by live-diff.
+fn is_word_diff_emphasized(buf: &ratatui::buffer::Buffer, x: u16, y: u16) -> bool {
+    use ratatui::style::Modifier;
+    let m = buf[(x, y)].style().add_modifier;
+    m.contains(Modifier::BOLD) && m.contains(Modifier::UNDERLINED)
+}
+
+/// Issue #1949: a low-similarity rewrite splits into a deletion virtual
+/// line + an added line. The deletion line must bold + underline the
+/// words that were *removed*, and the added line the words that were
+/// *added* — while tokens common to both lines stay unemphasized, so
+/// the user can spot what actually changed inside the pair.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_word_highlight_on_low_similarity_removed_added_pair() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // Plain text file: no syntax highlighting, so the only bold +
+    // underline cells on screen come from the word-diff overlays.
+    // The first and last tokens are shared between HEAD and the
+    // working tree; the middle word is fully rewritten with enough
+    // unique characters to push Sørensen–Dice similarity below the
+    // 0.95 split threshold. No `-` characters anywhere so the only
+    // `-` on screen is the deletion gutter glyph.
+    repo.create_file(
+        "note.txt",
+        "SHARED_HEAD_TOKEN OLD_REMOVED_WORD_PAYLOAD_ZZZZ SHARED_TAIL_TOKEN\n",
+    );
+    repo.git_add(&["note.txt"]);
+    repo.git_commit("baseline");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file(
+        "note.txt",
+        "SHARED_HEAD_TOKEN NEW_ADDED_REPLACEMENT_QQQQ SHARED_TAIL_TOKEN\n",
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "note.txt");
+
+    // Deletion virtual line (old content) + added line (new content)
+    // both on screen.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            has_glyph(&s, '-')
+                && has_text(&s, "OLD_REMOVED_WORD_PAYLOAD_ZZZZ")
+                && has_text(&s, "NEW_ADDED_REPLACEMENT_QQQQ")
+        })
+        .unwrap();
+
+    let buf = harness.buffer();
+
+    // Removed side: the rewritten word is emphasized...
+    let (old_y, old_x) = find_text_cell(buf, "OLD_REMOVED_WORD_PAYLOAD_ZZZZ")
+        .expect("deletion virtual line not found on screen");
+    assert!(
+        is_word_diff_emphasized(buf, old_x, old_y),
+        "removed word on the deletion virtual line (row {old_y}, col {old_x}) \
+         should be bold + underlined",
+    );
+    // ...while the token shared with the new line is not.
+    let (head_y, head_x) =
+        find_text_cell(buf, "SHARED_HEAD_TOKEN").expect("shared head token not found on screen");
+    assert_eq!(
+        head_y, old_y,
+        "expected the first SHARED_HEAD_TOKEN occurrence on the deletion \
+         virtual line (it renders above the added line)",
+    );
+    assert!(
+        !is_word_diff_emphasized(buf, head_x, head_y),
+        "shared token on the deletion virtual line (row {head_y}, col \
+         {head_x}) should NOT be bold + underlined",
+    );
+
+    // Added side: the replacement word is emphasized, its shared
+    // neighbor is not.
+    let (new_y, new_x) =
+        find_text_cell(buf, "NEW_ADDED_REPLACEMENT_QQQQ").expect("added line not found on screen");
+    assert!(
+        is_word_diff_emphasized(buf, new_x, new_y),
+        "added word on the new line (row {new_y}, col {new_x}) should be \
+         bold + underlined",
+    );
+    assert!(
+        !is_word_diff_emphasized(buf, head_x, new_y),
+        "shared token on the added line (row {new_y}, col {head_x}) should \
+         NOT be bold + underlined",
+    );
+}

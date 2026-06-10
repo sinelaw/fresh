@@ -124,15 +124,15 @@ interface Hunk {
   /** Old-side text, line by line, no trailing newline. */
   oldLines: string[];
   /** Word-level diff results, one entry per new-side line in this
-   * hunk. Set only on `modified` hunks above the similarity threshold
-   * — where we suppress the virtual deletion line and instead bold +
-   * underline the actually-changed words on the new line. `undefined`
-   * for unrefined hunks and for `added`/`removed` hunks. */
+   * hunk. Set by `refineHunks` on 1:1-paired hunks — `modified` hunks
+   * above the similarity threshold and `added` hunks from
+   * low-similarity splits — to bold + underline the actually-changed
+   * words on the new line. `undefined` for unrefined hunks. */
   wordRanges?: WordRange[][];
   /** Old-side word ranges, one entry per `oldLines` line. Set on
-   * `removed` hunks emitted by `refineHunks` for high-similarity
-   * pairs where words were dropped/changed; passed to addVirtualLine
-   * as `textOverlays` so the deletion virtual line bolds + underlines
+   * `removed` hunks emitted by `refineHunks` for 1:1 pairs where
+   * words were dropped/changed; passed to addVirtualLine as
+   * `textOverlays` so the deletion virtual line bolds + underlines
    * the actually-removed words. */
   oldWordRanges?: WordRange[][];
 }
@@ -694,7 +694,10 @@ function collapseRanges(tokens: Token[]): WordRange[] {
  * pair also has *removed* (or otherwise unmatched) old-side words,
  * we additionally emit a `removed` hunk carrying the old line plus
  * `oldWordRanges` so the deletion virtual line shows the user which
- * words went away — not just that *something* did.
+ * words went away — not just that *something* did. Low-similarity
+ * splits get the same word-level treatment on both halves of the
+ * pair, so even a rewrite-style change calls out the words it shares
+ * (and doesn't) with the old line.
  *
  * Hunks that don't have a 1:1 mapping (e.g. 3 old lines becoming 2
  * new lines) keep their original shape — the pairing is ambiguous,
@@ -736,17 +739,27 @@ function refineHunks(hunks: Hunk[], newLines: string[]): Hunk[] {
           wordRanges: [wd.newRanges],
         });
       } else {
+        // Low-similarity rewrite: the pair splits into a deletion
+        // virtual line + a bg-highlighted added line. The word-level
+        // diff still runs so the pair calls out *which* words were
+        // removed/added — tokens common to both lines stay unmarked
+        // (issue #1949).
+        const wd = computeWordDiff(oldLine, newLine);
         out.push({
           kind: "removed",
           newStart: h.newStart + i,
           newCount: 0,
           oldLines: [oldLine],
+          ...(wd.oldRanges.length > 0
+            ? { oldWordRanges: [wd.oldRanges] }
+            : {}),
         });
         out.push({
           kind: "added",
           newStart: h.newStart + i,
           newCount: 1,
           oldLines: [],
+          ...(wd.newRanges.length > 0 ? { wordRanges: [wd.newRanges] } : {}),
         });
       }
     }
@@ -875,7 +888,8 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       }
 
       // Word-level diff: bold + underline the changed words on the
-      // new-side line of a refined high-similarity modified hunk.
+      // new-side line of a refined 1:1 pair (a high-similarity
+      // `modified` hunk or the `added` half of a low-similarity split).
       // `wordRanges` is set only by `refineHunks` and uses byte
       // offsets relative to each new-side line's start, so we add the
       // line's own start byte before passing to `addOverlay`.
@@ -921,9 +935,9 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       // No "- " prefix in the line text — the indicator goes in the
       // gutter via `gutterGlyph` so it sits next to the deletion
       // line itself, not on the source line that follows it.
-      // When `oldWordRanges` is set (from a high-similarity refined
-      // pair), bold + underline the actually-removed words so the
-      // user can see *what* changed, not just that something did.
+      // When `oldWordRanges` is set (from a refined 1:1 pair), bold +
+      // underline the actually-removed words so the user can see
+      // *what* changed, not just that something did.
       const wordRanges = h.oldWordRanges?.[i];
       const textOverlays = wordRanges
         ? wordRanges.map((r) => ({
