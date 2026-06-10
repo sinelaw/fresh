@@ -3367,7 +3367,10 @@ fn dump_config_command(args: &Args) -> AnyhowResult<()> {
 /// Route non-interactive subcommands. Returns `Some(result)` if a subcommand
 /// was handled so the caller can propagate it; returns `None` for an
 /// interactive editor launch.
-fn run_if_subcommand(args: &Args, console_available: bool) -> Option<AnyhowResult<()>> {
+fn run_if_subcommand(
+    args: &Args,
+    #[cfg(feature = "gui")] console_available: bool,
+) -> Option<AnyhowResult<()>> {
     if args.show_paths {
         return Some(show_paths_command());
     }
@@ -3666,7 +3669,7 @@ fn real_main() -> AnyhowResult<()> {
     // Early check, otherwise terminal check would fail.
     #[cfg(all(windows, feature = "gui"))]
     let console_available = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) != 0 };
-    #[cfg(not(all(windows, feature = "gui")))]
+    #[cfg(all(not(windows), feature = "gui"))]
     let console_available = true;
 
     // Enable backtraces for error reporting if not already set.
@@ -3704,7 +3707,11 @@ fn real_main() -> AnyhowResult<()> {
         std::env::set_var("FRESH_INTERACTIVE", "1");
     }
 
-    if let Some(result) = run_if_subcommand(&args, console_available) {
+    if let Some(result) = run_if_subcommand(
+        &args,
+        #[cfg(feature = "gui")]
+        console_available,
+    ) {
         return result;
     }
 
