@@ -2,6 +2,7 @@
 //! These tests are only compiled when the "plugins" feature is enabled.
 
 pub mod after_file_open_preview;
+pub mod asm_lsp_config;
 pub mod audit_mode;
 pub mod authority_snapshot;
 pub mod buffer_info_splits;

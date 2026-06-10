@@ -64,7 +64,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Minimal static Linux binary** release artifact (musl, x86_64 and aarch64) optimized for a small binary size.
 
-* **Assembly language support** (#1964, requested by @viti95): Syntax highlighting for GAS/AT&T (`.s`/`.S`) and NASM/Intel (`.asm`/`.nasm`) assembly, covering x86, x86_64, ARM and RISC-V. [asm-lsp](https://github.com/bergercookie/asm-lsp) wired as the default LSP (opt-in per project, configurable via `.asm-lsp.toml`).
+* **Assembly language support** (#1964, requested by @viti95): Syntax highlighting for GAS/AT&T (`.s`/`.S`) and NASM/Intel (`.asm`/`.nasm`) assembly, covering x86, x86_64, ARM and RISC-V. [asm-lsp](https://github.com/bergercookie/asm-lsp) wired as the default LSP (opt-in per project). Since asm-lsp defaults to GAS/x86-64 and can't be told the dialect over LSP, opening an assembly file without an `.asm-lsp.toml` offers to generate one with the assembler and instruction set guessed from the file.
 
 ### Improvements
 
