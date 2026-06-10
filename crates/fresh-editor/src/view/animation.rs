@@ -441,8 +441,8 @@ impl FrameEffect for ColorTransition {
 
 /// One painted cell turned into a physics particle. `home` is where it
 /// belongs (its original screen cell, in area-local float coords); `pos`
-/// and `vel` evolve under a damped spring once the wave crest kicks it.
-/// `cell` carries the full visual (glyph, fg, bg, modifier) so chrome
+/// and `vel` evolve under a damped spring once the rising water reaches
+/// it. `cell` carries the full visual (glyph, fg, bg, modifier) so chrome
 /// colors fly along with the text.
 struct WaveParticle {
     home_x: f32,
@@ -455,14 +455,16 @@ struct WaveParticle {
     hit: bool,
 }
 
-/// Wave effect — see `AnimationKind::Wave`. On the first frame it
-/// snapshots the freshly painted buffer into a field of "ink" particles
-/// (every non-blank cell), records the dominant background color for the
-/// fill, and spawns a crest just below the bottom edge. Each subsequent
-/// frame it advances the crest upward, kicks any particle the crest has
-/// just reached, integrates a damped spring for kicked particles, then
-/// repaints: fill with the background, stamp every particle at its current
-/// cell, and lay the wiggling crest band on top.
+/// Wave effect — see `AnimationKind::Wave`. A body of water, anchored to
+/// the bottom edge, slowly rises to fill the view and then recedes. Its
+/// surface is the superposition of several sine waves of different
+/// wavelengths, and several more undulating "wave layers" ripple within
+/// the body, all heaving up and down slowly (well under 2 Hz). The swell
+/// amplitude grows slowly over time, so the sea starts calm and builds.
+/// As the rising surface reaches each painted cell ("ink" particle) it
+/// kicks it up and sideways; a damped spring then pulls it home, so
+/// content splashes out of the water and is swallowed as the tide climbs,
+/// then revealed again, settled, as it ebbs.
 pub struct WaveEffect {
     duration: Duration,
     area: Rect,
@@ -470,28 +472,38 @@ pub struct WaveEffect {
     /// Blank fill cell (background) painted into every cell before the
     /// particles are stamped, so vacated space reads as empty editor bg.
     fill: Cell,
-    /// Crest row in area-local coords. Starts just below the bottom
-    /// (`height`) and decreases toward `-amplitude` as the wave rises.
-    crest_y: f32,
-    /// Rows per second the crest climbs. Scaled so the wave crosses the
-    /// screen in a roughly fixed wall-clock time regardless of height.
-    speed: f32,
     last_elapsed: Option<Duration>,
     initialized: bool,
 }
 
 impl WaveEffect {
-    // Spring stiffness and damping. Underdamped (c < 2*sqrt(k) ≈ 16.4)
-    // so kicked content visibly bounces a couple times before settling.
-    const SPRING_K: f32 = 68.0;
-    const SPRING_C: f32 = 6.5;
-    // Impulse magnitudes (cells/sec) imparted when the crest passes.
-    const KICK_UP: f32 = 17.0;
-    const KICK_SIDE: f32 = 7.0;
-    // Crest band geometry.
-    const AMPLITUDE: f32 = 2.0;
-    const CREST_FREQ: f32 = 0.45;
-    const WATER_DEPTH: i32 = 2;
+    // Spring stiffness and damping. Underdamped (c < 2*sqrt(k) ≈ 16.7)
+    // so kicked content visibly bounces before settling.
+    const SPRING_K: f32 = 70.0;
+    const SPRING_C: f32 = 7.0;
+    // Impulse magnitudes (cells/sec) when the surface reaches a cell.
+    const KICK_UP: f32 = 13.0;
+    const KICK_SIDE: f32 = 6.0;
+
+    // Surface = sum of three sine components with distinct wavelengths
+    // (spatial wavenumber k = 2π / wavelength_in_cols) and distinct slow
+    // temporal frequencies (angular w = 2π·f; every f ≤ 0.5 Hz, far under
+    // the 2 Hz ceiling). A_i are the relative vertical amplitudes (rows).
+    const K1: f32 = 0.157; // ~40-col swell
+    const K2: f32 = 0.370; // ~17-col chop
+    const K3: f32 = 0.785; // ~8-col ripple
+    const A1: f32 = 1.0;
+    const A2: f32 = 0.55;
+    const A3: f32 = 0.28;
+    const W1: f32 = 1.95; // 0.31 Hz
+    const W2: f32 = 2.95; // 0.47 Hz
+    const W3: f32 = 1.19; // 0.19 Hz
+    // Whole-surface vertical heave.
+    const W_SWING: f32 = 1.70; // 0.27 Hz
+    const SWING_A: f32 = 1.6;
+    // Extra undulating layers drawn inside the body, each on its own phase.
+    const LAYERS: usize = 3;
+    const LAYER_SPACING: f32 = 2.3;
 
     pub fn new(duration: Duration) -> Self {
         Self {
@@ -499,14 +511,12 @@ impl WaveEffect {
             area: Rect::new(0, 0, 0, 0),
             particles: Vec::new(),
             fill: Cell::default(),
-            crest_y: 0.0,
-            speed: 0.0,
             last_elapsed: None,
             initialized: false,
         }
     }
 
-    /// Snapshot the painted buffer into particles and seed the crest.
+    /// Snapshot the painted buffer into particles and record the fill bg.
     fn init(&mut self, buf: &Buffer, area: Rect) {
         self.area = area;
         // Dominant background = the fill color for vacated cells. Counting
@@ -557,31 +567,55 @@ impl WaveEffect {
                 });
             }
         }
-
-        // Crest starts just off the bottom and climbs. Normalize travel
-        // time so short and tall terminals feel similar.
-        self.crest_y = area.height as f32 + Self::AMPLITUDE;
-        self.speed = (area.height as f32 / 0.85).max(18.0);
         self.initialized = true;
     }
 
-    /// Advance physics by `dt` seconds.
-    fn step(&mut self, dt: f32) {
-        self.crest_y -= self.speed * dt;
+    /// Water height (rows above the bottom edge) and swell-amplitude scale
+    /// at `elapsed`. The level rises slowly to cover the view and recedes
+    /// near the end for a clean hand-back to the live UI; the amplitude
+    /// grows monotonically with time so the sea builds as it climbs.
+    fn level_amp(&self, elapsed: Duration) -> (f32, f32) {
+        let p = if self.duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
+        };
+        let rise = if p < 0.82 {
+            smoothstep(p / 0.82)
+        } else {
+            1.0 - smoothstep((p - 0.82) / 0.18)
+        };
+        let max_level = self.area.height as f32 + 5.0;
+        let level = rise * max_level;
+        let amp = 0.3 + 0.95 * smoothstep(p);
+        (level, amp)
+    }
+
+    /// Vertical displacement of the surface at column `x`, time `t`, for a
+    /// layer whose phase is offset by `lp`. Sum of three wavelengths.
+    fn undulation(x: f32, t: f32, lp: f32, amp: f32) -> f32 {
+        amp * (Self::A1 * (Self::K1 * x + Self::W1 * t + lp).sin()
+            + Self::A2 * (Self::K2 * x - Self::W2 * t + lp * 1.7).sin()
+            + Self::A3 * (Self::K3 * x + Self::W3 * t + lp * 0.5).sin())
+    }
+
+    /// Whole-surface heave (slow vertical swing of the mean level).
+    fn swing(t: f32, amp: f32) -> f32 {
+        amp * Self::SWING_A * (Self::W_SWING * t).sin()
+    }
+
+    /// Advance physics by `dt` seconds. `water_top_mean` is the mean
+    /// surface row (smaller = higher); a particle is kicked once, the
+    /// frame the rising mean first reaches its home row.
+    fn step(&mut self, dt: f32, water_top_mean: f32) {
         for p in self.particles.iter_mut() {
-            if !p.hit && self.crest_y <= p.home_y {
-                // The crest just reached this row: kick it. Upward
-                // impulse plus a sideways shove that alternates by column
-                // (spatial sine) with a per-cell jitter so tight words
-                // fan apart instead of moving in lockstep.
+            if !p.hit && water_top_mean <= p.home_y {
                 p.hit = true;
                 let r = hash01(p.home_x, p.home_y);
-                let up = Self::KICK_UP * (0.7 + 0.6 * r);
-                p.vy = -up;
-                p.vx = (p.home_x * 0.55).sin() * Self::KICK_SIDE + (r - 0.5) * Self::KICK_SIDE;
+                p.vy = -Self::KICK_UP * (0.7 + 0.6 * r);
+                p.vx = (p.home_x * 0.5).sin() * Self::KICK_SIDE + (r - 0.5) * Self::KICK_SIDE;
             }
             if p.hit {
-                // Damped spring back toward the home cell.
                 let ax = -Self::SPRING_K * (p.x - p.home_x) - Self::SPRING_C * p.vx;
                 let ay = -Self::SPRING_K * (p.y - p.home_y) - Self::SPRING_C * p.vy;
                 p.vx += ax * dt;
@@ -592,22 +626,8 @@ impl WaveEffect {
         }
     }
 
-    /// True once the crest has exited the top and every particle has
-    /// settled back home (negligible displacement and velocity).
-    fn settled(&self) -> bool {
-        if self.crest_y > -Self::AMPLITUDE {
-            return false;
-        }
-        self.particles.iter().all(|p| {
-            (p.x - p.home_x).abs() < 0.06
-                && (p.y - p.home_y).abs() < 0.06
-                && p.vx.abs() < 0.4
-                && p.vy.abs() < 0.4
-        })
-    }
-
-    /// Repaint the area: fill, particles, then the crest band on top.
-    fn paint(&self, buf: &mut Buffer, elapsed: Duration) {
+    /// Repaint the area: background fill, ink particles, then the water.
+    fn paint(&self, buf: &mut Buffer, elapsed: Duration, level: f32, amp: f32) {
         let area = self.area;
         for dy in 0..area.height {
             for dx in 0..area.width {
@@ -630,44 +650,87 @@ impl WaveEffect {
                 *dst = p.cell.clone();
             }
         }
-        self.paint_crest(buf, elapsed);
+        self.paint_water(buf, elapsed, level, amp);
     }
 
-    /// Lay the wiggling crest band over the buffer. For each column a sine
-    /// (in space, drifting in time) sets the crest row; the crest cell and
-    /// `WATER_DEPTH` rows beneath it are tinted as water with cycling wave
-    /// glyphs, brightest at the crest and fading downward.
-    fn paint_crest(&self, buf: &mut Buffer, elapsed: Duration) {
-        const GLYPHS: [&str; 3] = ["~", "≈", "∿"];
+    /// Paint the rising water body over the buffer: every cell at or below
+    /// the undulating surface is tinted (shallow→deep by depth), the crest
+    /// row gets foam glyphs, and `LAYERS` extra undulating foam lines
+    /// ripple within the body on their own phases.
+    fn paint_water(&self, buf: &mut Buffer, elapsed: Duration, level: f32, amp: f32) {
+        const CREST: [&str; 3] = ["~", "≈", "∿"];
         let area = self.area;
-        let phase = elapsed.as_secs_f32() * 5.0;
-        let crest_fg = (140, 225, 255);
-        let crest_bg = (24, 70, 130);
-        let deep_bg = (12, 38, 78);
+        let h = area.height as f32;
+        let t = elapsed.as_secs_f32();
+        let water_top_mean = h - level;
+        let foam = Color::Rgb(210, 245, 255);
+
         for dx in 0..area.width {
-            let wiggle = (dx as f32 * Self::CREST_FREQ + phase).sin() * Self::AMPLITUDE;
-            let crest_row = self.crest_y + wiggle;
-            for depth in 0..=Self::WATER_DEPTH {
-                let row_f = crest_row + depth as f32;
-                if row_f < 0.0 {
+            let x = dx as f32;
+            let surf = water_top_mean - Self::undulation(x, t, 0.0, amp) - Self::swing(t, amp);
+            for dy in 0..area.height {
+                let y = dy as f32;
+                // Cells above the surface stay as air (content / bg).
+                if y + 0.5 < surf {
                     continue;
                 }
-                let row = row_f.round();
-                if row < 0.0 || row >= area.height as f32 {
-                    continue;
-                }
-                let row = row as u16;
-                let Some(dst) = buf.cell_mut((area.x + dx, area.y + row)) else {
+                let depth = y - surf;
+                let Some(dst) = buf.cell_mut((area.x + dx, area.y + dy)) else {
                     continue;
                 };
-                // Fade from crest color to deep water with depth.
-                let f = depth as f32 / (Self::WATER_DEPTH as f32 + 1.0);
-                let bg = blend_rgb(deep_bg, crest_bg, f);
-                let gi = ((dx as f32 * 0.5 + phase + depth as f32).floor() as i64).rem_euclid(3)
-                    as usize;
-                dst.set_symbol(GLYPHS[gi]);
-                dst.set_fg(Color::Rgb(crest_fg.0, crest_fg.1, crest_fg.2));
-                dst.set_bg(bg);
+                let body = water_rgb(depth);
+                if depth < 0.9 {
+                    // Foam crest right at the waterline.
+                    let gi = ((x * 0.5 + t * 1.6).floor() as i64).rem_euclid(3) as usize;
+                    let crest_bg = lerp_rgb((70, 170, 228), body, 0.5);
+                    dst.set_symbol(CREST[gi]);
+                    dst.set_fg(foam);
+                    dst.set_bg(Color::Rgb(crest_bg.0, crest_bg.1, crest_bg.2));
+                } else {
+                    // Body: colored water with sparse, slowly twinkling
+                    // bubbles for texture.
+                    let bg = Color::Rgb(body.0, body.1, body.2);
+                    if hash01(x + (t * 1.5).floor(), y) > 0.95 {
+                        dst.set_symbol("∘");
+                        dst.set_fg(Color::Rgb(150, 205, 235));
+                    } else {
+                        dst.set_symbol(" ");
+                        dst.set_fg(bg);
+                    }
+                    dst.set_bg(bg);
+                }
+            }
+        }
+
+        // Internal undulating layers — each is its own surface curve, on a
+        // distinct phase, sitting progressively deeper. They ride on top of
+        // the water bg painted above, so they read as ripples within the
+        // body rather than replacing its color.
+        for layer in 1..=Self::LAYERS {
+            let lp = layer as f32 * 2.3;
+            let base = layer as f32 * Self::LAYER_SPACING;
+            let lf = layer as f32 / (Self::LAYERS as f32 + 1.0);
+            let fg_rgb = lerp_rgb((190, 235, 255), (40, 120, 190), lf);
+            let fg = Color::Rgb(fg_rgb.0, fg_rgb.1, fg_rgb.2);
+            for dx in 0..area.width {
+                let x = dx as f32;
+                let surf = water_top_mean - Self::undulation(x, t, 0.0, amp) - Self::swing(t, amp);
+                let ly = water_top_mean - Self::undulation(x, t, lp, amp) - Self::swing(t, amp)
+                    + base;
+                // Keep the layer strictly inside the body.
+                if ly <= surf + 0.6 || ly < 0.0 || ly >= h {
+                    continue;
+                }
+                let row = ly.round();
+                if row < 0.0 || row >= h {
+                    continue;
+                }
+                if let Some(dst) = buf.cell_mut((area.x + dx, area.y + row as u16)) {
+                    let gi = ((x * 0.4 + t * 1.2 + layer as f32).floor() as i64).rem_euclid(3)
+                        as usize;
+                    dst.set_symbol(CREST[gi]);
+                    dst.set_fg(fg);
+                }
             }
         }
     }
@@ -680,19 +743,21 @@ impl FrameEffect for WaveEffect {
         } else {
             (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
         };
-        // Hard safety cap reached: paint nothing and report Done so the
-        // live UI (re-painted under us every frame) shows through cleanly.
+        // Hard cap reached: the tide has ebbed. Paint nothing and report
+        // Done so the live UI (re-painted under us every frame) shows
+        // through cleanly.
         if t >= 1.0 {
             return EffectStatus::Done;
         }
 
         if !self.initialized || self.area != area {
             // First frame (or a resize changed the area): re-snapshot the
-            // freshly painted buffer and restart the crest. A mid-flight
-            // resize is rare; restarting is simpler and visually fine.
+            // freshly painted buffer. A mid-flight resize is rare;
+            // restarting is simpler and visually fine.
             self.init(buf, area);
             self.last_elapsed = Some(elapsed);
-            self.paint(buf, elapsed);
+            let (level, amp) = self.level_amp(elapsed);
+            self.paint(buf, elapsed, level, amp);
             return EffectStatus::Running;
         }
 
@@ -704,22 +769,40 @@ impl FrameEffect for WaveEffect {
         let prev = self.last_elapsed.unwrap_or(elapsed);
         let dt = (elapsed.as_secs_f32() - prev.as_secs_f32()).clamp(0.0, 0.25);
         self.last_elapsed = Some(elapsed);
+        let (level, amp) = self.level_amp(elapsed);
+        let water_top_mean = self.area.height as f32 - level;
         const SUB: f32 = 1.0 / 120.0;
         let mut remaining = dt;
         while remaining > 0.0 {
-            let h = remaining.min(SUB);
-            self.step(h);
-            remaining -= h;
+            let step = remaining.min(SUB);
+            self.step(step, water_top_mean);
+            remaining -= step;
         }
 
-        if self.settled() {
-            // Settled early: report Done and leave the live UI showing.
-            return EffectStatus::Done;
-        }
-
-        self.paint(buf, elapsed);
+        self.paint(buf, elapsed, level, amp);
         EffectStatus::Running
     }
+}
+
+/// Smoothstep on [0, 1]: 0 at 0, 1 at 1, flat slope at both ends.
+fn smoothstep(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Linear interpolation between two RGB triples (`f`=0 → `a`, `f`=1 → `b`).
+fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), f: f32) -> (u8, u8, u8) {
+    let f = f.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * f).round() as u8;
+    (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
+}
+
+/// Water color at a given depth below the surface: shallow turquoise at
+/// the top fading to deep navy further down.
+fn water_rgb(depth: f32) -> (u8, u8, u8) {
+    const SHALLOW: (u8, u8, u8) = (38, 132, 205);
+    const DEEP: (u8, u8, u8) = (6, 26, 68);
+    lerp_rgb(SHALLOW, DEEP, (depth / 14.0).clamp(0.0, 1.0))
 }
 
 /// Cheap deterministic hash of a cell's home position to a float in
@@ -1593,15 +1676,15 @@ mod tests {
         let mut buf = make_buf(8, 6);
         paint(&mut buf, area, 'A', Color::Rgb(200, 200, 200));
 
-        let mut effect = WaveEffect::new(Duration::from_millis(2500));
-        // First apply initializes (snapshot + crest seed) and paints t≈0.
+        let mut effect = WaveEffect::new(Duration::from_millis(500));
+        // First apply initializes (snapshot) and paints t≈0.
         let s0 = effect.apply(&mut buf, area, Duration::ZERO);
         assert_eq!(s0, EffectStatus::Running);
         // Every cell was ink ('A'), so we get one particle per cell.
         assert_eq!(effect.particles.len(), (area.width * area.height) as usize);
 
-        // Drive a couple of frames; the crest climbs from the bottom and
-        // kicks the lower rows. The buffer should no longer be all 'A'.
+        // Drive to mid-flight, where the water has risen well up the view
+        // and kicked the lower rows. The buffer should no longer be all 'A'.
         effect.apply(&mut buf, area, Duration::from_millis(120));
         effect.apply(&mut buf, area, Duration::from_millis(240));
         let mut non_a = 0;

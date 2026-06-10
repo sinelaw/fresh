@@ -64,7 +64,7 @@ impl Editor {
         self.active_window_mut().animations.start(
             area,
             crate::view::animation::AnimationKind::Wave {
-                duration: std::time::Duration::from_millis(2500),
+                duration: std::time::Duration::from_millis(6000),
             },
         );
         self.set_status_message(t!("wave.triggered").to_string());
