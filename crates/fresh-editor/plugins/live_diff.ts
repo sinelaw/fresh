@@ -22,6 +22,8 @@ const editor = getEditor();
  *   - Live Diff: Toggle                — disable/enable for the active buffer
  *   - Live Diff: Refresh               — re-fetch reference and recompute
  *   - Live Diff: Set Default Mode...   — pick the default for new buffers
+ *   - Live Diff: Revert Hunk at Cursor — restore the reference content for
+ *     the change block the cursor is in, leaving other changes intact
  */
 
 // =============================================================================
@@ -1236,6 +1238,161 @@ async function live_diff_refresh(): Promise<void> {
 }
 registerHandler("live_diff_refresh", live_diff_refresh);
 
+/**
+ * Find the change block containing `line` in a raw (pre-`refineHunks`)
+ * hunk list. Added/modified hunks match when the cursor is on one of
+ * their new-side lines. Removed hunks have no new-side lines — they
+ * match when the cursor is on the line their virtual deletion block is
+ * anchored to (the line that follows the deletion, or the last real
+ * line when the deletion is at EOF, mirroring `renderHunks`).
+ *
+ * Raw hunks are used (not the refined ones rendered on screen) because
+ * each raw hunk carries the complete old-side text of its block;
+ * `refineHunks` splits a block into removed/modified/added fragments
+ * that individually don't know the full replacement text.
+ */
+function hunkAtLine(hunks: Hunk[], line: number, lineCount: number): Hunk | null {
+  for (const h of hunks) {
+    if (h.newCount > 0) {
+      if (line >= h.newStart && line < h.newStart + h.newCount) return h;
+    } else {
+      const anchor = h.newStart >= lineCount ? Math.max(0, lineCount - 1) : h.newStart;
+      if (line === anchor) return h;
+    }
+  }
+  return null;
+}
+
+/**
+ * Replace the buffer's content (`current`) with `next` by deleting and
+ * inserting only the minimal differing range, so markers and overlays
+ * outside the edit survive. Boundaries are found per UTF-16 code unit
+ * and then nudged so neither slice splits a surrogate pair —
+ * `utf8ByteLength` (and the buffer API) need well-formed strings.
+ */
+function applyMinimalEdit(bufferId: number, current: string, next: string): boolean {
+  let p = 0;
+  const minLen = Math.min(current.length, next.length);
+  while (p < minLen && current.charCodeAt(p) === next.charCodeAt(p)) p++;
+  if (p > 0 && p < minLen) {
+    const prev = current.charCodeAt(p - 1);
+    // High surrogate before the boundary: both strings share it, but
+    // the low surrogates differ — back off so the pair stays whole.
+    if (prev >= 0xd800 && prev <= 0xdbff) p--;
+  }
+  let curEnd = current.length;
+  let nextEnd = next.length;
+  while (
+    curEnd > p &&
+    nextEnd > p &&
+    current.charCodeAt(curEnd - 1) === next.charCodeAt(nextEnd - 1)
+  ) {
+    curEnd--;
+    nextEnd--;
+  }
+  if (curEnd < current.length && nextEnd < next.length) {
+    const c = current.charCodeAt(curEnd);
+    // Common suffix starts with a low surrogate: its high partner is
+    // inside the differing region. Pull the low surrogate into the
+    // differing slices so both sides end on a complete pair.
+    if (c >= 0xdc00 && c <= 0xdfff) {
+      curEnd++;
+      nextEnd++;
+    }
+  }
+  if (p === curEnd && p === nextEnd) return true;
+  const startByte = editor.utf8ByteLength(current.slice(0, p));
+  if (curEnd > p) {
+    const endByte = startByte + editor.utf8ByteLength(current.slice(p, curEnd));
+    if (!editor.deleteRange(bufferId, startByte, endByte)) return false;
+  }
+  if (nextEnd > p) {
+    if (!editor.insertText(bufferId, startByte, next.slice(p, nextEnd))) return false;
+  }
+  return true;
+}
+
+/**
+ * Revert the change block at the cursor to the reference content
+ * (HEAD, disk, or branch — whatever the buffer's diff mode compares
+ * against), leaving every other change intact.
+ *
+ * The diff is recomputed here against the exact text we're about to
+ * edit (rather than reusing the debounced render-state hunks) so a
+ * keystroke inside the debounce window can never make us revert stale
+ * line ranges.
+ */
+async function live_diff_revert_hunk(): Promise<void> {
+  const bid = editor.getActiveBufferId();
+  const state = ensureState(bid);
+  if (!state) {
+    editor.setStatus(editor.t("status.no_file"));
+    return;
+  }
+  if (!isEnabledForBuffer(state)) {
+    editor.setStatus(editor.t("status.not_enabled"));
+    return;
+  }
+  // Load the reference if it isn't cached yet (done inline rather than
+  // via `recompute`, which silently early-returns while a debounced
+  // recompute is in flight and would leave `oldText` null here).
+  if (state.oldText === null) {
+    const ref = await loadReference(state);
+    if (ref === null) {
+      editor.setStatus(editor.t("status.no_reference"));
+      return;
+    }
+    state.oldText = ref;
+    state.oldLines = splitLines(ref);
+  }
+
+  const cursorLine = editor.getPrimaryCursor()?.line;
+  if (cursorLine == null) {
+    editor.setStatus(editor.t("status.no_hunk"));
+    return;
+  }
+
+  const text = await editor.getBufferText(bid, 0, editor.getBufferLength(bid));
+  const lines = splitLines(text);
+  if (state.oldLines.length > MAX_DIFF_LINES || lines.length > MAX_DIFF_LINES) {
+    editor.setStatus(editor.t("status.too_large"));
+    return;
+  }
+  const ops = lineDiff(state.oldLines, lines);
+  if (ops === null) {
+    editor.setStatus(editor.t("status.too_large"));
+    return;
+  }
+  const rawHunks = opsToHunks(ops);
+  fillOldLines(rawHunks, state.oldLines);
+
+  const hunk = hunkAtLine(rawHunks, cursorLine, lines.length);
+  if (!hunk) {
+    editor.setStatus(editor.t("status.no_hunk"));
+    return;
+  }
+
+  const revertedLines = lines
+    .slice(0, hunk.newStart)
+    .concat(hunk.oldLines, lines.slice(hunk.newStart + hunk.newCount));
+  let reverted = revertedLines.join("\n");
+  // Line-based reconstruction (splitLines drops the trailing newline on
+  // both sides): keep the buffer's own trailing-newline convention, or
+  // the reference's when the buffer is empty.
+  const wantsTrailingNewline =
+    text.length > 0 ? text.endsWith("\n") : state.oldText.endsWith("\n");
+  if (wantsTrailingNewline && reverted.length > 0) reverted += "\n";
+
+  if (!applyMinimalEdit(bid, text, reverted)) {
+    editor.setStatus(editor.t("status.revert_failed"));
+    return;
+  }
+  // Our own insert/delete fire after_insert / after_delete, which
+  // schedule the decoration recompute — nothing else to refresh here.
+  editor.setStatus(editor.t("status.reverted"));
+}
+registerHandler("live_diff_revert_hunk", live_diff_revert_hunk);
+
 async function live_diff_set_default(): Promise<void> {
   const choice = await editor.prompt(editor.t("prompt.default_mode"), "head");
   if (!choice) return;
@@ -1440,6 +1597,7 @@ editor.registerCommand("%cmd.vs_branch", "%cmd.vs_branch_desc", "live_diff_vs_br
 editor.registerCommand("%cmd.vs_default_branch", "%cmd.vs_default_branch_desc", "live_diff_vs_default_branch", null);
 editor.registerCommand("%cmd.refresh", "%cmd.refresh_desc", "live_diff_refresh", null);
 editor.registerCommand("%cmd.set_default", "%cmd.set_default_desc", "live_diff_set_default", null);
+editor.registerCommand("%cmd.revert_hunk", "%cmd.revert_hunk_desc", "live_diff_revert_hunk", null);
 
 // =============================================================================
 // Plugin API

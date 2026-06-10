@@ -16,6 +16,8 @@
     "cmd.refresh_desc": "Re-fetch the reference and recompute the diff for the current buffer",
     "cmd.set_default": "Live Diff: Set Default Mode...",
     "cmd.set_default_desc": "Set the default diff mode for new buffers (head, disk, or branch:<ref>)",
+    "cmd.revert_hunk": "Live Diff: Revert Hunk at Cursor",
+    "cmd.revert_hunk_desc": "Revert the change block at the cursor to the reference content (HEAD, disk, or branch)",
     "prompt.branch": "Branch or ref",
     "prompt.default_mode": "Default mode (head, disk, or branch:<ref>)",
     "status.no_file": "Live Diff: No file open",
@@ -29,7 +31,12 @@
     "status.refreshed": "Live Diff: reference refreshed",
     "status.too_large": "Live Diff: file too large for live diff",
     "status.bad_default": "Live Diff: invalid mode (use head, disk, or branch:<ref>)",
-    "status.default_set": "Live Diff: default mode updated"
+    "status.default_set": "Live Diff: default mode updated",
+    "status.reverted": "Live Diff: hunk reverted",
+    "status.no_hunk": "Live Diff: no change at cursor",
+    "status.not_enabled": "Live Diff: not enabled for this buffer",
+    "status.no_reference": "Live Diff: no reference available for this file",
+    "status.revert_failed": "Live Diff: revert failed"
   },
   "cs": {
     "cmd.toggle_global": "Živý Diff: Přepnout (globálně)",
@@ -48,6 +55,8 @@
     "cmd.refresh_desc": "Znovu načíst referenci a přepočítat diff pro aktuální buffer",
     "cmd.set_default": "Živý Diff: Nastavit výchozí režim...",
     "cmd.set_default_desc": "Nastavit výchozí režim diffu pro nové buffery (head, disk nebo branch:<ref>)",
+    "cmd.revert_hunk": "Živý Diff: Vrátit blok změn pod kurzorem",
+    "cmd.revert_hunk_desc": "Vrátit blok změn pod kurzorem na obsah reference (HEAD, disk nebo větev)",
     "prompt.branch": "Větev nebo reference",
     "prompt.default_mode": "Výchozí režim (head, disk nebo branch:<ref>)",
     "status.no_file": "Živý Diff: Žádný soubor není otevřen",
@@ -61,7 +70,12 @@
     "status.refreshed": "Živý Diff: reference obnovena",
     "status.too_large": "Živý Diff: soubor je příliš velký pro živý diff",
     "status.bad_default": "Živý Diff: neplatný režim (použijte head, disk nebo branch:<ref>)",
-    "status.default_set": "Živý Diff: výchozí režim aktualizován"
+    "status.default_set": "Živý Diff: výchozí režim aktualizován",
+    "status.reverted": "Živý Diff: blok změn vrácen",
+    "status.no_hunk": "Živý Diff: žádná změna pod kurzorem",
+    "status.not_enabled": "Živý Diff: není zapnut pro tento buffer",
+    "status.no_reference": "Živý Diff: pro tento soubor není dostupná reference",
+    "status.revert_failed": "Živý Diff: vrácení se nezdařilo"
   },
   "de": {
     "cmd.toggle_global": "Live-Diff: Umschalten (global)",
@@ -80,6 +94,8 @@
     "cmd.refresh_desc": "Referenz neu laden und Diff für den aktuellen Puffer neu berechnen",
     "cmd.set_default": "Live-Diff: Standardmodus festlegen...",
     "cmd.set_default_desc": "Standardmäßigen Diff-Modus für neue Puffer festlegen (head, disk oder branch:<ref>)",
+    "cmd.revert_hunk": "Live-Diff: Hunk unter Cursor zurücksetzen",
+    "cmd.revert_hunk_desc": "Den Änderungsblock unter dem Cursor auf den Referenzinhalt zurücksetzen (HEAD, Festplatte oder Branch)",
     "prompt.branch": "Branch oder Referenz",
     "prompt.default_mode": "Standardmodus (head, disk oder branch:<ref>)",
     "status.no_file": "Live-Diff: Keine Datei geöffnet",
@@ -93,7 +109,12 @@
     "status.refreshed": "Live-Diff: Referenz aktualisiert",
     "status.too_large": "Live-Diff: Datei zu groß für Live-Diff",
     "status.bad_default": "Live-Diff: ungültiger Modus (head, disk oder branch:<ref> verwenden)",
-    "status.default_set": "Live-Diff: Standardmodus aktualisiert"
+    "status.default_set": "Live-Diff: Standardmodus aktualisiert",
+    "status.reverted": "Live-Diff: Hunk zurückgesetzt",
+    "status.no_hunk": "Live-Diff: keine Änderung unter dem Cursor",
+    "status.not_enabled": "Live-Diff: für diesen Puffer nicht aktiviert",
+    "status.no_reference": "Live-Diff: keine Referenz für diese Datei verfügbar",
+    "status.revert_failed": "Live-Diff: Zurücksetzen fehlgeschlagen"
   },
   "es": {
     "cmd.toggle_global": "Diff en vivo: Alternar (global)",
@@ -112,6 +133,8 @@
     "cmd.refresh_desc": "Volver a obtener la referencia y recalcular el diff para el búfer actual",
     "cmd.set_default": "Diff en vivo: Establecer modo predeterminado...",
     "cmd.set_default_desc": "Establecer el modo de diff predeterminado para nuevos búferes (head, disk o branch:<ref>)",
+    "cmd.revert_hunk": "Diff en vivo: Revertir hunk bajo el cursor",
+    "cmd.revert_hunk_desc": "Revertir el bloque de cambios bajo el cursor al contenido de referencia (HEAD, disco o rama)",
     "prompt.branch": "Rama o referencia",
     "prompt.default_mode": "Modo predeterminado (head, disk o branch:<ref>)",
     "status.no_file": "Diff en vivo: Ningún archivo abierto",
@@ -125,7 +148,12 @@
     "status.refreshed": "Diff en vivo: referencia actualizada",
     "status.too_large": "Diff en vivo: archivo demasiado grande para diff en vivo",
     "status.bad_default": "Diff en vivo: modo inválido (use head, disk o branch:<ref>)",
-    "status.default_set": "Diff en vivo: modo predeterminado actualizado"
+    "status.default_set": "Diff en vivo: modo predeterminado actualizado",
+    "status.reverted": "Diff en vivo: hunk revertido",
+    "status.no_hunk": "Diff en vivo: ningún cambio bajo el cursor",
+    "status.not_enabled": "Diff en vivo: no activado para este búfer",
+    "status.no_reference": "Diff en vivo: no hay referencia disponible para este archivo",
+    "status.revert_failed": "Diff en vivo: la reversión falló"
   },
   "fr": {
     "cmd.toggle_global": "Diff en direct : Activer/Désactiver (global)",
@@ -144,6 +172,8 @@
     "cmd.refresh_desc": "Recharger la référence et recalculer le diff pour le tampon actuel",
     "cmd.set_default": "Diff en direct : Définir le mode par défaut...",
     "cmd.set_default_desc": "Définir le mode de diff par défaut pour les nouveaux tampons (head, disk ou branch:<ref>)",
+    "cmd.revert_hunk": "Diff en direct : Annuler le bloc sous le curseur",
+    "cmd.revert_hunk_desc": "Rétablir le bloc de modifications sous le curseur au contenu de référence (HEAD, disque ou branche)",
     "prompt.branch": "Branche ou référence",
     "prompt.default_mode": "Mode par défaut (head, disk ou branch:<ref>)",
     "status.no_file": "Diff en direct : Aucun fichier ouvert",
@@ -157,7 +187,12 @@
     "status.refreshed": "Diff en direct : référence rafraîchie",
     "status.too_large": "Diff en direct : fichier trop volumineux pour un diff en direct",
     "status.bad_default": "Diff en direct : mode invalide (utilisez head, disk ou branch:<ref>)",
-    "status.default_set": "Diff en direct : mode par défaut mis à jour"
+    "status.default_set": "Diff en direct : mode par défaut mis à jour",
+    "status.reverted": "Diff en direct : bloc annulé",
+    "status.no_hunk": "Diff en direct : aucune modification sous le curseur",
+    "status.not_enabled": "Diff en direct : non activé pour ce tampon",
+    "status.no_reference": "Diff en direct : aucune référence disponible pour ce fichier",
+    "status.revert_failed": "Diff en direct : échec de l'annulation"
   },
   "it": {
     "cmd.toggle_global": "Diff in tempo reale: Attiva/Disattiva (globale)",
@@ -176,6 +211,8 @@
     "cmd.refresh_desc": "Ricarica il riferimento e ricalcola il diff per il buffer corrente",
     "cmd.set_default": "Diff in tempo reale: Imposta modalità predefinita...",
     "cmd.set_default_desc": "Imposta la modalità di diff predefinita per i nuovi buffer (head, disk o branch:<ref>)",
+    "cmd.revert_hunk": "Diff in tempo reale: Ripristina hunk sotto il cursore",
+    "cmd.revert_hunk_desc": "Ripristina il blocco di modifiche sotto il cursore al contenuto di riferimento (HEAD, disco o ramo)",
     "prompt.branch": "Ramo o riferimento",
     "prompt.default_mode": "Modalità predefinita (head, disk o branch:<ref>)",
     "status.no_file": "Diff in tempo reale: Nessun file aperto",
@@ -189,7 +226,12 @@
     "status.refreshed": "Diff in tempo reale: riferimento aggiornato",
     "status.too_large": "Diff in tempo reale: file troppo grande per il diff in tempo reale",
     "status.bad_default": "Diff in tempo reale: modalità non valida (usa head, disk o branch:<ref>)",
-    "status.default_set": "Diff in tempo reale: modalità predefinita aggiornata"
+    "status.default_set": "Diff in tempo reale: modalità predefinita aggiornata",
+    "status.reverted": "Diff in tempo reale: hunk ripristinato",
+    "status.no_hunk": "Diff in tempo reale: nessuna modifica sotto il cursore",
+    "status.not_enabled": "Diff in tempo reale: non attivato per questo buffer",
+    "status.no_reference": "Diff in tempo reale: nessun riferimento disponibile per questo file",
+    "status.revert_failed": "Diff in tempo reale: ripristino non riuscito"
   },
   "ja": {
     "cmd.toggle_global": "ライブ差分: 切り替え (グローバル)",
@@ -208,6 +250,8 @@
     "cmd.refresh_desc": "リファレンスを再取得し、現在のバッファの差分を再計算",
     "cmd.set_default": "ライブ差分: デフォルトモードを設定...",
     "cmd.set_default_desc": "新規バッファの既定の差分モードを設定 (head、disk、または branch:<ref>)",
+    "cmd.revert_hunk": "ライブ差分: カーソル位置のハンクを元に戻す",
+    "cmd.revert_hunk_desc": "カーソル位置の変更ブロックを参照内容 (HEAD、ディスク、またはブランチ) に戻す",
     "prompt.branch": "ブランチまたはリファレンス",
     "prompt.default_mode": "デフォルトモード (head、disk、または branch:<ref>)",
     "status.no_file": "ライブ差分: ファイルが開かれていません",
@@ -221,7 +265,12 @@
     "status.refreshed": "ライブ差分: リファレンスを更新しました",
     "status.too_large": "ライブ差分: ファイルが大きすぎます",
     "status.bad_default": "ライブ差分: 無効なモード (head、disk、または branch:<ref> を使用)",
-    "status.default_set": "ライブ差分: デフォルトモードを更新しました"
+    "status.default_set": "ライブ差分: デフォルトモードを更新しました",
+    "status.reverted": "ライブ差分: ハンクを元に戻しました",
+    "status.no_hunk": "ライブ差分: カーソル位置に変更はありません",
+    "status.not_enabled": "ライブ差分: このバッファでは有効になっていません",
+    "status.no_reference": "ライブ差分: このファイルの参照がありません",
+    "status.revert_failed": "ライブ差分: 元に戻せませんでした"
   },
   "ko": {
     "cmd.toggle_global": "라이브 Diff: 켜기/끄기 (전역)",
@@ -240,6 +289,8 @@
     "cmd.refresh_desc": "참조를 다시 가져와 현재 버퍼의 diff를 재계산",
     "cmd.set_default": "라이브 Diff: 기본 모드 설정...",
     "cmd.set_default_desc": "새 버퍼의 기본 diff 모드 설정 (head, disk, 또는 branch:<ref>)",
+    "cmd.revert_hunk": "라이브 Diff: 커서 위치의 헝크 되돌리기",
+    "cmd.revert_hunk_desc": "커서 위치의 변경 블록을 참조 내용(HEAD, 디스크 또는 브랜치)으로 되돌리기",
     "prompt.branch": "브랜치 또는 참조",
     "prompt.default_mode": "기본 모드 (head, disk, 또는 branch:<ref>)",
     "status.no_file": "라이브 Diff: 열린 파일 없음",
@@ -253,7 +304,12 @@
     "status.refreshed": "라이브 Diff: 참조 새로고침됨",
     "status.too_large": "라이브 Diff: 파일이 너무 커서 라이브 diff 불가",
     "status.bad_default": "라이브 Diff: 잘못된 모드 (head, disk, 또는 branch:<ref> 사용)",
-    "status.default_set": "라이브 Diff: 기본 모드 업데이트됨"
+    "status.default_set": "라이브 Diff: 기본 모드 업데이트됨",
+    "status.reverted": "라이브 Diff: 헝크를 되돌렸습니다",
+    "status.no_hunk": "라이브 Diff: 커서 위치에 변경 없음",
+    "status.not_enabled": "라이브 Diff: 이 버퍼에서 활성화되지 않음",
+    "status.no_reference": "라이브 Diff: 이 파일에 사용할 참조가 없음",
+    "status.revert_failed": "라이브 Diff: 되돌리기 실패"
   },
   "pt-BR": {
     "cmd.toggle_global": "Diff ao vivo: Alternar (global)",
@@ -272,6 +328,8 @@
     "cmd.refresh_desc": "Recarregar a referência e recalcular o diff para o buffer atual",
     "cmd.set_default": "Diff ao vivo: Definir modo padrão...",
     "cmd.set_default_desc": "Definir o modo de diff padrão para novos buffers (head, disk ou branch:<ref>)",
+    "cmd.revert_hunk": "Diff ao vivo: Reverter hunk sob o cursor",
+    "cmd.revert_hunk_desc": "Reverter o bloco de alterações sob o cursor para o conteúdo de referência (HEAD, disco ou branch)",
     "prompt.branch": "Branch ou referência",
     "prompt.default_mode": "Modo padrão (head, disk ou branch:<ref>)",
     "status.no_file": "Diff ao vivo: Nenhum arquivo aberto",
@@ -285,7 +343,12 @@
     "status.refreshed": "Diff ao vivo: referência atualizada",
     "status.too_large": "Diff ao vivo: arquivo muito grande para diff ao vivo",
     "status.bad_default": "Diff ao vivo: modo inválido (use head, disk ou branch:<ref>)",
-    "status.default_set": "Diff ao vivo: modo padrão atualizado"
+    "status.default_set": "Diff ao vivo: modo padrão atualizado",
+    "status.reverted": "Diff ao vivo: hunk revertido",
+    "status.no_hunk": "Diff ao vivo: nenhuma alteração sob o cursor",
+    "status.not_enabled": "Diff ao vivo: não ativado para este buffer",
+    "status.no_reference": "Diff ao vivo: nenhuma referência disponível para este arquivo",
+    "status.revert_failed": "Diff ao vivo: falha ao reverter"
   },
   "ru": {
     "cmd.toggle_global": "Живой Diff: Переключить (глобально)",
@@ -304,6 +367,8 @@
     "cmd.refresh_desc": "Перезагрузить эталон и пересчитать diff для текущего буфера",
     "cmd.set_default": "Живой Diff: Установить режим по умолчанию...",
     "cmd.set_default_desc": "Установить режим diff по умолчанию для новых буферов (head, disk или branch:<ref>)",
+    "cmd.revert_hunk": "Живой Diff: Откатить блок под курсором",
+    "cmd.revert_hunk_desc": "Откатить блок изменений под курсором к содержимому эталона (HEAD, диск или ветка)",
     "prompt.branch": "Ветка или ссылка",
     "prompt.default_mode": "Режим по умолчанию (head, disk или branch:<ref>)",
     "status.no_file": "Живой Diff: Нет открытого файла",
@@ -317,7 +382,12 @@
     "status.refreshed": "Живой Diff: эталон обновлён",
     "status.too_large": "Живой Diff: файл слишком большой для живого diff",
     "status.bad_default": "Живой Diff: недопустимый режим (используйте head, disk или branch:<ref>)",
-    "status.default_set": "Живой Diff: режим по умолчанию обновлён"
+    "status.default_set": "Живой Diff: режим по умолчанию обновлён",
+    "status.reverted": "Живой Diff: блок изменений откачен",
+    "status.no_hunk": "Живой Diff: нет изменений под курсором",
+    "status.not_enabled": "Живой Diff: не включён для этого буфера",
+    "status.no_reference": "Живой Diff: для этого файла нет эталона",
+    "status.revert_failed": "Живой Diff: не удалось откатить"
   },
   "th": {
     "cmd.toggle_global": "Diff สด: สลับ (ทั่วโลก)",
@@ -336,6 +406,8 @@
     "cmd.refresh_desc": "ดึงการอ้างอิงใหม่และคำนวณ diff สำหรับบัฟเฟอร์ปัจจุบันใหม่",
     "cmd.set_default": "Diff สด: ตั้งโหมดเริ่มต้น...",
     "cmd.set_default_desc": "ตั้งโหมด diff เริ่มต้นสำหรับบัฟเฟอร์ใหม่ (head, disk หรือ branch:<ref>)",
+    "cmd.revert_hunk": "Diff สด: ย้อนกลับฮังก์ที่เคอร์เซอร์",
+    "cmd.revert_hunk_desc": "ย้อนบล็อกการเปลี่ยนแปลงที่เคอร์เซอร์กลับเป็นเนื้อหาอ้างอิง (HEAD, ดิสก์ หรือสาขา)",
     "prompt.branch": "สาขาหรือการอ้างอิง",
     "prompt.default_mode": "โหมดเริ่มต้น (head, disk หรือ branch:<ref>)",
     "status.no_file": "Diff สด: ไม่มีไฟล์เปิดอยู่",
@@ -349,7 +421,12 @@
     "status.refreshed": "Diff สด: รีเฟรชการอ้างอิงแล้ว",
     "status.too_large": "Diff สด: ไฟล์ใหญ่เกินไปสำหรับ diff สด",
     "status.bad_default": "Diff สด: โหมดไม่ถูกต้อง (ใช้ head, disk หรือ branch:<ref>)",
-    "status.default_set": "Diff สด: อัปเดตโหมดเริ่มต้นแล้ว"
+    "status.default_set": "Diff สด: อัปเดตโหมดเริ่มต้นแล้ว",
+    "status.reverted": "Diff สด: ย้อนกลับฮังก์แล้ว",
+    "status.no_hunk": "Diff สด: ไม่มีการเปลี่ยนแปลงที่เคอร์เซอร์",
+    "status.not_enabled": "Diff สด: ไม่ได้เปิดใช้งานสำหรับบัฟเฟอร์นี้",
+    "status.no_reference": "Diff สด: ไม่มีการอ้างอิงสำหรับไฟล์นี้",
+    "status.revert_failed": "Diff สด: ย้อนกลับไม่สำเร็จ"
   },
   "uk": {
     "cmd.toggle_global": "Живий Diff: Перемкнути (глобально)",
@@ -368,6 +445,8 @@
     "cmd.refresh_desc": "Перезавантажити еталон і перерахувати diff для поточного буфера",
     "cmd.set_default": "Живий Diff: Встановити типовий режим...",
     "cmd.set_default_desc": "Встановити типовий режим diff для нових буферів (head, disk або branch:<ref>)",
+    "cmd.revert_hunk": "Живий Diff: Відкотити блок під курсором",
+    "cmd.revert_hunk_desc": "Відкотити блок змін під курсором до вмісту еталона (HEAD, диск або гілка)",
     "prompt.branch": "Гілка або посилання",
     "prompt.default_mode": "Типовий режим (head, disk або branch:<ref>)",
     "status.no_file": "Живий Diff: Немає відкритого файлу",
@@ -381,7 +460,12 @@
     "status.refreshed": "Живий Diff: еталон оновлено",
     "status.too_large": "Живий Diff: файл завеликий для живого diff",
     "status.bad_default": "Живий Diff: неприпустимий режим (використовуйте head, disk або branch:<ref>)",
-    "status.default_set": "Живий Diff: типовий режим оновлено"
+    "status.default_set": "Живий Diff: типовий режим оновлено",
+    "status.reverted": "Живий Diff: блок змін відкочено",
+    "status.no_hunk": "Живий Diff: немає змін під курсором",
+    "status.not_enabled": "Живий Diff: не ввімкнено для цього буфера",
+    "status.no_reference": "Живий Diff: для цього файлу немає еталона",
+    "status.revert_failed": "Живий Diff: не вдалося відкотити"
   },
   "vi": {
     "cmd.toggle_global": "Diff trực tiếp: Bật/Tắt (toàn cục)",
@@ -400,6 +484,8 @@
     "cmd.refresh_desc": "Tải lại tham chiếu và tính lại diff cho buffer hiện tại",
     "cmd.set_default": "Diff trực tiếp: Đặt chế độ mặc định...",
     "cmd.set_default_desc": "Đặt chế độ diff mặc định cho buffer mới (head, disk hoặc branch:<ref>)",
+    "cmd.revert_hunk": "Diff trực tiếp: Hoàn tác khối thay đổi tại con trỏ",
+    "cmd.revert_hunk_desc": "Hoàn tác khối thay đổi tại con trỏ về nội dung tham chiếu (HEAD, đĩa hoặc nhánh)",
     "prompt.branch": "Nhánh hoặc tham chiếu",
     "prompt.default_mode": "Chế độ mặc định (head, disk hoặc branch:<ref>)",
     "status.no_file": "Diff trực tiếp: Không có tệp mở",
@@ -413,7 +499,12 @@
     "status.refreshed": "Diff trực tiếp: đã làm mới tham chiếu",
     "status.too_large": "Diff trực tiếp: tệp quá lớn để diff trực tiếp",
     "status.bad_default": "Diff trực tiếp: chế độ không hợp lệ (sử dụng head, disk hoặc branch:<ref>)",
-    "status.default_set": "Diff trực tiếp: đã cập nhật chế độ mặc định"
+    "status.default_set": "Diff trực tiếp: đã cập nhật chế độ mặc định",
+    "status.reverted": "Diff trực tiếp: đã hoàn tác khối thay đổi",
+    "status.no_hunk": "Diff trực tiếp: không có thay đổi tại con trỏ",
+    "status.not_enabled": "Diff trực tiếp: chưa được bật cho buffer này",
+    "status.no_reference": "Diff trực tiếp: không có tham chiếu cho tệp này",
+    "status.revert_failed": "Diff trực tiếp: hoàn tác thất bại"
   },
   "zh-CN": {
     "cmd.toggle_global": "实时 Diff: 切换 (全局)",
@@ -432,6 +523,8 @@
     "cmd.refresh_desc": "重新获取参照并重算当前缓冲区的 diff",
     "cmd.set_default": "实时 Diff: 设置默认模式...",
     "cmd.set_default_desc": "为新缓冲区设置默认 diff 模式 (head、disk 或 branch:<ref>)",
+    "cmd.revert_hunk": "实时 Diff: 还原光标处的变更块",
+    "cmd.revert_hunk_desc": "将光标处的变更块还原为参照内容 (HEAD、磁盘或分支)",
     "prompt.branch": "分支或引用",
     "prompt.default_mode": "默认模式 (head、disk 或 branch:<ref>)",
     "status.no_file": "实时 Diff: 没有打开的文件",
@@ -445,6 +538,11 @@
     "status.refreshed": "实时 Diff: 参照已刷新",
     "status.too_large": "实时 Diff: 文件过大，无法进行实时 diff",
     "status.bad_default": "实时 Diff: 模式无效 (使用 head、disk 或 branch:<ref>)",
-    "status.default_set": "实时 Diff: 默认模式已更新"
+    "status.default_set": "实时 Diff: 默认模式已更新",
+    "status.reverted": "实时 Diff: 已还原变更块",
+    "status.no_hunk": "实时 Diff: 光标处没有变更",
+    "status.not_enabled": "实时 Diff: 未对此缓冲区启用",
+    "status.no_reference": "实时 Diff: 此文件没有可用参照",
+    "status.revert_failed": "实时 Diff: 还原失败"
   }
 }
