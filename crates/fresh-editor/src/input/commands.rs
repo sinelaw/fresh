@@ -602,6 +602,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.wave_animation",
+        desc_key: "cmd.wave_animation_desc",
+        action: || Action::TriggerWaveAnimation,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.toggle_scroll_sync",
         desc_key: "cmd.toggle_scroll_sync_desc",
         action: || Action::ToggleScrollSync,

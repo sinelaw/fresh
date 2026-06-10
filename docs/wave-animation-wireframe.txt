@@ -1,0 +1,61 @@
+WAVE ANIMATION — ASCII WIREFRAME (example mid-flight frame)
+============================================================
+
+Trigger:  Command Palette (Ctrl+P)  ->  "Wave Animation"
+
+The whole rendered frame (menu bar, tab bar, gutter, text, status bar — every
+painted cell) is snapshotted into a field of "ink" particles. A crest of wave
+glyphs (~ ≈ ∿) rises from the bottom edge. As the crest sweeps past a row it
+kicks every particle on that row: an upward impulse plus a sideways shove that
+varies per-column (some left, some right). Each particle is then pulled back
+to its home cell by a damped spring, so content bounces UP/DOWN and SIDEWAYS
+and settles back exactly where it started once the wave exits the top.
+
+t ≈ 0.45s  (crest has cleared the lower third; that content is airborne and
+            still jittering; upper rows are just starting to get hit)
+
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │  File   Edit   View   Sel ection    Go    LSP   Help                          │   <- chrome
+ │  wavedemo.txt ×   +                                                            │      jitters too
+ │  1 │ The  quick   brown fox  jumps  over the  lazy dog.                        │   ^ small wobble
+ │  2 │  Pack my box  with five dozen   liquor jugs.                              │   | (wave hasn't
+ │  3 │ How vexingly  quick  daft zebras  jump!                                   │   | reached here)
+ │  4 │   Sphinx of black  quartz,  judge my  vow.                                │
+ │  5 │     T h e   fi ve   b o xing    wi zards   ju mp   qu ickly.              │   <- being hit:
+ │  6 │   B r i  g h t      v i x e n s    j  u m  p ;     d o z y   fo wl        │      letters fan
+ │ 6│  q  u   a  c   k  .          J a c k    d  a  w  s   l  o  v e              │      out, rise,
+ │   J a  c   k    d a w s    l  o  v  e    m  y    b i g                         │      drift L/R
+ │  W  a   l  t  z ,      b  a  d       n y  m  p h ,    f  o  r                  │
+ │     G l  i b      j  o  c  k  s       q  u  i z      n y m  p h                │  <- highest fliers
+ │  q  u  i  c  k       j  i  g  s     v  e  x  .                                 │     (kicked first,
+ │      d  w  a  r  f  .                                                          │      near apex)
+ │   ≈∿~≈      ~∿≈~~∿        ≈~∿≈~       ~~≈∿~≈∿      ≈~∿~      ~≈∿≈~∿~≈          │  <==  WAVE CREST
+ │  ~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈   │       (sine-wiggled
+ │ ∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿~≈∿  │        cyan/blue band)
+ │                                                                                │  <- below crest:
+ │                                                                                │     swept clean,
+ │                                                                                │     content already
+ │                                                                                │     bounced up
+ │  Restricted  Local  Ln 1, Col 1        LF  ASCII  Text   Palette: Ctrl+P        │   <- status bar
+ └────────────────────────────────────────────────────────────────────────────┘      (will get hit
+                                                                                       last)
+
+LEGEND
+  ~ ≈ ∿     wave crest glyphs (a 2–3 row band, bright cyan over a blue water bg)
+  spread    letters that were tight ("five") become loose ("fi ve") because each
+            glyph is an independent particle displaced by its own velocity
+  L/R drift columns alternate sideways push (per-column sine + per-cell jitter)
+
+PHYSICS (per particle, integrated each frame with dt)
+  on crest-pass:  vy -= KICK              (upward impulse)
+                  vx  = sin(x)*SIDE + rand  (sideways shove, varies per column)
+  every frame:    a = -k*(pos-home) - c*vel   (damped spring back toward home)
+                  vel += a*dt ;  pos += vel*dt
+  underdamped (c < 2*sqrt(k)) => a visible bounce that decays and settles home
+
+LIFECYCLE
+  crest spawns just below the bottom edge, travels up at ~height/0.85 rows/sec,
+  exits past the top; effect ends once the crest is gone AND every particle has
+  settled (velocity & displacement below epsilon), or at a hard 2.5s cap. On the
+  final frame nothing is drawn, so the live UI (re-painted underneath every
+  frame) shows through cleanly — no leftover artifacts.

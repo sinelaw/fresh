@@ -679,6 +679,8 @@ pub enum Action {
 
     // View toggles
     ToggleLineNumbers,
+    /// Playful full-screen wave that bounces all painted content around.
+    TriggerWaveAnimation,
     ToggleScrollSync,
     ToggleMouseCapture,
     ToggleDebugHighlights, // Debug mode: show highlight/overlay byte ranges
@@ -1139,6 +1141,7 @@ impl Action {
             "toggle_mouse_hover" => ToggleMouseHover,
 
             "toggle_line_numbers" => ToggleLineNumbers,
+            "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
             "toggle_debug_highlights" => ToggleDebugHighlights,
@@ -2544,6 +2547,7 @@ impl KeybindingResolver {
             Action::ToggleInlayHints => t!("action.toggle_inlay_hints"),
             Action::ToggleMouseHover => t!("action.toggle_mouse_hover"),
             Action::ToggleLineNumbers => t!("action.toggle_line_numbers"),
+            Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),
             Action::ToggleDebugHighlights => t!("action.toggle_debug_highlights"),

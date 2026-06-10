@@ -46,6 +46,30 @@ impl Editor {
         }
     }
 
+    /// Kick off the full-screen wave animation: a crest of wave glyphs
+    /// rises from the bottom edge and bounces every painted cell — text,
+    /// gutter, menu bar, status bar — up, down, and sideways before they
+    /// spring back into place. Purely cosmetic; the underlying UI keeps
+    /// re-painting underneath and is restored intact once the wave ends.
+    pub fn trigger_wave_animation(&mut self) {
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.terminal_width,
+            height: self.terminal_height,
+        };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        self.active_window_mut().animations.start(
+            area,
+            crate::view::animation::AnimationKind::Wave {
+                duration: std::time::Duration::from_millis(2500),
+            },
+        );
+        self.set_status_message(t!("wave.triggered").to_string());
+    }
+
     /// Toggle menu bar visibility.
     ///
     /// `editor.show_menu_bar` is a global preference, so the toggle updates the

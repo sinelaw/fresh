@@ -6,8 +6,10 @@
 //! active effects from the render clock. The layer knows nothing about
 //! virtual buffers; callers resolve areas and pass them in.
 //!
-//! Current effects: `SlideIn`, `CursorJump`, `ColorTransition`. Easing is
-//! an implementation detail.
+//! Current effects: `SlideIn`, `CursorJump`, `ColorTransition`, `Wave`.
+//! Easing is an implementation detail. `Wave` is the odd one out — a
+//! stateful particle simulation that takes over the whole frame, rather
+//! than an area transition.
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -53,6 +55,16 @@ pub enum AnimationKind {
     /// instead of flipping. Cells whose colors can't be resolved to RGB
     /// (`Reset` / indexed) switch instantly.
     ColorTransition { duration: Duration },
+    /// Playful full-screen effect: a crest of wave glyphs rises from the
+    /// bottom edge and, as it sweeps past each row, kicks every painted
+    /// cell ("ink" particle) on that row upward and sideways. Each
+    /// particle is then pulled back to its home cell by a damped spring,
+    /// so the whole UI — text, gutter, menu bar, status bar — bounces up,
+    /// down, and sideways before settling exactly back into place once the
+    /// wave exits the top. `duration` is a hard safety cap; the effect
+    /// normally ends earlier, the moment the crest is gone and every
+    /// particle has settled.
+    Wave { duration: Duration },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -427,6 +439,302 @@ impl FrameEffect for ColorTransition {
     }
 }
 
+/// One painted cell turned into a physics particle. `home` is where it
+/// belongs (its original screen cell, in area-local float coords); `pos`
+/// and `vel` evolve under a damped spring once the wave crest kicks it.
+/// `cell` carries the full visual (glyph, fg, bg, modifier) so chrome
+/// colors fly along with the text.
+struct WaveParticle {
+    home_x: f32,
+    home_y: f32,
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    cell: Cell,
+    hit: bool,
+}
+
+/// Wave effect — see `AnimationKind::Wave`. On the first frame it
+/// snapshots the freshly painted buffer into a field of "ink" particles
+/// (every non-blank cell), records the dominant background color for the
+/// fill, and spawns a crest just below the bottom edge. Each subsequent
+/// frame it advances the crest upward, kicks any particle the crest has
+/// just reached, integrates a damped spring for kicked particles, then
+/// repaints: fill with the background, stamp every particle at its current
+/// cell, and lay the wiggling crest band on top.
+pub struct WaveEffect {
+    duration: Duration,
+    area: Rect,
+    particles: Vec<WaveParticle>,
+    /// Blank fill cell (background) painted into every cell before the
+    /// particles are stamped, so vacated space reads as empty editor bg.
+    fill: Cell,
+    /// Crest row in area-local coords. Starts just below the bottom
+    /// (`height`) and decreases toward `-amplitude` as the wave rises.
+    crest_y: f32,
+    /// Rows per second the crest climbs. Scaled so the wave crosses the
+    /// screen in a roughly fixed wall-clock time regardless of height.
+    speed: f32,
+    last_elapsed: Option<Duration>,
+    initialized: bool,
+}
+
+impl WaveEffect {
+    // Spring stiffness and damping. Underdamped (c < 2*sqrt(k) ≈ 16.4)
+    // so kicked content visibly bounces a couple times before settling.
+    const SPRING_K: f32 = 68.0;
+    const SPRING_C: f32 = 6.5;
+    // Impulse magnitudes (cells/sec) imparted when the crest passes.
+    const KICK_UP: f32 = 17.0;
+    const KICK_SIDE: f32 = 7.0;
+    // Crest band geometry.
+    const AMPLITUDE: f32 = 2.0;
+    const CREST_FREQ: f32 = 0.45;
+    const WATER_DEPTH: i32 = 2;
+
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            duration,
+            area: Rect::new(0, 0, 0, 0),
+            particles: Vec::new(),
+            fill: Cell::default(),
+            crest_y: 0.0,
+            speed: 0.0,
+            last_elapsed: None,
+            initialized: false,
+        }
+    }
+
+    /// Snapshot the painted buffer into particles and seed the crest.
+    fn init(&mut self, buf: &Buffer, area: Rect) {
+        self.area = area;
+        // Dominant background = the fill color for vacated cells. Counting
+        // exact `Color` values is enough: the editor bg dominates the
+        // frame, so it wins the tally.
+        let mut bg_counts: std::collections::HashMap<Color, u32> = std::collections::HashMap::new();
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                if let Some(c) = buf.cell((area.x + dx, area.y + dy)) {
+                    *bg_counts.entry(c.bg).or_insert(0) += 1;
+                }
+            }
+        }
+        let fill_bg = bg_counts
+            .into_iter()
+            .max_by_key(|&(_, n)| n)
+            .map(|(c, _)| c)
+            .unwrap_or(Color::Reset);
+        let mut fill = Cell::default();
+        fill.set_symbol(" ");
+        fill.set_bg(fill_bg);
+        fill.set_fg(fill_bg);
+        self.fill = fill;
+
+        // A cell is "ink" (a flying particle) if it draws anything: a
+        // non-space glyph, or a background that differs from the dominant
+        // fill (so colored chrome bands lift off too). Blank background
+        // cells stay put as fill and aren't simulated.
+        self.particles.clear();
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                let Some(cell) = buf.cell((area.x + dx, area.y + dy)) else {
+                    continue;
+                };
+                let is_ink = cell.symbol() != " " || cell.bg != fill_bg;
+                if !is_ink {
+                    continue;
+                }
+                self.particles.push(WaveParticle {
+                    home_x: dx as f32,
+                    home_y: dy as f32,
+                    x: dx as f32,
+                    y: dy as f32,
+                    vx: 0.0,
+                    vy: 0.0,
+                    cell: cell.clone(),
+                    hit: false,
+                });
+            }
+        }
+
+        // Crest starts just off the bottom and climbs. Normalize travel
+        // time so short and tall terminals feel similar.
+        self.crest_y = area.height as f32 + Self::AMPLITUDE;
+        self.speed = (area.height as f32 / 0.85).max(18.0);
+        self.initialized = true;
+    }
+
+    /// Advance physics by `dt` seconds.
+    fn step(&mut self, dt: f32) {
+        self.crest_y -= self.speed * dt;
+        for p in self.particles.iter_mut() {
+            if !p.hit && self.crest_y <= p.home_y {
+                // The crest just reached this row: kick it. Upward
+                // impulse plus a sideways shove that alternates by column
+                // (spatial sine) with a per-cell jitter so tight words
+                // fan apart instead of moving in lockstep.
+                p.hit = true;
+                let r = hash01(p.home_x, p.home_y);
+                let up = Self::KICK_UP * (0.7 + 0.6 * r);
+                p.vy = -up;
+                p.vx = (p.home_x * 0.55).sin() * Self::KICK_SIDE + (r - 0.5) * Self::KICK_SIDE;
+            }
+            if p.hit {
+                // Damped spring back toward the home cell.
+                let ax = -Self::SPRING_K * (p.x - p.home_x) - Self::SPRING_C * p.vx;
+                let ay = -Self::SPRING_K * (p.y - p.home_y) - Self::SPRING_C * p.vy;
+                p.vx += ax * dt;
+                p.vy += ay * dt;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+            }
+        }
+    }
+
+    /// True once the crest has exited the top and every particle has
+    /// settled back home (negligible displacement and velocity).
+    fn settled(&self) -> bool {
+        if self.crest_y > -Self::AMPLITUDE {
+            return false;
+        }
+        self.particles.iter().all(|p| {
+            (p.x - p.home_x).abs() < 0.06
+                && (p.y - p.home_y).abs() < 0.06
+                && p.vx.abs() < 0.4
+                && p.vy.abs() < 0.4
+        })
+    }
+
+    /// Repaint the area: fill, particles, then the crest band on top.
+    fn paint(&self, buf: &mut Buffer, elapsed: Duration) {
+        let area = self.area;
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                if let Some(dst) = buf.cell_mut((area.x + dx, area.y + dy)) {
+                    *dst = self.fill.clone();
+                }
+            }
+        }
+        for p in self.particles.iter() {
+            let cx = p.x.round();
+            let cy = p.y.round();
+            if cx < 0.0 || cy < 0.0 {
+                continue;
+            }
+            let (cx, cy) = (cx as u16, cy as u16);
+            if cx >= area.width || cy >= area.height {
+                continue;
+            }
+            if let Some(dst) = buf.cell_mut((area.x + cx, area.y + cy)) {
+                *dst = p.cell.clone();
+            }
+        }
+        self.paint_crest(buf, elapsed);
+    }
+
+    /// Lay the wiggling crest band over the buffer. For each column a sine
+    /// (in space, drifting in time) sets the crest row; the crest cell and
+    /// `WATER_DEPTH` rows beneath it are tinted as water with cycling wave
+    /// glyphs, brightest at the crest and fading downward.
+    fn paint_crest(&self, buf: &mut Buffer, elapsed: Duration) {
+        const GLYPHS: [&str; 3] = ["~", "≈", "∿"];
+        let area = self.area;
+        let phase = elapsed.as_secs_f32() * 5.0;
+        let crest_fg = (140, 225, 255);
+        let crest_bg = (24, 70, 130);
+        let deep_bg = (12, 38, 78);
+        for dx in 0..area.width {
+            let wiggle = (dx as f32 * Self::CREST_FREQ + phase).sin() * Self::AMPLITUDE;
+            let crest_row = self.crest_y + wiggle;
+            for depth in 0..=Self::WATER_DEPTH {
+                let row_f = crest_row + depth as f32;
+                if row_f < 0.0 {
+                    continue;
+                }
+                let row = row_f.round();
+                if row < 0.0 || row >= area.height as f32 {
+                    continue;
+                }
+                let row = row as u16;
+                let Some(dst) = buf.cell_mut((area.x + dx, area.y + row)) else {
+                    continue;
+                };
+                // Fade from crest color to deep water with depth.
+                let f = depth as f32 / (Self::WATER_DEPTH as f32 + 1.0);
+                let bg = blend_rgb(deep_bg, crest_bg, f);
+                let gi = ((dx as f32 * 0.5 + phase + depth as f32).floor() as i64).rem_euclid(3)
+                    as usize;
+                dst.set_symbol(GLYPHS[gi]);
+                dst.set_fg(Color::Rgb(crest_fg.0, crest_fg.1, crest_fg.2));
+                dst.set_bg(bg);
+            }
+        }
+    }
+}
+
+impl FrameEffect for WaveEffect {
+    fn apply(&mut self, buf: &mut Buffer, area: Rect, elapsed: Duration) -> EffectStatus {
+        let t = if self.duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
+        };
+        // Hard safety cap reached: paint nothing and report Done so the
+        // live UI (re-painted under us every frame) shows through cleanly.
+        if t >= 1.0 {
+            return EffectStatus::Done;
+        }
+
+        if !self.initialized || self.area != area {
+            // First frame (or a resize changed the area): re-snapshot the
+            // freshly painted buffer and restart the crest. A mid-flight
+            // resize is rare; restarting is simpler and visually fine.
+            self.init(buf, area);
+            self.last_elapsed = Some(elapsed);
+            self.paint(buf, elapsed);
+            return EffectStatus::Running;
+        }
+
+        // Integrate from the last frame's timestamp. We sub-step in fixed
+        // slices so the simulation advances by the true wall-clock delta
+        // regardless of frame rate (a slow debug frame can be 50–100ms),
+        // while each slice stays small enough to keep the spring stable.
+        // A long stall (debugger pause) is capped so it can't explode.
+        let prev = self.last_elapsed.unwrap_or(elapsed);
+        let dt = (elapsed.as_secs_f32() - prev.as_secs_f32()).clamp(0.0, 0.25);
+        self.last_elapsed = Some(elapsed);
+        const SUB: f32 = 1.0 / 120.0;
+        let mut remaining = dt;
+        while remaining > 0.0 {
+            let h = remaining.min(SUB);
+            self.step(h);
+            remaining -= h;
+        }
+
+        if self.settled() {
+            // Settled early: report Done and leave the live UI showing.
+            return EffectStatus::Done;
+        }
+
+        self.paint(buf, elapsed);
+        EffectStatus::Running
+    }
+}
+
+/// Cheap deterministic hash of a cell's home position to a float in
+/// [0, 1). Gives each particle a stable per-cell jitter without pulling in
+/// an RNG dependency.
+fn hash01(x: f32, y: f32) -> f32 {
+    let xi = x as i64;
+    let yi = y as i64;
+    let mut h = (xi.wrapping_mul(73_856_093) ^ yi.wrapping_mul(19_349_663)) as u64;
+    h ^= h >> 13;
+    h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= h >> 16;
+    (h & 0xFFFF) as f32 / 65_536.0
+}
+
 fn blend_rgb(fg: (u8, u8, u8), bg: (u8, u8, u8), alpha: f32) -> Color {
     let a = alpha.clamp(0.0, 1.0);
     let mix = |f: u8, b: u8| -> u8 {
@@ -553,6 +861,11 @@ impl AnimationRunner {
                 ),
                 AnimationKind::ColorTransition { duration } => (
                     Box::new(ColorTransition::new(duration)),
+                    Duration::ZERO,
+                    duration,
+                ),
+                AnimationKind::Wave { duration } => (
+                    Box::new(WaveEffect::new(duration)),
                     Duration::ZERO,
                     duration,
                 ),
@@ -1269,6 +1582,73 @@ mod tests {
             r,
             g
         );
+    }
+
+    #[test]
+    fn wave_snapshots_ink_and_disturbs_content() {
+        // A buffer of 'A's gets a wave; after a step the crest has begun
+        // climbing and the painted content should differ from the static
+        // input (cells displaced / crest glyphs laid down).
+        let area = Rect::new(0, 0, 8, 6);
+        let mut buf = make_buf(8, 6);
+        paint(&mut buf, area, 'A', Color::Rgb(200, 200, 200));
+
+        let mut effect = WaveEffect::new(Duration::from_millis(2500));
+        // First apply initializes (snapshot + crest seed) and paints t≈0.
+        let s0 = effect.apply(&mut buf, area, Duration::ZERO);
+        assert_eq!(s0, EffectStatus::Running);
+        // Every cell was ink ('A'), so we get one particle per cell.
+        assert_eq!(effect.particles.len(), (area.width * area.height) as usize);
+
+        // Drive a couple of frames; the crest climbs from the bottom and
+        // kicks the lower rows. The buffer should no longer be all 'A'.
+        effect.apply(&mut buf, area, Duration::from_millis(120));
+        effect.apply(&mut buf, area, Duration::from_millis(240));
+        let mut non_a = 0;
+        for dy in 0..area.height {
+            for dx in 0..area.width {
+                if buf.cell((dx, dy)).unwrap().symbol() != "A" {
+                    non_a += 1;
+                }
+            }
+        }
+        assert!(
+            non_a > 0,
+            "wave should have displaced content / drawn crest glyphs"
+        );
+    }
+
+    #[test]
+    fn wave_reports_done_at_duration_cap() {
+        let area = Rect::new(0, 0, 4, 4);
+        let mut buf = make_buf(4, 4);
+        paint(&mut buf, area, 'Z', Color::White);
+        let mut effect = WaveEffect::new(Duration::from_millis(100));
+        effect.apply(&mut buf, area, Duration::ZERO);
+        // At/after the hard cap the effect must report Done so the live UI
+        // shows through cleanly (same contract as the other effects).
+        let s = effect.apply(&mut buf, area, Duration::from_millis(100));
+        assert_eq!(s, EffectStatus::Done);
+    }
+
+    #[test]
+    fn wave_through_runner_is_active_then_finishes() {
+        let area = Rect::new(0, 0, 6, 5);
+        let mut runner = AnimationRunner::new();
+        runner.start(
+            area,
+            AnimationKind::Wave {
+                duration: Duration::from_millis(60),
+            },
+        );
+        assert!(runner.is_active());
+        let mut buf = make_buf(6, 5);
+        paint(&mut buf, area, '#', Color::Rgb(180, 180, 180));
+        runner.apply_all(&mut buf);
+        assert!(runner.is_active(), "running right after start");
+        std::thread::sleep(Duration::from_millis(90));
+        runner.apply_all(&mut buf);
+        assert!(!runner.is_active(), "wave finishes past its duration cap");
     }
 
     #[test]
