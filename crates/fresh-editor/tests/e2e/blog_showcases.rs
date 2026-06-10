@@ -4237,17 +4237,17 @@ fn blog_showcase_fresh_0_4_0_live_diff() {
     }
     hold(&mut h, &mut s, 4, 120);
 
-    // Modify an existing line — the OLD text shows above with a `-` gutter.
+    // Modify an existing line — append a trailing comment so the OLD text shows
+    // above with a `-` gutter. (Append at end-of-line rather than reselecting,
+    // so smart-Home / the line's own indent can't double up.)
     h.send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
     h.type_text("2").unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
-    snap(&mut h, &mut s, Some("select line"), 140);
-    h.type_text("    pub port: u16,        // listen port")
-        .unwrap();
+    h.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    snap(&mut h, &mut s, Some("Ln 2"), 140);
+    h.type_text("    // listen port").unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("edit"), 220);
     // The old line should now be shown above with a `-` gutter.
