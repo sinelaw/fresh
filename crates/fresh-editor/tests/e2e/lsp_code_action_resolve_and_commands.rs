@@ -292,10 +292,13 @@ fn test_code_action_with_edit_and_command() -> anyhow::Result<()> {
     // The edit replaces "let x = 5;" with "let x = 99;"
     harness.wait_for_screen_contains("99")?;
 
-    // The command should also be sent to the server
+    // The command should also be sent to the server. Wait for the BODY line
+    // (which carries the command name), not just the METHOD line: the fake
+    // server writes them as two separate appends, so a wait on the METHOD
+    // line alone can read the log between the two writes and miss the body.
     harness.wait_until(|_| {
         let log = std::fs::read_to_string(&log_file).unwrap_or_default();
-        log.contains("METHOD:workspace/executeCommand")
+        log.contains("METHOD:workspace/executeCommand") && log.contains("test.postEdit")
     })?;
 
     // Verify the edit was applied
