@@ -13,7 +13,7 @@ A dozen point releases since 0.3.0, and the through-line is **working across man
 
 ## Wave Screensaver
 
-Pure eye-candy: leave the editor idle and a decorative **wave** washes over it — a rising sea of glyphs that bounces every cell (text, gutter, chrome) up, down, and sideways, with words launching off the crest and sinking back, before the UI settles intact. It runs as a screensaver after `screensaver_idle_minutes`, or fire it any time with the **Wave Animation** command.
+Pure eye-candy: a decorative **wave** washes over the editor — a rising sea of glyphs that bounces every cell (text, gutter, chrome) up, down, and sideways, with words launching off the crest and sinking back, before the UI settles intact. Turn it on in the **Settings** UI (it's off by default): enable the screensaver and it kicks in after `screensaver_idle_minutes` of inactivity. Or fire it any time — no setup needed — with the **Wave Animation** command.
 
 <div class="showcase-demo">
   <img src="./wave-screensaver/showcase.gif" alt="Wave screensaver demo" />

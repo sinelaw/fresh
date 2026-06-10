@@ -4014,8 +4014,9 @@ fn blog_showcase_fresh_0_4_0_wave_screensaver() {
         "fresh-0.4.0/wave-screensaver",
         "Wave Screensaver",
         "A decorative wave washes over the editor — a rising sea of glyphs that \
-         bounces every cell up, down, and sideways, then settles back. It kicks \
-         in as a screensaver after an idle timeout, or fire it on demand with the \
+         bounces every cell up, down, and sideways, then settles back. The \
+         screensaver is off by default: enable it in the Settings UI and it \
+         kicks in after an idle timeout. You can also fire it on demand with the \
          Wave Animation command.",
     );
 

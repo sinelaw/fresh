@@ -5,7 +5,9 @@ outline: false
 
 # Wave Screensaver
 
-A decorative wave washes over the editor — a rising sea of glyphs that bounces every cell up, down, and sideways, then settles back. It kicks in as a screensaver after an idle timeout, or fire it on demand with the Wave Animation command.
+A decorative wave washes over the editor — a rising sea of glyphs that bounces every cell up, down, and sideways, then settles back.
+
+The screensaver is **off by default**: enable it in the **Settings** UI (`screensaver_enabled`) and it kicks in after `screensaver_idle_minutes` of inactivity. You can also fire it on demand any time — no setup needed — with the **Wave Animation** command.
 
 <div class="showcase-demo">
   <img src="./showcase.gif" alt="Wave Screensaver demo" />
