@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Animación de ola",
+  "cmd.wave_animation": "Animación de ola",
+  "cmd.wave_animation_desc": "Envía una ola por el editor: hace rebotar todo el contenido arriba, abajo y a los lados",
+  "wave.triggered": "🌊 ¡Ola! — pulsa cualquier tecla o mueve el ratón para detenerla",
   "_version": 1,
   "cli.about": "Un editor de texto para terminal con soporte multicursor",
   "cli.documentation": "Documentación",

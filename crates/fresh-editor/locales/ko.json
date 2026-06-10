@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "물결 애니메이션",
+  "cmd.wave_animation": "물결 애니메이션",
+  "cmd.wave_animation_desc": "에디터에 물결을 일으켜 모든 내용을 위아래·양옆으로 튕겨냅니다",
+  "wave.triggered": "🌊 물결! — 멈추려면 아무 키나 누르거나 마우스를 움직이세요",
   "_version": 1,
   "cli.about": "멀티커서를 지원하는 터미널 텍스트 편집기",
   "cli.documentation": "문서",

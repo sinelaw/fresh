@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Hoạt ảnh sóng",
+  "cmd.wave_animation": "Hoạt ảnh sóng",
+  "cmd.wave_animation_desc": "Tạo một con sóng quét qua trình soạn thảo — hất tung mọi nội dung lên, xuống và sang hai bên",
+  "wave.triggered": "🌊 Sóng! — nhấn phím bất kỳ hoặc di chuột để dừng",
   "_version": 1,
   "cli.about": "Trình soạn thảo văn bản cho terminal, hỗ trợ nhiều con trỏ",
   "cli.documentation": "Tài liệu",

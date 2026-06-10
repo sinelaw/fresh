@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Wellenanimation",
+  "cmd.wave_animation": "Wellenanimation",
+  "cmd.wave_animation_desc": "Eine Welle durch den Editor schicken — schleudert den gesamten Inhalt nach oben, unten und zur Seite",
+  "wave.triggered": "🌊 Welle! — beliebige Taste drücken oder Maus bewegen zum Stoppen",
   "_version": 1,
   "cli.about": "Ein Terminal-Texteditor mit Mehrcursor-Unterstützung",
   "cli.documentation": "Dokumentation",

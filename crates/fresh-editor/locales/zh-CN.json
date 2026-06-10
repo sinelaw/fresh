@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "波浪动画",
+  "cmd.wave_animation": "波浪动画",
+  "cmd.wave_animation_desc": "在编辑器中掀起一道波浪——把所有内容上下左右地抛弹起来",
+  "wave.triggered": "🌊 波浪！——按任意键或移动鼠标即可停止",
   "_version": 1,
   "cli.about": "支持多光标的终端文本编辑器",
   "cli.documentation": "文档",

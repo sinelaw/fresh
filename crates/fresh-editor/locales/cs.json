@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Vlnová animace",
+  "cmd.wave_animation": "Vlnová animace",
+  "cmd.wave_animation_desc": "Pošle editorem vlnu — odhodí veškerý obsah nahoru, dolů a do stran",
+  "wave.triggered": "🌊 Vlna! — zastavíte stiskem klávesy nebo pohybem myši",
   "_version": 1,
   "cli.about": "Terminálový textový editor s podporou více kurzorů",
   "cli.documentation": "Dokumentace",

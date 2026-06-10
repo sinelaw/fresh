@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Animação de onda",
+  "cmd.wave_animation": "Animação de onda",
+  "cmd.wave_animation_desc": "Envia uma onda pelo editor — faz todo o conteúdo quicar para cima, para baixo e para os lados",
+  "wave.triggered": "🌊 Onda! — pressione qualquer tecla ou mova o mouse para parar",
   "_version": 1,
   "cli.about": "Um editor de texto para terminal com suporte a múltiplos cursores",
   "cli.documentation": "Documentação",

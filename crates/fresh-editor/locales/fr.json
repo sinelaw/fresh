@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "Animation de vague",
+  "cmd.wave_animation": "Animation de vague",
+  "cmd.wave_animation_desc": "Envoie une vague à travers l'éditeur — fait rebondir tout le contenu de haut en bas et sur les côtés",
+  "wave.triggered": "🌊 Vague ! — appuyez sur une touche ou bougez la souris pour arrêter",
   "_version": 1,
   "cli.about": "Un éditeur de texte pour terminal avec gestion multi-curseur",
   "cli.documentation": "Documentation",

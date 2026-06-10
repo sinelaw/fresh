@@ -1,4 +1,8 @@
 {
+  "action.trigger_wave_animation": "波アニメーション",
+  "cmd.wave_animation": "波アニメーション",
+  "cmd.wave_animation_desc": "エディタに波を起こして、すべての内容を上下左右に弾き飛ばします",
+  "wave.triggered": "🌊 波！ — 停止するには任意のキーを押すかマウスを動かしてください",
   "_version": 1,
   "cli.about": "マルチカーソル対応のターミナル向けテキストエディタ",
   "cli.documentation": "ドキュメント",
