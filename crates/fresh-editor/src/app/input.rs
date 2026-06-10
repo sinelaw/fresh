@@ -1079,6 +1079,12 @@ impl Editor {
                 );
                 self.init_folder_open_state();
             }
+            Action::OpenRecentProject => {
+                self.start_open_recent_project_prompt();
+            }
+            Action::TogglePinProject => {
+                self.toggle_pin_current_project();
+            }
             Action::GotoLine => {
                 let has_line_index = self.active_buffer_has_line_index();
                 if has_line_index {

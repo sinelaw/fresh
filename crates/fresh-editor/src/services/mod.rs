@@ -22,6 +22,7 @@ pub mod packages;
 pub mod plugins;
 pub mod process_hidden;
 pub mod process_limits;
+pub mod recent_projects;
 pub mod recovery;
 pub mod release_checker;
 pub mod remote;

@@ -62,6 +62,7 @@ mod popup_dialogs;
 mod popup_overlay_actions;
 mod prompt_actions;
 mod prompt_lifecycle;
+mod recent_projects_actions;
 mod recovery_actions;
 mod regex_replace;
 pub(crate) mod render;

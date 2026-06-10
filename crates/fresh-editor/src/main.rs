@@ -3951,6 +3951,11 @@ fn real_main() -> AnyhowResult<()> {
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
 
+        // Record this working directory in the recent-projects list. A project
+        // switch restarts the editor through this same loop, so this single
+        // call covers both the initial launch and every later switch (#1895).
+        editor.record_recent_project_open();
+
         // Orchestrator cross-restart persistence is now loaded by
         // `Editor::with_options` before construction — it reads
         // `windows.json` + `state/*.json` from under the platform

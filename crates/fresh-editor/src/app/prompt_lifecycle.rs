@@ -1011,6 +1011,7 @@ impl Editor {
                 prompt.prompt_type,
                 PromptType::OpenFile
                     | PromptType::SwitchProject
+                    | PromptType::OpenRecentProject
                     | PromptType::SaveFileAs
                     | PromptType::StopLspServer
                     | PromptType::RestartLspServer
@@ -1331,6 +1332,14 @@ impl Editor {
             }
             PromptType::SelectLocale => {
                 // Locale selection also matches on description (language names)
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
+                    prompt.filter_suggestions(true);
+                }
+            }
+            PromptType::OpenRecentProject => {
+                // Recent-project entries display a short name but also match on
+                // their full path (carried in the suggestion description), so a
+                // user can type any path fragment to filter.
                 if let Some(prompt) = &mut self.active_window_mut().prompt {
                     prompt.filter_suggestions(true);
                 }

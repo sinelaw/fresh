@@ -19,6 +19,9 @@ pub enum PromptType {
     ReloadWithEncoding,
     /// Switch to a different project folder (change working directory)
     SwitchProject,
+    /// Pick a recently opened / pinned project from a list and switch to it
+    /// (issue #1895). Suggestions carry the absolute project path in `value`.
+    OpenRecentProject,
     /// Save current buffer to a new file
     SaveFileAs,
     /// Search for text in buffer

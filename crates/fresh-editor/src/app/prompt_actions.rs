@@ -100,6 +100,9 @@ impl Editor {
                     );
                 }
             }
+            PromptType::OpenRecentProject => {
+                self.handle_open_recent_project(&input);
+            }
             PromptType::SaveFileAs => {
                 self.handle_save_file_as(&input);
             }

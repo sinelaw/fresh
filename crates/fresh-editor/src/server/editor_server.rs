@@ -658,6 +658,11 @@ impl EditorServer {
             tracing::warn!("Failed to start recovery session: {}", e);
         }
 
+        // Record this working directory as a recent project. Session rebuilds
+        // (project switches) also go through `build_editor_instance`, so this
+        // covers both the initial session and every switch (#1895).
+        editor.record_recent_project_open();
+
         self.terminal = Some(terminal);
         self.editor = Some(editor);
 
