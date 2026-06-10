@@ -650,6 +650,13 @@ pub struct Window {
     /// history.
     pub prompt_histories: HashMap<String, crate::input::input_history::InputHistory>,
 
+    /// Recently opened files (absolute paths, most recent first,
+    /// capped at [`MAX_RECENT_FILES`]). Updated on every
+    /// user-initiated file open; persisted in the workspace file so
+    /// the list survives restarts. Per-window because the list is
+    /// project-scoped, like the rest of the workspace state.
+    pub recent_files: Vec<PathBuf>,
+
     /// Buffer id pending close-confirmation prompt resolution.
     /// Per-window because the prompt that produced this is per-window.
     pub pending_close_buffer: Option<BufferId>,
@@ -1056,7 +1063,20 @@ pub(crate) fn build_window_lsp(
     lsp
 }
 
+/// Maximum number of entries kept in [`Window::recent_files`].
+pub const MAX_RECENT_FILES: usize = 20;
+
 impl Window {
+    /// Record a user-initiated file open in the recent-files list.
+    /// The path must be absolute. Moves an existing entry to the
+    /// front (most recent first) and caps the list at
+    /// [`MAX_RECENT_FILES`].
+    pub fn record_recent_file(&mut self, path: PathBuf) {
+        self.recent_files.retain(|p| p != &path);
+        self.recent_files.insert(0, path);
+        self.recent_files.truncate(MAX_RECENT_FILES);
+    }
+
     /// Apply LSP folding ranges to the named buffer's `folding_ranges`
     /// store. Pure window mutation — no editor-global state touched.
     /// Used by the LSP folding-ranges response dispatcher after the
@@ -1982,6 +2002,7 @@ impl Window {
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
             editor_mode: None,
             prompt_histories: HashMap::new(),
+            recent_files: Vec::new(),
             pending_close_buffer: None,
             completion_service: crate::services::completion::CompletionService::new(),
             lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace::from_string(

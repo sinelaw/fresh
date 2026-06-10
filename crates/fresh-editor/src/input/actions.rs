@@ -3132,6 +3132,7 @@ pub fn action_to_events(
         | Action::Save
         | Action::SaveAs
         | Action::Open
+        | Action::OpenRecent
         | Action::SwitchProject
         | Action::New
         | Action::Close

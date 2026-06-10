@@ -2152,6 +2152,20 @@ impl crate::app::window::Window {
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
 
+        // Recent-files list (issue #926): stored relative to the
+        // workspace root when possible; resolve back to absolute.
+        self.recent_files = workspace
+            .recent_files
+            .iter()
+            .map(|p| {
+                if p.is_absolute() {
+                    p.clone()
+                } else {
+                    self.root.join(p)
+                }
+            })
+            .collect();
+
         // Unnamed-buffer recovery must precede the split layout (the tree
         // references those buffers).
         let unnamed_buffer_map = self.restore_unnamed_buffers(&workspace.unnamed_buffers);
@@ -2407,6 +2421,16 @@ impl crate::app::window::Window {
             })
             .collect();
 
+        let recent_files: Vec<PathBuf> = self
+            .recent_files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&self.root)
+                    .map(|rel| rel.to_path_buf())
+                    .unwrap_or_else(|_| p.clone())
+            })
+            .collect();
+
         let unnamed_buffers: Vec<UnnamedBufferRef> = if self.resources.config.editor.hot_exit {
             self.buffer_metadata
                 .iter()
@@ -2447,6 +2471,7 @@ impl crate::app::window::Window {
             terminals,
             external_files,
             read_only_files,
+            recent_files,
             unnamed_buffers,
             plugin_global_state: HashMap::new(),
             saved_at: std::time::SystemTime::now()

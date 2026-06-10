@@ -3106,6 +3106,13 @@ impl MenuConfig {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: t!("menu.file.open_recent").to_string(),
+                        action: "open_recent".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: t!("menu.file.save").to_string(),

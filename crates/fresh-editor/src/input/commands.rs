@@ -182,6 +182,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.open_recent",
+        desc_key: "cmd.open_recent_desc",
+        action: || Action::OpenRecent,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.switch_project",
         desc_key: "cmd.switch_project_desc",
         action: || Action::SwitchProject,
