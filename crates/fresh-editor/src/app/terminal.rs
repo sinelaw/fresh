@@ -865,7 +865,9 @@ impl Editor {
     /// Send the current selection (or the cursor's line when nothing is
     /// selected) to the most recently focused terminal, terminated with
     /// a newline so shells/REPLs execute it — the "Run Selected Text In
-    /// Active Terminal" workflow from VS Code (issue #1871).
+    /// Active Terminal" workflow from VS Code (issue #1871). The
+    /// terminal is then focused (jumping to its split or bringing its
+    /// tab forward) in terminal mode, so the user lands at the prompt.
     pub fn send_selection_to_terminal(&mut self) {
         // Only meaningful from an editor buffer; a terminal buffer has
         // no text selection to send.
@@ -892,8 +894,53 @@ impl Editor {
 
         if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
             handle.write(normalized.as_bytes());
+            self.focus_terminal_buffer(terminal_id);
+            // After `enter_terminal_mode`'s generic message — the send
+            // destination is the more useful thing to surface.
             self.set_status_message(t!("terminal.sent_selection", id = terminal_id.0).to_string());
         }
+    }
+
+    /// Focus the buffer of the given terminal: jump to the split that
+    /// shows it, or — when it sits in a background tab — focus its host
+    /// split and bring the tab forward; then enable terminal mode so
+    /// keystrokes go to the prompt.
+    fn focus_terminal_buffer(&mut self, terminal_id: TerminalId) {
+        let Some(buffer_id) = self
+            .active_window()
+            .terminal_buffers
+            .iter()
+            .find_map(|(buffer, terminal)| (*terminal == terminal_id).then_some(*buffer))
+        else {
+            return;
+        };
+
+        // Prefer a split currently showing the terminal; otherwise the
+        // split holding it as a background tab. `focus_split` handles
+        // both (it delegates to the tab-switch path when the target is
+        // the active split).
+        let target_split = self.active_window().buffers.splits().and_then(|(mgr, vs)| {
+            mgr.splits_for_buffer(buffer_id)
+                .into_iter()
+                .next()
+                .or_else(|| {
+                    vs.iter()
+                        .find(|(_, view_state)| view_state.has_buffer(buffer_id))
+                        .map(|(split_id, _)| *split_id)
+                })
+        });
+        if let Some(split_id) = target_split {
+            self.focus_split(split_id, buffer_id);
+        } else {
+            self.switch_buffer(buffer_id);
+        }
+
+        // `focus_split` enables terminal mode for the cross-split case,
+        // but a tab switch resumes it only when the terminal was left in
+        // terminal mode. Enter it explicitly — this also re-enables
+        // editing and scrolls a previously-synced scrollback view back
+        // to the live prompt.
+        self.enter_terminal_mode();
     }
 
     /// Text that "send to terminal" operates on, mirroring

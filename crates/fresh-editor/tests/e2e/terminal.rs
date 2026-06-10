@@ -3583,7 +3583,7 @@ fn test_send_selection_to_terminal_runs_selection() {
         .load_buffer_from_text("echo SEL_$((6*7))_DONE\nsecond line\n")
         .unwrap();
 
-    setup_text_buffer_beside_terminal(&mut harness);
+    let terminal_buffer = setup_text_buffer_beside_terminal(&mut harness);
 
     // Select the first line (cursor starts at offset 0).
     harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
@@ -3604,6 +3604,20 @@ fn test_send_selection_to_terminal_runs_selection() {
     harness
         .wait_until(|h| h.screen_to_string().contains("SEL_42_DONE"))
         .unwrap();
+
+    // The send also moves focus into the terminal's split, in terminal
+    // mode, so the user can keep typing at the prompt.
+    assert_eq!(harness.editor().active_buffer_id(), terminal_buffer);
+    assert!(harness.editor().is_terminal_mode());
+
+    // Keystrokes now reach the PTY: type another command and see it run.
+    harness.type_text("echo FOCUS_$((5*5))_OK").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FOCUS_25_OK"))
+        .unwrap();
 }
 
 /// With no selection, the command sends the cursor's current line. The
@@ -3618,7 +3632,7 @@ fn test_send_selection_to_terminal_sends_current_line_when_no_selection() {
         .load_buffer_from_text("echo LINE_$((7*7))_RUN\necho OTHER_$((8*8))_LINE\n")
         .unwrap();
 
-    setup_text_buffer_beside_terminal(&mut harness);
+    let terminal_buffer = setup_text_buffer_beside_terminal(&mut harness);
 
     harness.api_mut().dispatch(Action::SendSelectionToTerminal);
     harness
@@ -3627,6 +3641,10 @@ fn test_send_selection_to_terminal_sends_current_line_when_no_selection() {
 
     // Only the cursor's line ran — the second line stayed in the buffer.
     harness.assert_screen_not_contains("OTHER_64_LINE");
+
+    // Focus followed the send into the terminal, in terminal mode.
+    assert_eq!(harness.editor().active_buffer_id(), terminal_buffer);
+    assert!(harness.editor().is_terminal_mode());
 }
 
 /// Without any open terminal the command reports it in the status bar
@@ -3651,8 +3669,8 @@ fn test_send_selection_to_terminal_without_terminal_shows_status() {
 
 /// A terminal living in a background tab of the same split (not visible
 /// in any pane) is still found via the newest-terminal fallback: the
-/// sent line executes and its output is on the live screen when the
-/// terminal tab is brought back to the front.
+/// send brings its tab to the front in terminal mode and the executed
+/// line's output is on the live screen.
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell syntax
 fn test_send_selection_to_terminal_reaches_background_tab_terminal() {
@@ -3683,10 +3701,12 @@ fn test_send_selection_to_terminal_reaches_background_tab_terminal() {
 
     harness.api_mut().dispatch(Action::SendSelectionToTerminal);
 
-    // Reveal the terminal again and resume live mode to observe the output.
-    harness.editor_mut().switch_buffer(terminal_buffer);
-    harness.api_mut().dispatch(Action::FocusTerminal);
+    // The send brings the terminal's tab back to the front in terminal
+    // mode on its own — no manual reveal — so the live screen shows the
+    // executed line's output.
     harness
         .wait_until(|h| h.screen_to_string().contains("TAB_9_FALLBACK"))
         .unwrap();
+    assert_eq!(harness.editor().active_buffer_id(), terminal_buffer);
+    assert!(harness.editor().is_terminal_mode());
 }
