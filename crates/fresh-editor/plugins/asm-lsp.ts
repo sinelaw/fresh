@@ -238,12 +238,28 @@ function handleConfigOfferResult(actionId: string) {
   pendingOffer = null;
 }
 
-editor.on("after_file_open", async (data) => {
+/// Map a file path to the assembly language key, mirroring the default
+/// `languages` config. Decided from the path (like csharp_support does)
+/// rather than `getBufferInfo().language`: the plugin state snapshot is
+/// updated asynchronously, so right after `after_file_open` fires the
+/// buffer's language may not be visible to plugins yet.
+function asmLanguageForPath(path: string): string | null {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".asm") || lower.endsWith(".nasm")) {
+    return "asm";
+  }
+  if (lower.endsWith(".s")) {
+    return "gas";
+  }
+  return null;
+}
+
+async function maybeOfferConfig(bufferId: number, path: string) {
   if (configOfferedThisSession) {
     return;
   }
-  const info = editor.getBufferInfo(data.buffer_id);
-  if (!info || !ASM_LANGUAGES.includes(info.language)) {
+  const language = asmLanguageForPath(path);
+  if (!language) {
     return;
   }
   if (editor.fileExists(projectConfigPath()) || globalConfigExists()) {
@@ -254,8 +270,18 @@ editor.on("after_file_open", async (data) => {
   }
   configOfferedThisSession = true;
 
-  const language = info.language;
-  const sample = await editor.getBufferText(data.buffer_id, 0, Math.min(info.length, 2048));
+  // The content sniff needs the buffer in the plugin snapshot; give the
+  // async snapshot a moment to catch up, and fall back to an extension-only
+  // guess if it doesn't.
+  let sample = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const info = editor.getBufferInfo(bufferId);
+    if (info) {
+      sample = await editor.getBufferText(bufferId, 0, Math.min(info.length, 2048));
+      break;
+    }
+    await editor.delay(50);
+  }
   const assembler = guessAssembler(language, sample);
   const arch = guessArch(sample);
   pendingOffer = { language, arch };
@@ -274,6 +300,24 @@ editor.on("after_file_open", async (data) => {
       { id: "never", label: "Don't ask again for this project" },
     ],
   });
+}
+
+editor.on("after_file_open", async (data) => {
+  await maybeOfferConfig(data.buffer_id, data.path);
+});
+
+// Files opened before this plugin finished loading (CLI arguments, session
+// restore) never fire `after_file_open` for us — sweep the buffers that are
+// already open once the editor is up.
+editor.on("plugins_loaded", async () => {
+  for (const buffer of editor.listBuffers()) {
+    if (buffer.path) {
+      await maybeOfferConfig(buffer.id, buffer.path);
+    }
+    if (configOfferedThisSession) {
+      break;
+    }
+  }
 });
 
 editor.debug("asm-lsp: Plugin loaded");

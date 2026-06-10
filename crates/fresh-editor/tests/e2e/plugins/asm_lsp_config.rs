@@ -19,6 +19,7 @@ const GAS_SOURCE: &str =
 /// XDG_CONFIG_HOME is pointed at an empty dir inside the project so the
 /// plugin's user-global `.asm-lsp.toml` lookup never sees the host's config.
 fn setup_project(temp: &Path, file_name: &str, content: &str) -> std::path::PathBuf {
+    crate::common::tracing::init_tracing_from_env();
     let project_root = temp.join("project");
     fs::create_dir(&project_root).unwrap();
 
