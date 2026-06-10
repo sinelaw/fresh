@@ -38,17 +38,14 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 - [x] **live-diff** — enable Live Diff (vs HEAD) on a committed file, then
   type: added lines get a green `+` gutter, an edited line shows its old
   text above with a `-` gutter — updating live as the buffer changes.
+- [x] **review-diff** — the reimagined review: a FILES sidebar (with a `*`
+  comment badge), a side-by-side OLD/NEW view (`1`), and a comment left with
+  `c` landing in the COMMENTS panel.
 
 ## Tier 1 — headliners still to create
 
-- [ ] **review-diff** — the reimagined review workflow (the biggest unreleased
-  feature on `master`). File sidebar grouped by directory with status / line
-  counts / comment badges; true **side-by-side** with `Tab` between OLD/NEW
-  panes and `Enter` to open either version; **comments anywhere** + multi-line
-  comments panel rendered as inline callouts; **Review Stash**; **`W` watch
-  mode** (auto-reload on save); `/` filter; split/stack/auto layout toggle.
-  *Demo:* open a review, toggle split/stack, comment on a line, watch it
-  auto-reload on save.
+*(all the original Tier-1 headliners are done; remaining is the agent-aware orchestrator beat below)*
+
 
 ## Tier 1 — new since the last review (agent-aware orchestrator)
 
@@ -97,7 +94,7 @@ Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` embeds the six finished GIFs (orchestrator-dock,
+- The rollup `index.md` embeds the seven finished GIFs (orchestrator-dock,
   ssh-session, universal-search, wave-screensaver, live-diff, terminal-path-
-  links) and carries text sections for everything else; swap each text section
-  for a `<img>` as its GIF lands. **Still text-only: review-diff.**
+  links, review-diff). All Tier-1 headliner GIFs are done; the only remaining
+  Tier-1 item is the **agent-sessions** beat (could fold into the dock showcase).

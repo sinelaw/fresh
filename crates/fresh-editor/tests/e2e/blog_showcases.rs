@@ -4260,3 +4260,143 @@ fn blog_showcase_fresh_0_4_0_live_diff() {
 
     s.finalize().unwrap();
 }
+
+// =========================================================================
+// Blog Post: Review Diff, Reimagined (0.4.0)
+// =========================================================================
+
+/// Review Diff — the reimagined review workflow: a file sidebar grouped by
+/// directory, a true side-by-side OLD/NEW view, and a comments panel. Opens a
+/// review over working-tree changes, toggles to side-by-side, then leaves a
+/// comment on a line and shows it land in the panel.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_review_diff() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping review-diff showcase: git not installed");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let repo = GitTestRepo::new();
+    repo.create_file(
+        "src/auth.rs",
+        "pub fn validate_token(token: &str) -> bool {\n\
+         \x20   !token.is_empty()\n\
+         }\n\
+         \n\
+         pub fn login(user: &str) -> Session {\n\
+         \x20   Session::new(user)\n\
+         }\n",
+    );
+    repo.create_file(
+        "src/db.rs",
+        "pub fn connect() -> Pool {\n    Pool::with_size(8)\n}\n",
+    );
+    repo.create_file("README.md", "# service\n\nA demo service.\n");
+    repo.git_add_all();
+    repo.git_commit("initial commit");
+
+    // Working-tree changes: a multi-hunk edit + a new untracked file.
+    repo.modify_file(
+        "src/auth.rs",
+        "pub fn validate_token(token: &str) -> bool {\n\
+         \x20   token.len() > 16 && token.starts_with(\"tok_\")\n\
+         }\n\
+         \n\
+         pub fn login(user: &str, pw: &str) -> Result<Session, AuthError> {\n\
+         \x20   let ok = check_password(user, pw)?;\n\
+         \x20   Session::new(user)\n\
+         }\n",
+    );
+    repo.create_file("src/metrics.rs", "// request metrics\n");
+
+    let plugins_dir = repo.path.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "audit_mode");
+
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        140,
+        36,
+        fresh::config::Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    h.tick_and_render().unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Review Diff")
+    })
+    .unwrap();
+    hide_prompt_line(&mut h);
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/review-diff",
+        "Review Diff, Reimagined",
+        "A real review workflow: a file sidebar grouped by directory, a true \
+         side-by-side OLD/NEW view, and comments anywhere — collected in a \
+         dedicated panel. (Plus Review Stash and a watch mode that auto-reloads \
+         on save.)",
+    );
+
+    hold(&mut h, &mut s, 4, 110);
+
+    // Open Review Diff — a three-column layout: FILES | diff | COMMENTS.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Review Diff").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Review Diff"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Review Diff"), 150);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("FILES") && scr.contains("auth.rs") && scr.contains("COMMENTS")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 260);
+    hold(&mut h, &mut s, 7, 140);
+
+    // [1] switches the center panel to a side-by-side OLD/NEW view.
+    h.send_key(KeyCode::Char('1'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("OLD (HEAD)"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("1"), 240);
+    hold(&mut h, &mut s, 6, 150);
+
+    // Move onto a changed line and leave a comment with [c].
+    for _ in 0..3 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, Some("↓"), 120);
+    }
+    h.send_key(KeyCode::Char('c'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Comment on"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("c"), 200);
+    for ch in "validate the token prefix here".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, None, 38);
+    }
+    snap(&mut h, &mut s, None, 200);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The comment lands in the COMMENTS panel (text wraps in the narrow panel,
+    // so wait on a single distinctive word) and badges the file.
+    h.wait_until(|h| h.screen_to_string().contains("prefix"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 280);
+    hold(&mut h, &mut s, 10, 160);
+
+    s.finalize().unwrap();
+}

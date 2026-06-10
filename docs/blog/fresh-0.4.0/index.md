@@ -43,6 +43,10 @@ Live Grep grew into a universal search overlay: search across multiple **scopes*
 
 The review diff picked up a real review workflow: a **file sidebar** grouped by directory with status, line counts, and comment badges; a true **side-by-side** view with `Tab` between the OLD/HEAD and NEW/working panes (and `Enter` to open either version at that line); **comments anywhere**, including multi-line notes rendered as inline callouts and collected in a dedicated panel; **Review Stash** to review a git stash as a diff; and a **watch mode** that auto-reloads on save. A `/` filter and split/stack/auto layout toggles round it out.
 
+<div class="showcase-demo">
+  <img src="./review-diff/showcase.gif" alt="Review diff demo" />
+</div>
+
 ## Live Diff
 
 The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter. Especially handy for watching an agent rewrite a file under you.
