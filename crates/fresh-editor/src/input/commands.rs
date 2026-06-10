@@ -1337,6 +1337,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.send_selection_to_terminal",
+        desc_key: "cmd.send_selection_to_terminal_desc",
+        action: || Action::SendSelectionToTerminal,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.exit_terminal_mode",
         desc_key: "cmd.exit_terminal_mode_desc",
         action: || Action::TerminalEscape,

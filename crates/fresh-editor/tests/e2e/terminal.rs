@@ -3517,3 +3517,173 @@ fn test_hidden_terminal_resyncs_pty_size_when_revealed() {
         rows_after
     );
 }
+
+// --- Send selection to terminal (issue #1871) ---------------------------
+
+/// Write directly to a terminal by id, bypassing `active_buffer()`
+/// routing so it works while focus is on a non-terminal split.
+fn write_to_terminal_by_buffer(
+    harness: &EditorTestHarness,
+    terminal_buffer: fresh::model::event::BufferId,
+    bytes: &[u8],
+) {
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(terminal_buffer)
+        .expect("terminal id");
+    harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle")
+        .write(bytes);
+}
+
+/// Set up a vertical split with the current text buffer in one pane and a
+/// live shell in the other, then move focus back to the text buffer.
+/// Returns the terminal's buffer id.
+fn setup_text_buffer_beside_terminal(
+    harness: &mut EditorTestHarness,
+) -> fresh::model::event::BufferId {
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+
+    harness.editor_mut().next_split();
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let terminal_buffer = harness.editor().active_buffer_id();
+
+    // Wait for the shell prompt to settle so later writes reach a live shell.
+    write_to_terminal_by_buffer(harness, terminal_buffer, b"echo FRESH_READY\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FRESH_READY"))
+        .unwrap();
+
+    // Move focus back to the text buffer split.
+    harness.editor_mut().next_split();
+    harness.render().unwrap();
+    assert!(!harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(harness.editor().active_buffer_id()));
+
+    terminal_buffer
+}
+
+/// Selecting text and running "Send Selection to Terminal" from the
+/// command palette executes the selection in the visible terminal split.
+/// The buffer holds `echo SEL_$((6*7))_DONE`, so the expanded output
+/// `SEL_42_DONE` can only come from the shell actually running the text.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell syntax
+fn test_send_selection_to_terminal_runs_selection() {
+    let mut harness = harness_or_return!(120, 30);
+    harness
+        .load_buffer_from_text("echo SEL_$((6*7))_DONE\nsecond line\n")
+        .unwrap();
+
+    setup_text_buffer_beside_terminal(&mut harness);
+
+    // Select the first line (cursor starts at offset 0).
+    harness.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    harness.render().unwrap();
+
+    // Run the command through the palette, the way a user would.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains(">command");
+    harness.type_text("Send Selection to Terminal").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The shell expands $((6*7)) — output only the terminal can produce.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SEL_42_DONE"))
+        .unwrap();
+}
+
+/// With no selection, the command sends the cursor's current line. The
+/// cursor sits on line 1; line 2 must not run.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell syntax
+fn test_send_selection_to_terminal_sends_current_line_when_no_selection() {
+    use fresh::test_api::Action;
+
+    let mut harness = harness_or_return!(120, 30);
+    harness
+        .load_buffer_from_text("echo LINE_$((7*7))_RUN\necho OTHER_$((8*8))_LINE\n")
+        .unwrap();
+
+    setup_text_buffer_beside_terminal(&mut harness);
+
+    harness.api_mut().dispatch(Action::SendSelectionToTerminal);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("LINE_49_RUN"))
+        .unwrap();
+
+    // Only the cursor's line ran — the second line stayed in the buffer.
+    harness.assert_screen_not_contains("OTHER_64_LINE");
+}
+
+/// Without any open terminal the command reports it in the status bar
+/// instead of failing silently.
+#[test]
+fn test_send_selection_to_terminal_without_terminal_shows_status() {
+    use fresh::test_api::Action;
+
+    let mut harness = harness_or_return!(120, 30);
+    harness
+        .load_buffer_from_text("echo nothing to receive this\n")
+        .unwrap();
+
+    harness.api_mut().dispatch(Action::SendSelectionToTerminal);
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("No open terminal");
+}
+
+/// A terminal living in a background tab of the same split (not visible
+/// in any pane) is still found via the newest-terminal fallback: the
+/// sent line executes and its output is on the live screen when the
+/// terminal tab is brought back to the front.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell syntax
+fn test_send_selection_to_terminal_reaches_background_tab_terminal() {
+    use fresh::test_api::Action;
+
+    let mut harness = harness_or_return!(120, 30);
+    harness
+        .load_buffer_from_text("echo TAB_$((3*3))_FALLBACK\n")
+        .unwrap();
+    let text_buffer = harness.editor().active_buffer_id();
+
+    // Open a terminal as a sibling tab in the same split.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    let terminal_buffer = harness.editor().active_buffer_id();
+    write_to_terminal_by_buffer(&harness, terminal_buffer, b"echo FRESH_READY\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FRESH_READY"))
+        .unwrap();
+
+    // Leave terminal mode and bring the text buffer's tab to the front,
+    // hiding the terminal in a background tab.
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(' '), KeyModifiers::CONTROL);
+    harness.editor_mut().switch_buffer(text_buffer);
+    harness.render().unwrap();
+
+    harness.api_mut().dispatch(Action::SendSelectionToTerminal);
+
+    // Reveal the terminal again and resume live mode to observe the output.
+    harness.editor_mut().switch_buffer(terminal_buffer);
+    harness.api_mut().dispatch(Action::FocusTerminal);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TAB_9_FALLBACK"))
+        .unwrap();
+}

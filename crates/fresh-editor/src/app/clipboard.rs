@@ -209,7 +209,7 @@ impl Editor {
     ///
     /// This works for both small and large files by using line_iterator
     /// for iteration and only using 2D positions for column extraction.
-    fn copy_block_selection_text(&mut self) -> String {
+    pub(crate) fn copy_block_selection_text(&mut self) -> String {
         let estimated_line_length = 120;
 
         // Collect block selection info from all cursors

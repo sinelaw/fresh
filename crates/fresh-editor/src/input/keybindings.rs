@@ -745,12 +745,13 @@ pub enum Action {
     SettingsInherit,     // Set nullable setting to null (inherit value)
 
     // Terminal operations
-    OpenTerminal,          // Open a new terminal in the current split
-    CloseTerminal,         // Close the current terminal
-    FocusTerminal,         // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape,        // Escape from terminal mode back to editor
-    ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
-    TerminalPaste,         // Paste clipboard contents into terminal as a single batch
+    OpenTerminal,            // Open a new terminal in the current split
+    CloseTerminal,           // Close the current terminal
+    FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape,          // Escape from terminal mode back to editor
+    ToggleKeyboardCapture,   // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,           // Paste clipboard contents into terminal as a single batch
+    SendSelectionToTerminal, // Run the selection (or current line) in the last-focused terminal
 
     // Shell command operations
     ShellCommand,        // Run shell command on buffer/selection, output to new buffer
@@ -1189,6 +1190,7 @@ impl Action {
             "terminal_escape" => TerminalEscape,
             "toggle_keyboard_capture" => ToggleKeyboardCapture,
             "terminal_paste" => TerminalPaste,
+            "send_selection_to_terminal" => SendSelectionToTerminal,
 
             "shell_command" => ShellCommand,
             "shell_command_replace" => ShellCommandReplace,
@@ -2595,6 +2597,7 @@ impl KeybindingResolver {
             Action::TerminalEscape => t!("action.terminal_escape"),
             Action::ToggleKeyboardCapture => t!("action.toggle_keyboard_capture"),
             Action::TerminalPaste => t!("action.terminal_paste"),
+            Action::SendSelectionToTerminal => t!("action.send_selection_to_terminal"),
             Action::OpenSettings => t!("action.open_settings"),
             Action::CloseSettings => t!("action.close_settings"),
             Action::SettingsSave => t!("action.settings_save"),

@@ -3006,6 +3006,13 @@ impl MenuConfig {
                                 when: None,
                                 checkbox: None,
                             },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.send_selection").to_string(),
+                                action: "send_selection_to_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
                             MenuItem::Separator { separator: true },
                             MenuItem::Action {
                                 label: t!("menu.terminal.toggle_keyboard_capture").to_string(),

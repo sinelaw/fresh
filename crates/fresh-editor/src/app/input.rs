@@ -2280,6 +2280,9 @@ impl Editor {
                     }
                 }
             }
+            Action::SendSelectionToTerminal => {
+                self.send_selection_to_terminal();
+            }
             Action::ShellCommand => {
                 // Run shell command on buffer/selection, output to new buffer
                 self.start_shell_command_prompt(false);

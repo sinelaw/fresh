@@ -723,6 +723,24 @@ impl Window {
 
         buffer_id
     }
+
+    /// The terminal the user interacted with most recently: the latest
+    /// split in the focus LRU whose current buffer is a terminal. Falls
+    /// back to the newest open terminal when no split currently shows
+    /// one (e.g. the terminal sits in a background tab), and `None`
+    /// when the window has no terminals at all.
+    pub fn last_focused_terminal(&self) -> Option<TerminalId> {
+        if let Some((mgr, _)) = self.buffers.splits() {
+            let terminal_of_leaf = |leaf: LeafId| {
+                mgr.get_buffer_id(leaf.into())
+                    .and_then(|buffer_id| self.terminal_buffers.get(&buffer_id).copied())
+            };
+            if let Some(leaf) = mgr.last_focused_where(|leaf| terminal_of_leaf(leaf).is_some()) {
+                return terminal_of_leaf(leaf);
+            }
+        }
+        self.terminal_buffers.values().copied().max_by_key(|t| t.0)
+    }
 }
 
 impl Editor {
@@ -842,6 +860,90 @@ impl Editor {
         } else {
             self.set_status_message(t!("status.not_viewing_terminal").to_string());
         }
+    }
+
+    /// Send the current selection (or the cursor's line when nothing is
+    /// selected) to the most recently focused terminal, terminated with
+    /// a newline so shells/REPLs execute it — the "Run Selected Text In
+    /// Active Terminal" workflow from VS Code (issue #1871).
+    pub fn send_selection_to_terminal(&mut self) {
+        // Only meaningful from an editor buffer; a terminal buffer has
+        // no text selection to send.
+        if self
+            .active_window()
+            .is_terminal_buffer(self.active_buffer())
+        {
+            return;
+        }
+
+        let Some(terminal_id) = self.active_window().last_focused_terminal() else {
+            self.set_status_message(t!("terminal.no_terminal_open").to_string());
+            return;
+        };
+
+        let text = self.selection_or_cursor_line_text();
+
+        // Same normalization as the terminal paste path (CRLF/CR →
+        // LF), plus a terminating newline so the last line runs.
+        let mut normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if !normalized.ends_with('\n') {
+            normalized.push('\n');
+        }
+
+        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
+            handle.write(normalized.as_bytes());
+            self.set_status_message(t!("terminal.sent_selection", id = terminal_id.0).to_string());
+        }
+    }
+
+    /// Text that "send to terminal" operates on, mirroring
+    /// `copy_selection`'s precedence: block selection first, then
+    /// regular selections (joined by newline), else each cursor's
+    /// current line (without its line ending).
+    fn selection_or_cursor_line_text(&mut self) -> String {
+        if self
+            .active_cursors()
+            .iter()
+            .any(|(_, cursor)| cursor.has_block_selection())
+        {
+            return self.copy_block_selection_text();
+        }
+
+        let ranges: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .filter_map(|(_, cursor)| cursor.selection_range())
+            .collect();
+        if !ranges.is_empty() {
+            let state = self.active_state_mut();
+            let mut text = String::new();
+            for range in ranges {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&state.get_text_range(range.start, range.end));
+            }
+            return text;
+        }
+
+        let estimated_line_length = 80;
+        let positions: Vec<_> = self
+            .active_cursors()
+            .iter()
+            .map(|(_, cursor)| cursor.position)
+            .collect();
+        let state = self.active_state_mut();
+        let mut text = String::new();
+        for pos in positions {
+            let mut iter = state.buffer.line_iterator(pos, estimated_line_length);
+            if let Some((_start, content)) = iter.next_line() {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(content.trim_end_matches(['\n', '\r']));
+            }
+        }
+        text
     }
 
     // `is_terminal_buffer` and `get_terminal_id` moved to `impl Window`
