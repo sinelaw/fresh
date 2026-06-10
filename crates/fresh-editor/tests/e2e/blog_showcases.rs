@@ -4400,3 +4400,105 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
 
     s.finalize().unwrap();
 }
+
+// =========================================================================
+// Blog Post: Agent Sessions (0.4.0)
+// =========================================================================
+
+/// Agent Sessions — the New Session dialog's agent-command dropdown. An
+/// "Agent:" preset row offers the plain terminal plus known coding agents
+/// (claude, aider) tagged with `↻` ("resumes on restart"); picking one fills
+/// the Agent Command and arms the session to rejoin its agent after a restart.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_agent_sessions() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping agent-sessions showcase: git not installed");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let repo = GitTestRepo::new();
+    repo.create_file("src/main.rs", "fn main() {\n    // ship it\n}\n");
+    repo.git_add_all();
+    repo.git_commit("initial");
+    let plugins_dir = repo.path.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+
+    // 160 wide so the dialog is roomy enough to show the full "↻ resumes on
+    // restart" legend (it truncates off a narrower dialog).
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        160,
+        36,
+        fresh::config::Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    h.tick_and_render().unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Orchestrator: New Session")
+    })
+    .unwrap();
+    h.open_file(&repo.path.join("src/main.rs")).unwrap();
+    hide_prompt_line(&mut h);
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/agent-sessions",
+        "Agent Sessions",
+        "The New Session dialog now knows about coding agents. Pick one from the \
+         Agent dropdown — agents tagged ↻ resume on restart, so a restart rejoins \
+         the running agent instead of relaunching it.",
+    );
+
+    hold(&mut h, &mut s, 4, 110);
+
+    // Open the New Session dialog.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("New Session").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("New Session"), 130);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The dialog shows an "Agent:" preset row with the resume legend.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("Agent:") && scr.contains("resumes on restart")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 240);
+    hold(&mut h, &mut s, 6, 150);
+
+    // Click through the agent presets — each fills the Agent Command field and
+    // (for ↻ agents) arms resume-on-restart.
+    let click_preset = |h: &mut EditorTestHarness, s: &mut BlogShowcase, label: &str| {
+        let (col, row) = h
+            .find_text_on_screen(label)
+            .unwrap_or_else(|| panic!("agent preset `{label}` should be on screen"));
+        snap_mouse(h, s, None, (col, row), 160);
+        h.mouse_click(col, row).unwrap();
+        h.render().unwrap();
+        snap_mouse(h, s, Some("Click"), (col, row), 240);
+        hold(h, s, 5, 150);
+    };
+
+    click_preset(&mut h, &mut s, "claude");
+    click_preset(&mut h, &mut s, "aider");
+    click_preset(&mut h, &mut s, "claude");
+
+    hold(&mut h, &mut s, 6, 160);
+
+    s.finalize().unwrap();
+}

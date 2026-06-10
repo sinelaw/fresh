@@ -21,6 +21,14 @@ Every session keeps running on its own — in the demo below, two of them each r
   <img src="./orchestrator-dock/showcase.gif" alt="Orchestrator dock demo" />
 </div>
 
+## Agent Sessions
+
+The New Session dialog now knows about coding agents. An **Agent:** dropdown offers the plain terminal plus known agents (claude, aider); the ones tagged **`↻`** *resume on restart* — Fresh provisions a session id when it launches the agent, so reopening the project rejoins the running conversation instead of relaunching it. Pick one and it fills in the Agent Command for you.
+
+<div class="showcase-demo">
+  <img src="./agent-sessions/showcase.gif" alt="Agent sessions demo" />
+</div>
+
 ## Remote Sessions from the UI
 
 You could already launch a remote host from the CLI; now the **New Session** dialog attaches one for you. Pick the **SSH** backend, point it at a host — `host`, `user@host:port`, or `ssh://…`, with an optional identity file and extra ssh options — and Fresh brings up a full remote session: the filesystem, LSP, process spawners, and an integrated terminal all run on the remote host. Switching sessions retargets without a restart. An initial, experimental **Kubernetes** backend connects over `kubectl exec` with a keepalive heartbeat and reconnect.

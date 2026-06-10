@@ -41,23 +41,16 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 - [x] **review-diff** — the reimagined review: a FILES sidebar (with a `*`
   comment badge), a side-by-side OLD/NEW view (`1`), and a comment left with
   `c` landing in the COMMENTS panel.
+- [x] **agent-sessions** — the New Session dialog's **Agent:** dropdown
+  (terminal / claude ↻ / aider ↻ / custom…); picking an agent fills the
+  Agent Command, and the `↻ resumes on restart` legend is shown. 160-wide
+  so the legend isn't truncated.
 
 ## Tier 1 — headliners still to create
 
-*(all the original Tier-1 headliners are done; remaining is the agent-aware orchestrator beat below)*
+*(all done — see Done above)*
 
 
-## Tier 1 — new since the last review (agent-aware orchestrator)
-
-`master` grew first-class support for **coding agents as sessions** — worth its
-own beat now that we have the fake Coding Agent prop:
-
-- [ ] **agent-sessions** — the New Session dialog's **agent-command dropdown**,
-  and **agents that resume on restart** ("restore rejoins an agent, not
-  restart"; "provision known agents to resume"). *Demo:* pick an agent command
-  when spawning a session; show a session reattaching to its running agent
-  rather than relaunching. (Could be folded into the dock showcase or stand
-  alone.)
 
 ## Tier 2 — worth a GIF
 
@@ -94,7 +87,7 @@ Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` embeds the seven finished GIFs (orchestrator-dock,
+- The rollup `index.md` embeds the eight finished GIFs (orchestrator-dock,
   ssh-session, universal-search, wave-screensaver, live-diff, terminal-path-
-  links, review-diff). All Tier-1 headliner GIFs are done; the only remaining
-  Tier-1 item is the **agent-sessions** beat (could fold into the dock showcase).
+  links, review-diff, agent-sessions). **All Tier-1 GIFs are done.** Remaining work
+  is Tier-2 / mention-only.
