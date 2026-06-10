@@ -4313,9 +4313,10 @@ where
     let mut last_render = Instant::now();
     let mut needs_render = true;
     let mut pending_event: Option<CrosstermEvent> = None;
-    // Wall-clock of the last real input event, used to start the
-    // wave-animation screensaver after the configured idle period.
-    let mut last_input_time = Instant::now();
+    // Time of the last real input event, used to start the wave-animation
+    // screensaver after the configured idle period. Read from the editor's
+    // injected time source so tests can drive idle time deterministically.
+    let mut last_input_time = editor.time_source().now();
 
     loop {
         // Apply any nested-forward requests (file/dir opens from a `fresh`
@@ -4443,14 +4444,15 @@ where
             // No input this cycle. If the editor has been idle long enough,
             // start the wave-animation screensaver (it renders on the next
             // iteration via the animation-active check above).
-            if editor.maybe_start_screensaver(last_input_time.elapsed()) {
+            let idle = editor.time_source().elapsed_since(last_input_time);
+            if editor.maybe_start_screensaver(idle) {
                 needs_render = true;
             }
             continue;
         };
 
         // A real input event arrived — reset the screensaver idle clock.
-        last_input_time = Instant::now();
+        last_input_time = editor.time_source().now();
 
         let (event, next) = coalesce_mouse_moves(event)?;
         pending_event = next;
