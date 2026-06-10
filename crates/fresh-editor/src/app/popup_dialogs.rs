@@ -1153,9 +1153,10 @@ impl Editor {
     }
 
     /// Dispatch the choice selected from the workspace-trust prompt.
-    /// `"trusted"` / `"restricted"` / `"blocked"` set the level (persisted,
-    /// and the editor restarts so the new policy applies to already-running
-    /// tooling). Anything else is logged and ignored.
+    /// `"trusted"` / `"restricted"` / `"blocked"` set the level (persisted);
+    /// the new policy applies live to the next authority-routed spawn, scoped
+    /// to this session's window — no editor restart. Anything else is logged
+    /// and ignored.
     pub fn handle_workspace_trust_action(&mut self, action_key: &str) {
         use crate::services::workspace_trust::TrustLevel;
         let level = match action_key {

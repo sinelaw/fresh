@@ -895,8 +895,19 @@ impl Editor {
         level: crate::services::workspace_trust::TrustLevel,
     ) {
         use crate::services::workspace_trust::TrustLevel;
+        // Trust is a per-window gate: each `Window` owns its own authority +
+        // `WorkspaceTrust` (issue #2280), and the guarding spawners read the
+        // level live at spawn time. Writing the new level here is the whole
+        // change — `set_level` itself documents "no rebuild required". The
+        // next authority-routed spawn (LSP, terminal command, task, formatter,
+        // plugin `spawnProcess`) honours the new level automatically.
+        //
+        // We deliberately do NOT `request_restart` here: that tears down and
+        // rebuilds the *entire* editor — every orchestrator session window,
+        // not just this one — which discarded other sessions' buffers and
+        // reset the layout when toggling a single session's trust (the
+        // trust-level-modal reset bug).
         let trust = &self.authority().workspace_trust;
-        let changed = trust.level() != level;
         trust.set_level(level);
         let msg = match level {
             TrustLevel::Trusted => t!("trust.now_trusted"),
@@ -905,11 +916,6 @@ impl Editor {
         }
         .to_string();
         self.active_window_mut().status_message = Some(msg);
-        // Re-evaluate all authority-routed processes (LSP, terminals, …)
-        // under the new level by rebuilding around the same authority.
-        if changed {
-            self.request_restart(self.working_dir().to_path_buf());
-        }
     }
 
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
