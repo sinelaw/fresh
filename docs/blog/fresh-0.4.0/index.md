@@ -45,11 +45,19 @@ The review diff picked up a real review workflow: a **file sidebar** grouped by 
 
 ## Live Diff
 
-The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Especially handy for watching an agent rewrite a file under you.
+The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter. Especially handy for watching an agent rewrite a file under you.
+
+<div class="showcase-demo">
+  <img src="./live-diff/showcase.gif" alt="Live diff demo" />
+</div>
 
 ## Terminal Path Links
 
 Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`** (or `Ctrl+hover`) any `path:line` in the output — including in scrollback — to jump straight to that file and line. Fresh also tracks the shell's working directory via OSC 7 so relative paths resolve correctly.
+
+<div class="showcase-demo">
+  <img src="./terminal-path-links/showcase.gif" alt="Terminal path links demo" />
+</div>
 
 ## Environment Managers
 

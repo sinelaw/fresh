@@ -12,7 +12,7 @@
 
 use crate::common::blog_showcase::BlogShowcase;
 use crate::common::fixtures::TestFixture;
-use crate::common::git_test_helper::{git_command, GitTestRepo};
+use crate::common::git_test_helper::{git_command, DirGuard, GitTestRepo};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
@@ -4041,6 +4041,222 @@ fn blog_showcase_fresh_0_4_0_wave_screensaver() {
     // because the wave is flat-colour — generate it with `--colors 32
     // --dither none` (see the regenerate hint below).
     animate(&mut h, &mut s, None, 80, 38, 19);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post: Terminal Path Links (0.4.0)
+// =========================================================================
+
+/// Terminal Path Links — Ctrl+Click (or Ctrl+hover) a `path:line` printed in
+/// the integrated terminal to jump straight to that file and line. Runs a
+/// `grep -rn` in the terminal, Ctrl+hovers a result to underline it, then
+/// Ctrl+clicks to open the file at the matched line.
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_terminal_path_links() {
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        eprintln!("Skipping terminal-path-links showcase: PTY not available");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let pd = h.project_dir().unwrap();
+    create_demo_project(&pd);
+    h.open_file(&pd.join("src/main.rs")).unwrap();
+    hide_prompt_line(&mut h);
+    h.render().unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/terminal-path-links",
+        "Terminal Path Links",
+        "Run a build, a test, or a grep in the integrated terminal and \
+         Ctrl+Click any path:line in the output — including in scrollback — to \
+         jump straight to that file and line.",
+    );
+
+    hold(&mut h, &mut s, 4, 110);
+
+    // Open a terminal and grep for a symbol — the output is `path:line:match`.
+    h.editor_mut().open_terminal();
+    h.tick_and_render().unwrap();
+    h.type_text("grep -rn process_item src").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(180));
+    h.tick_and_render().unwrap();
+    snap(&mut h, &mut s, Some("grep -rn process_item src"), 130);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The grep results — `src/main.rs:<line>:…` — land in the terminal.
+    h.wait_until(|h| h.screen_to_string().contains("src/main.rs:"))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    h.tick_and_render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 200);
+    hold(&mut h, &mut s, 4, 120);
+
+    // Locate the first `src/main.rs:` link in the output.
+    let (col, row) = h
+        .find_text_on_screen("src/main.rs:")
+        .expect("grep output should contain a src/main.rs: path link");
+
+    // Ctrl+hover underlines the link to signal it's clickable.
+    h.send_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Moved,
+        column: col + 2,
+        row,
+        modifiers: KeyModifiers::CONTROL,
+    })
+    .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+hover"), 200);
+    hold(&mut h, &mut s, 5, 130);
+
+    // Ctrl+Click opens the file at the matched line.
+    h.send_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: col + 2,
+        row,
+        modifiers: KeyModifiers::CONTROL,
+    })
+    .unwrap();
+    // The editor jumps to main.rs at the grep line — `process_item` is on it.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("process_item(item") && !scr.contains("grep -rn")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+Click"), 260);
+    hold(&mut h, &mut s, 8, 140);
+
+    s.finalize().unwrap();
+}
+
+// =========================================================================
+// Blog Post: Live Diff (0.4.0)
+// =========================================================================
+
+/// Live Diff — a unified diff rendered inside the editable buffer that updates
+/// as you edit. Enables Live Diff (vs HEAD) on a committed file, then types
+/// changes and watches `+` (added) / `-` (old) gutter glyphs and the inline
+/// OLD lines appear live.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_live_diff() {
+    let git_ok = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !git_ok {
+        eprintln!("Skipping live-diff showcase: git not installed");
+        return;
+    }
+
+    fresh::i18n::set_locale("en");
+    let repo = GitTestRepo::new();
+    repo.create_file(
+        "src/server.rs",
+        "pub struct Config {\n\
+         \x20   pub port: u16,\n\
+         \x20   pub host: String,\n\
+         }\n\
+         \n\
+         pub fn start_server(config: Config) {\n\
+         \x20   println!(\"listening on {}\", config.port);\n\
+         }\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("initial");
+    repo.setup_live_diff_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        100,
+        30,
+        fresh::config::Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    h.wait_until(|h| {
+        let reg = h.editor().command_registry().read().unwrap();
+        reg.get_all()
+            .iter()
+            .any(|c| c.get_localized_name() == "Live Diff: Toggle (Global)")
+    })
+    .unwrap();
+    h.open_file(&repo.path.join("src/server.rs")).unwrap();
+    hide_prompt_line(&mut h);
+    h.render().unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/live-diff",
+        "Live Diff",
+        "A unified diff rendered right inside the editable buffer, updating as the \
+         file changes: added lines get a + gutter, edited lines show the old text \
+         above the new. Point it at HEAD, the file on disk, or a branch — handy \
+         for watching an agent rewrite a file under you.",
+    );
+
+    hold(&mut h, &mut s, 4, 110);
+
+    // Turn on Live Diff (vs HEAD). No diff yet — the buffer matches HEAD.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Live Diff: Toggle (Global)").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Live Diff: Toggle (Global)"))
+        .unwrap();
+    snap(&mut h, &mut s, Some("Live Diff: Toggle"), 150);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.tick_and_render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 200);
+    hold(&mut h, &mut s, 3, 120);
+
+    // Add a new function at the end — `+` glyphs appear live as we type.
+    h.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    snap(&mut h, &mut s, None, 90);
+    for line in ["", "pub fn health() -> bool {", "    true", "}"] {
+        h.type_text(line).unwrap();
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        snap(&mut h, &mut s, None, 120);
+    }
+    hold(&mut h, &mut s, 4, 120);
+
+    // Modify an existing line — the OLD text shows above with a `-` gutter.
+    h.send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("2").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::End, KeyModifiers::SHIFT).unwrap();
+    snap(&mut h, &mut s, Some("select line"), 140);
+    h.type_text("    pub port: u16,        // listen port")
+        .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("edit"), 220);
+    // The old line should now be shown above with a `-` gutter.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("listen port") && scr.lines().any(|l| l.trim_start().starts_with('-'))
+    })
+    .unwrap();
+    hold(&mut h, &mut s, 10, 150);
 
     s.finalize().unwrap();
 }

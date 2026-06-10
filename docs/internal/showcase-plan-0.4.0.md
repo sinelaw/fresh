@@ -33,6 +33,12 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   with `frames-to-gif.sh --colors 32 --dither none` (new flags) since the
   flat-colour frames don't need dithering — keeps the high-fps GIF ~1.9 MB.
 
+- [x] **terminal-path-links** — Ctrl+hover underlines a `path:line` in a
+  terminal `grep` result, Ctrl+Click jumps to that file and line.
+- [x] **live-diff** — enable Live Diff (vs HEAD) on a committed file, then
+  type: added lines get a green `+` gutter, an edited line shows its old
+  text above with a `-` gutter — updating live as the buffer changes.
+
 ## Tier 1 — headliners still to create
 
 - [ ] **review-diff** — the reimagined review workflow (the biggest unreleased
@@ -43,12 +49,6 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   mode** (auto-reload on save); `/` filter; split/stack/auto layout toggle.
   *Demo:* open a review, toggle split/stack, comment on a line, watch it
   auto-reload on save.
-- [ ] **terminal-path-links** — `Ctrl+Click` / `Ctrl+hover` a `path:line` in
-  terminal output (incl. scrollback) to jump straight to that file and line;
-  OSC 7 cwd tracking. *Demo:* run a build/grep, Ctrl+Click a result.
-- [ ] **live-diff** — the live in-buffer unified-diff overlay (`vs HEAD` /
-  `vs Disk` / `vs Branch…`) updating as the file changes. Pairs naturally with
-  the Coding Agent: point Live Diff at a file and let an agent rewrite it.
 
 ## Tier 1 — new since the last review (agent-aware orchestrator)
 
@@ -97,6 +97,7 @@ Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` embeds the four finished GIFs (orchestrator-dock,
-  ssh-session, universal-search, wave-screensaver) and carries text sections
-  for everything else; swap each text section for a `<img>` as its GIF lands.
+- The rollup `index.md` embeds the six finished GIFs (orchestrator-dock,
+  ssh-session, universal-search, wave-screensaver, live-diff, terminal-path-
+  links) and carries text sections for everything else; swap each text section
+  for a `<img>` as its GIF lands. **Still text-only: review-diff.**
