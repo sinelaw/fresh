@@ -497,8 +497,26 @@ impl Editor {
         let new_buffer_len = output.len();
         let new_cursor_pos = old_cursor_pos.min(new_buffer_len);
 
+        // Leading cursor-restore event. Applied forward this is a no-op (the
+        // cursor is already at `old_cursor_pos`), but a `Batch` is undone by
+        // applying the *inverse* of each event in reverse order, so this
+        // event's inverse runs last on undo and pins the cursor/selection back
+        // to exactly where it was before the rewrite. Without it, the last
+        // inverse applied on undo is the re-`Insert` of the original text,
+        // which leaves the cursor at the end of the buffer and scrolls the
+        // view to the bottom of the file (issue #2027).
+        let restore_cursor_event = Event::MoveCursor {
+            cursor_id,
+            old_position: old_cursor_pos,
+            new_position: old_cursor_pos,
+            old_anchor,
+            new_anchor: old_anchor,
+            old_sticky_column,
+            new_sticky_column: old_sticky_column,
+        };
+
         // Only add MoveCursor event if position actually changes
-        let mut events = vec![delete_event, insert_event];
+        let mut events = vec![restore_cursor_event, delete_event, insert_event];
         if new_cursor_pos != new_buffer_len {
             let move_cursor_event = Event::MoveCursor {
                 cursor_id,
