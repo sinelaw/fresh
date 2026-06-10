@@ -439,11 +439,23 @@ impl FrameEffect for ColorTransition {
     }
 }
 
-/// One painted cell turned into a physics particle. `home` is where it
-/// belongs (its original screen cell, in area-local float coords); `pos`
-/// and `vel` evolve under a damped spring once the rising water reaches
-/// it. `cell` carries the full visual (glyph, fg, bg, modifier) so chrome
-/// colors fly along with the text.
+/// Lifecycle of a snapshotted cell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PState {
+    /// Sitting at its home cell above the waterline, untouched so far.
+    Resting,
+    /// Launched: a ballistic projectile under gravity (its whole word flies
+    /// off together with a shared launch velocity).
+    Flying,
+    /// Fell back into the water and is now drifting slowly down through it.
+    Sinking,
+}
+
+/// One painted cell turned into a physics particle. `home` is its original
+/// screen cell (area-local float coords); `pos`/`vel` evolve once its word
+/// is struck by the wave. `cell` carries the full visual (glyph, fg, bg,
+/// modifier) so chrome colors fly along with the text. `word` indexes the
+/// run of characters it belongs to — the unit that launches together.
 struct WaveParticle {
     home_x: f32,
     home_y: f32,
@@ -452,23 +464,34 @@ struct WaveParticle {
     vx: f32,
     vy: f32,
     cell: Cell,
-    hit: bool,
+    word: usize,
+    state: PState,
+}
+
+/// A contiguous run of "ink" cells on one row — a word (or a chunk of a
+/// chrome band). All its characters launch together with one shared
+/// velocity, so the word flies off as a rigid cluster.
+struct Word {
+    members: Vec<usize>,
+    home_y: f32,
+    center_x: f32,
+    launched: bool,
 }
 
 /// Wave effect — see `AnimationKind::Wave`. A body of water, anchored to
-/// the bottom edge, slowly rises to fill the view and then recedes. Its
-/// surface is the superposition of several sine waves of different
-/// wavelengths, and several more undulating "wave layers" ripple within
-/// the body, all heaving up and down slowly (well under 2 Hz). The swell
-/// amplitude grows slowly over time, so the sea starts calm and builds.
-/// As the rising surface reaches each painted cell ("ink" particle) it
-/// kicks it up and sideways; a damped spring then pulls it home, so
-/// content splashes out of the water and is swallowed as the tide climbs,
-/// then revealed again, settled, as it ebbs.
+/// the bottom edge, rises to about half the view's height and then just
+/// undulates there like a real pond. Its surface is the superposition of
+/// several sine waves of different wavelengths, with more undulating "wave
+/// layers" rippling within the body, all heaving up and down slowly (well
+/// under 2 Hz); the swell amplitude builds up slowly. Whenever the
+/// undulating surface reaches a rendered word, that word is flung off as a
+/// ballistic projectile (gravity arc); when a flying character falls back
+/// onto the water it switches to drifting slowly down through it.
 pub struct WaveEffect {
     duration: Duration,
     area: Rect,
     particles: Vec<WaveParticle>,
+    words: Vec<Word>,
     /// Blank fill cell (background) painted into every cell before the
     /// particles are stamped, so vacated space reads as empty editor bg.
     fill: Cell,
@@ -477,13 +500,18 @@ pub struct WaveEffect {
 }
 
 impl WaveEffect {
-    // Spring stiffness and damping. Underdamped (c < 2*sqrt(k) ≈ 16.7)
-    // so kicked content visibly bounces before settling.
-    const SPRING_K: f32 = 70.0;
-    const SPRING_C: f32 = 7.0;
-    // Impulse magnitudes (cells/sec) when the surface reaches a cell.
-    const KICK_UP: f32 = 13.0;
-    const KICK_SIDE: f32 = 6.0;
+    // Ballistic launch + gravity (cells / sec, cells / sec²).
+    const GRAVITY: f32 = 24.0;
+    const LAUNCH_UP_MIN: f32 = 12.0;
+    const LAUNCH_UP_VAR: f32 = 10.0;
+    const LAUNCH_SIDE: f32 = 7.0;
+    // Slow downward drift once a character is back in the water.
+    const SINK_SPEED: f32 = 2.2;
+    // Longest contiguous run treated as one word; longer chrome bands split
+    // into chunks so the whole status bar doesn't fly as one slab.
+    const WORD_CAP: usize = 14;
+    // Water tops out at this fraction of the view height, then undulates.
+    const MAX_LEVEL_FRAC: f32 = 0.5;
 
     // Surface = sum of three sine components with distinct wavelengths
     // (spatial wavenumber k = 2π / wavelength_in_cols) and distinct slow
@@ -510,13 +538,15 @@ impl WaveEffect {
             duration,
             area: Rect::new(0, 0, 0, 0),
             particles: Vec::new(),
+            words: Vec::new(),
             fill: Cell::default(),
             last_elapsed: None,
             initialized: false,
         }
     }
 
-    /// Snapshot the painted buffer into particles and record the fill bg.
+    /// Snapshot the painted buffer into particles grouped into words, and
+    /// record the fill bg.
     fn init(&mut self, buf: &Buffer, area: Rect) {
         self.area = area;
         // Dominant background = the fill color for vacated cells. Counting
@@ -543,16 +573,38 @@ impl WaveEffect {
 
         // A cell is "ink" (a flying particle) if it draws anything: a
         // non-space glyph, or a background that differs from the dominant
-        // fill (so colored chrome bands lift off too). Blank background
-        // cells stay put as fill and aren't simulated.
+        // fill (so colored chrome bands lift off too). Walk each row left to
+        // right, accumulating contiguous ink cells into a word; a gap (or
+        // the WORD_CAP) closes the current word.
         self.particles.clear();
+        self.words.clear();
         for dy in 0..area.height {
+            let mut run: Vec<usize> = Vec::new();
+            let mut close_run = |run: &mut Vec<usize>,
+                                 particles: &mut Vec<WaveParticle>,
+                                 words: &mut Vec<Word>| {
+                if run.is_empty() {
+                    return;
+                }
+                let wid = words.len();
+                let cx = run.iter().map(|&i| particles[i].home_x).sum::<f32>() / run.len() as f32;
+                for &i in run.iter() {
+                    particles[i].word = wid;
+                }
+                words.push(Word {
+                    members: std::mem::take(run),
+                    home_y: dy as f32,
+                    center_x: cx,
+                    launched: false,
+                });
+            };
             for dx in 0..area.width {
                 let Some(cell) = buf.cell((area.x + dx, area.y + dy)) else {
                     continue;
                 };
                 let is_ink = cell.symbol() != " " || cell.bg != fill_bg;
                 if !is_ink {
+                    close_run(&mut run, &mut self.particles, &mut self.words);
                     continue;
                 }
                 self.particles.push(WaveParticle {
@@ -563,31 +615,42 @@ impl WaveEffect {
                     vx: 0.0,
                     vy: 0.0,
                     cell: cell.clone(),
-                    hit: false,
+                    word: 0,
+                    state: PState::Resting,
                 });
+                run.push(self.particles.len() - 1);
+                if run.len() >= Self::WORD_CAP {
+                    close_run(&mut run, &mut self.particles, &mut self.words);
+                }
             }
+            close_run(&mut run, &mut self.particles, &mut self.words);
         }
         self.initialized = true;
     }
 
     /// Water height (rows above the bottom edge) and swell-amplitude scale
-    /// at `elapsed`. The level rises slowly to cover the view and recedes
-    /// near the end for a clean hand-back to the live UI; the amplitude
-    /// grows monotonically with time so the sea builds as it climbs.
+    /// at `elapsed`. The level rises slowly to ~half the view, holds there
+    /// undulating, then ebbs near the very end for a clean hand-back to the
+    /// live UI. Amplitude builds up over the rise and then holds steady.
     fn level_amp(&self, elapsed: Duration) -> (f32, f32) {
         let p = if self.duration.is_zero() {
             1.0
         } else {
             (elapsed.as_secs_f32() / self.duration.as_secs_f32()).clamp(0.0, 1.0)
         };
-        let rise = if p < 0.82 {
-            smoothstep(p / 0.82)
+        const RISE_END: f32 = 0.16;
+        const EBB_START: f32 = 0.88;
+        let frac = if p < RISE_END {
+            smoothstep(p / RISE_END)
+        } else if p < EBB_START {
+            1.0
         } else {
-            1.0 - smoothstep((p - 0.82) / 0.18)
+            1.0 - smoothstep((p - EBB_START) / (1.0 - EBB_START))
         };
-        let max_level = self.area.height as f32 + 5.0;
-        let level = rise * max_level;
-        let amp = 0.3 + 0.95 * smoothstep(p);
+        let max_level = Self::MAX_LEVEL_FRAC * self.area.height as f32;
+        let level = frac * max_level;
+        // Amplitude grows as the water climbs, then stays steady (calm pond).
+        let amp = 0.3 + 0.95 * smoothstep((p / RISE_END).min(1.0));
         (level, amp)
     }
 
@@ -604,31 +667,76 @@ impl WaveEffect {
         amp * Self::SWING_A * (Self::W_SWING * t).sin()
     }
 
-    /// Advance physics by `dt` seconds. `water_top_mean` is the mean
-    /// surface row (smaller = higher); a particle is kicked once, the
-    /// frame the rising mean first reaches its home row.
-    fn step(&mut self, dt: f32, water_top_mean: f32) {
-        for p in self.particles.iter_mut() {
-            if !p.hit && water_top_mean <= p.home_y {
-                p.hit = true;
-                let r = hash01(p.home_x, p.home_y);
-                p.vy = -Self::KICK_UP * (0.7 + 0.6 * r);
-                p.vx = (p.home_x * 0.5).sin() * Self::KICK_SIDE + (r - 0.5) * Self::KICK_SIDE;
+    /// Surface row at column `x` (smaller = higher up the screen).
+    fn surface_at(x: f32, t: f32, water_top_mean: f32, amp: f32) -> f32 {
+        water_top_mean - Self::undulation(x, t, 0.0, amp) - Self::swing(t, amp)
+    }
+
+    /// Advance physics by `dt` seconds at time `t`.
+    fn step(&mut self, dt: f32, t: f32, water_top_mean: f32, amp: f32) {
+        // Launch any word the undulating surface has just washed over. The
+        // whole word gets one shared velocity so it flies as a unit.
+        for wi in 0..self.words.len() {
+            if self.words[wi].launched {
+                continue;
             }
-            if p.hit {
-                let ax = -Self::SPRING_K * (p.x - p.home_x) - Self::SPRING_C * p.vx;
-                let ay = -Self::SPRING_K * (p.y - p.home_y) - Self::SPRING_C * p.vy;
-                p.vx += ax * dt;
-                p.vy += ay * dt;
-                p.x += p.vx * dt;
-                p.y += p.vy * dt;
+            let (cx, wy) = (self.words[wi].center_x, self.words[wi].home_y);
+            let surf = Self::surface_at(cx, t, water_top_mean, amp);
+            if surf <= wy {
+                let r = hash01(cx, wy);
+                let r2 = hash01(wy, cx);
+                let vy0 = -(Self::LAUNCH_UP_MIN + r * Self::LAUNCH_UP_VAR);
+                let vx0 = (r2 - 0.5) * 2.0 * Self::LAUNCH_SIDE;
+                self.words[wi].launched = true;
+                let members = std::mem::take(&mut self.words[wi].members);
+                for &pi in &members {
+                    let p = &mut self.particles[pi];
+                    p.state = PState::Flying;
+                    p.vx = vx0;
+                    p.vy = vy0;
+                }
+                self.words[wi].members = members;
+            }
+        }
+
+        let bottom = self.area.height as f32 - 1.0;
+        for p in self.particles.iter_mut() {
+            match p.state {
+                PState::Resting => {}
+                PState::Flying => {
+                    p.vy += Self::GRAVITY * dt;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    // Fell back onto the water? Start sinking.
+                    let surf = Self::surface_at(p.x, t, water_top_mean, amp);
+                    if p.vy > 0.0 && p.y >= surf {
+                        p.state = PState::Sinking;
+                        p.y = surf;
+                        p.vy = Self::SINK_SPEED;
+                        p.vx *= 0.3;
+                    }
+                }
+                PState::Sinking => {
+                    // Slow descent with a gentle sideways sway, until it
+                    // settles on the seabed.
+                    p.vx *= (1.0 - 2.0 * dt).max(0.0);
+                    p.x += p.vx * dt + 0.6 * (t * 1.3 + p.home_x).sin() * dt;
+                    p.y += Self::SINK_SPEED * dt;
+                    if p.y >= bottom {
+                        p.y = bottom;
+                    }
+                }
             }
         }
     }
 
-    /// Repaint the area: background fill, ink particles, then the water.
+    /// Repaint the area: bg fill, then above-water particles, then the
+    /// water body, then submerged (sinking) particles tinted on top.
     fn paint(&self, buf: &mut Buffer, elapsed: Duration, level: f32, amp: f32) {
         let area = self.area;
+        let t = elapsed.as_secs_f32();
+        let water_top_mean = area.height as f32 - level;
+
         for dy in 0..area.height {
             for dx in 0..area.width {
                 if let Some(dst) = buf.cell_mut((area.x + dx, area.y + dy)) {
@@ -636,27 +744,54 @@ impl WaveEffect {
                 }
             }
         }
+        // Resting / flying particles sit above (or splash through) the
+        // surface — paint them first so the water can cover any that are
+        // momentarily below the waterline.
         for p in self.particles.iter() {
-            let cx = p.x.round();
-            let cy = p.y.round();
-            if cx < 0.0 || cy < 0.0 {
+            if p.state == PState::Sinking {
                 continue;
             }
-            let (cx, cy) = (cx as u16, cy as u16);
-            if cx >= area.width || cy >= area.height {
-                continue;
-            }
-            if let Some(dst) = buf.cell_mut((area.x + cx, area.y + cy)) {
-                *dst = p.cell.clone();
-            }
+            self.stamp(buf, p.x, p.y, |dst| *dst = p.cell.clone());
         }
         self.paint_water(buf, elapsed, level, amp);
+        // Sinking particles are drawn over the water, tinted by depth so
+        // they read as submerged and drifting down.
+        for p in self.particles.iter() {
+            if p.state != PState::Sinking {
+                continue;
+            }
+            let depth = (p.y - Self::surface_at(p.x, t, water_top_mean, amp)).max(0.0);
+            let sym = p.cell.symbol().to_string();
+            let base = color_to_rgb(p.cell.fg).unwrap_or((230, 230, 230));
+            let fg = lerp_rgb(base, water_rgb(depth), 0.55);
+            let bg = water_rgb(depth + 0.5);
+            self.stamp(buf, p.x, p.y, |dst| {
+                dst.set_symbol(&sym);
+                dst.set_fg(Color::Rgb(fg.0, fg.1, fg.2));
+                dst.set_bg(Color::Rgb(bg.0, bg.1, bg.2));
+            });
+        }
     }
 
-    /// Paint the rising water body over the buffer: every cell at or below
-    /// the undulating surface is tinted (shallow→deep by depth), the crest
-    /// row gets foam glyphs, and `LAYERS` extra undulating foam lines
-    /// ripple within the body on their own phases.
+    /// Write to the cell at rounded `(x, y)` if it's on screen.
+    fn stamp(&self, buf: &mut Buffer, x: f32, y: f32, f: impl FnOnce(&mut Cell)) {
+        let area = self.area;
+        let (cx, cy) = (x.round(), y.round());
+        if cx < 0.0 || cy < 0.0 {
+            return;
+        }
+        let (cx, cy) = (cx as u16, cy as u16);
+        if cx >= area.width || cy >= area.height {
+            return;
+        }
+        if let Some(dst) = buf.cell_mut((area.x + cx, area.y + cy)) {
+            f(dst);
+        }
+    }
+
+    /// Paint the water body: every cell at or below the undulating surface
+    /// is tinted (shallow→deep by depth), the crest row gets foam glyphs,
+    /// and `LAYERS` extra undulating foam lines ripple within the body.
     fn paint_water(&self, buf: &mut Buffer, elapsed: Duration, level: f32, amp: f32) {
         const CREST: [&str; 3] = ["~", "≈", "∿"];
         let area = self.area;
@@ -667,7 +802,7 @@ impl WaveEffect {
 
         for dx in 0..area.width {
             let x = dx as f32;
-            let surf = water_top_mean - Self::undulation(x, t, 0.0, amp) - Self::swing(t, amp);
+            let surf = Self::surface_at(x, t, water_top_mean, amp);
             for dy in 0..area.height {
                 let y = dy as f32;
                 // Cells above the surface stay as air (content / bg).
@@ -714,7 +849,7 @@ impl WaveEffect {
             let fg = Color::Rgb(fg_rgb.0, fg_rgb.1, fg_rgb.2);
             for dx in 0..area.width {
                 let x = dx as f32;
-                let surf = water_top_mean - Self::undulation(x, t, 0.0, amp) - Self::swing(t, amp);
+                let surf = Self::surface_at(x, t, water_top_mean, amp);
                 let ly = water_top_mean - Self::undulation(x, t, lp, amp) - Self::swing(t, amp)
                     + base;
                 // Keep the layer strictly inside the body.
@@ -764,8 +899,8 @@ impl FrameEffect for WaveEffect {
         // Integrate from the last frame's timestamp. We sub-step in fixed
         // slices so the simulation advances by the true wall-clock delta
         // regardless of frame rate (a slow debug frame can be 50–100ms),
-        // while each slice stays small enough to keep the spring stable.
-        // A long stall (debugger pause) is capped so it can't explode.
+        // while each slice stays small enough to keep the arcs stable. A
+        // long stall (debugger pause) is capped so it can't explode.
         let prev = self.last_elapsed.unwrap_or(elapsed);
         let dt = (elapsed.as_secs_f32() - prev.as_secs_f32()).clamp(0.0, 0.25);
         self.last_elapsed = Some(elapsed);
@@ -775,7 +910,7 @@ impl FrameEffect for WaveEffect {
         let mut remaining = dt;
         while remaining > 0.0 {
             let step = remaining.min(SUB);
-            self.step(step, water_top_mean);
+            self.step(step, elapsed.as_secs_f32(), water_top_mean, amp);
             remaining -= step;
         }
 
