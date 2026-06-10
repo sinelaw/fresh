@@ -59,6 +59,14 @@ A built-in **environment-manager** plugin detects a project's `venv` / `.envrc` 
 
 A symbol finder with live preview: filter your document's symbols, see source-line snippets, and jump precisely to the symbol name (line *and* column), with the symbol under the cursor preselected.
 
+## Wave Screensaver
+
+Pure eye-candy: leave the editor idle and a decorative **wave** washes over it — a rising sea of glyphs that bounces every cell (text, gutter, chrome) up, down, and sideways, with words launching off the crest and sinking back, before the UI settles intact. It runs as a screensaver after `screensaver_idle_minutes`, or fire it any time with the **Wave Animation** command.
+
+<div class="showcase-demo">
+  <img src="./wave-screensaver/showcase.gif" alt="Wave screensaver demo" />
+</div>
+
 ## Also New
 
 ### Editing & Navigation

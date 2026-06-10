@@ -28,6 +28,10 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 - [x] **universal-search** — multi-scope Live Grep overlay (files / buffers /
   terminals) with Word/Regex modes, the scope toolbar, git-grep provider, and
   the live syntax-highlighted preview pane.
+- [x] **wave-screensaver** — the decorative wave animation, fired from the
+  palette and captured at ~26 fps with the real-time `animate` helper. Built
+  with `frames-to-gif.sh --colors 32 --dither none` (new flags) since the
+  flat-colour frames don't need dithering — keeps the high-fps GIF ~1.9 MB.
 
 ## Tier 1 — headliners still to create
 
@@ -45,15 +49,6 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 - [ ] **live-diff** — the live in-buffer unified-diff overlay (`vs HEAD` /
   `vs Disk` / `vs Branch…`) updating as the file changes. Pairs naturally with
   the Coding Agent: point Live Diff at a file and let an agent rewrite it.
-- [ ] **wave-screensaver** *(new on master)* — the decorative **wave
-  animation**: a rising, bottom-anchored "sea" with a growing swell and
-  ballistic words that launch off the crest and sink back. Runs as a
-  **screensaver** after `screensaver_idle_minutes` of inactivity
-  (`screensaver_enabled`), or fire it on demand with the **Wave Animation**
-  palette command ("bounce all content up, down, and sideways"). Pure eye-candy
-  and very GIF-friendly. *Demo:* open a code buffer, run **Wave Animation**, let
-  the swell rise and the words rain back down. Needs the per-frame `animate`
-  capture helper (real wall-clock between frames) since it's time-driven.
 
 ## Tier 1 — new since the last review (agent-aware orchestrator)
 
@@ -102,6 +97,6 @@ Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` currently embeds the three finished GIFs and carries
-  text sections for everything else; swap each text section for a `<img>` as
-  its GIF lands.
+- The rollup `index.md` embeds the four finished GIFs (orchestrator-dock,
+  ssh-session, universal-search, wave-screensaver) and carries text sections
+  for everything else; swap each text section for a `<img>` as its GIF lands.

@@ -3,17 +3,27 @@ set -euo pipefail
 
 # frames-to-gif.sh - Convert blog showcase SVG frames to animated GIF
 #
-# Usage: scripts/frames-to-gif.sh <blog-dir> [--scale FACTOR]
+# Usage: scripts/frames-to-gif.sh <blog-dir> [--scale FACTOR] [--colors N] [--dither MODE]
 # Example: scripts/frames-to-gif.sh docs/blog/multi-cursor
 #          scripts/frames-to-gif.sh docs/blog/multi-cursor --scale 1.5
+#          scripts/frames-to-gif.sh docs/blog/wave --colors 32 --dither none
+#
+# --colors / --dither tune the GIF palette (ffmpeg path). Terminal frames are
+# flat-colour, so `--dither none` with a small palette is much smaller — and
+# just as crisp — as the default dithered 128-colour palette; handy for dense,
+# high-frame-rate animations like the wave screensaver. Defaults are unchanged.
 
-BLOG_DIR="${1:?Usage: $0 <blog-dir> [--scale FACTOR]}"
+BLOG_DIR="${1:?Usage: $0 <blog-dir> [--scale FACTOR] [--colors N] [--dither MODE]}"
 SCALE="1.0"
+COLORS="128"
+DITHER="bayer:bayer_scale=3"
 
 shift
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --scale) SCALE="$2"; shift 2 ;;
+        --colors) COLORS="$2"; shift 2 ;;
+        --dither) DITHER="$2"; shift 2 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -108,12 +118,12 @@ if command -v ffmpeg &>/dev/null; then
     # Generate palette for high-quality GIF
     PALETTE="$PNG_DIR/palette.png"
     ffmpeg -y -f concat -safe 0 -i "$CONCAT_FILE" \
-        -vf "palettegen=max_colors=128:stats_mode=diff" \
+        -vf "palettegen=max_colors=${COLORS}:stats_mode=diff" \
         "$PALETTE" 2>/dev/null
 
     # Generate final GIF using palette
     ffmpeg -y -f concat -safe 0 -i "$CONCAT_FILE" -i "$PALETTE" \
-        -lavfi "paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle" \
+        -lavfi "paletteuse=dither=${DITHER}:diff_mode=rectangle" \
         -loop 0 \
         "$OUTPUT_GIF" 2>/dev/null
 

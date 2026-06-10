@@ -3985,3 +3985,62 @@ fn blog_showcase_fresh_0_4_0_orchestrator_dock() {
 
     s.finalize().unwrap();
 }
+
+// =========================================================================
+// Blog Post: Wave Screensaver (0.4.0)
+// =========================================================================
+
+/// Wave Screensaver — the decorative wave animation. A rising, bottom-anchored
+/// "sea" of wave glyphs swells up the screen and bounces every painted cell
+/// (text, gutter, chrome) up, down, and sideways before the UI settles back.
+/// It runs as a screensaver after an idle timeout, or on demand via the
+/// "Wave Animation" palette command. Captured with the real-time `animate`
+/// helper since the effect is driven by the wall clock.
+#[test]
+#[ignore]
+fn blog_showcase_fresh_0_4_0_wave_screensaver() {
+    fresh::i18n::set_locale("en");
+    // Animations on so the frame-effect layer runs (the harness only forces it
+    // off when no config is provided).
+    let mut cfg = fresh::config::Config::default();
+    cfg.editor.animations = true;
+    let mut h = EditorTestHarness::with_temp_project_and_config(100, 30, cfg).unwrap();
+    let pd = h.project_dir().unwrap();
+    create_demo_project(&pd);
+    h.open_file(&pd.join("src/main.rs")).unwrap();
+    h.render().unwrap();
+
+    let mut s = BlogShowcase::new(
+        "fresh-0.4.0/wave-screensaver",
+        "Wave Screensaver",
+        "A decorative wave washes over the editor — a rising sea of glyphs that \
+         bounces every cell up, down, and sideways, then settles back. It kicks \
+         in as a screensaver after an idle timeout, or fire it on demand with the \
+         Wave Animation command.",
+    );
+
+    // Settle on the code.
+    hold(&mut h, &mut s, 4, 110);
+
+    // Fire it from the palette so the command is visible.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+P"), 110);
+    h.type_text("Wave Animation").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Wave Animation"))
+        .unwrap();
+    snap(&mut h, &mut s, None, 110);
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.tick_and_render().unwrap();
+    snap(&mut h, &mut s, Some("Enter"), 38);
+
+    // The sea rises (~1.6s) and keeps churning. A fluid effect needs a high
+    // frame rate, so capture ~26 fps for ~3s (≈80 frames, sleeping ~38ms real
+    // between them) and play them back at the same rate. The GIF stays small
+    // because the wave is flat-colour — generate it with `--colors 32
+    // --dither none` (see the regenerate hint below).
+    animate(&mut h, &mut s, None, 80, 38, 19);
+
+    s.finalize().unwrap();
+}
