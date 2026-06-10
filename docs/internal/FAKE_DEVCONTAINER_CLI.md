@@ -40,8 +40,8 @@ Captured by reading every `editor.spawnHostProcess(...)` site in
 
 | Caller (file:line) | Invocation | What Fresh expects back |
 |---|---|---|
-| `devcontainer.ts:1378` | `which devcontainer` | exit 0 with path on stdout |
-| `devcontainer.ts:1440` | `sh -c 'exec devcontainer "$@" 2> "$LOG"' sh <log> up --workspace-folder <cwd> [extra]` | stdout: a line that is a JSON object `{ outcome, containerId, remoteUser, remoteWorkspaceFolder }` somewhere near the end; stderr → log file (any human progress text) |
+| `devcontainer.ts` (`resolveDevcontainerBin`) | `devcontainer --version` | exit 0 with version on stdout (probed directly — no `which`, which doesn't exist on native Windows; see #2201) |
+| `devcontainer.ts` (`runDevcontainerUp`) | `sh -c 'exec "$BIN" "$@" 2> "$LOG"' sh <log> <bin> up --workspace-folder <cwd> [extra]` | stdout: a line that is a JSON object `{ outcome, containerId, remoteUser, remoteWorkspaceFolder }` somewhere near the end; stderr → log file (any human progress text) |
 | `devcontainer.ts:1694` | `which docker` | exit 0 with path on stdout |
 | `devcontainer.ts:1701` | `docker logs --tail 1000 <id>` | stdout/stderr of the "container" |
 | `devcontainer.ts:791,880` | `docker port <id>` | lines like `8080/tcp -> 0.0.0.0:32769` |
@@ -217,8 +217,9 @@ exits 64.
 
 ### Integration with the editor
 
-The plugin doesn't know it's talking to a fake — `which devcontainer`
-just resolves earlier in `$PATH`. That means the test recipe is just:
+The plugin doesn't know it's talking to a fake — its
+`devcontainer --version` probe just resolves the fake earlier in
+`$PATH`. That means the test recipe is just:
 
 ```bash
 source scripts/fake-devcontainer/activate.sh

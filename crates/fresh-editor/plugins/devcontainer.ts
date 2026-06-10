@@ -1704,10 +1704,34 @@ async function runInitializeCommand(): Promise<boolean> {
   return true;
 }
 
+/// Resolve a spawnable devcontainer CLI command name, or null when
+/// none is found. Probes by running `<candidate> --version` through
+/// the same spawn machinery the actual `devcontainer up` uses, instead
+/// of shelling out to `which`: native Windows ships no `which` utility
+/// at all, so that probe reported "CLI Not Found" there regardless of
+/// installation method (#2201) — and even on Unix it answers the wrong
+/// question ("can `which` find the name?" rather than "can we spawn
+/// it?").
+///
+/// `devcontainer.cmd` covers npm's Windows shim: process spawning
+/// resolves `.exe` from PATH (e.g. Bun's shim) but never `.cmd`, which
+/// needs to be named explicitly. Probing it on platforms where it
+/// doesn't exist is a fast spawn failure — same fire-all-candidates
+/// pattern as dashboard's `openUrl`.
+async function resolveDevcontainerBin(): Promise<string | null> {
+  for (const bin of ["devcontainer", "devcontainer.cmd"]) {
+    const probe = await editor.spawnHostProcess(bin, ["--version"]);
+    if (probe.exit_code === 0) {
+      return bin;
+    }
+  }
+  return null;
+}
+
 async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   const cwd = editor.getCwd();
-  const which = await editor.spawnHostProcess("which", ["devcontainer"]);
-  if (which.exit_code !== 0) {
+  const devcontainerBin = await resolveDevcontainerBin();
+  if (devcontainerBin === null) {
     showCliNotFoundPopup();
     return;
   }
@@ -1769,16 +1793,19 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
   // continues either way.
   openBuildLogInSplit(logPath);
 
-  // `sh -c 'exec devcontainer "$@" 2> "$LOG"' sh <log> <args...>` —
-  // positional-arg form so the log path and cwd never get
-  // string-interpolated into the script body. $1 is the log path;
-  // `shift` drops it; `$@` is the devcontainer invocation.
-  const shellScript = 'LOG="$1"; shift; exec devcontainer "$@" 2> "$LOG"';
+  // `sh -c 'exec "$BIN" "$@" 2> "$LOG"' sh <log> <bin> <args...>` —
+  // positional-arg form so the log path, resolved CLI, and cwd never
+  // get string-interpolated into the script body. $1 is the log path,
+  // $2 the CLI resolved by the probe above (kept consistent so the
+  // binary we checked is the binary we run); `shift 2` drops both and
+  // `$@` is the devcontainer invocation.
+  const shellScript = 'LOG="$1"; BIN="$2"; shift 2; exec "$BIN" "$@" 2> "$LOG"';
   const args = [
     "-c",
     shellScript,
     "sh",
     logPath,
+    devcontainerBin,
     "up",
     "--workspace-folder",
     cwd,

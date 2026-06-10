@@ -754,3 +754,66 @@ fn attach_missing_container_id_surfaces_failed_attach_popup() {
     drop(harness);
     drop_workspace_temp(&workspace);
 }
+
+/// Regression test for issue #2201 (Devcontainer CLI not found on
+/// Windows when installed via Bun): the CLI-presence probe must not
+/// depend on an external `which` utility vouching for `devcontainer`.
+/// Native Windows ships no `which` at all, so a probe that shells out
+/// to it reports "CLI Not Found" even when `devcontainer` itself is
+/// perfectly spawnable from PATH. The probe must ask the question we
+/// actually care about — "can the CLI be spawned?" — by running it
+/// directly.
+///
+/// Modeled here (the suite is unix-only) by shadowing `which` with a
+/// shim that denies knowledge of `devcontainer` while the fake CLI
+/// stays on PATH: attach must still succeed.
+#[test]
+fn attach_succeeds_when_which_cannot_locate_cli() {
+    let (_workspace_temp, workspace) = set_up_workspace();
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new()
+            .with_working_dir(workspace.clone())
+            .with_fake_devcontainer(),
+    )
+    .unwrap();
+
+    // Shadow `which` AFTER the harness exists so the fake-devcontainer
+    // mutex already serializes us with sibling tests (same reasoning
+    // as the FAKE_DC_* env knobs above). The shim fails only for
+    // `devcontainer` and delegates everything else, so the rest of the
+    // attach flow (sh, mkdir, docker) is unaffected.
+    let shim_temp = tempfile::tempdir().unwrap();
+    let shim = shim_temp.path().join("which");
+    fs::write(
+        &shim,
+        "#!/bin/sh\n\
+         for a in \"$@\"; do [ \"$a\" = devcontainer ] && exit 1; done\n\
+         [ -x /usr/bin/which ] && exec /usr/bin/which \"$@\"\n\
+         exit 127\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{}", shim_temp.path().display(), saved_path),
+    );
+    harness.tick_and_render().unwrap();
+
+    accept_attach(&mut harness);
+    let label = wait_for_container_authority(&mut harness);
+    assert!(
+        label.starts_with("Container:"),
+        "attach must succeed without `which` vouching for the CLI; label = {label:?}"
+    );
+
+    std::env::set_var("PATH", saved_path);
+    drop(harness);
+    drop_workspace_temp(&workspace);
+}

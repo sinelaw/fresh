@@ -316,6 +316,9 @@ main() {
     up)                 cmd_up "$@" ;;
     read-configuration) cmd_read_configuration "$@" ;;
     reset)              cmd_reset "$@" ;;
+    # Fresh probes CLI presence by running `devcontainer --version`
+    # (the real CLI prints its version and exits 0).
+    --version)          printf '0.0.0-fake\n'; exit 0 ;;
     --help|-h|help)     usage; exit 0 ;;
     *)
       echo "fake-devcontainer: unsupported subcommand: $sub" >&2
