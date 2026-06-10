@@ -3631,14 +3631,17 @@ fn test_send_selection_to_terminal_sends_current_line_when_no_selection() {
 
 /// Without any open terminal the command reports it in the status bar
 /// instead of failing silently.
+///
+/// Runs on the unnamed startup buffer on purpose: a fixture file's
+/// temp-dir path (long on macOS and Windows) crowds the Messages
+/// element out of the 120-col status bar, hiding the very message
+/// under test. No PTY is needed since no terminal is ever opened.
 #[test]
 fn test_send_selection_to_terminal_without_terminal_shows_status() {
     use fresh::test_api::Action;
 
-    let mut harness = harness_or_return!(120, 30);
-    harness
-        .load_buffer_from_text("echo nothing to receive this\n")
-        .unwrap();
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.render().unwrap();
 
     harness.api_mut().dispatch(Action::SendSelectionToTerminal);
     harness.render().unwrap();
