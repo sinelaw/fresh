@@ -15,11 +15,12 @@ pub struct FileExplorerClipboard {
 /// Config-derived defaults handed to `Window::install_initialized_file_explorer`
 /// so the apply logic lives on `Window` without it borrowing the editor's
 /// `Config` (which would clash with the `&mut Window` borrow).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct FileExplorerViewDefaults {
     pub show_hidden: bool,
     pub show_gitignored: bool,
     pub compact_directories: bool,
+    pub custom_ignore_patterns: Vec<String>,
 }
 
 /// Outcome of a single filesystem-level paste op (`paste_one_fs_op`).
@@ -1682,6 +1683,15 @@ impl crate::app::window::Window {
             .unwrap_or(defaults.show_gitignored);
         view.ignore_patterns_mut()
             .set_show_gitignored(show_gitignored);
+        {
+            // Wire the configured custom ignore patterns into the matcher (previously the
+            // `custom_ignore_patterns` config field was parsed but never applied).
+            let ip = view.ignore_patterns_mut();
+            ip.clear_custom_patterns();
+            for pattern in &defaults.custom_ignore_patterns {
+                ip.add_custom_pattern(pattern.clone());
+            }
+        }
         view.set_compact_directories(defaults.compact_directories);
         self.file_explorer = Some(view);
         // Auto-expand to reveal the active file on first open (issue #1569),

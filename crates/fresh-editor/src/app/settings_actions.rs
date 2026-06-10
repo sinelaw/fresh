@@ -200,6 +200,12 @@ impl Editor {
             let patterns = explorer.ignore_patterns_mut();
             patterns.set_show_hidden(self.config.file_explorer.show_hidden);
             patterns.set_show_gitignored(self.config.file_explorer.show_gitignored);
+            // Apply configured custom ignore patterns (this wiring was missing, so the
+            // `custom_ignore_patterns` config field had no effect).
+            patterns.clear_custom_patterns();
+            for pattern in &self.config.file_explorer.custom_ignore_patterns {
+                patterns.add_custom_pattern(pattern.clone());
+            }
             explorer.set_compact_directories(self.config.file_explorer.compact_directories);
         }
 
