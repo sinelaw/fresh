@@ -11,6 +11,14 @@ outline: false
 
 A dozen point releases since 0.3.0, and the through-line is **working across many sessions and machines from one Fresh process**: a multi-window Orchestrator with a persistent dock, remote sessions you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, environment managers, and the usual long tail of editor, LSP, and language work.
 
+## Wave Screensaver
+
+Pure eye-candy: leave the editor idle and a decorative **wave** washes over it — a rising sea of glyphs that bounces every cell (text, gutter, chrome) up, down, and sideways, with words launching off the crest and sinking back, before the UI settles intact. It runs as a screensaver after `screensaver_idle_minutes`, or fire it any time with the **Wave Animation** command.
+
+<div class="showcase-demo">
+  <img src="./wave-screensaver/showcase.gif" alt="Wave screensaver demo" />
+</div>
+
 ## The Orchestrator & Dock
 
 Fresh can now juggle several independent sessions in one process. The **Orchestrator Dock** is a persistent, non-modal left column that lists every session — each row showing working/idle status, project, branch, a git summary, and a PR badge. `Alt+O` toggles focus to the dock; the arrow keys *live-switch* the active session as you move; right-click a row for Visit / Archive / Delete. Spin up new sessions from the **New Session** dialog (a type selector for Local / SSH / Kubernetes / Devcontainer), attach to existing git worktrees, or run bulk actions across a multi-select.
@@ -78,14 +86,6 @@ A built-in **environment-manager** plugin detects a project's `venv` / `.envrc` 
 ## Go to LSP Symbol
 
 A symbol finder with live preview: filter your document's symbols, see source-line snippets, and jump precisely to the symbol name (line *and* column), with the symbol under the cursor preselected.
-
-## Wave Screensaver
-
-Pure eye-candy: leave the editor idle and a decorative **wave** washes over it — a rising sea of glyphs that bounces every cell (text, gutter, chrome) up, down, and sideways, with words launching off the crest and sinking back, before the UI settles intact. It runs as a screensaver after `screensaver_idle_minutes`, or fire it any time with the **Wave Animation** command.
-
-<div class="showcase-demo">
-  <img src="./wave-screensaver/showcase.gif" alt="Wave screensaver demo" />
-</div>
 
 ## Also New
 
