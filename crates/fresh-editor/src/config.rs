@@ -5159,6 +5159,63 @@ impl Config {
             },
         );
 
+        // Assembly is split into two language entries sharing one grammar so
+        // comment toggling matches the dialect: NASM/MASM (Intel) comments
+        // are `;` while GAS (AT&T) x86 comments are `#`.
+        languages.insert(
+            "asm".to_string(),
+            LanguageConfig {
+                extensions: vec!["asm".to_string(), "nasm".to_string()],
+                filenames: vec![],
+                grammar: "Assembly".to_string(),
+                comment_prefix: Some(";".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "gas".to_string(),
+            LanguageConfig {
+                // LSP extension matching is case-sensitive: list both `.s`
+                // and `.S` (GAS source that runs through the C preprocessor).
+                extensions: vec!["s".to_string(), "S".to_string()],
+                filenames: vec![],
+                grammar: "Assembly".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indent: None,
+            },
+        );
+
         languages.insert(
             "ruby".to_string(),
             LanguageConfig {
@@ -7053,6 +7110,33 @@ impl Config {
         lsp.insert(
             "systemverilog".to_string(),
             LspLanguageConfig::Multi(vec![svls_config]),
+        );
+
+        // asm-lsp - Assembly Language Server (https://github.com/bergercookie/asm-lsp)
+        // Install via cargo: cargo install asm-lsp
+        // Handles GAS/NASM/MASM across x86, x86_64, ARM and RISC-V;
+        // configured per-project via .asm-lsp.toml.
+        let asm_lsp_config = LspServerConfig {
+            command: "asm-lsp".to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: false,
+            process_limits: ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+            root_markers: vec![".asm-lsp.toml".to_string(), ".git".to_string()],
+        };
+        lsp.insert(
+            "asm".to_string(),
+            LspLanguageConfig::Multi(vec![asm_lsp_config.clone()]),
+        );
+        lsp.insert(
+            "gas".to_string(),
+            LspLanguageConfig::Multi(vec![asm_lsp_config]),
         );
     }
     pub fn validate(&self) -> Result<(), ConfigError> {

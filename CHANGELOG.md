@@ -64,6 +64,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Minimal static Linux binary** release artifact (musl, x86_64 and aarch64) optimized for a small binary size.
 
+* **Assembly language support** (#1964, requested by @viti95): Syntax highlighting for GAS/AT&T (`.s`/`.S`) and NASM/Intel (`.asm`/`.nasm`) assembly, covering x86, x86_64, ARM and RISC-V. [asm-lsp](https://github.com/bergercookie/asm-lsp) wired as the default LSP (opt-in per project, configurable via `.asm-lsp.toml`).
+
 ### Improvements
 
 * **Orchestrator Dock right-click menu**: right-click a session row for an unobtrusive popup anchored at the cursor with Visit / Archive / Delete. Archive and Delete open a centered, full-screen-dimmed confirmation before they run.

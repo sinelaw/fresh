@@ -1,0 +1,124 @@
+%YAML 1.2
+---
+# Generic assembly grammar covering the dialects asm-lsp serves: GAS/AT&T
+# (x86, ARM, RISC-V) and Intel-style NASM/MASM. Mnemonics are highlighted
+# positionally (first word of an instruction line) instead of enumerating
+# every ISA, so the grammar stays small and works across architectures.
+name: Assembly
+file_extensions: [asm, s, S, nasm]
+scope: source.asm
+contexts:
+  main:
+    - include: preprocessor
+    - include: block-comments
+    - include: line-comments
+    - include: strings
+    - include: labels
+    - include: instructions
+    - include: directives
+    - include: data-keywords
+    - include: registers
+    - include: numbers
+
+  preprocessor:
+    # C preprocessor in .S files. Must precede line-comments so `#include`
+    # is not swallowed by the GAS `#` comment rule.
+    - match: '^\s*#\s*(include|define|undef|if|ifdef|ifndef|elif|else|endif|pragma|error|warning)\b'
+      scope: keyword.control.import.asm
+    # NASM preprocessor (%macro, %define, %include, %if, ...)
+    - match: '^\s*%[a-zA-Z_]\w*'
+      scope: keyword.control.import.asm
+
+  block-comments:
+    - match: '/\*'
+      push:
+        - meta_scope: comment.block.asm
+        - match: '\*/'
+          pop: true
+
+  line-comments:
+    - match: ';.*$'
+      scope: comment.line.semicolon.asm
+    - match: '//.*$'
+      scope: comment.line.double-slash.asm
+    # GAS x86 comment. ARM immediates (`#42`, `#0xff`) are matched by the
+    # numbers rule below, but numbers are reachable only from operand
+    # position, so guard against eating immediates here too.
+    - match: '#(?![-+]?\d).*$'
+      scope: comment.line.number-sign.asm
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.asm
+        - match: '\\.'
+          scope: constant.character.escape.asm
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.asm
+        - match: '\\.'
+          scope: constant.character.escape.asm
+        - match: "'"
+          pop: true
+
+  labels:
+    - match: '^\s*([A-Za-z_.$][\w.$]*):'
+      captures:
+        1: entity.name.function.asm
+      push: mnemonic
+
+  instructions:
+    - match: '^\s*(?=[A-Za-z_])'
+      push: mnemonic
+
+  mnemonic:
+    # NASM data definitions: `msg db "x"` — the first word is a name, the
+    # data keyword is highlighted by data-keywords from operand position.
+    - match: '([A-Za-z_.$][\w.$]*)(?=\s+(?i:db|dw|dd|dq|dt|do|dy|dz|resb|resw|resd|resq|equ)\b)'
+      captures:
+        1: entity.name.constant.asm
+      pop: true
+    - match: '[A-Za-z_][\w.]*'
+      scope: keyword.other.instruction.asm
+      pop: true
+    - match: '(?=\S|$)'
+      pop: true
+
+  directives:
+    # GAS directives: .text, .globl, .section, .ascii, ...
+    - match: '(?:^|\s)(\.[A-Za-z_][\w.]*)\b'
+      captures:
+        1: keyword.control.directive.asm
+    # NASM/MASM directives that appear without a leading dot
+    - match: '\b(?i:section|segment|global|extern|bits|org|align|alignb|default|cpu|use16|use32|use64|struc|endstruc|istruc|iend|times|incbin)\b'
+      scope: keyword.control.directive.asm
+
+  data-keywords:
+    - match: '\b(?i:db|dw|dd|dq|dt|do|dy|dz|resb|resw|resd|resq|rest|equ)\b'
+      scope: storage.type.asm
+
+  registers:
+    # AT&T register syntax: %rax, %eax, %xmm0, ...
+    - match: '%[a-zA-Z][\w]*'
+      scope: constant.language.register.asm
+    # AT&T immediates: $1, $0x10, $symbol
+    - match: '\$(0[xXbB][0-9a-fA-F]+|\d+)'
+      scope: constant.numeric.immediate.asm
+    # x86 / x86_64
+    - match: '\b(?i:[re]?(?:ax|bx|cx|dx|si|di|bp|sp|ip)|[abcd][lh]|sil|dil|bpl|spl|r(?:8|9|1[0-5])[bwd]?|[cdefgs]s|cr[0-8]|dr[0-7]|st[0-7]?|mm[0-7]|[xyz]mm(?:[12]?[0-9]|3[01]))\b'
+      scope: constant.language.register.asm
+    # ARM (AArch64) and RISC-V
+    - match: '\b(?i:[xwv](?:[12]?[0-9]|3[01])|sp|lr|pc|fp|xzr|wzr|zero|ra|gp|tp|t[0-6]|s(?:[0-9]|1[01])|a[0-7]|f[ast][0-9]+)\b'
+      scope: constant.language.register.asm
+
+  numbers:
+    - match: '#?[-+]?\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.asm
+    - match: '#?[-+]?\b0[bB][01]+\b'
+      scope: constant.numeric.binary.asm
+    - match: '\b[0-9a-fA-F]+[hH]\b'
+      scope: constant.numeric.hex.asm
+    - match: '#?[-+]?\b\d+\b'
+      scope: constant.numeric.decimal.asm

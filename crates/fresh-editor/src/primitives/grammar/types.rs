@@ -251,6 +251,10 @@ pub const VHDL_GRAMMAR: &str = include_str!("../../grammars/vhdl.sublime-syntax"
 
 pub const C3_GRAMMAR: &str = include_str!("../../grammars/c3.sublime-syntax");
 
+/// Embedded Assembly grammar (GAS/AT&T and Intel/NASM dialects; syntect
+/// doesn't include one)
+pub const ASM_GRAMMAR: &str = include_str!("../../grammars/asm.sublime-syntax");
+
 /// Registry of all available TextMate grammars.
 ///
 /// This struct holds the compiled syntax set and provides lookup methods.
@@ -722,6 +726,7 @@ impl GrammarRegistry {
             (SYSTEMVERILOG_GRAMMAR, "SystemVerilog"),
             (VHDL_GRAMMAR, "VHDL"),
             (C3_GRAMMAR, "C3"),
+            (ASM_GRAMMAR, "Assembly"),
         ];
 
         for (grammar_str, name) in additional_grammars {

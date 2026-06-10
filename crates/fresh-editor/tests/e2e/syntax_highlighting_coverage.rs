@@ -246,6 +246,35 @@ test_highlighting_works!(test_highlight_verilog, "hello.vh", 2);
 test_highlighting_works!(test_highlight_systemverilog, "hello.sv", 2);
 test_highlighting_works!(test_highlight_vhdl, "hello.vhd", 2);
 
+// --- Assembly (NASM/Intel via .asm, GAS/AT&T via .s) ---
+test_highlighting_works!(test_highlight_asm_nasm, "hello.asm", 2);
+test_highlighting_works!(test_highlight_asm_gas, "hello.s", 2);
+
+/// Without the asm/gas language entries, `.asm` resolves to no language at
+/// all and `.s` falls through to syntect's R grammar (its extension list
+/// claims `s`/`S`). Pin the detection so the config override keeps winning.
+#[test]
+fn test_asm_language_detection() {
+    for (file, expected) in [("hello.asm", "asm"), ("hello.s", "gas")] {
+        let path = fixture_path(file);
+        let mut harness = EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_project_root()
+                .with_full_grammar_registry(),
+        )
+        .unwrap();
+        harness.open_file(&path).unwrap();
+        harness.render().unwrap();
+        assert_eq!(
+            harness.editor().active_state().language,
+            expected,
+            "{file}: wrong language detected"
+        );
+    }
+}
+
 // --- Extension mappings (fixed) ---
 test_highlighting_works!(test_highlight_cjs, "hello.cjs", 2);
 test_highlighting_works!(test_highlight_mts, "hello.mts", 2);
