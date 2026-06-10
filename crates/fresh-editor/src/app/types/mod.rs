@@ -19,11 +19,12 @@ pub use buffer_group::{BufferGroup, BufferGroupId, GroupLayoutNode};
 pub use buffer_meta::{BufferKind, BufferMetadata};
 
 // context_menu re-exports
+pub use context_menu::EDITOR_CONTEXT_MENU_WIDTH;
 pub use context_menu::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
 pub use context_menu::NEW_TAB_MENU_WIDTH;
 pub use context_menu::{
-    FileExplorerContextMenu, FileExplorerContextMenuItem, NewTabMenu, NewTabMenuItem,
-    TabContextMenu, TabContextMenuItem,
+    EditorContextMenu, EditorContextMenuItem, FileExplorerContextMenu, FileExplorerContextMenuItem,
+    NewTabMenu, NewTabMenuItem, TabContextMenu, TabContextMenuItem,
 };
 
 // drag re-exports

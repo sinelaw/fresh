@@ -6,6 +6,11 @@ pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 24;
 /// Width of the "+" new-tab popup menu (fits "New Terminal" + padding).
 pub const NEW_TAB_MENU_WIDTH: u16 = 18;
 
+/// Width of the editor (buffer) right-click context menu. Wide enough to
+/// hold the longest localized "Select All" label (e.g. French
+/// "Tout sélectionner") plus borders.
+pub const EDITOR_CONTEXT_MENU_WIDTH: u16 = 20;
+
 /// Tab context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuItem {
@@ -233,6 +238,96 @@ impl FileExplorerContextMenuItem {
             Self::CopyFullPath => t!("explorer.context.copy_full_path").to_string(),
             Self::CopyRelativePath => t!("explorer.context.copy_relative_path").to_string(),
         }
+    }
+}
+
+/// Editor (buffer) context menu items. Shown on a plain right-click inside
+/// a text-buffer split. Deliberately minimal — the universal clipboard
+/// verbs every editor offers — since the command palette (Ctrl+P) already
+/// covers the long tail of commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorContextMenuItem {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+impl EditorContextMenuItem {
+    /// Get all menu items in order.
+    pub fn all() -> &'static [Self] {
+        &[Self::Cut, Self::Copy, Self::Paste, Self::SelectAll]
+    }
+
+    /// Get the display label for this menu item.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Cut => t!("editor.context.cut").to_string(),
+            Self::Copy => t!("editor.context.copy").to_string(),
+            Self::Paste => t!("editor.context.paste").to_string(),
+            Self::SelectAll => t!("editor.context.select_all").to_string(),
+        }
+    }
+}
+
+/// State for the editor (buffer) context menu (right-click popup over a
+/// text-buffer split).
+#[derive(Debug, Clone)]
+pub struct EditorContextMenu {
+    /// Screen position where the menu should appear (x, y).
+    pub position: (u16, u16),
+    /// Currently highlighted menu item index.
+    pub highlighted: usize,
+}
+
+impl EditorContextMenu {
+    pub fn new(x: u16, y: u16) -> Self {
+        Self {
+            position: (x, y),
+            highlighted: 0,
+        }
+    }
+
+    pub fn items(&self) -> &'static [EditorContextMenuItem] {
+        EditorContextMenuItem::all()
+    }
+
+    pub fn highlighted_item(&self) -> EditorContextMenuItem {
+        self.items()[self.highlighted]
+    }
+
+    pub fn height(&self) -> u16 {
+        self.items().len() as u16 + 2
+    }
+
+    /// Clamp the anchor so the whole menu stays on screen.
+    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
+        let x = if self.position.0 + EDITOR_CONTEXT_MENU_WIDTH > screen_width {
+            screen_width.saturating_sub(EDITOR_CONTEXT_MENU_WIDTH)
+        } else {
+            self.position.0
+        };
+        let h = self.height();
+        let y = if self.position.1 + h > screen_height {
+            screen_height.saturating_sub(h)
+        } else {
+            self.position.1
+        };
+        (x, y)
+    }
+
+    pub fn next_item(&mut self) {
+        let len = self.items().len();
+        self.highlighted = (self.highlighted + 1) % len;
+    }
+
+    pub fn prev_item(&mut self) {
+        let len = self.items().len();
+        self.highlighted = if self.highlighted == 0 {
+            len - 1
+        } else {
+            self.highlighted - 1
+        };
     }
 }
 

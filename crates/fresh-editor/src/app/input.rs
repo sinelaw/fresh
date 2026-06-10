@@ -592,6 +592,12 @@ impl Editor {
             return result;
         }
 
+        if self.active_window_mut().editor_context_menu.is_some() {
+            if let Some(result) = self.handle_editor_context_menu_key(code, modifiers) {
+                return result;
+            }
+        }
+
         // Determine the current context first
         let mut context = self.get_key_context();
 

@@ -2103,6 +2103,12 @@ impl Editor {
                 self.render_new_tab_menu(frame, &menu);
             }
         }
+
+        // Render the editor (buffer) right-click context menu if open
+        let editor_ctx_menu = self.active_window().editor_context_menu.clone();
+        if let Some(menu) = editor_ctx_menu {
+            self.render_editor_context_menu(frame, &menu);
+        }
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.
@@ -4065,6 +4071,55 @@ impl Editor {
 
         let items = menu.items();
         let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
+        let menu_height = menu.height();
+        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
+
+        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
+
+        frame.render_widget(Clear, area);
+
+        let mut lines = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let is_highlighted = idx == menu.highlighted;
+
+            let style = if is_highlighted {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_highlight_fg)
+                    .bg(self.theme.read().unwrap().menu_highlight_bg)
+            } else {
+                Style::default()
+                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
+                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
+            };
+
+            let label = item.label();
+            let content_width = (menu_width as usize).saturating_sub(2);
+            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
+
+            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
+            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
+
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(paragraph, area);
+    }
+
+    /// Render the editor (buffer) right-click context menu.
+    fn render_editor_context_menu(
+        &self,
+        frame: &mut Frame,
+        menu: &super::types::EditorContextMenu,
+    ) {
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+        let items = menu.items();
+        let menu_width = super::types::EDITOR_CONTEXT_MENU_WIDTH;
         let menu_height = menu.height();
         let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
 
