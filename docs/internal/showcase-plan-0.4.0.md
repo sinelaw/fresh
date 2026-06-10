@@ -45,6 +45,15 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 - [ ] **live-diff** — the live in-buffer unified-diff overlay (`vs HEAD` /
   `vs Disk` / `vs Branch…`) updating as the file changes. Pairs naturally with
   the Coding Agent: point Live Diff at a file and let an agent rewrite it.
+- [ ] **wave-screensaver** *(new on master)* — the decorative **wave
+  animation**: a rising, bottom-anchored "sea" with a growing swell and
+  ballistic words that launch off the crest and sink back. Runs as a
+  **screensaver** after `screensaver_idle_minutes` of inactivity
+  (`screensaver_enabled`), or fire it on demand with the **Wave Animation**
+  palette command ("bounce all content up, down, and sideways"). Pure eye-candy
+  and very GIF-friendly. *Demo:* open a code buffer, run **Wave Animation**, let
+  the swell rise and the words rain back down. Needs the per-frame `animate`
+  capture helper (real wall-clock between frames) since it's time-driven.
 
 ## Tier 1 — new since the last review (agent-aware orchestrator)
 
