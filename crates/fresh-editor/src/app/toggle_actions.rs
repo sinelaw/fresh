@@ -88,6 +88,37 @@ impl Editor {
         }
     }
 
+    /// The configured screensaver idle threshold, or `None` when the
+    /// screensaver is disabled (turned off, or a zero-minute timeout).
+    pub fn screensaver_idle_timeout(&self) -> Option<std::time::Duration> {
+        let editor = &self.config.editor;
+        if editor.screensaver_enabled && editor.screensaver_idle_minutes > 0 {
+            Some(std::time::Duration::from_secs(
+                editor.screensaver_idle_minutes as u64 * 60,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Start the wave animation as a screensaver if the editor has been
+    /// idle (no key/mouse input) for at least the configured threshold.
+    /// No-op — returns `false` — when the screensaver is disabled, the
+    /// idle time is below the threshold, or a wave is already running.
+    /// Returns `true` iff it started the screensaver on this call. The
+    /// main loop calls this each time it polls and finds no input event;
+    /// any real input both dismisses the wave and resets the idle clock.
+    pub fn maybe_start_screensaver(&mut self, idle: std::time::Duration) -> bool {
+        let Some(timeout) = self.screensaver_idle_timeout() else {
+            return false;
+        };
+        if idle < timeout || self.wave_animation_active() {
+            return false;
+        }
+        self.trigger_wave_animation();
+        true
+    }
+
     /// Toggle menu bar visibility.
     ///
     /// `editor.show_menu_bar` is a global preference, so the toggle updates the

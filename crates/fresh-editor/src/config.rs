@@ -876,6 +876,22 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_menu_bar: bool,
 
+    /// Enable the wave-animation screensaver. When the editor has been
+    /// idle (no key or mouse input) for `screensaver_idle_minutes`, a
+    /// decorative wave washes over the screen until you press a key or
+    /// move the mouse.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub screensaver_enabled: bool,
+
+    /// Minutes of inactivity before the wave-animation screensaver starts
+    /// (only when `screensaver_enabled`). A value of `0` disables it.
+    /// Default: 5
+    #[serde(default = "default_screensaver_idle_minutes")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub screensaver_idle_minutes: u32,
+
     /// Whether menu bar mnemonics (Alt+letter shortcuts) are enabled.
     /// When enabled, pressing Alt+F opens the File menu, Alt+E opens Edit, etc.
     /// Disabling this frees up Alt+letter keybindings for other actions.
@@ -1422,6 +1438,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_screensaver_idle_minutes() -> u32 {
+    5
+}
+
 fn default_false() -> bool {
     false
 }
@@ -1539,6 +1559,8 @@ impl Default for EditorConfig {
             quick_suggestions_delay_ms: default_quick_suggestions_delay(),
             suggest_on_trigger_characters: true,
             show_menu_bar: true,
+            screensaver_enabled: false,
+            screensaver_idle_minutes: default_screensaver_idle_minutes(),
             menu_bar_mnemonics: true,
             show_tab_bar: true,
             show_status_bar: true,

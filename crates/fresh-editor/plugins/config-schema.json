@@ -44,6 +44,8 @@
         "page_width": 80,
         "syntax_highlighting": true,
         "show_menu_bar": true,
+        "screensaver_enabled": false,
+        "screensaver_idle_minutes": 5,
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
         "show_status_bar": true,
@@ -385,6 +387,20 @@
           "description": "Whether the menu bar is visible by default.\nThe menu bar provides access to menus (File, Edit, View, etc.) at the top of the screen.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "screensaver_enabled": {
+          "description": "Enable the wave-animation screensaver. When the editor has been\nidle (no key or mouse input) for `screensaver_idle_minutes`, a\ndecorative wave washes over the screen until you press a key or\nmove the mouse.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Display"
+        },
+        "screensaver_idle_minutes": {
+          "description": "Minutes of inactivity before the wave-animation screensaver starts\n(only when `screensaver_enabled`). A value of `0` disables it.\nDefault: 5",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5,
           "x-section": "Display"
         },
         "menu_bar_mnemonics": {

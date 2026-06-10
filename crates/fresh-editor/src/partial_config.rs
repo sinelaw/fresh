@@ -199,6 +199,8 @@ pub struct PartialEditorConfig {
     pub quick_suggestions_delay_ms: Option<u64>,
     pub suggest_on_trigger_characters: Option<bool>,
     pub show_menu_bar: Option<bool>,
+    pub screensaver_enabled: Option<bool>,
+    pub screensaver_idle_minutes: Option<u32>,
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
@@ -307,6 +309,10 @@ impl Merge for PartialEditorConfig {
         self.suggest_on_trigger_characters
             .merge_from(&other.suggest_on_trigger_characters);
         self.show_menu_bar.merge_from(&other.show_menu_bar);
+        self.screensaver_enabled
+            .merge_from(&other.screensaver_enabled);
+        self.screensaver_idle_minutes
+            .merge_from(&other.screensaver_idle_minutes);
         self.menu_bar_mnemonics
             .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
@@ -625,6 +631,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             quick_suggestions_delay_ms: Some(cfg.quick_suggestions_delay_ms),
             suggest_on_trigger_characters: Some(cfg.suggest_on_trigger_characters),
             show_menu_bar: Some(cfg.show_menu_bar),
+            screensaver_enabled: Some(cfg.screensaver_enabled),
+            screensaver_idle_minutes: Some(cfg.screensaver_idle_minutes),
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
@@ -780,6 +788,12 @@ impl PartialEditorConfig {
                 .suggest_on_trigger_characters
                 .unwrap_or(defaults.suggest_on_trigger_characters),
             show_menu_bar: self.show_menu_bar.unwrap_or(defaults.show_menu_bar),
+            screensaver_enabled: self
+                .screensaver_enabled
+                .unwrap_or(defaults.screensaver_enabled),
+            screensaver_idle_minutes: self
+                .screensaver_idle_minutes
+                .unwrap_or(defaults.screensaver_idle_minutes),
             menu_bar_mnemonics: self
                 .menu_bar_mnemonics
                 .unwrap_or(defaults.menu_bar_mnemonics),
