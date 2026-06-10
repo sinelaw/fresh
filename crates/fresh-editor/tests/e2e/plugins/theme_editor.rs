@@ -4047,6 +4047,10 @@ fn test_theme_editor_colors_update_on_theme_change() {
 
     let mut config = fresh::config::Config::default();
     config.theme = "dark".into();
+    // The theme switch below kicks off a color-transition crossfade; the
+    // assertions check settled colors, so disable animations (the harness
+    // only does this automatically when no custom config is passed).
+    config.editor.animations = false;
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(140, 40, config, project_root).unwrap();

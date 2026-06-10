@@ -758,6 +758,10 @@ fn test_diagnostic_overlay_colors_update_on_theme_change() -> anyhow::Result<()>
 
     let mut config = Config::default();
     config.theme = "dark".into();
+    // The theme switch below kicks off a color-transition crossfade; the
+    // assertions check settled colors, so disable animations (the harness
+    // only does this automatically when no custom config is passed).
+    config.editor.animations = false;
     config.lsp.insert(
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {

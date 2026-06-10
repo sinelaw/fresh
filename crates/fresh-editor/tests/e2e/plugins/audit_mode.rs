@@ -2878,6 +2878,10 @@ fn start_server(config: Config) {
     // Start in the dark theme so we have well-known expected colors.
     let mut config = Config::default();
     config.theme = "dark".into();
+    // The theme switch below kicks off a color-transition crossfade; the
+    // assertions check settled colors, so disable animations (the harness
+    // only does this automatically when no custom config is passed).
+    config.editor.animations = false;
 
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(140, 40, config, repo.path.clone()).unwrap();
