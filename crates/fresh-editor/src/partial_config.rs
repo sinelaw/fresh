@@ -87,6 +87,7 @@ pub struct PartialConfig {
     pub active_keybinding_map: Option<KeybindingMapName>,
     pub languages: Option<HashMap<String, PartialLanguageConfig>>,
     pub default_language: Option<String>,
+    pub lsp_enabled: Option<bool>,
     pub lsp: Option<HashMap<String, LspLanguageConfig>>,
     pub universal_lsp: Option<HashMap<String, LspLanguageConfig>>,
     pub warnings: Option<PartialWarningsConfig>,
@@ -117,6 +118,7 @@ impl Merge for PartialConfig {
         merge_hashmap(&mut self.keybinding_maps, &other.keybinding_maps);
         merge_hashmap_recursive(&mut self.languages, &other.languages);
         self.default_language.merge_from(&other.default_language);
+        self.lsp_enabled.merge_from(&other.lsp_enabled);
         merge_hashmap(&mut self.lsp, &other.lsp);
         merge_hashmap(&mut self.universal_lsp, &other.universal_lsp);
         merge_hashmap_recursive(&mut self.plugins, &other.plugins);
@@ -1073,6 +1075,7 @@ impl From<&crate::config::Config> for PartialConfig {
                     .collect(),
             ),
             default_language: cfg.default_language.clone(),
+            lsp_enabled: Some(cfg.lsp_enabled),
             lsp: Some(
                 cfg.lsp
                     .iter()
@@ -1282,6 +1285,7 @@ impl PartialConfig {
             default_language: self
                 .default_language
                 .or_else(|| defaults.default_language.clone()),
+            lsp_enabled: self.lsp_enabled.unwrap_or(defaults.lsp_enabled),
             lsp,
             universal_lsp,
             warnings: self

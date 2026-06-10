@@ -73,6 +73,7 @@ pub(crate) fn compose_lsp_status(
     lsp_server_statuses: &HashMap<(String, String), LspServerStatus>,
     lsp_config: &HashMap<String, LspLanguageConfig>,
     user_dismissed_languages: &HashSet<String>,
+    lsp_globally_enabled: bool,
 ) -> (String, LspIndicatorState) {
     // 0. Per-buffer LSP skip — only flag it when it's a *mismatch* with
     //    language state: LSP is running for this language, but not for
@@ -162,10 +163,15 @@ pub(crate) fn compose_lsp_status(
         // server is the persistent flavour of the same idea, so render
         // it the same way: pill stays visible but dimmed, so the user
         // has a discoverable surface to re-enable.
+        // The global `lsp_enabled=false` master switch is the same flavour
+        // of deliberate opt-out, so it renders dimmed too.
         let any_enabled = lsp_config
             .get(current_language)
             .is_some_and(|cfg| cfg.as_slice().iter().any(|c| c.enabled));
-        let state = if !any_enabled || user_dismissed_languages.contains(current_language) {
+        let state = if !lsp_globally_enabled
+            || !any_enabled
+            || user_dismissed_languages.contains(current_language)
+        {
             LspIndicatorState::OffDismissed
         } else {
             LspIndicatorState::Off
@@ -227,6 +233,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         assert_eq!(text, "");
         assert_eq!(state, LspIndicatorState::None);
@@ -241,6 +248,7 @@ mod tests {
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         assert!(text.contains("LSP (off)"));
         assert_eq!(state, LspIndicatorState::Off);
@@ -257,6 +265,7 @@ mod tests {
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
             &dismissed,
+            true,
         );
         assert!(text.contains("LSP (off)"));
         assert_eq!(state, LspIndicatorState::OffDismissed);
@@ -283,6 +292,7 @@ mod tests {
             &HashMap::new(),
             &config,
             &HashSet::new(),
+            true,
         );
         assert!(
             text.contains("LSP (off)"),
@@ -298,6 +308,25 @@ mod tests {
         );
     }
 
+    /// With the global `lsp_enabled=false` master switch, configured
+    /// servers still surface the pill (so the user has a discoverable
+    /// surface to start manually or re-enable), but dimmed — the same
+    /// deliberate-opt-out flavour as all-servers-disabled.
+    #[test]
+    fn off_dismissed_when_lsp_globally_disabled() {
+        let (text, state) = compose_lsp_status(
+            "rust",
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            &configured_for("rust", "rust-analyzer"),
+            &HashSet::new(),
+            false,
+        );
+        assert!(text.contains("LSP (off)"));
+        assert_eq!(state, LspIndicatorState::OffDismissed);
+    }
+
     #[test]
     fn running_wins_over_off() {
         let statuses = status("rust", "rust-analyzer", LspServerStatus::Running);
@@ -308,6 +337,7 @@ mod tests {
             &statuses,
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         assert!(text.contains("LSP (on)"));
         assert_eq!(state, LspIndicatorState::On);
@@ -327,6 +357,7 @@ mod tests {
             &statuses,
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         assert!(text.contains("LSP (error)"));
         assert_eq!(state, LspIndicatorState::Error);
@@ -344,6 +375,7 @@ mod tests {
             &statuses,
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         assert!(text.contains("LSP"));
         assert_eq!(state, LspIndicatorState::On);
@@ -359,6 +391,7 @@ mod tests {
             &statuses,
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         assert!(text.contains("LSP (off)"));
         assert_eq!(state, LspIndicatorState::Off);
@@ -374,6 +407,7 @@ mod tests {
             &statuses,
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         assert_eq!(text, "");
         assert_eq!(state, LspIndicatorState::None);
@@ -390,6 +424,7 @@ mod tests {
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         let (err, _) = compose_lsp_status(
             "rust",
@@ -398,6 +433,7 @@ mod tests {
             &status("rust", "rust-analyzer", LspServerStatus::Error),
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         let (na, _) = compose_lsp_status(
             "rust",
@@ -406,6 +442,7 @@ mod tests {
             &status("rust", "rust-analyzer", LspServerStatus::Running),
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         let off_w = unicode_width::UnicodeWidthStr::width(off.as_str());
         let err_w = unicode_width::UnicodeWidthStr::width(err.as_str());
@@ -430,6 +467,7 @@ mod tests {
             &statuses,
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         assert!(
             text.contains("LSP (n/a)"),
@@ -452,6 +490,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashSet::new(),
+            true,
         );
         assert_eq!(text, "");
         assert_eq!(state, LspIndicatorState::None);
@@ -472,6 +511,7 @@ mod tests {
             &HashMap::new(),
             &configured_for("rust", "rust-analyzer"),
             &HashSet::new(),
+            true,
         );
         assert!(
             text.contains("LSP (off)"),

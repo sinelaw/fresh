@@ -388,6 +388,14 @@ pub struct Config {
     #[schemars(extend("x-enum-from" = "/languages"))]
     pub default_language: Option<String>,
 
+    /// Master switch for LSP support. When false, no language server is
+    /// started automatically for any language (per-language and universal
+    /// servers alike), without having to disable each server individually.
+    /// Servers can still be started manually, e.g. via the command palette's
+    /// "Start/Restart LSP Server".
+    #[serde(default = "default_true")]
+    pub lsp_enabled: bool,
+
     /// LSP server configurations by language.
     /// Each language maps to one or more server configs (multi-LSP support).
     /// Accepts both single-object and array forms for backwards compatibility.
@@ -2609,6 +2617,7 @@ impl Default for Config {
             active_keybinding_map: default_keybinding_map_name(),
             languages: Self::default_languages(),
             default_language: None,
+            lsp_enabled: true,
             lsp: Self::default_lsp_config(),
             universal_lsp: Self::default_universal_lsp_config(),
             warnings: WarningsConfig::default(),

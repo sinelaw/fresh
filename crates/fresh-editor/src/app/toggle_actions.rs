@@ -387,6 +387,7 @@ impl Editor {
         // Update LSP configs
         let __active_id = self.active_window;
         if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
+            lsp.set_globally_enabled(self.config.lsp_enabled);
             for (language, lsp_configs) in &self.config.lsp {
                 lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());
             }

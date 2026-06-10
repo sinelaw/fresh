@@ -940,6 +940,7 @@ impl Editor {
             &self.active_window().lsp_server_statuses,
             &self.config.lsp,
             &self.active_window().user_dismissed_lsp_languages,
+            self.config.lsp_enabled,
         );
         let theme = self.theme.read().unwrap().clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings

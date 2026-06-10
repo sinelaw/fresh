@@ -457,6 +457,13 @@ pub struct LspManager {
     /// Languages that have been explicitly disabled/stopped by the user
     /// These will not auto-restart until user manually restarts them
     disabled_languages: HashSet<String>,
+
+    /// Master switch mirroring the top-level `lsp_enabled` config field.
+    /// When false, `try_spawn` refuses to auto-start any server (per-language
+    /// and universal alike). Manual starts (`allow_language` + `force_spawn`)
+    /// still work — an explicit user action overrides the global opt-out,
+    /// matching how manual start already overrides per-server `enabled=false`.
+    globally_enabled: bool,
 }
 
 impl LspManager {
@@ -484,7 +491,14 @@ impl LspManager {
             pending_restarts: HashMap::new(),
             allowed_languages: HashSet::new(),
             disabled_languages: HashSet::new(),
+            globally_enabled: true,
         }
+    }
+
+    /// Mirror the top-level `lsp_enabled` config field. When false, no
+    /// server auto-starts for any language (see `try_spawn`).
+    pub fn set_globally_enabled(&mut self, enabled: bool) {
+        self.globally_enabled = enabled;
     }
 
     /// Wire the long-running spawner from the active `Authority`.
@@ -708,6 +722,18 @@ impl LspManager {
         {
             self.ensure_universal_servers_running(file_path);
             return LspSpawnResult::Spawned;
+        }
+
+        // Global master switch (top-level `lsp_enabled` config field): a
+        // deliberate user opt-out for every language, including universal
+        // servers. Checked before anything can spawn; manual starts go
+        // through `force_spawn` directly and are intentionally unaffected.
+        if !self.globally_enabled {
+            tracing::debug!(
+                "LSP for '{}' not auto-started: LSP is globally disabled (lsp_enabled=false)",
+                language
+            );
+            return LspSpawnResult::Disabled;
         }
 
         // Check if we have runtime and bridge
@@ -1331,6 +1357,12 @@ impl LspManager {
     /// across all languages. Only servers with `enabled=true` and
     /// `auto_start=true` are started automatically.
     fn ensure_universal_servers_running(&mut self, file_path: Option<&Path>) {
+        // Global master switch also covers universal servers — without this,
+        // a manually started language server would drag the universal
+        // servers up via the handles-exist fast path in `try_spawn`.
+        if !self.globally_enabled {
+            return;
+        }
         if self
             .handles
             .iter()
@@ -2232,6 +2264,45 @@ mod tests {
         );
 
         assert_eq!(manager.try_spawn("rust", None), LspSpawnResult::Disabled);
+    }
+
+    // The global master switch (top-level `lsp_enabled=false` config field)
+    // must block auto-start even for a server that is individually
+    // enabled+auto_start. It's a deliberate user opt-out, so the result is
+    // `Disabled` (callers stay silent), not `Failed`.
+    #[test]
+    fn test_lsp_manager_try_spawn_returns_disabled_when_globally_disabled() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut manager = LspManager::new(fresh_core::WindowId(1), None);
+        let async_bridge = AsyncBridge::new();
+        manager.set_runtime(rt.handle().clone(), async_bridge);
+
+        manager.set_language_config(
+            "rust".to_string(),
+            LspServerConfig {
+                enabled: true,
+                command: "rust-analyzer".to_string(),
+                args: vec![],
+                process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
+                auto_start: true,
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: Default::default(),
+            },
+        );
+
+        manager.set_globally_enabled(false);
+        assert_eq!(manager.try_spawn("rust", None), LspSpawnResult::Disabled);
+
+        // Flipping the switch back restores normal auto-start behaviour
+        // (the spawn itself may fail in this barebones test setup, but it
+        // must no longer short-circuit to Disabled).
+        manager.set_globally_enabled(true);
+        assert_ne!(manager.try_spawn("rust", None), LspSpawnResult::Disabled);
     }
 
     #[test]

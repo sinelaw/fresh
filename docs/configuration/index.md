@@ -97,6 +97,16 @@ The `lsp` map uses **deep merging with field-level override**:
 // Result: rust-analyzer command preserved from defaults, just disabled
 ```
 
+**Example:** To disable LSP for *all* languages at once, use the top-level
+`lsp_enabled` master switch instead of disabling each server:
+```json
+{
+  "lsp_enabled": false
+}
+// Result: no language server auto-starts for any language (universal servers
+// included). Manual starts via the command palette still work.
+```
+
 **Example:** To add initialization options without repeating the command:
 ```json
 {

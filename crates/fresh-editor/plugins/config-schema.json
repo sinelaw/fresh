@@ -207,6 +207,11 @@
       "default": null,
       "x-enum-from": "/languages"
     },
+    "lsp_enabled": {
+      "description": "Master switch for LSP support. When false, no language server is\nstarted automatically for any language (per-language and universal\nservers alike), without having to disable each server individually.\nServers can still be started manually, e.g. via the command palette's\n\"Start/Restart LSP Server\".",
+      "type": "boolean",
+      "default": true
+    },
     "lsp": {
       "description": "LSP server configurations by language.\nEach language maps to one or more server configs (multi-LSP support).\nAccepts both single-object and array forms for backwards compatibility.",
       "type": "object",

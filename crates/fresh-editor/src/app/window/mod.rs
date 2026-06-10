@@ -818,6 +818,9 @@ pub(crate) fn configure_lsp_servers(
 ) {
     use crate::types::{LspServerConfig, ProcessLimits};
 
+    // Global master switch — gates auto-start of every server below.
+    lsp.set_globally_enabled(config.lsp_enabled);
+
     // Per-language servers from config.
     for (language, lsp_configs) in &config.lsp {
         lsp.set_language_configs(language.clone(), lsp_configs.as_slice().to_vec());

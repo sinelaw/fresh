@@ -42,6 +42,20 @@ You can configure multiple LSP servers for the same language (e.g., pylsp + pyri
 
 Each server can opt into or out of specific features using `only_features` / `except_features` — for example, route completions to one server and diagnostics to another. Fresh merges completions from every eligible server and tracks diagnostics per-server. Servers configured for all languages are spawned once per project rather than once per language.
 
+## Disabling LSP
+
+To disable a single server, set `"enabled": false` on its entry in the `lsp` map (Settings UI: **LSP** section), or mute the language from the status-bar popup.
+
+To disable LSP for **all** languages at once, set the top-level `lsp_enabled` master switch to `false` (Settings UI: **General** section):
+
+```json
+{
+  "lsp_enabled": false
+}
+```
+
+No language server will auto-start for any language (universal servers included), and the status bar shows a dimmed `LSP (off)` pill when servers are configured for the current language. You can still start a server explicitly with **Start/Restart LSP Server** from the command palette — a manual start overrides the global switch for that language.
+
 ## C/C++ Header Routing
 
 When you open a `.h` file, Fresh routes to the C++ LSP if there's a clear signal in the project (a sibling `.cpp`, `.hpp`, or `.hxx`), and to the C LSP otherwise.
