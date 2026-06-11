@@ -1,0 +1,63 @@
+%YAML 1.2
+---
+name: Fish
+file_extensions: [fish]
+scope: source.fish
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: variables
+    - include: keywords
+    - include: numbers
+    - include: operators
+    - include: commands
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.fish
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.fish
+        - match: '\\.'
+          scope: constant.character.escape.fish
+        - match: '\$\w+'
+          scope: variable.other.fish
+        - match: '"'
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.fish
+        - match: "''"
+          scope: constant.character.escape.fish
+        - match: "'"
+          pop: true
+
+  variables:
+    - match: '\$[A-Za-z_][A-Za-z0-9_]*'
+      scope: variable.other.fish
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.fish
+
+  keywords:
+    - match: '\b(if|else|switch|case|for|while|begin|function|end|break|continue|return|and|or|not)\b'
+      scope: keyword.control.fish
+    - match: '\b(set|set_color|status|test|command|builtin|source|emit|eval|exec|read|argparse|complete|abbr|alias|functions|type)\b'
+      scope: support.function.fish
+    - match: '\b(true|false)\b'
+      scope: constant.language.fish
+
+  operators:
+    - match: '(\||&&|;|=|!=|<=|>=|<|>)'
+      scope: keyword.operator.fish
+
+  numbers:
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.fish
+
+  commands:
+    - match: '(^|\s)([A-Za-z_./-][A-Za-z0-9_./-]*)'
+      captures:
+        2: support.function.fish

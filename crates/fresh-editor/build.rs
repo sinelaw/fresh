@@ -352,6 +352,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/kdl.sublime-syntax", "KDL"),
         ("src/grammars/nushell.sublime-syntax", "Nushell"),
         ("src/grammars/smali.sublime-syntax", "Smali"),
+        ("src/grammars/fish.sublime-syntax", "Fish"),
         ("src/grammars/starlark.sublime-syntax", "Starlark"),
         ("src/grammars/justfile.sublime-syntax", "Justfile"),
         ("src/grammars/earthfile.sublime-syntax", "Earthfile"),

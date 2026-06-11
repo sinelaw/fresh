@@ -114,8 +114,8 @@ impl IndentCalculator {
                 Language::CSharp => ("csharp", include_str!("../../queries/csharp/indents.scm")),
                 Language::Pascal => ("pascal", include_str!("../../queries/pascal/indents.scm")),
                 Language::Odin => ("odin", include_str!("../../queries/odin/indents.scm")),
-                // Fish has a bundled parser for highlighting, but no
-                // indentation query yet. Use the keyword-delimited fallback.
+                // Fish uses the regex indent-rules tier, not a bundled
+                // tree-sitter indent query.
                 Language::Fish => return None,
                 // Templ extends Go's grammar; Go's indent rules apply to the Go
                 // portions of a templ file. The HTML/CSS portions fall back to
@@ -234,7 +234,7 @@ impl IndentCalculator {
     fn uses_keyword_delimited_blocks(language: &Language) -> bool {
         matches!(
             language,
-            Language::Lua | Language::Ruby | Language::Bash | Language::Fish | Language::Pascal
+            Language::Lua | Language::Ruby | Language::Bash | Language::Pascal
         )
     }
 

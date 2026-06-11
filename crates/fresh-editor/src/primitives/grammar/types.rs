@@ -218,6 +218,8 @@ pub const KDL_GRAMMAR: &str = include_str!("../../grammars/kdl.sublime-syntax");
 pub const NUSHELL_GRAMMAR: &str = include_str!("../../grammars/nushell.sublime-syntax");
 /// Embedded Smali grammar
 pub const SMALI_GRAMMAR: &str = include_str!("../../grammars/smali.sublime-syntax");
+/// Embedded Fish shell grammar
+pub const FISH_GRAMMAR: &str = include_str!("../../grammars/fish.sublime-syntax");
 /// Embedded Starlark/Bazel grammar
 pub const STARLARK_GRAMMAR: &str = include_str!("../../grammars/starlark.sublime-syntax");
 /// Embedded Justfile grammar
@@ -705,6 +707,7 @@ impl GrammarRegistry {
             (KDL_GRAMMAR, "KDL"),
             (NUSHELL_GRAMMAR, "Nushell"),
             (SMALI_GRAMMAR, "Smali"),
+            (FISH_GRAMMAR, "Fish"),
             (STARLARK_GRAMMAR, "Starlark"),
             (JUSTFILE_GRAMMAR, "Justfile"),
             (EARTHFILE_GRAMMAR, "Earthfile"),
@@ -1126,7 +1129,12 @@ impl GrammarRegistry {
             }
             for ext in &entry.extensions {
                 let ext_key = ext.to_lowercase();
-                if entry.engines.syntect.is_none() && entry.engines.tree_sitter.is_some() {
+                // Syntect's default Bash grammar also advertises `.fish`.
+                // Fresh ships an explicit Fish grammar, so it must win that
+                // extension even though Bash appears earlier in the packdump.
+                if entry.language_id == "fish"
+                    || (entry.engines.syntect.is_none() && entry.engines.tree_sitter.is_some())
+                {
                     by_extension.insert(ext_key, idx);
                 } else {
                     by_extension.entry(ext_key).or_insert(idx);
@@ -2248,7 +2256,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fish_extension_prefers_tree_sitter_entry_over_bash_fallback() {
+    fn test_fish_extension_prefers_fish_grammar_over_bash_fallback() {
         let registry = GrammarRegistry::default();
         let entry = registry
             .find_by_extension("fish")
@@ -2256,10 +2264,7 @@ mod tests {
 
         assert_eq!(entry.language_id, "fish");
         assert_eq!(entry.display_name, "Fish");
-        assert_eq!(
-            entry.engines.tree_sitter,
-            Some(fresh_languages::Language::Fish)
-        );
+        assert!(entry.engines.syntect.is_some());
     }
 
     /// Config-declared extensions must override the built-in mapping. If the

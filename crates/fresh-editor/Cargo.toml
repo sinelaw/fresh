@@ -49,7 +49,7 @@ plugins = [
 # Tree-sitter AST features (precise indent, scope-aware reference highlighting,
 # and tree-sitter syntax highlighting for the languages syntect can't cover).
 # Enabled by default, but only bundles the grammars that *must* use tree-sitter
-# — JavaScript, TypeScript, JSONC, Fish, Templ and Go (see
+# — JavaScript, TypeScript, JSONC, Templ and Go (see
 # `fresh-languages/bundled-languages`). Every other language is highlighted by
 # syntect and indented by the regex indent-rules tier, so its parse table is
 # not linked. When this feature is disabled entirely, all tree-sitter code is

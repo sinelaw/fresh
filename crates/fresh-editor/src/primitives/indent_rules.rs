@@ -67,6 +67,8 @@ pub enum Family {
     LuaLike,
     /// Bash — `if…then…fi`, `for/while…do…done`, `case…esac`, `{ }`.
     BashLike,
+    /// Fish — `if…end`, `for…end`, `function…end`, `switch/case…end`.
+    FishLike,
     /// Pascal — `begin…end`, `case…of…end`, `repeat…until`.
     PascalLike,
     /// Smali — dot-directive blocks such as `.method` ... `.end method`,
@@ -294,6 +296,7 @@ fn family_for_id(id: &str) -> Option<Family> {
         "ruby" => Family::RubyLike,
         "lua" => Family::LuaLike,
         "bash" | "sh" | "shell" | "shellscript" => Family::BashLike,
+        "fish" => Family::FishLike,
         "pascal" => Family::PascalLike,
         "smali" => Family::SmaliLike,
         _ => return None,
@@ -310,6 +313,7 @@ fn def_for_family(family: Family) -> &'static IndentRulesDef {
         Family::RubyLike => &RUBY_LIKE,
         Family::LuaLike => &LUA_LIKE,
         Family::BashLike => &BASH_LIKE,
+        Family::FishLike => &FISH_LIKE,
         Family::PascalLike => &PASCAL_LIKE,
         Family::SmaliLike => &SMALI_LIKE,
     }
@@ -324,6 +328,7 @@ static FAMILY_RULES: Lazy<HashMap<Family, Arc<IndentRules>>> = Lazy::new(|| {
         Family::RubyLike,
         Family::LuaLike,
         Family::BashLike,
+        Family::FishLike,
         Family::PascalLike,
         Family::SmaliLike,
     ] {
@@ -471,6 +476,15 @@ const BASH_LIKE: IndentRulesDef = IndentRulesDef {
     indent_next_line: None,
     dedent_next_line: None,
     self_close: None,
+    indentation_significant: false,
+};
+
+const FISH_LIKE: IndentRulesDef = IndentRulesDef {
+    increase: Some(r"^\s*(if|else|for|while|begin|function|switch|case)\b"),
+    decrease: Some(r"^\s*(end|else|case)\b"),
+    indent_next_line: None,
+    dedent_next_line: None,
+    self_close: Some(r"\bend\b"),
     indentation_significant: false,
 };
 
@@ -808,6 +822,26 @@ mod tests {
     fn bash_resolves_from_syntect_name() {
         // syntect names bash "Bourne Again Shell (bash)".
         assert!(rules_for_syntax_name("Bourne Again Shell (bash)").is_some());
+    }
+
+    #[test]
+    fn fish_indents_after_block_openers() {
+        assert_eq!(indent("fish", "if test -n \"$name\"\n", 4), 4);
+        assert_eq!(indent("fish", "for item in $items\n", 4), 4);
+        assert_eq!(
+            indent("fish", "function greet --argument-names name\n", 4),
+            4
+        );
+        assert_eq!(indent("fish", "switch $name\n", 4), 4);
+        assert_eq!(indent("fish", "case fresh\n", 4), 4);
+    }
+
+    #[test]
+    fn fish_one_liner_with_end_does_not_indent() {
+        assert_eq!(
+            indent("fish", "if test -n \"$name\"; echo $name; end\n", 4),
+            0
+        );
     }
 
     // ---- PascalLike -------------------------------------------------------

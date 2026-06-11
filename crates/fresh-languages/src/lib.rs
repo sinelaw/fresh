@@ -8,8 +8,6 @@ pub use tree_sitter_highlight::HighlightConfiguration;
 // Re-export the bundled language grammar crates (gated by features). Only the
 // languages that must use tree-sitter because syntect ships no highlighting
 // for them are bundled; the rest were removed (see Cargo.toml).
-#[cfg(feature = "tree-sitter-fish")]
-pub use tree_sitter_fish;
 #[cfg(feature = "tree-sitter-go")]
 pub use tree_sitter_go;
 #[cfg(feature = "tree-sitter-javascript")]
@@ -303,23 +301,6 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-json"))]
                 Err("JSONC language support not enabled".to_string())
             }
-            Self::Fish => {
-                #[cfg(feature = "tree-sitter-fish")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_fish::language(),
-                        "fish",
-                        tree_sitter_fish::HIGHLIGHTS_QUERY,
-                        "",
-                        "",
-                    )
-                    .map_err(|e| format!("Failed to create Fish highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-fish"))]
-                Err("Fish language support not enabled".to_string())
-            }
             Self::Templ => {
                 // The templ grammar extends Go (see vrischmann/tree-sitter-templ),
                 // so combining Go's highlights query with the templ-specific one
@@ -409,16 +390,6 @@ impl Language {
                     Some(tree_sitter_json::LANGUAGE.into())
                 }
                 #[cfg(not(feature = "tree-sitter-json"))]
-                {
-                    None
-                }
-            }
-            Self::Fish => {
-                #[cfg(feature = "tree-sitter-fish")]
-                {
-                    Some(tree_sitter_fish::language())
-                }
-                #[cfg(not(feature = "tree-sitter-fish"))]
                 {
                     None
                 }
@@ -784,14 +755,6 @@ mod tests {
     fn test_fish_detected_from_extension() {
         let path = Path::new("config.fish");
         assert!(matches!(Language::from_path(path), Some(Language::Fish)));
-    }
-
-    #[test]
-    #[cfg(feature = "tree-sitter-fish")]
-    fn test_fish_highlight_config_builds() {
-        Language::Fish
-            .highlight_config()
-            .expect("Fish highlight config should build");
     }
 
     #[test]

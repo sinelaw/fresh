@@ -13,14 +13,13 @@ tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true
 # Only the grammars Fresh must use tree-sitter for are kept: languages syntect
 # ships no highlighting for — JavaScript, TypeScript, JSON (also serves JSONC),
-# Fish, Templ — plus Go, which the Templ grammar extends. The other grammars were
+# Templ — plus Go, which the Templ grammar extends. The other grammars were
 # removed: those languages are highlighted by syntect and indented by the regex
 # indent-rules tier, which dropped ~18 MB of parse tables from the binary.
 tree-sitter-javascript = { version = "0.25.0", optional = true }
 tree-sitter-typescript = { version = "0.23.2", optional = true }
 tree-sitter-go = { version = "0.25.0", optional = true }
 tree-sitter-json = { version = "0.24.8", optional = true }
-tree-sitter-fish = { version = "3.6.0", optional = true }
 tree-sitter-templ = { version = "2.2.0", optional = true }
 
 [features]
@@ -32,6 +31,5 @@ tree-sitter-templ = ["dep:tree-sitter-templ", "tree-sitter-go"]
 # the editor's `tree-sitter` feature enables.
 bundled-languages = [
     "tree-sitter-javascript", "tree-sitter-typescript",
-    "tree-sitter-json", "tree-sitter-fish", "tree-sitter-go",
-    "tree-sitter-templ",
+    "tree-sitter-json", "tree-sitter-go", "tree-sitter-templ",
 ]
