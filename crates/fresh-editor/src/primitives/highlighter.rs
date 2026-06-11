@@ -404,9 +404,6 @@ mod tests {
         let path = std::path::Path::new("home.templ");
         assert!(matches!(Language::from_path(path), Some(Language::Templ)));
 
-        let path = std::path::Path::new("MainActivity.smali");
-        assert!(matches!(Language::from_path(path), Some(Language::Smali)));
-
         // Markdown disabled due to tree-sitter version conflict
         // let path = std::path::Path::new("test.md");
         // assert!(matches!(Language::from_path(path), Some(Language::Markdown)));

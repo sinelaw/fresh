@@ -14,8 +14,6 @@ pub use tree_sitter_go;
 pub use tree_sitter_javascript;
 #[cfg(feature = "tree-sitter-json")]
 pub use tree_sitter_json;
-#[cfg(feature = "tree-sitter-smali")]
-pub use tree_sitter_smali;
 #[cfg(feature = "tree-sitter-templ")]
 pub use tree_sitter_templ;
 #[cfg(feature = "tree-sitter-typescript")]
@@ -186,7 +184,6 @@ pub enum Language {
     Pascal,
     Odin,
     Templ,
-    Smali,
 }
 
 impl Language {
@@ -329,23 +326,6 @@ impl Language {
                 #[cfg(not(feature = "tree-sitter-templ"))]
                 Err("Templ language support not enabled".to_string())
             }
-            Self::Smali => {
-                #[cfg(feature = "tree-sitter-smali")]
-                {
-                    let mut config = HighlightConfiguration::new(
-                        tree_sitter_smali::LANGUAGE.into(),
-                        "smali",
-                        tree_sitter_smali::HIGHLIGHTS_QUERY,
-                        "",
-                        tree_sitter_smali::LOCALS_QUERY,
-                    )
-                    .map_err(|e| format!("Failed to create Smali highlight config: {e}"))?;
-                    config.configure(DEFAULT_HIGHLIGHT_CAPTURES);
-                    Ok(config)
-                }
-                #[cfg(not(feature = "tree-sitter-smali"))]
-                Err("Smali language support not enabled".to_string())
-            }
             // Every other language is highlighted by syntect; no tree-sitter
             // grammar is bundled for it (see Cargo.toml and `ts_language`).
             _ => Err("no bundled tree-sitter grammar for this language".to_string()),
@@ -423,16 +403,6 @@ impl Language {
                     None
                 }
             }
-            Self::Smali => {
-                #[cfg(feature = "tree-sitter-smali")]
-                {
-                    Some(tree_sitter_smali::LANGUAGE.into())
-                }
-                #[cfg(not(feature = "tree-sitter-smali"))]
-                {
-                    None
-                }
-            }
             // Every other language is highlighted by syntect and indented by
             // the regex rules tier; no tree-sitter grammar is bundled for it.
             _ => None,
@@ -464,7 +434,6 @@ impl Language {
             Language::Pascal,
             Language::Odin,
             Language::Templ,
-            Language::Smali,
         ]
     }
 
@@ -491,7 +460,6 @@ impl Language {
             Self::Pascal => "pascal",
             Self::Odin => "odin",
             Self::Templ => "templ",
-            Self::Smali => "smali",
         }
     }
 
@@ -538,7 +506,6 @@ impl Language {
             Self::Pascal => &["pas", "p"],
             Self::Odin => &["odin"],
             Self::Templ => &["templ"],
-            Self::Smali => &["smali"],
         }
     }
 
@@ -565,7 +532,6 @@ impl Language {
             Self::Pascal => "Pascal",
             Self::Odin => "Odin",
             Self::Templ => "Templ",
-            Self::Smali => "Smali",
         }
     }
 
@@ -593,7 +559,6 @@ impl Language {
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
             "templ" => Some(Self::Templ),
-            "smali" => Some(Self::Smali),
             _ => None,
         }
     }
@@ -636,7 +601,6 @@ impl Language {
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
             "templ" => Some(Self::Templ),
-            "smali" => Some(Self::Smali),
             _ => {
                 // Try matching shell variants
                 if name_lower.contains("bash") || name_lower.contains("shell") {
@@ -789,20 +753,6 @@ mod tests {
         Language::Templ
             .highlight_config()
             .expect("Templ highlight config should build");
-    }
-
-    #[test]
-    fn test_smali_detected_from_extension() {
-        let path = Path::new("MainActivity.smali");
-        assert!(matches!(Language::from_path(path), Some(Language::Smali)));
-    }
-
-    #[test]
-    #[cfg(feature = "tree-sitter-smali")]
-    fn test_smali_highlight_config_builds() {
-        Language::Smali
-            .highlight_config()
-            .expect("Smali highlight config should build");
     }
 
     /// Guard: `from_path` and `extensions()` must stay in sync — they used to

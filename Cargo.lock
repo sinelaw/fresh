@@ -1485,7 +1485,6 @@ dependencies = [
  "tree-sitter-highlight",
  "tree-sitter-javascript",
  "tree-sitter-json",
- "tree-sitter-smali-valonsodev",
  "tree-sitter-templ",
  "tree-sitter-typescript",
 ]
@@ -5876,16 +5875,6 @@ name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
-
-[[package]]
-name = "tree-sitter-smali-valonsodev"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbdb2196eea06206e759bed879a03e9c39b2370b4dffccd6872a5a50e7b199b0"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
 
 [[package]]
 name = "tree-sitter-templ"

@@ -118,7 +118,6 @@ impl IndentCalculator {
                 // portions of a templ file. The HTML/CSS portions fall back to
                 // copy-current-line indent, good enough as an initial heuristic.
                 Language::Templ => ("templ", include_str!("../../queries/go/indents.scm")),
-                Language::Smali => ("smali", include_str!("../../queries/smali/indents.scm")),
             };
 
             // Check if we already have this config

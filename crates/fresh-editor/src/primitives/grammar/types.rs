@@ -216,6 +216,8 @@ pub const SOLIDITY_GRAMMAR: &str = include_str!("../../grammars/solidity.sublime
 pub const KDL_GRAMMAR: &str = include_str!("../../grammars/kdl.sublime-syntax");
 /// Embedded Nushell grammar
 pub const NUSHELL_GRAMMAR: &str = include_str!("../../grammars/nushell.sublime-syntax");
+/// Embedded Smali grammar
+pub const SMALI_GRAMMAR: &str = include_str!("../../grammars/smali.sublime-syntax");
 /// Embedded Starlark/Bazel grammar
 pub const STARLARK_GRAMMAR: &str = include_str!("../../grammars/starlark.sublime-syntax");
 /// Embedded Justfile grammar
@@ -668,6 +670,7 @@ impl GrammarRegistry {
             (SOLIDITY_GRAMMAR, "Solidity"),
             (KDL_GRAMMAR, "KDL"),
             (NUSHELL_GRAMMAR, "Nushell"),
+            (SMALI_GRAMMAR, "Smali"),
             (STARLARK_GRAMMAR, "Starlark"),
             (JUSTFILE_GRAMMAR, "Justfile"),
             (EARTHFILE_GRAMMAR, "Earthfile"),
@@ -2069,6 +2072,21 @@ mod tests {
         assert_eq!(ts.display_name, "TypeScript");
         let rs = registry.find_by_extension("rs").expect("rs should resolve");
         assert_eq!(rs.display_name, "Rust");
+    }
+
+    #[test]
+    fn test_smali_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(SMALI_GRAMMAR, true, Some("Smali"))
+            .expect("Smali grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "smali"));
+
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("MainActivity.smali"), None)
+            .expect("Smali files should resolve");
+        assert_eq!(entry.display_name, "Smali");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
     }
 
     /// Build a minimal LanguageConfig for tests.

@@ -69,6 +69,9 @@ pub enum Family {
     BashLike,
     /// Pascal — `begin…end`, `case…of…end`, `repeat…until`.
     PascalLike,
+    /// Smali — dot-directive blocks such as `.method` ... `.end method`,
+    /// plus brace-delimited register/value lists.
+    SmaliLike,
 }
 
 /// String form of a rule set (what a family or user config provides).
@@ -292,6 +295,7 @@ fn family_for_id(id: &str) -> Option<Family> {
         "lua" => Family::LuaLike,
         "bash" | "sh" | "shell" | "shellscript" => Family::BashLike,
         "pascal" => Family::PascalLike,
+        "smali" => Family::SmaliLike,
         _ => return None,
     };
     Some(f)
@@ -307,6 +311,7 @@ fn def_for_family(family: Family) -> &'static IndentRulesDef {
         Family::LuaLike => &LUA_LIKE,
         Family::BashLike => &BASH_LIKE,
         Family::PascalLike => &PASCAL_LIKE,
+        Family::SmaliLike => &SMALI_LIKE,
     }
 }
 
@@ -320,6 +325,7 @@ static FAMILY_RULES: Lazy<HashMap<Family, Arc<IndentRules>>> = Lazy::new(|| {
         Family::LuaLike,
         Family::BashLike,
         Family::PascalLike,
+        Family::SmaliLike,
     ] {
         m.insert(
             family,
@@ -384,6 +390,39 @@ const CURLY_BRACE: IndentRulesDef = IndentRulesDef {
     indent_next_line: Some(r"^\s*((if|for|while)\b.*\)|else)\s*$"),
     dedent_next_line: None,
     self_close: None,
+    indentation_significant: false,
+};
+
+const SMALI_LIKE: IndentRulesDef = IndentRulesDef {
+    increase: Some(
+        r"(?x)
+        (^\s*\.
+            (?:method|annotation|subannotation|packed-switch|sparse-switch|array-data|param|parameter)
+            \b
+        )
+        |
+        ([\{\[\(]\s*$)
+        ",
+    ),
+    decrease: Some(
+        r"(?x)^\s*
+        (?:
+            \.end\s+
+                (?:method|annotation|subannotation|packed-switch|sparse-switch|array-data|param|parameter)\b
+            |
+            [\}\]\)]
+        )
+        ",
+    ),
+    indent_next_line: None,
+    dedent_next_line: None,
+    self_close: Some(
+        r"(?x)^\s*\.
+            (?:method|annotation|subannotation|packed-switch|sparse-switch|array-data|param|parameter)
+            \b.*\s\.end\s+
+            (?:method|annotation|subannotation|packed-switch|sparse-switch|array-data|param|parameter)\b
+        ",
+    ),
     indentation_significant: false,
 };
 
@@ -782,6 +821,35 @@ mod tests {
     #[test]
     fn pascal_one_liner_with_end_does_not_indent() {
         assert_eq!(indent("pascal", "begin end;\n", 4), 0);
+    }
+
+    // ---- SmaliLike --------------------------------------------------------
+
+    #[test]
+    fn smali_indents_after_method_directive() {
+        assert_eq!(
+            indent(
+                "smali",
+                ".method public onCreate(Landroid/os/Bundle;)V\n",
+                4
+            ),
+            4
+        );
+    }
+
+    #[test]
+    fn smali_dedents_before_end_directive() {
+        let content = ".method public main()V\n    .end method";
+        let pos = content.find(".end method").unwrap();
+        let got = rules_for_id("smali")
+            .unwrap()
+            .calculate_indent(&buf(content), pos, 4, |_| true);
+        assert_eq!(got, 0);
+    }
+
+    #[test]
+    fn smali_plain_field_does_not_indent() {
+        assert_eq!(indent("smali", ".field public static count:I = 0\n", 4), 0);
     }
 
     // ---- registry ---------------------------------------------------------

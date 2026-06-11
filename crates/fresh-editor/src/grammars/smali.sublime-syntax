@@ -1,0 +1,77 @@
+%YAML 1.2
+---
+name: Smali
+file_extensions: [smali]
+scope: source.smali
+
+variables:
+  identifier: '[A-Za-z_$][A-Za-z0-9_$-]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: labels
+    - include: directives
+    - include: opcodes
+    - include: types
+    - include: registers
+    - include: constants
+    - include: punctuation
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.smali
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.smali
+        - match: '\\([btnrf"''\\]|u[0-9a-fA-F]{4}|[0-3]?[0-7]{1,2})'
+          scope: constant.character.escape.smali
+        - match: '"'
+          pop: true
+
+  labels:
+    - match: '(:)({{identifier}})'
+      captures:
+        1: punctuation.definition.label.smali
+        2: entity.name.label.smali
+
+  directives:
+    - match: '(\.end\s+)(method|field|annotation|subannotation|param|parameter|packed-switch|sparse-switch|array-data)\b'
+      captures:
+        1: keyword.control.directive.smali
+        2: keyword.control.directive.smali
+    - match: '\.(class|super|implements|source|field|method|annotation|subannotation|param|parameter|line|locals|local|registers|prologue|epilogue|catch|catchall|packed-switch|sparse-switch|array-data|enum|restart local|end local)\b'
+      scope: keyword.control.directive.smali
+    - match: '\b(public|private|protected|static|final|synchronized|bridge|varargs|native|abstract|strictfp|synthetic|constructor|declared-synchronized|interface|enum|annotation|volatile|transient)\b'
+      scope: storage.modifier.smali
+
+  opcodes:
+    - match: '\b(invoke-(?:virtual|super|direct|static|interface)(?:/range)?|return(?:-void|-wide|-object)?|throw|goto(?:/16|/32)?|if-[a-z0-9-]+|cmp[a-z-]*|move(?:-[a-z0-9/]+)?|const(?:-[a-z0-9/]+)?|new-instance|new-array|filled-new-array(?:/range)?|check-cast|instance-of|array-length|aget(?:-[a-z]+)?|aput(?:-[a-z]+)?|iget(?:-[a-z]+)?|iput(?:-[a-z]+)?|sget(?:-[a-z]+)?|sput(?:-[a-z]+)?|add-[a-z]+|sub-[a-z]+|mul-[a-z]+|div-[a-z]+|rem-[a-z]+|and-[a-z]+|or-[a-z]+|xor-[a-z]+|shl-[a-z]+|shr-[a-z]+|ushr-[a-z]+|neg-[a-z]+|not-[a-z]+|int-to-[a-z]+|long-to-[a-z]+|float-to-[a-z]+|double-to-[a-z]+|nop|monitor-enter|monitor-exit)\b'
+      scope: keyword.operator.word.smali
+    - match: '(->)({{identifier}})'
+      captures:
+        1: punctuation.accessor.smali
+        2: entity.name.function.smali
+
+  types:
+    - match: 'L[[:alnum:]_/$-]+;'
+      scope: support.type.class.smali
+    - match: '\[+[ZBSCIJFDV]|[ZBSCIJFDV]\b'
+      scope: storage.type.primitive.smali
+
+  registers:
+    - match: '\b[vp][0-9]+\b'
+      scope: variable.other.register.smali
+
+  constants:
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.smali
+    - match: '[-+]?(0x[0-9a-fA-F]+|[0-9]+)([tTsSlLfFdD])?\b'
+      scope: constant.numeric.smali
+
+  punctuation:
+    - match: '[{}()\[\],;:=@/]'
+      scope: punctuation.separator.smali
