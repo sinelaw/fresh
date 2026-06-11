@@ -6,6 +6,18 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use lsp_types::FoldingRange;
 
 fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: usize) {
+    set_fold_range_with_text(harness, start_line, end_line, None);
+}
+
+/// Like [`set_fold_range`] but lets the caller attach `collapsed_text`, the
+/// placeholder label some LSP servers return alongside a folding range
+/// (issue #1579).
+fn set_fold_range_with_text(
+    harness: &mut EditorTestHarness,
+    start_line: usize,
+    end_line: usize,
+    collapsed_text: Option<String>,
+) {
     let state = harness.editor_mut().active_state_mut();
     let ranges = vec![FoldingRange {
         start_line: start_line as u32,
@@ -13,7 +25,7 @@ fn set_fold_range(harness: &mut EditorTestHarness, start_line: usize, end_line: 
         start_character: None,
         end_character: None,
         kind: None,
-        collapsed_text: None,
+        collapsed_text,
     }];
     state
         .folding_ranges
@@ -94,6 +106,50 @@ fn test_fold_gutter_double_click_toggles_like_single() {
     assert!(
         row_text.contains("line 3"),
         "Expected folded lines to be visible after double click. Row text: '{row_text}'"
+    );
+}
+
+/// Issue #1579: an LSP folding range may carry a `collapsedText` label that
+/// the server wants shown when the range is collapsed (e.g. `{ … }` for a
+/// brace block). Collapsing such a fold must render that server-provided text
+/// as the placeholder on the header row, instead of the generic `...` default.
+#[test]
+fn test_lsp_collapsed_text_renders_as_placeholder() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    let content: String = (0..30).map(|i| format!("line {i}\n")).collect();
+    let fixture = TestFixture::new("fold_collapsed_text.py", &content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+
+    // LSP fold over lines 3..6 (header = line 2) with a custom collapsed label.
+    let header_line = 2usize;
+    let end_line = 6usize;
+    let collapsed_label = "<4 folded lines>";
+    set_fold_range_with_text(
+        &mut harness,
+        header_line,
+        end_line,
+        Some(collapsed_label.to_string()),
+    );
+    harness.render().unwrap();
+
+    // Collapse the fold via a gutter click on the header row.
+    let header_row = (layout::CONTENT_START_ROW + header_line) as u16;
+    harness.mouse_click(0, header_row).unwrap();
+    harness.render().unwrap();
+
+    // The fold collapsed: body lines are hidden, header stays visible.
+    harness.assert_screen_not_contains("line 4");
+    harness.assert_screen_not_contains("line 5");
+    harness.assert_screen_contains("line 7");
+
+    // The server-provided collapsed_text must appear on the header row.
+    let header_row_text = harness.get_row_text(header_row);
+    assert!(
+        header_row_text.contains(collapsed_label),
+        "Expected server collapsed_text '{collapsed_label}' on the fold header row, \
+         not the default placeholder.\nHeader row: '{header_row_text}'\nScreen:\n{}",
+        harness.screen_to_string()
     );
 }
 
