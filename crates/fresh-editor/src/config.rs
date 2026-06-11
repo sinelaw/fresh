@@ -1,4 +1,4 @@
-use crate::types::{context_keys, LspLanguageConfig, LspServerConfig, ProcessLimits};
+use crate::types::{context_keys, LspFeature, LspLanguageConfig, LspServerConfig, ProcessLimits};
 
 use rust_i18n::t;
 use schemars::JsonSchema;
@@ -7116,6 +7116,12 @@ impl Config {
         // Install via cargo: cargo install asm-lsp
         // Handles GAS/NASM/MASM across x86, x86_64, ARM and RISC-V;
         // configured per-project via .asm-lsp.toml.
+        //
+        // Pull diagnostics are excluded: asm-lsp (≤0.10.x) advertises
+        // `diagnosticProvider` but never answers `textDocument/diagnostic`
+        // (it drops the request id and only pushes `publishDiagnostics`),
+        // so every pull request would stall for the full 30s timeout.
+        // Pushed diagnostics are unaffected by the feature filter.
         let asm_lsp_config = LspServerConfig {
             command: "asm-lsp".to_string(),
             args: vec![],
@@ -7127,7 +7133,7 @@ impl Config {
             language_id_overrides: Default::default(),
             name: None,
             only_features: None,
-            except_features: None,
+            except_features: Some(vec![LspFeature::Diagnostics]),
             root_markers: vec![".asm-lsp.toml".to_string(), ".git".to_string()],
         };
         lsp.insert(
@@ -8012,5 +8018,26 @@ mod tests {
             loaded.universal_lsp.contains_key("quicklsp"),
             "Default quicklsp should be merged from defaults"
         );
+    }
+
+    /// asm-lsp (≤0.10.x) advertises `diagnosticProvider` but never answers
+    /// `textDocument/diagnostic`, so every pull request stalls for the full
+    /// 30s timeout. The default config must exclude the diagnostics feature
+    /// (pushed diagnostics don't go through the feature filter).
+    #[test]
+    fn test_asm_lsp_defaults_exclude_pull_diagnostics() {
+        let config = Config::default();
+        for language in ["asm", "gas"] {
+            let LspLanguageConfig::Multi(servers) = &config.lsp[language] else {
+                panic!("expected Multi LSP config for {language}");
+            };
+            let server = &servers[0];
+            assert_eq!(server.command, "asm-lsp");
+            assert_eq!(
+                server.except_features,
+                Some(vec![LspFeature::Diagnostics]),
+                "{language}: asm-lsp must exclude pull diagnostics"
+            );
+        }
     }
 }
