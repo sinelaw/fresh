@@ -1,5 +1,13 @@
 # Release Notes
 
+## Unreleased
+
+### Improvements
+
+* **Clickable links in LSP hover popups**: bare `http`/`https` URLs embedded in
+  hover documentation (as emitted by servers like pyrefly) now render as
+  underlined links and open in the browser when clicked (#603).
+
 ## 0.4.4
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

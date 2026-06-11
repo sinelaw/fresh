@@ -10152,3 +10152,91 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
 
     Ok(())
 }
+
+/// A bare URL embedded in LSP hover prose should render as a clickable link.
+///
+/// Servers like pyrefly put raw `https://…` URLs into hover docs. CommonMark
+/// does not autolink bare URLs, so before issue #603 they rendered as inert
+/// text. This drives a real hover whose content contains a bare URL and asserts
+/// the URL is rendered with the link style (cyan + underline) in the popup —
+/// the observable signal that it is now a link. The click→open path itself is
+/// covered by a component unit test on `Popup::link_at_position`.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_hover_bare_url_renders_as_clickable_link() -> anyhow::Result<()> {
+    use crate::common::fake_lsp::FakeLspServer;
+    use ratatui::style::{Color, Modifier};
+    use std::time::Duration;
+
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn_with_url_hover(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "fn foo() {}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::url_hover_script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Hover over "foo" to trigger the LSP hover request.
+    harness.mouse_move(10, 2)?;
+    harness.render()?;
+    harness.sleep(Duration::from_millis(600));
+    harness.editor_mut().force_check_mouse_hover();
+
+    // Wait for the hover popup carrying the bare URL to render.
+    let url = "https://docs.example.com/path";
+    harness.wait_until(|h| h.screen_to_string().contains(url))?;
+
+    // The URL must render as a link: cyan foreground + underline. Inspect the
+    // first cell of the URL on screen.
+    let (col, row) = harness
+        .find_text_on_screen(url)
+        .expect("URL text should be on screen");
+    let style = harness
+        .get_cell_style(col, row)
+        .expect("cell style at URL start");
+    assert_eq!(
+        style.fg,
+        Some(Color::Cyan),
+        "bare URL should render in the link color (cyan). Screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        style.add_modifier.contains(Modifier::UNDERLINED),
+        "bare URL should render underlined like a link. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    Ok(())
+}

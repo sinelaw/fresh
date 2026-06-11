@@ -1124,7 +1124,7 @@ impl Editor {
         use ratatui::style::Style;
         use unicode_width::UnicodeWidthStr;
 
-        let hover_lines: Vec<StyledLine> = if contents.is_empty() {
+        let mut hover_lines: Vec<StyledLine> = if contents.is_empty() {
             Vec::new()
         } else if is_markdown {
             parse_markdown(
@@ -1145,6 +1145,11 @@ impl Editor {
                 })
                 .collect()
         };
+        // Make bare URLs (http/https) embedded in hover prose clickable. Servers
+        // like pyrefly emit raw URLs that CommonMark does not autolink, so without
+        // this they render as inert text. Markdown `[text](url)` links already
+        // carry their URL and are left untouched. See issue #603.
+        crate::view::markdown::linkify_bare_urls(&mut hover_lines);
 
         let has_diagnostic = !diagnostic_lines.is_empty();
         let mut all_lines: Vec<StyledLine> = Vec::new();

@@ -656,6 +656,158 @@ pub fn parse_markdown(
     lines
 }
 
+/// Scan already-parsed styled lines for bare URLs (`http://` / `https://`) and
+/// turn them into clickable link spans, in place.
+///
+/// LSP hover payloads frequently embed raw URLs in prose (pyrefly, doc links,
+/// …). CommonMark — and therefore [`parse_markdown`] — only treats `[text](url)`
+/// and `<url>` as links, so a bare `https://…` renders as inert text. This pass
+/// closes that gap for both markdown and plain-text hovers, reusing the same
+/// `link_url` span metadata that `[text](url)` links populate, so the existing
+/// popup click handling makes them clickable for free.
+///
+/// Spans that already carry a `link_url` are left untouched, so a markdown link
+/// is never double-processed. See issue #603.
+pub fn linkify_bare_urls(lines: &mut [StyledLine]) {
+    for line in lines.iter_mut() {
+        let has_candidate = line
+            .spans
+            .iter()
+            .any(|s| s.link_url.is_none() && s.text.contains("http"));
+        if !has_candidate {
+            continue;
+        }
+        let mut rebuilt = Vec::with_capacity(line.spans.len());
+        for span in std::mem::take(&mut line.spans) {
+            if span.link_url.is_some() {
+                rebuilt.push(span);
+            } else {
+                split_span_at_urls(span, &mut rebuilt);
+            }
+        }
+        line.spans = rebuilt;
+    }
+}
+
+/// Split a single span into plain + link segments at any bare URLs it contains,
+/// pushing the results onto `out`. If the span contains no URL it is pushed
+/// unchanged (preserving empty spans and styling).
+fn split_span_at_urls(span: StyledSpan, out: &mut Vec<StyledSpan>) {
+    let text = span.text.as_str();
+    let mut pos = 0;
+    let mut found = false;
+    while let Some((start, end)) = next_url(text, pos) {
+        found = true;
+        if start > pos {
+            out.push(StyledSpan {
+                text: text[pos..start].to_string(),
+                style: span.style,
+                link_url: None,
+            });
+        }
+        let url = &text[start..end];
+        out.push(StyledSpan {
+            text: url.to_string(),
+            style: span
+                .style
+                .add_modifier(Modifier::UNDERLINED)
+                .fg(Color::Cyan),
+            link_url: Some(url.to_string()),
+        });
+        pos = end;
+    }
+    if !found {
+        out.push(span);
+    } else if pos < text.len() {
+        out.push(StyledSpan {
+            text: text[pos..].to_string(),
+            style: span.style,
+            link_url: None,
+        });
+    }
+}
+
+/// Find the next bare `http`/`https` URL in `text` at or after byte offset
+/// `from`. Returns the `(start, end)` byte range, with trailing sentence
+/// punctuation excluded. Returns `None` when no URL with a host follows.
+fn next_url(text: &str, mut from: usize) -> Option<(usize, usize)> {
+    loop {
+        let rel_http = text[from..].find("http://");
+        let rel_https = text[from..].find("https://");
+        let (rel, scheme_len) = match (rel_http, rel_https) {
+            (Some(a), Some(b)) => {
+                if a <= b {
+                    (a, "http://".len())
+                } else {
+                    (b, "https://".len())
+                }
+            }
+            (Some(a), None) => (a, "http://".len()),
+            (None, Some(b)) => (b, "https://".len()),
+            (None, None) => return None,
+        };
+        let start = from + rel;
+        let host_start = start + scheme_len;
+        let mut end = host_start;
+        for (i, ch) in text[host_start..].char_indices() {
+            if is_url_char(ch) {
+                end = host_start + i + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        // Exclude trailing punctuation commonly adjacent to URLs in prose,
+        // e.g. "see https://x." or "(https://x)".
+        while end > host_start {
+            let last = text[host_start..end].chars().next_back().unwrap();
+            if matches!(
+                last,
+                '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
+            ) {
+                end -= last.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end > host_start {
+            return Some((start, end));
+        }
+        // Bare scheme with no host (e.g. "http://" alone) — keep scanning past it.
+        from = host_start;
+    }
+}
+
+/// Whether `c` may appear inside a URL per RFC 3986 (unreserved + reserved
+/// gen/sub-delims + percent-encoding).
+fn is_url_char(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            '-' | '.'
+                | '_'
+                | '~'
+                | ':'
+                | '/'
+                | '?'
+                | '#'
+                | '['
+                | ']'
+                | '@'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | '%'
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1422,6 +1574,151 @@ mod tests {
         assert_eq!(
             cont_indent, orig_indent,
             "Continuation line should have same indent as original"
+        );
+    }
+
+    // ==================== Bare URL Linkification Tests ====================
+
+    /// Build a single styled line from one plain-text span (no link), mirroring
+    /// how a plain-text LSP hover is constructed.
+    fn plain_line(text: &str) -> StyledLine {
+        let mut line = StyledLine::new();
+        line.push(text.to_string(), Style::default());
+        line
+    }
+
+    #[test]
+    fn test_linkify_bare_url_in_prose() {
+        let mut lines = vec![plain_line("See https://docs.example.com/path for details")];
+        linkify_bare_urls(&mut lines);
+
+        // The URL becomes its own span carrying the link URL.
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("a link span");
+        assert_eq!(link.text, "https://docs.example.com/path");
+        assert_eq!(
+            link.link_url.as_deref(),
+            Some("https://docs.example.com/path")
+        );
+        assert!(
+            link.style.add_modifier.contains(Modifier::UNDERLINED),
+            "link should be underlined"
+        );
+        assert_eq!(link.style.fg, Some(Color::Cyan), "link should be cyan");
+
+        // Surrounding prose is preserved and stays unlinked.
+        assert_eq!(
+            lines[0].plain_text(),
+            "See https://docs.example.com/path for details"
+        );
+        assert_eq!(lines[0].link_at_column(0), None, "leading prose not a link");
+        let after = lines[0].plain_text().find("for").unwrap();
+        assert_eq!(
+            lines[0].link_at_column(after),
+            None,
+            "trailing prose not a link"
+        );
+    }
+
+    #[test]
+    fn test_linkify_trims_trailing_punctuation() {
+        let mut lines = vec![plain_line("docs at https://example.com/a.")];
+        linkify_bare_urls(&mut lines);
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("a link span");
+        // The sentence-ending period is not part of the URL.
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com/a"));
+        // But the period is still rendered as trailing text.
+        assert!(lines[0].plain_text().ends_with("a."));
+    }
+
+    #[test]
+    fn test_linkify_parenthesized_url() {
+        let mut lines = vec![plain_line("(https://example.com)")];
+        linkify_bare_urls(&mut lines);
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("a link span");
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com"));
+        assert_eq!(lines[0].plain_text(), "(https://example.com)");
+    }
+
+    #[test]
+    fn test_linkify_multiple_urls() {
+        let mut lines = vec![plain_line("a http://one.test b https://two.test c")];
+        linkify_bare_urls(&mut lines);
+        let urls: Vec<&str> = lines[0]
+            .spans
+            .iter()
+            .filter_map(|s| s.link_url.as_deref())
+            .collect();
+        assert_eq!(urls, vec!["http://one.test", "https://two.test"]);
+        assert_eq!(
+            lines[0].plain_text(),
+            "a http://one.test b https://two.test c"
+        );
+    }
+
+    #[test]
+    fn test_linkify_ignores_non_url_http() {
+        // "http" or "https" without a scheme separator is not a link.
+        let mut lines = vec![plain_line("the https protocol and http header")];
+        linkify_bare_urls(&mut lines);
+        assert!(
+            lines[0].spans.iter().all(|s| s.link_url.is_none()),
+            "no link should be produced for bare 'http'/'https' words"
+        );
+    }
+
+    #[test]
+    fn test_linkify_leaves_markdown_links_untouched() {
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        // A markdown link already carries link_url; its visible text is "here".
+        let mut lines = parse_markdown("Click [here](https://example.com)", &theme, None);
+        linkify_bare_urls(&mut lines);
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("the markdown link span");
+        assert_eq!(link.text, "here", "markdown link text must be preserved");
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com"));
+        // Exactly one link span — the bare-URL pass didn't add a duplicate.
+        assert_eq!(
+            lines[0]
+                .spans
+                .iter()
+                .filter(|s| s.link_url.is_some())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_linkify_makes_url_clickable_in_popup() {
+        use crate::view::popup::{Popup, PopupContent};
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        let mut lines = vec![plain_line("https://example.com/docs")];
+        linkify_bare_urls(&mut lines);
+
+        let mut popup = Popup::text(Vec::new(), &theme);
+        popup.content = PopupContent::Markdown(lines);
+        popup.width = 60;
+        popup.bordered = true;
+
+        // Column 0 of row 0 sits on the URL → resolves to a clickable link.
+        assert_eq!(
+            popup.link_at_position(0, 0).as_deref(),
+            Some("https://example.com/docs")
         );
     }
 }
