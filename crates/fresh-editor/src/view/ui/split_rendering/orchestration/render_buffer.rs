@@ -12,7 +12,8 @@ use super::super::layout::{
     calculate_compose_layout, calculate_view_anchor, calculate_viewport_end, ComposeLayout,
 };
 use super::super::post_pass::{
-    apply_background_to_lines, render_column_guides, render_cursor_column_bg, render_ruler_bg,
+    apply_background_to_lines, apply_image_placeholders, render_column_guides,
+    render_cursor_column_bg, render_ruler_bg,
 };
 use super::super::view_data::build_view_data;
 use super::contexts::SelectionContext;
@@ -530,6 +531,17 @@ pub(crate) fn draw_buffer_in_split(
             0,
         );
     }
+
+    // Overwrite reserved image rows with kitty Unicode placeholder cells so
+    // the terminal paints the transmitted image over them. These rows only
+    // carry a spec on graphics-capable terminals (the `placeImage` handler
+    // inserts a text fallback otherwise), so this is safe to run always.
+    apply_image_placeholders(
+        frame,
+        &layout_output.render_output.view_line_mappings,
+        render_area,
+        gutter_width,
+    );
 
     if let Some((screen_x, screen_y)) = cursor_screen_pos {
         // Record the hardware cursor position instead of committing it to

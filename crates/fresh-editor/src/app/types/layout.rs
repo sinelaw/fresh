@@ -21,6 +21,10 @@ pub struct ViewLineMapping {
     /// the cursor on a position whose `line_end_byte` was inherited
     /// from the previous source row.
     pub is_plugin_virtual: bool,
+    /// Set when this visual row is one row of a placed inline image. The
+    /// render post-pass overwrites the row's content cells with kitty
+    /// Unicode placeholders referencing the image. `None` otherwise.
+    pub image_placeholder: Option<crate::services::graphics::ImageCellSpec>,
 }
 
 impl ViewLineMapping {

@@ -71,6 +71,10 @@ pub struct ViewLine {
     /// (it can't recover the bg from `char_styles.first()` when there
     /// are no chars). `None` for source lines.
     pub virtual_line_style: Option<ViewTokenStyle>,
+    /// Set when this virtual line is one row of a placed inline image. The
+    /// render post-pass overwrites this row's cells with kitty Unicode
+    /// placeholders. `None` for ordinary lines.
+    pub image_placeholder: Option<crate::services::graphics::ImageCellSpec>,
 }
 
 impl ViewLine {
@@ -295,6 +299,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                     ends_with_newline: false,
                     virtual_gutter_glyph: None,
                     virtual_line_style: None,
+                    image_placeholder: None,
                 });
             }
             return None;
@@ -610,6 +615,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
             ends_with_newline,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            image_placeholder: None,
         })
     }
 }

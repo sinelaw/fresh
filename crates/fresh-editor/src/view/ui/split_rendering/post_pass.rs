@@ -46,6 +46,52 @@ pub(super) fn render_column_guides(
     }
 }
 
+/// Overwrite the content cells of any image-placeholder rows with kitty
+/// Unicode placeholder graphemes (`U+10EEEE` + row/column diacritics), with
+/// each cell's foreground encoding the image id. The terminal then paints the
+/// transmitted image over this rectangle of placeholder cells. Rows without
+/// an image placeholder are left untouched.
+///
+/// This is the "post-render buffer injection" path: the placeholder grapheme
+/// (base char + two combining marks) is written as a single ratatui cell
+/// symbol, side-stepping the per-scalar cell pipeline that would otherwise
+/// split the combining marks into their own columns.
+pub(super) fn apply_image_placeholders(
+    frame: &mut Frame,
+    view_line_mappings: &[ViewLineMapping],
+    render_area: Rect,
+    gutter_width: usize,
+) {
+    let content_x = render_area.x + gutter_width as u16;
+    let max_x = render_area.x + render_area.width;
+    let max_y = render_area.y + render_area.height;
+    let buf = frame.buffer_mut();
+
+    for (screen_row, mapping) in view_line_mappings.iter().enumerate() {
+        let Some(spec) = mapping.image_placeholder else {
+            continue;
+        };
+        let y = render_area.y + screen_row as u16;
+        if y >= max_y {
+            break;
+        }
+        let (r, g, b) = spec.fg();
+        let fg = Color::Rgb(r, g, b);
+        for col in 0..spec.cols as usize {
+            let x = content_x + col as u16;
+            if x >= max_x {
+                break;
+            }
+            let Some(symbol) = spec.cell_symbol(col) else {
+                break;
+            };
+            let cell = &mut buf[(x, y)];
+            cell.set_symbol(&symbol);
+            cell.set_fg(fg);
+        }
+    }
+}
+
 /// Tint the background of a single column (the cursor's column) to make it
 /// easier to track vertical alignment. `column_x` is relative to
 /// `render_area.x` (i.e. the same coordinate as `cursor` from

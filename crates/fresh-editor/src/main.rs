@@ -4418,6 +4418,22 @@ where
             needs_render = false;
         }
 
+        // Flush any pending inline-image protocol bytes (kitty graphics) to
+        // the terminal. The placeholder cells that reference these images are
+        // emitted as part of the normal frame above; transmitting the pixel
+        // data afterwards is fine — the terminal displays the image as soon
+        // as it arrives. No-op in session mode / on terminals without
+        // graphics support.
+        {
+            let graphics = editor.take_graphics_escape_sequences();
+            if !graphics.is_empty() {
+                use std::io::Write;
+                let mut out = stdout();
+                let _ = out.write_all(&graphics);
+                let _ = out.flush();
+            }
+        }
+
         let event = if let Some(e) = pending_event.take() {
             Some(e)
         } else {

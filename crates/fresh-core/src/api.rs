@@ -2572,6 +2572,38 @@ pub enum PluginCommand {
         namespace: String,
     },
 
+    /// Place an inline raster image (kitty graphics protocol) anchored to a
+    /// buffer position. The core reserves `rows` virtual lines × `cols`
+    /// columns and renders kitty Unicode placeholders over them, so the image
+    /// scrolls with the text. No-op (the plugin keeps its text fallback) on
+    /// terminals without graphics support. A generic rendering primitive:
+    /// the core doesn't know what the image shows — plugins use it to
+    /// render any file's content (diagrams, pictures, plots, previews, …).
+    PlaceImage {
+        buffer_id: BufferId,
+        /// Content key for dedup/reuse across re-renders (e.g. a hash of the
+        /// image bytes). Re-placing the same key reuses the transmitted image.
+        key: String,
+        /// Absolute path to a PNG the terminal can read.
+        source: String,
+        /// Byte position whose line the image is anchored to.
+        position: usize,
+        /// Placement width / height in terminal cells.
+        cols: u16,
+        rows: u16,
+        /// true = above the anchored line, false = below.
+        above: bool,
+        /// Namespace for bulk removal via [`PluginCommand::ClearImages`].
+        namespace: String,
+    },
+
+    /// Remove all images (and their reserved placeholder rows) placed under a
+    /// namespace, and free the terminal-side pixel data.
+    ClearImages {
+        buffer_id: BufferId,
+        namespace: String,
+    },
+
     /// Add a conceal range that hides or replaces a byte range during rendering.
     /// Used for Typora-style seamless markdown: hiding syntax markers like `**`, `[](url)`, etc.
     AddConceal {

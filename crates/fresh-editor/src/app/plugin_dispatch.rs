@@ -381,6 +381,28 @@ impl Editor {
                 self.handle_clear_virtual_text_namespace(buffer_id, namespace);
             }
 
+            PluginCommand::PlaceImage {
+                buffer_id,
+                key,
+                source,
+                position,
+                cols,
+                rows,
+                above,
+                namespace,
+            } => {
+                self.handle_place_image(
+                    buffer_id, key, source, position, cols, rows, above, namespace,
+                );
+            }
+
+            PluginCommand::ClearImages {
+                buffer_id,
+                namespace,
+            } => {
+                self.handle_clear_images(buffer_id, namespace);
+            }
+
             // ==================== Conceal Commands ====================
             PluginCommand::AddConceal {
                 buffer_id,

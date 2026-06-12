@@ -113,6 +113,11 @@ pub struct VirtualText {
     /// Offsets are byte offsets within `text`. Used e.g. by live-diff
     /// to bold + underline removed words on deletion virtual lines.
     pub text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+    /// When set, this virtual line is one row of a placed inline image.
+    /// The render post-pass overwrites its cells with kitty Unicode
+    /// placeholders instead of rendering `text`; `text` holds `cols` spaces
+    /// so the row still reserves width on terminals without graphics.
+    pub image: Option<crate::services::graphics::ImageCellSpec>,
 }
 
 impl VirtualText {
@@ -234,6 +239,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                image: None,
             },
         );
         self.bump_version();
@@ -285,6 +291,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                image: None,
             },
         );
         self.bump_version();
@@ -326,6 +333,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                image: None,
             },
         );
         self.bump_version();
@@ -373,6 +381,7 @@ impl VirtualTextManager {
                 gutter_glyph: None,
                 gutter_color: None,
                 text_overlays: Vec::new(),
+                image: None,
             },
         );
 
@@ -466,6 +475,56 @@ impl VirtualTextManager {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+                image: None,
+            },
+        );
+        self.bump_version();
+
+        id
+    }
+
+    /// Add a virtual line that reserves one row of a placed inline image.
+    /// `text` should be `cols` spaces (the fallback shown when the terminal
+    /// has no graphics support); `spec` carries the image id, image-row, and
+    /// width the render post-pass uses to emit kitty Unicode placeholders.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_image_line(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        placement: VirtualTextPosition,
+        namespace: VirtualTextNamespace,
+        priority: i32,
+        spec: crate::services::graphics::ImageCellSpec,
+    ) -> VirtualTextId {
+        debug_assert!(
+            placement.is_line(),
+            "add_image_line requires LineAbove or LineBelow"
+        );
+
+        let marker_id = marker_list.create(position, false);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                text,
+                style,
+                fg_theme_key: None,
+                bg_theme_key: None,
+                position: placement,
+                priority,
+                string_id: None,
+                namespace: Some(namespace),
+                gutter_glyph: None,
+                gutter_color: None,
+                text_overlays: Vec::new(),
+                image: Some(spec),
             },
         );
         self.bump_version();

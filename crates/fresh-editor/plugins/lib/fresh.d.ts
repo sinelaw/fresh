@@ -603,15 +603,39 @@ type FileExplorerDecoration = {
 	*/
 	priority: number;
 };
-type FileExplorerTooltip = {
+type FileExplorerSlotEntry = {
 	/**
-	* Tooltip title shown in the popup border.
+	* File or directory path to override.
 	*/
-	title: string;
+	path: string;
 	/**
-	* Body lines shown inside the popup.
+	* Optional leading-slot override.
 	*/
-	lines: Array<string>;
+	leading: FileExplorerLeadingSlot | null;
+	/**
+	* Explicitly suppress the compatibility leading slot for this path.
+	*/
+	suppressLeading: boolean;
+	/**
+	* Optional trailing-slot override.
+	*/
+	trailing: FileExplorerTrailingSlot | null;
+	/**
+	* Explicitly suppress the compatibility trailing slot for this path.
+	*/
+	suppressTrailing: boolean;
+	/**
+	* Optional filename colour override.
+	*/
+	nameColor: OverlayColorSpec | null;
+	/**
+	* Explicitly suppress compatibility filename colouring for this path.
+	*/
+	suppressNameColor: boolean;
+	/**
+	* Priority for display when multiple overrides exist (higher wins).
+	*/
+	priority: number;
 };
 type FileExplorerLeadingSlot = {
 	/**
@@ -625,7 +649,7 @@ type FileExplorerLeadingSlot = {
 	/**
 	* Minimum display width reserved for the leading slot.
 	*/
-	minWidth?: number;
+	minWidth: number;
 };
 type FileExplorerTrailingSlot = {
 	/**
@@ -639,41 +663,17 @@ type FileExplorerTrailingSlot = {
 	/**
 	* Optional tooltip shown when hovering the trailing slot.
 	*/
-	tooltip?: FileExplorerTooltip | null;
+	tooltip: FileExplorerTooltip | null;
 };
-type FileExplorerSlotEntry = {
+type FileExplorerTooltip = {
 	/**
-	* File or directory path to override.
+	* Tooltip title shown in the popup border.
 	*/
-	path: string;
+	title: string;
 	/**
-	* Optional leading-slot override.
+	* Body lines shown inside the popup.
 	*/
-	leading?: FileExplorerLeadingSlot | null;
-	/**
-	* Explicitly suppress the compatibility leading slot for this path.
-	*/
-	suppressLeading?: boolean;
-	/**
-	* Optional trailing-slot override.
-	*/
-	trailing?: FileExplorerTrailingSlot | null;
-	/**
-	* Explicitly suppress the compatibility trailing slot for this path.
-	*/
-	suppressTrailing?: boolean;
-	/**
-	* Optional filename colour override.
-	*/
-	nameColor?: OverlayColorSpec | null;
-	/**
-	* Explicitly suppress compatibility filename colouring for this path.
-	*/
-	suppressNameColor?: boolean;
-	/**
-	* Priority for display when multiple overrides exist (higher wins).
-	*/
-	priority?: number;
+	lines: Array<string>;
 };
 type FormatterPackConfig = {
 	/**
@@ -2157,6 +2157,14 @@ interface EditorAPI {
 	*/
 	readFile(path: string): string | null;
 	/**
+	* Read up to `max_len` bytes from a file starting at byte `offset`,
+	* returned as an array of byte values (0-255). Returns `null` if the
+	* file can't be opened or read. Intended for lightweight binary
+	* inspection — e.g. parsing an image header for its dimensions — not
+	* for bulk reads: `max_len` is capped at 1 MiB.
+	*/
+	readFileBytes(path: string, offset: number, maxLen: number): number[] | null;
+	/**
 	* Write file contents
 	*/
 	writeFile(path: string, content: string): boolean;
@@ -2567,10 +2575,9 @@ interface EditorAPI {
 	*/
 	clearFileExplorerDecorations(namespace: string): boolean;
 	/**
-	* Set file explorer slot overrides for a namespace. Any omitted fields
-	* fall back to the editor's default file-explorer providers.
+	* Set file explorer slot overrides for a namespace
 	*/
-	setFileExplorerSlots(namespace: string, slots: FileExplorerSlotEntry[]): boolean;
+	setFileExplorerSlots(namespace: string, slots: Record<string, unknown>[]): boolean;
 	/**
 	* Clear file explorer slot overrides for a namespace
 	*/
@@ -2620,6 +2627,31 @@ interface EditorAPI {
 	* `fg`/`bg`. Falls back to the theme's line-number fg.
 	*/
 	addVirtualLine(bufferId: number, position: number, text: string, options: Record<string, unknown>, above: boolean, namespace: string, priority: number): boolean;
+	/**
+	* Place an inline image (kitty graphics protocol) anchored to a buffer
+	* position. `source` is an absolute path to a PNG; `cols`/`rows` are the
+	* placement size in terminal cells. Returns true if the command was
+	* dispatched. On terminals without graphics support the core treats it
+	* as a no-op, so the caller should keep a visible text fallback.
+	*/
+	placeImage(bufferId: number, key: string, source: string, position: number, cols: number, rows: number, above: boolean, namespace: string): boolean;
+	/**
+	* Remove all images placed under `namespace` (and their reserved rows)
+	* and free the terminal-side image data.
+	*/
+	clearImages(bufferId: number, namespace: string): boolean;
+	/**
+	* The terminal's raster-graphics capability: `"kitty"` if inline images
+	* placed via `placeImage` will actually render (kitty graphics
+	* protocol — kitty, WezTerm, Ghostty, …), `"none"` otherwise.
+	* 
+	* Check this before doing expensive rendering work (rasterizing
+	* diagrams, converting image formats): on `"none"` terminals
+	* `placeImage` is a no-op in the core, so skip the work and keep a text
+	* fallback instead. Overridable by the user with the `FRESH_GRAPHICS`
+	* env var (`kitty` / `none`).
+	*/
+	getGraphicsCapability(): string;
 	/**
 	* Show a prompt and wait for user input (async)
 	* Returns the user input or null if cancelled

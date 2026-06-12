@@ -86,6 +86,31 @@ impl Editor {
         std::mem::take(&mut self.pending_escape_sequences)
     }
 
+    /// Terminal raster-graphics capability (kitty graphics protocol, …).
+    pub fn graphics_capability(&self) -> crate::services::graphics::GraphicsCapability {
+        self.image_manager.capability()
+    }
+
+    /// Mutable access to the inline-image registry (used by the plugin
+    /// `placeImage` / `clearImages` commands to register and forget images).
+    pub fn image_manager_mut(&mut self) -> &mut crate::services::graphics::ImageManager {
+        &mut self.image_manager
+    }
+
+    /// Drain queued image transmit/delete sequences for the kitty graphics
+    /// protocol. The caller writes these to the terminal after a frame.
+    /// Always empty in session mode or on terminals without graphics support.
+    pub fn take_graphics_escape_sequences(&mut self) -> Vec<u8> {
+        if self.session_mode {
+            // Still drain (and discard) so the queues can't grow unboundedly
+            // when a headless session runs inside a graphics-capable
+            // environment.
+            let _ = self.image_manager.take_escape_sequences();
+            return Vec::new();
+        }
+        self.image_manager.take_escape_sequences()
+    }
+
     /// Take pending clipboard data queued in session mode, clearing the request
     pub fn take_pending_clipboard(
         &mut self,

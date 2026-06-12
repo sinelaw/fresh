@@ -162,7 +162,16 @@ pub(super) fn create_wrapped_virtual_lines(
     wrap_width: Option<usize>,
     gutter_glyph: Option<(String, Color)>,
     text_overlays: &[fresh_core::api::VirtualLineTextOverlay],
+    image: Option<crate::services::graphics::ImageCellSpec>,
 ) -> Vec<ViewLine> {
+    // Image placeholder rows are never wrapped: the row reserves an exact
+    // cell width and the post-pass overwrites those cells with placeholders.
+    if let Some(spec) = image {
+        let token_style = token_style_from_ratatui(style);
+        let mut line = build_virtual_view_line(text, &token_style, gutter_glyph, 0, text_overlays);
+        line.image_placeholder = Some(spec);
+        return vec![line];
+    }
     // `TokenColor` faithfully captures every `ratatui::Color` variant
     // (RGB, named ANSI, indexed, `Reset`) so themes like `terminal` —
     // which use named ANSI colors for the diff backgrounds — survive
@@ -262,6 +271,7 @@ fn build_virtual_view_line(
         ends_with_newline: true,
         virtual_gutter_glyph: gutter_glyph,
         virtual_line_style: Some(token_style.clone()),
+        image_placeholder: None,
     }
 }
 
@@ -271,7 +281,7 @@ mod tests {
 
     #[test]
     fn create_wrapped_virtual_lines_no_wrap_returns_one_line() {
-        let lines = create_wrapped_virtual_lines("hello world", Style::default(), None, None, &[]);
+        let lines = create_wrapped_virtual_lines("hello world", Style::default(), None, None, &[], None);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "hello world");
         assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
@@ -279,7 +289,7 @@ mod tests {
 
     #[test]
     fn create_wrapped_virtual_lines_empty_input_yields_single_empty_row() {
-        let lines = create_wrapped_virtual_lines("", Style::default(), Some(20), None, &[]);
+        let lines = create_wrapped_virtual_lines("", Style::default(), Some(20), None, &[], None);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].text.is_empty());
         assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
@@ -289,7 +299,7 @@ mod tests {
     fn create_wrapped_virtual_lines_splits_no_boundary_at_hard_cap() {
         // No word boundary anywhere — must hard-cap at width.
         let text: String = std::iter::repeat('X').take(50).collect();
-        let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20), None, &[]);
+        let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20), None, &[], None);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].text.chars().count(), 20);
         assert_eq!(lines[1].text.chars().count(), 20);
@@ -312,6 +322,7 @@ mod tests {
             Some(18),
             None,
             &[],
+            None,
         );
         assert!(lines.len() >= 2);
         // Concatenating the segment texts must round-trip the input.

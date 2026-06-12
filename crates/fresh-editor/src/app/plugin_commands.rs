@@ -478,6 +478,91 @@ impl Editor {
         }
     }
 
+    /// Handle PlaceImage — reserve `rows`×`cols` placeholder cells anchored to
+    /// `position` and register the image for kitty transmission. No-op on
+    /// terminals without graphics support (the caller keeps a text fallback).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_place_image(
+        &mut self,
+        buffer_id: BufferId,
+        key: String,
+        source: String,
+        position: usize,
+        cols: u16,
+        rows: u16,
+        above: bool,
+        namespace: String,
+    ) {
+        use crate::services::graphics::{max_placement_cells, ImageCellSpec};
+        use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
+        use ratatui::style::Style;
+        use std::path::PathBuf;
+
+        if !self.graphics_capability().supports_images() {
+            return;
+        }
+
+        let max = max_placement_cells() as u16;
+        let cols = cols.clamp(1, max);
+        let rows = rows.clamp(1, max);
+
+        // Register first (mutable borrow of the image manager); the buffer
+        // borrow below is sequential so the two never overlap.
+        let id = self
+            .image_manager_mut()
+            .register(&key, &namespace, PathBuf::from(source), cols, rows);
+
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let placement = if above {
+                VirtualTextPosition::LineAbove
+            } else {
+                VirtualTextPosition::LineBelow
+            };
+            let blank: String = " ".repeat(cols as usize);
+            for image_row in 0..rows {
+                state.virtual_texts.add_image_line(
+                    &mut state.marker_list,
+                    position,
+                    blank.clone(),
+                    Style::default(),
+                    placement,
+                    VirtualTextNamespace::from_string(namespace.clone()),
+                    0,
+                    ImageCellSpec {
+                        id,
+                        image_row,
+                        cols,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Handle ClearImages — drop a namespace's reserved placeholder rows and
+    /// free the terminal-side image data.
+    pub(super) fn handle_clear_images(&mut self, buffer_id: BufferId, namespace: String) {
+        use crate::view::virtual_text::VirtualTextNamespace;
+
+        self.image_manager_mut().forget_namespace(&namespace);
+
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let ns = VirtualTextNamespace::from_string(namespace);
+            state
+                .virtual_texts
+                .clear_namespace(&mut state.marker_list, &ns);
+        }
+    }
+
     // ==================== Conceal Commands ====================
 
     /// Handle AddConceal command - add a conceal range that hides or replaces bytes

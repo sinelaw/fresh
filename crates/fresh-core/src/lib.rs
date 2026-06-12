@@ -125,6 +125,7 @@ impl std::fmt::Display for WindowTerminalId {
 pub mod config;
 pub mod file_explorer;
 pub mod file_uri;
+pub mod graphics;
 pub mod menu;
 pub mod overlay;
 pub mod plugin_schemas;

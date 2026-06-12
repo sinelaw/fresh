@@ -946,6 +946,11 @@ pub struct Editor {
     /// Terminal color capability (true color, 256, or 16 colors)
     color_capability: crate::view::color_support::ColorCapability,
 
+    /// Terminal raster-graphics support and the registry of inline images
+    /// (kitty graphics protocol). Owns pending transmit/delete escape
+    /// sequences flushed to the terminal after each frame.
+    image_manager: crate::services::graphics::ImageManager,
+
     /// Hunks for the Review Diff tool
     // `review_hunks` moved onto `Window`.
 

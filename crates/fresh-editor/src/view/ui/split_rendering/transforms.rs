@@ -944,6 +944,7 @@ pub(super) fn inject_virtual_lines(
                         wrap_width,
                         glyph,
                         &vtext.text_overlays,
+                        vtext.image,
                     ));
                 }
             }
@@ -969,6 +970,7 @@ pub(super) fn inject_virtual_lines(
                         wrap_width,
                         glyph,
                         &vtext.text_overlays,
+                        vtext.image,
                     ));
                 }
             }

@@ -564,6 +564,10 @@ function enableMarkdownCompose(bufferId: number): void {
 
   // Trigger a refresh so lines_changed hooks fire for visible content
   editor.refreshLines(bufferId);
+  // Render mermaid diagrams / embedded images (async, best-effort).
+  void refreshComposeImages(bufferId);
+  // Highlight fenced code blocks (async, best-effort).
+  void refreshCodeHighlight(bufferId);
   editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
 }
 
@@ -584,9 +588,528 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearNamespace(bufferId, "md-emphasis");
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
+    editor.clearNamespace(bufferId, CODE_NAMESPACE);
+    editor.clearImages(bufferId, IMAGE_NAMESPACE);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
+  }
+}
+
+// ── Inline image rendering (kitty graphics protocol) ────────────────────
+// Mermaid diagrams and embedded image links are rendered as real pictures
+// via the generic `editor.placeImage` API on terminals that speak the kitty
+// graphics protocol (kitty, WezTerm, Ghostty, recent Konsole). On terminals
+// without graphics support we skip the rendering work entirely (see
+// GRAPHICS_SUPPORTED) and the raw markdown stays visible as the fallback.
+// Mermaid additionally requires the `mmdc` CLI
+// (`npm i -g @mermaid-js/mermaid-cli`); non-PNG raster formats are converted
+// opportunistically via `sips` (macOS) or ImageMagick when available.
+const IMAGE_NAMESPACE = "md-compose-image";
+const RASTER_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"]);
+// Tri-state cache for `mmdc` availability (undefined = not yet probed).
+let mmdcAvailable: boolean | undefined = undefined;
+
+// Whether `placeImage` can actually render here. Detected once at load —
+// the terminal's protocol support can't change mid-session. When false, all
+// image work (mmdc, format conversion) is skipped, not just the placement.
+const GRAPHICS_SUPPORTED = editor.getGraphicsCapability() !== "none";
+
+// Feature flags, surfaced in Settings → Plugin Settings. Read live via
+// `pluginFlag` so toggling them takes effect without reloading the plugin.
+editor.defineConfigBoolean("render_inline_images", {
+  default: true,
+  description:
+    "Compose mode: render image links and mermaid diagrams as inline pictures (graphics-capable terminals only).",
+});
+editor.defineConfigBoolean("highlight_code_blocks", {
+  default: true,
+  description:
+    "Compose mode: approximate syntax highlighting and background tint for fenced code blocks.",
+});
+function pluginFlag(name: string, fallback: boolean): boolean {
+  try {
+    const cfg = editor.getPluginConfig() as Record<string, unknown> | null;
+    const v = cfg ? cfg[name] : undefined;
+    return typeof v === "boolean" ? v : fallback;
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+// Per-buffer generation counters: every refresh bumps its buffer's counter
+// and bails after each await if superseded, so overlapping refreshes
+// (typing during a slow mermaid render, rapid saves) can't interleave a
+// stale clear-and-repaint over a newer one. Also used to debounce.
+const imageRefreshGen = new Map<number, number>();
+const codeHlGen = new Map<number, number>();
+
+function imageHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16);
+}
+
+function imageCacheDir(): string {
+  const dir = editor.pathJoin(editor.getTempDir(), "fresh-md-images");
+  try {
+    editor.createDir(dir);
+  } catch (_e) {
+    /* already exists */
+  }
+  return dir;
+}
+
+async function runProcess(
+  cmd: string,
+  args: string[],
+  cwd?: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  try {
+    const r = cwd
+      ? await editor.spawnProcess(cmd, args, cwd)
+      : await editor.spawnProcess(cmd, args);
+    return { code: r.exit_code, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  } catch (_e) {
+    return { code: -1, stdout: "", stderr: "" };
+  }
+}
+
+// Resolve a markdown image URL to a local absolute path, or null for remote
+// URLs / data URIs we can't render.
+function resolveImagePath(url: string, fileDir: string): string | null {
+  if (/^[a-z]+:\/\//i.test(url) || url.startsWith("data:")) return null;
+  const clean = url.split("#")[0].split("?")[0].trim();
+  if (!clean) return null;
+  return editor.pathIsAbsolute(clean) ? clean : editor.pathJoin(fileDir, clean);
+}
+
+// Ensure a PNG the terminal can read: PNGs pass through; other raster
+// formats are converted via `sips` (macOS) or ImageMagick (`magick` /
+// `convert`), whichever is available. Returns null if the file is missing
+// or no converter succeeds — the text fallback stays visible.
+async function ensurePng(absPath: string): Promise<string | null> {
+  if (!editor.fileExists(absPath)) return null;
+  const ext = editor.pathExtname(absPath).replace(/^\./, "").toLowerCase();
+  if (ext === "png") return absPath;
+  if (!RASTER_EXT.has(ext)) return null;
+  const out = editor.pathJoin(imageCacheDir(), imageHash(absPath) + ".png");
+  if (editor.fileExists(out)) return out;
+  const converters: [string, string[]][] = [
+    ["sips", ["-s", "format", "png", absPath, "-o", out]],
+    ["magick", [absPath, out]],
+    ["convert", [absPath, out]],
+  ];
+  for (const [cmd, args] of converters) {
+    const r = await runProcess(cmd, args);
+    if (r.code === 0 && editor.fileExists(out)) return out;
+  }
+  return null;
+}
+
+// Pixel dimensions of a PNG, parsed directly from the IHDR chunk (works on
+// every platform — no external tools). Returns null if the file isn't a
+// well-formed PNG.
+function pngDims(path: string): { w: number; h: number } | null {
+  // 8-byte signature, then IHDR: length(4) + "IHDR"(4) + width(4) + height(4).
+  const b = editor.readFileBytes(path, 0, 24);
+  if (!b || b.length < 24) return null;
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let i = 0; i < 8; i++) {
+    if (b[i] !== sig[i]) return null;
+  }
+  if (b[12] !== 0x49 || b[13] !== 0x48 || b[14] !== 0x44 || b[15] !== 0x52) return null;
+  const w = ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) >>> 0;
+  const h = ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]) >>> 0;
+  return w > 0 && h > 0 ? { w, h } : null;
+}
+
+async function ensureMmdc(): Promise<boolean> {
+  if (mmdcAvailable !== undefined) return mmdcAvailable;
+  const r = await runProcess("mmdc", ["--version"]);
+  mmdcAvailable = r.code === 0;
+  return mmdcAvailable;
+}
+
+// Rasterize Mermaid source to a PNG (cached by content hash). Returns null if
+// `mmdc` is unavailable or rendering fails — caller keeps the text fallback.
+async function renderMermaid(code: string): Promise<string | null> {
+  if (!(await ensureMmdc())) return null;
+  const dir = imageCacheDir();
+  const key = imageHash("mermaid:" + code);
+  const out = editor.pathJoin(dir, key + ".png");
+  if (editor.fileExists(out)) return out;
+  const inPath = editor.pathJoin(dir, key + ".mmd");
+  if (!editor.writeFile(inPath, code)) return null;
+  const r = await runProcess("mmdc", ["-i", inPath, "-o", out, "-b", "transparent"]);
+  return r.code === 0 && editor.fileExists(out) ? out : null;
+}
+
+// Choose a placement size in terminal cells that preserves the image aspect
+// ratio, assuming a cell is roughly twice as tall as it is wide (~10px/cell
+// horizontally). Width is bounded by the compose width AND the image's
+// native pixel width, so small images (icons, badges) aren't blown up.
+function cellsForImage(w: number, h: number): { cols: number; rows: number } {
+  const cfgW = config.composeWidth && config.composeWidth > 0 ? config.composeWidth : 80;
+  const nativeCols = Math.ceil(Math.max(1, w) / 10);
+  const cols = Math.max(4, Math.min(cfgW, 100, nativeCols));
+  let rows = Math.round(cols * 0.5 * (h / Math.max(1, w)));
+  rows = Math.max(1, Math.min(rows, 40));
+  return { cols, rows };
+}
+
+// Re-place all images for a composing buffer: clears prior placements, then
+// renders image links and mermaid fences. Safe to call repeatedly; fully
+// guarded so a failure never disrupts compose-mode text rendering. Bails
+// when superseded by a newer refresh (generation check after every await).
+async function refreshComposeImages(bufferId: number): Promise<void> {
+  // Skip all rendering work when the terminal can't show the result or the
+  // user turned the feature off — the raw markdown stays as the fallback.
+  if (!GRAPHICS_SUPPORTED) return;
+  if (!pluginFlag("render_inline_images", true)) {
+    // Drop any placements from before the flag was switched off.
+    editor.clearImages(bufferId, IMAGE_NAMESPACE);
+    return;
+  }
+
+  const gen = (imageRefreshGen.get(bufferId) ?? 0) + 1;
+  imageRefreshGen.set(bufferId, gen);
+  const stale = (): boolean => imageRefreshGen.get(bufferId) !== gen;
+
+  try {
+    if (!isComposingInAnySplit(bufferId)) return;
+    const info = editor.getBufferInfo(bufferId);
+    if (!info || !isMarkdownFile(info.path)) return;
+    const fileDir = editor.pathDirname(info.path);
+
+    const len = editor.getBufferLength(bufferId);
+    const text = await editor.getBufferText(bufferId, 0, len);
+    if (typeof text !== "string" || stale()) return;
+
+    editor.clearImages(bufferId, IMAGE_NAMESPACE);
+
+    const blocks = parseMarkdownBlocks(text);
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (b.type === "image") {
+        const m = b.content.match(/!\[[^\]]*\]\(([^)]+)\)/);
+        if (!m) continue;
+        const abs = resolveImagePath(m[1], fileDir);
+        if (!abs) continue;
+        const png = await ensurePng(abs);
+        if (stale()) return;
+        if (!png) continue;
+        const dims = pngDims(png);
+        if (!dims) continue;
+        const { cols, rows } = cellsForImage(dims.w, dims.h);
+        editor.placeImage(
+          bufferId,
+          imageHash(png + cols + "x" + rows),
+          png,
+          b.startByte,
+          cols,
+          rows,
+          false,
+          IMAGE_NAMESPACE,
+        );
+      } else if (
+        b.type === "code-fence" &&
+        /^```\s*mermaid\b/i.test(b.content.trim())
+      ) {
+        const codeLines: string[] = [];
+        let j = i + 1;
+        for (; j < blocks.length; j++) {
+          if (blocks[j].type === "code-content") {
+            codeLines.push(blocks[j].content);
+          } else {
+            break;
+          }
+        }
+        // Anchor the diagram below the closing fence (if present); advance
+        // past it so the closing fence isn't re-scanned.
+        const closing = blocks[j];
+        const anchorByte =
+          closing && closing.type === "code-fence" ? closing.startByte : b.startByte;
+        i = j;
+        const code = codeLines.join("\n").trim();
+        if (!code) continue;
+        const png = await renderMermaid(code);
+        if (stale()) return;
+        if (!png) continue;
+        const dims = pngDims(png);
+        if (!dims) continue;
+        const { cols, rows } = cellsForImage(dims.w, dims.h);
+        editor.placeImage(
+          bufferId,
+          imageHash("mmd:" + code + cols + "x" + rows),
+          png,
+          anchorByte,
+          cols,
+          rows,
+          false,
+          IMAGE_NAMESPACE,
+        );
+      }
+    }
+  } catch (e) {
+    editor.debug(`[mc] refreshComposeImages error: ${e}`);
+  }
+}
+
+// ── Fenced code-block syntax highlighting ───────────────────────────────
+// Fresh disables tree-sitter language injection, so code inside markdown
+// fences isn't highlighted by its declared language. This is a lightweight,
+// language-agnostic tokenizer (comments / strings / numbers / common
+// keywords) that paints `syntax.*` theme-key overlays over fenced code, plus
+// a subtle code-block background. It is a preview aid, not a full grammar.
+const CODE_NAMESPACE = "md-code";
+// Skip whole-buffer re-highlight above this size to keep per-keystroke cost
+// bounded; the block-level work itself only touches code-fence bytes.
+const CODE_HL_MAX_BYTES = 512 * 1024;
+
+const CODE_KEYWORDS = new Set<string>([
+  // declarations / control flow shared across many languages
+  "abstract", "as", "async", "await", "break", "case", "catch", "class",
+  "const", "continue", "def", "default", "defer", "del", "do", "elif", "else",
+  "end", "enum", "except", "export", "extends", "extern", "final", "finally",
+  "fn", "for", "from", "func", "function", "global", "go", "goto", "if",
+  "impl", "implements", "import", "in", "include", "instanceof", "interface",
+  "is", "lambda", "let", "loop", "match", "mod", "module", "mut", "namespace",
+  "new", "of", "operator", "package", "pass", "private", "protected", "pub",
+  "public", "raise", "readonly", "ref", "return", "self", "static", "struct",
+  "super", "switch", "template", "then", "this", "throw", "throws", "trait",
+  "try", "type", "typedef", "typeof", "union", "unless", "until", "use",
+  "using", "var", "virtual", "void", "where", "while", "with", "yield",
+  // common type keywords
+  "bool", "boolean", "byte", "char", "double", "float", "int", "long", "short",
+  "string", "str", "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "usize",
+]);
+const CODE_CONSTS = new Set<string>([
+  "true", "false", "null", "nil", "none", "None", "True", "False", "undefined",
+  "NaN", "Infinity", "nullptr", "NULL",
+]);
+
+interface LangSpec {
+  line: string[]; // line-comment starters
+  block?: [string, string]; // block-comment open/close
+  triple?: boolean; // python-style triple-quoted strings
+  strings: string[]; // single-char string delimiters
+  template?: boolean; // backtick template strings
+}
+
+function codeLangSpec(lang: string): LangSpec {
+  const cFamily: LangSpec = { line: ["//"], block: ["/*", "*/"], strings: ['"', "'"] };
+  switch (lang.toLowerCase()) {
+    case "js": case "javascript": case "jsx": case "ts": case "typescript": case "tsx":
+      return { line: ["//"], block: ["/*", "*/"], strings: ['"', "'"], template: true };
+    case "py": case "python":
+      return { line: ["#"], strings: ['"', "'"], triple: true };
+    case "rb": case "ruby": case "sh": case "bash": case "shell": case "zsh":
+    case "yaml": case "yml": case "toml": case "r": case "perl": case "pl":
+    case "makefile": case "dockerfile": case "conf": case "ini": case "":
+      return { line: ["#"], strings: ['"', "'"] };
+    case "sql": case "haskell": case "hs": case "elm":
+      return { line: ["--"], strings: ['"', "'"] };
+    case "lua":
+      return { line: ["--"], block: ["--[[", "]]"], strings: ['"', "'"] };
+    case "html": case "xml": case "svg": case "vue":
+      return { line: [], block: ["<!--", "-->"], strings: ['"', "'"] };
+    case "clojure": case "clj": case "lisp": case "scheme": case "el":
+      return { line: [";"], strings: ['"'] };
+    default:
+      return cFamily;
+  }
+}
+
+// Tokenize the content lines of one fenced block and paint overlays. State
+// (block comment / triple string) is carried across lines within the block.
+function highlightCodeLines(
+  bufferId: number,
+  lines: { content: string; startByte: number }[],
+  spec: LangSpec,
+): void {
+  let inBlock = false;
+  let inTriple: string | null = null;
+
+  for (const { content, startByte } of lines) {
+    const n = content.length;
+    let i = 0;
+    const add = (cs: number, ce: number, key: string): void => {
+      if (ce <= cs) return;
+      const bs = charToByte(content, cs, startByte);
+      const be = charToByte(content, ce, startByte);
+      editor.addOverlay(bufferId, CODE_NAMESPACE, bs, be, { fg: key });
+    };
+
+    if (inBlock && spec.block) {
+      const close = content.indexOf(spec.block[1]);
+      if (close === -1) { add(0, n, "syntax.comment"); continue; }
+      add(0, close + spec.block[1].length, "syntax.comment");
+      i = close + spec.block[1].length;
+      inBlock = false;
+    }
+    if (inTriple) {
+      const close = content.indexOf(inTriple);
+      if (close === -1) { add(0, n, "syntax.string"); continue; }
+      add(0, close + inTriple.length, "syntax.string");
+      i = close + inTriple.length;
+      inTriple = null;
+    }
+
+    while (i < n) {
+      const rest = content.slice(i);
+
+      let matchedLine = false;
+      for (const lc of spec.line) {
+        if (rest.startsWith(lc)) {
+          add(i, n, "syntax.comment");
+          i = n;
+          matchedLine = true;
+          break;
+        }
+      }
+      if (matchedLine) break;
+
+      if (spec.block && rest.startsWith(spec.block[0])) {
+        const close = content.indexOf(spec.block[1], i + spec.block[0].length);
+        if (close === -1) {
+          add(i, n, "syntax.comment");
+          inBlock = true;
+          i = n;
+        } else {
+          add(i, close + spec.block[1].length, "syntax.comment");
+          i = close + spec.block[1].length;
+        }
+        continue;
+      }
+
+      if (spec.triple && (rest.startsWith('"""') || rest.startsWith("'''"))) {
+        const delim = rest.slice(0, 3);
+        const close = content.indexOf(delim, i + 3);
+        if (close === -1) {
+          add(i, n, "syntax.string");
+          inTriple = delim;
+          i = n;
+        } else {
+          add(i, close + 3, "syntax.string");
+          i = close + 3;
+        }
+        continue;
+      }
+
+      const ch = content[i];
+
+      if (spec.strings.indexOf(ch) !== -1 || (spec.template === true && ch === "`")) {
+        let j = i + 1;
+        while (j < n) {
+          if (content[j] === "\\") { j += 2; continue; }
+          if (content[j] === ch) { j++; break; }
+          j++;
+        }
+        add(i, j, "syntax.string");
+        i = j;
+        continue;
+      }
+
+      if (ch >= "0" && ch <= "9") {
+        const m = rest.match(/^(0x[0-9a-fA-F]+|\d[\d_]*(\.\d+)?([eE][+-]?\d+)?)/);
+        if (m) {
+          add(i, i + m[0].length, "syntax.constant");
+          i += m[0].length;
+          continue;
+        }
+      }
+
+      if (/[A-Za-z_$]/.test(ch)) {
+        const m = rest.match(/^[A-Za-z_$][A-Za-z0-9_$]*/);
+        const word = m ? m[0] : ch;
+        if (CODE_KEYWORDS.has(word)) add(i, i + word.length, "syntax.keyword");
+        else if (CODE_CONSTS.has(word)) add(i, i + word.length, "syntax.constant");
+        i += word.length;
+        continue;
+      }
+
+      i++;
+    }
+  }
+}
+
+// Re-highlight all fenced code blocks in a composing buffer, debounced by
+// `delayMs` (rapid keystrokes collapse into one trailing run — each call
+// supersedes pending ones via the generation counter). Clears the previous
+// overlays only once it's committed to repainting, so superseded runs leave
+// the existing highlight untouched. Fully guarded so a failure never breaks
+// rendering.
+async function refreshCodeHighlight(bufferId: number, delayMs = 0): Promise<void> {
+  if (!pluginFlag("highlight_code_blocks", true)) {
+    // Drop any overlays from before the flag was switched off.
+    editor.clearNamespace(bufferId, CODE_NAMESPACE);
+    return;
+  }
+
+  const gen = (codeHlGen.get(bufferId) ?? 0) + 1;
+  codeHlGen.set(bufferId, gen);
+  const stale = (): boolean => codeHlGen.get(bufferId) !== gen;
+
+  try {
+    if (delayMs > 0) {
+      await editor.delay(delayMs);
+      if (stale()) return;
+    }
+    if (!isComposingInAnySplit(bufferId)) return;
+
+    const len = editor.getBufferLength(bufferId);
+    if (len <= 0 || len > CODE_HL_MAX_BYTES) {
+      editor.clearNamespace(bufferId, CODE_NAMESPACE);
+      return;
+    }
+    const text = await editor.getBufferText(bufferId, 0, len);
+    if (typeof text !== "string" || stale()) return;
+
+    editor.clearNamespace(bufferId, CODE_NAMESPACE);
+
+    const blocks = parseMarkdownBlocks(text);
+    for (let i = 0; i < blocks.length; i++) {
+      const open = blocks[i];
+      if (open.type !== "code-fence") continue;
+
+      // Language follows the opening fence markers (``` or ~~~).
+      const lang = open.content.trim().replace(/^(```+|~~~+)/, "").trim().split(/\s+/)[0] || "";
+      const spec = codeLangSpec(lang);
+
+      // Subtle code-block background on the opening fence line.
+      editor.addOverlay(bufferId, CODE_NAMESPACE, open.startByte, open.endByte, {
+        bg: "editor.line_number_bg",
+        extend_to_line_end: true,
+      });
+
+      // Collect content lines until the closing fence.
+      const contentLines: { content: string; startByte: number }[] = [];
+      let j = i + 1;
+      for (; j < blocks.length; j++) {
+        const b = blocks[j];
+        if (b.type !== "code-content") break;
+        contentLines.push({ content: b.content, startByte: b.startByte });
+        editor.addOverlay(bufferId, CODE_NAMESPACE, b.startByte, b.endByte, {
+          bg: "editor.line_number_bg",
+          extend_to_line_end: true,
+        });
+      }
+      // Background on the closing fence line too (if present).
+      if (j < blocks.length && blocks[j].type === "code-fence") {
+        editor.addOverlay(bufferId, CODE_NAMESPACE, blocks[j].startByte, blocks[j].endByte, {
+          bg: "editor.line_number_bg",
+          extend_to_line_end: true,
+        });
+      }
+
+      highlightCodeLines(bufferId, contentLines, spec);
+      i = j; // resume after the closing fence
+    }
+  } catch (e) {
+    editor.debug(`[mc] refreshCodeHighlight error: ${e}`);
   }
 }
 
@@ -1695,13 +2218,23 @@ editor.on("lines_changed", (data) => {
     editor.refreshLines(data.buffer_id);
   }
 });
+editor.on("after_file_save", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  // Re-render diagrams/images and re-highlight code after a save.
+  void refreshComposeImages(data.buffer_id);
+  void refreshCodeHighlight(data.buffer_id);
+});
 editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
+  // Live-update fenced code highlighting, debounced so rapid typing costs
+  // one trailing re-highlight instead of one per keystroke.
+  void refreshCodeHighlight(data.buffer_id, 200);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
+  void refreshCodeHighlight(data.buffer_id, 200);
 });
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;

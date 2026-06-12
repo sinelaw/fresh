@@ -309,6 +309,7 @@ pub fn layout_for_plain_text(
             ends_with_newline: false,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            image_placeholder: None,
         });
     }
     lines
@@ -556,6 +557,7 @@ pub fn compute_line_layout(
             ends_with_newline: false,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            image_placeholder: None,
         });
     }
     result
@@ -612,6 +614,7 @@ pub fn placeholder_layout_for_row_count(n: u32) -> Vec<ViewLine> {
             ends_with_newline: false,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            image_placeholder: None,
         })
         .collect()
 }
@@ -818,6 +821,7 @@ mod tests {
                 ends_with_newline: false,
                 virtual_gutter_glyph: None,
                 virtual_line_style: None,
+                image_placeholder: None,
             })
             .collect()
     }

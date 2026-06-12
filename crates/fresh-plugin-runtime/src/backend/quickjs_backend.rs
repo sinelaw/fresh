@@ -676,6 +676,10 @@ pub struct PluginTrackedState {
     pub overlay_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, namespace) pairs used for virtual lines
     pub virtual_line_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, namespace) pairs used for inline images placed via
+    /// `placeImage`. Cleared on unload with ClearImages, which removes the
+    /// reserved placeholder rows and frees the terminal-side pixel data.
+    pub image_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, namespace) pairs used for line indicators
     pub line_indicator_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, virtual_text_id) pairs
@@ -2232,6 +2236,30 @@ impl JsEditorApi {
     /// Read file contents
     pub fn read_file(&self, path: String) -> Option<String> {
         std::fs::read_to_string(&path).ok()
+    }
+
+    /// Read up to `max_len` bytes from a file starting at byte `offset`,
+    /// returned as an array of byte values (0-255). Returns `null` if the
+    /// file can't be opened or read. Intended for lightweight binary
+    /// inspection — e.g. parsing an image header for its dimensions — not
+    /// for bulk reads: `max_len` is capped at 1 MiB.
+    #[plugin_api(ts_return = "number[] | null")]
+    pub fn read_file_bytes(&self, path: String, offset: u32, max_len: u32) -> Option<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        const CAP: u32 = 1024 * 1024;
+        let mut f = std::fs::File::open(&path).ok()?;
+        f.seek(SeekFrom::Start(offset as u64)).ok()?;
+        let mut buf = vec![0u8; max_len.min(CAP) as usize];
+        let mut filled = 0;
+        while filled < buf.len() {
+            match f.read(&mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(_) => return None,
+            }
+        }
+        buf.truncate(filled);
+        Some(buf)
     }
 
     /// Write file contents
@@ -4108,6 +4136,72 @@ impl JsEditorApi {
                 text_overlays,
             })
             .is_ok())
+    }
+
+    /// Place an inline image (kitty graphics protocol) anchored to a buffer
+    /// position. `source` is an absolute path to a PNG; `cols`/`rows` are the
+    /// placement size in terminal cells. Returns true if the command was
+    /// dispatched. On terminals without graphics support the core treats it
+    /// as a no-op, so the caller should keep a visible text fallback.
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_image(
+        &self,
+        buffer_id: u32,
+        key: String,
+        source: String,
+        position: u32,
+        cols: u32,
+        rows: u32,
+        above: bool,
+        namespace: String,
+    ) -> bool {
+        // Track the namespace so unload cleanup sends ClearImages, tearing
+        // down the reserved placeholder rows and freeing terminal pixel data.
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .image_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+
+        self.command_sender
+            .send(PluginCommand::PlaceImage {
+                buffer_id: BufferId(buffer_id as usize),
+                key,
+                source,
+                position: position as usize,
+                cols: cols as u16,
+                rows: rows as u16,
+                above,
+                namespace,
+            })
+            .is_ok()
+    }
+
+    /// Remove all images placed under `namespace` (and their reserved rows)
+    /// and free the terminal-side image data.
+    pub fn clear_images(&self, buffer_id: u32, namespace: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearImages {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+            })
+            .is_ok()
+    }
+
+    /// The terminal's raster-graphics capability: `"kitty"` if inline images
+    /// placed via `placeImage` will actually render (kitty graphics
+    /// protocol — kitty, WezTerm, Ghostty, …), `"none"` otherwise.
+    ///
+    /// Check this before doing expensive rendering work (rasterizing
+    /// diagrams, converting image formats): on `"none"` terminals
+    /// `placeImage` is a no-op in the core, so skip the work and keep a text
+    /// fallback instead. Overridable by the user with the `FRESH_GRAPHICS`
+    /// env var (`kitty` / `none`).
+    pub fn get_graphics_capability(&self) -> String {
+        fresh_core::graphics::GraphicsCapability::detect()
+            .as_str()
+            .to_string()
     }
 
     // === Prompts ===
@@ -7373,6 +7467,19 @@ impl QuickJsBackend {
             // Note: Virtual lines have no namespace-based clear command in the API.
             // They will persist until the buffer is closed. This is acceptable for now
             // since most plugins re-create virtual lines on init anyway.
+
+            // Clear inline-image namespaces: removes the reserved placeholder
+            // rows and frees the terminal-side pixel data.
+            let mut seen_img_ns: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, ns) in &tracked.image_namespaces {
+                if seen_img_ns.insert((buf_id.0, ns.clone())) {
+                    let _ = self.command_sender.send(PluginCommand::ClearImages {
+                        buffer_id: *buf_id,
+                        namespace: ns.clone(),
+                    });
+                }
+            }
 
             // Clear line indicator namespaces
             let mut seen_li_ns: std::collections::HashSet<(usize, String)> =

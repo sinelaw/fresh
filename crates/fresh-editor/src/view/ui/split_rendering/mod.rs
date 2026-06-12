@@ -520,6 +520,7 @@ mod tests {
             ends_with_newline: true,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            image_placeholder: None,
         }];
 
         let indicators = fold_indicators_for_viewport(&state, &folds, &view_lines);

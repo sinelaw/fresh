@@ -218,6 +218,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 ends_with_newline: false,
                 virtual_gutter_glyph: None,
                 virtual_line_style: None,
+                image_placeholder: None,
             })
         } else {
             break;
@@ -906,5 +907,6 @@ fn build_view_line_mapping(
         char_source_bytes: content_map,
         line_end_byte,
         is_plugin_virtual,
+        image_placeholder: view_line.image_placeholder,
     }
 }
