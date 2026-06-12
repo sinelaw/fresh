@@ -223,7 +223,7 @@ impl Editor {
             recovery_service: parts.recovery_service,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
-            image_manager: crate::services::graphics::ImageManager::new_from_env(
+            image_manager: crate::services::graphics::ImageManager::new(
                 crate::services::graphics::GraphicsCapability::detect(),
             ),
             update_checker: parts.update_checker,

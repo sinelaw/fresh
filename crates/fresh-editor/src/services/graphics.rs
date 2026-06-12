@@ -187,10 +187,13 @@ fn wrap_tmux(inner: &[u8]) -> Vec<u8> {
 }
 
 impl ImageManager {
+    /// Create an image manager. Tmux passthrough wrapping is detected from
+    /// the environment (`$TMUX` set ⇒ on); tests that assert byte-exact
+    /// escape output pin it explicitly via [`set_tmux_passthrough`].
     pub fn new(capability: GraphicsCapability) -> Self {
         ImageManager {
             capability,
-            tmux_passthrough: false,
+            tmux_passthrough: std::env::var_os("TMUX").is_some(),
             next_id: 1,
             by_key: HashMap::new(),
             by_namespace: HashMap::new(),
@@ -198,15 +201,6 @@ impl ImageManager {
             pending_transmit: Vec::new(),
             pending_delete: Vec::new(),
         }
-    }
-
-    /// Like [`new`], but detects the runtime environment: enables tmux
-    /// passthrough wrapping when running inside tmux (`$TMUX` set). Used by
-    /// the editor; tests use [`new`] for byte-exact (unwrapped) output.
-    pub fn new_from_env(capability: GraphicsCapability) -> Self {
-        let mut mgr = Self::new(capability);
-        mgr.tmux_passthrough = std::env::var_os("TMUX").is_some();
-        mgr
     }
 
     /// Force tmux passthrough wrapping on/off (overrides env detection).
@@ -416,6 +410,7 @@ mod tests {
     #[test]
     fn transmit_and_delete_escape_sequences() {
         let mut mgr = ImageManager::new(GraphicsCapability::Kitty);
+        mgr.set_tmux_passthrough(false); // assert raw bytes, independent of $TMUX
         let id = mgr.register("a", "ns", PathBuf::from("/tmp/x.png"), 10, 4);
         assert!(id >= 1 && id <= MAX_IMAGE_ID);
 
@@ -441,6 +436,7 @@ mod tests {
     #[test]
     fn forget_namespace_deletes_all_in_namespace() {
         let mut mgr = ImageManager::new(GraphicsCapability::Kitty);
+        mgr.set_tmux_passthrough(false); // assert raw bytes, independent of $TMUX
         let a = mgr.register("a", "doc1", PathBuf::from("/tmp/a.png"), 4, 2);
         let b = mgr.register("b", "doc1", PathBuf::from("/tmp/b.png"), 4, 2);
         let c = mgr.register("c", "doc2", PathBuf::from("/tmp/c.png"), 4, 2);
