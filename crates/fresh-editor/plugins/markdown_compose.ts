@@ -1207,6 +1207,94 @@ function processLineConceals(
     // Fall through: headings may still contain inline emphasis/code/links.
   }
 
+  // --- Block quotes ---
+  // `> text` (and nested `> > text`): each `>` marker renders as a vertical
+  // quote bar and the quoted text is dimmed, approximating how GitHub
+  // displays block quotes. The bar glyph is width-preserving (one cell per
+  // `>`), so soft-wrap budgets and hanging indents are unaffected. Markers
+  // are revealed while the cursor is on the line.
+  const quoteMatch = lineContent.match(/^(\s{0,3})(>(?:[ \t]?>)*)/);
+  if (quoteMatch) {
+    const runStart = quoteMatch[1].length;
+    const markerRun = quoteMatch[2];
+    if (!cursorOnLine) {
+      for (let ci = 0; ci < markerRun.length; ci++) {
+        if (markerRun[ci] !== '>') continue;
+        const pos = runStart + ci;
+        editor.addConceal(
+          bufferId,
+          "md-syntax",
+          charToByte(lineContent, pos, byteStart),
+          charToByte(lineContent, pos + 1, byteStart),
+          "▌",
+        );
+      }
+    }
+    let effLen = lineContent.length;
+    if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+    if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+    const textStart = charToByte(lineContent, runStart + markerRun.length, byteStart);
+    const textEnd = charToByte(lineContent, effLen, byteStart);
+    if (textEnd > textStart) {
+      editor.addOverlay(bufferId, "md-emphasis", textStart, textEnd, {
+        fg: "syntax.comment",
+        italic: true,
+      });
+    }
+    // Fall through: quoted text may still contain inline emphasis/code/links.
+  }
+
+  // --- Horizontal rules ---
+  // `---` / `***` / `___` render as a rule spanning the compose width
+  // (revealed while the cursor is on the line).
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+    if (!cursorOnLine) {
+      let effLen = lineContent.length;
+      if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+      if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+      if (effLen > 0) {
+        const viewport = editor.getViewport();
+        const ruleW = Math.max(3, effectiveComposeWidth(viewport ? viewport.width : 80) - 2);
+        editor.addConceal(
+          bufferId,
+          "md-syntax",
+          byteStart,
+          charToByte(lineContent, effLen, byteStart),
+          "─".repeat(ruleW),
+        );
+      }
+    }
+    return;
+  }
+
+  // --- List bullets and task checkboxes ---
+  // `- ` / `* ` / `+ ` bullets render as `•` (width-preserving), and task
+  // boxes `[ ]` / `[x]` render as ☐ / ☑. Both revealed while the cursor is
+  // on the line. Ordered-list numbers stay as-is — they're already readable.
+  const bulletMatch = lineContent.match(/^(\s*)([-*+])(\s+)/);
+  if (bulletMatch && !cursorOnLine) {
+    const bulletPos = bulletMatch[1].length;
+    editor.addConceal(
+      bufferId,
+      "md-syntax",
+      charToByte(lineContent, bulletPos, byteStart),
+      charToByte(lineContent, bulletPos + 1, byteStart),
+      "•",
+    );
+    const boxMatch = lineContent.slice(bulletMatch[0].length).match(/^\[([ xX])\](?= |$)/);
+    if (boxMatch) {
+      const boxPos = bulletMatch[0].length;
+      editor.addConceal(
+        bufferId,
+        "md-syntax",
+        charToByte(lineContent, boxPos, byteStart),
+        charToByte(lineContent, boxPos + 3, byteStart),
+        boxMatch[1] === ' ' ? "☐" : "☑",
+      );
+    }
+    // Fall through: list items may still contain inline emphasis/code/links.
+  }
+
   // --- Table row handling ---
   // Always apply table conceals even when cursor is on the line.
   // Tables are structural: pipes → box-drawing, cells padded for alignment.

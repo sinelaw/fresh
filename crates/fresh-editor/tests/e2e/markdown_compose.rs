@@ -1314,6 +1314,129 @@ Ampersand: &amp; dash: &mdash; space:&nbsp;here numeric: &#169;
     );
 }
 
+/// Test compose-mode rendering of block quotes, list bullets, task
+/// checkboxes, and horizontal rules: the raw markers should be concealed
+/// into their display glyphs (▌, •, ☐/☑, ─).
+#[test]
+fn test_compose_mode_blockquote_bullet_checkbox_hr_rendering() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    let md_content = "\
+# Render Test
+
+> quoted text here
+
+- bullet item
+- [ ] open task
+- [x] done task
+
+***
+
+after rule
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("render_test.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("render_test.md");
+
+    // Enable compose mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Wait for compose mode to settle: the quote marker should be concealed
+    // into the quote bar. The cursor sits on line 0 (the heading), away from
+    // all the lines under test, so conceals are active everywhere below.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("\u{258c}") && s.contains("quoted text here")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+
+    // Block quote: `>` becomes a vertical bar, text remains.
+    assert!(
+        !screen.contains("> quoted"),
+        "Raw > marker should be concealed in compose mode.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{258c} quoted text here"),
+        "Quote bar \u{258c} should replace the > marker.\nScreen:\n{}",
+        screen,
+    );
+
+    // Bullets: `-` becomes `•`.
+    assert!(
+        !screen.contains("- bullet item"),
+        "Raw - bullet should be concealed in compose mode.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{2022} bullet item"),
+        "Bullet \u{2022} should replace the - marker.\nScreen:\n{}",
+        screen,
+    );
+
+    // Task checkboxes: `[ ]` → ☐, `[x]` → ☑.
+    assert!(
+        !screen.contains("[ ] open task") && !screen.contains("[x] done task"),
+        "Raw checkbox syntax should be concealed in compose mode.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{2610} open task"),
+        "Unchecked box \u{2610} should replace [ ].\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{2611} done task"),
+        "Checked box \u{2611} should replace [x].\nScreen:\n{}",
+        screen,
+    );
+
+    // Horizontal rule: `***` becomes a run of ─ characters.
+    assert!(
+        !screen.contains("***"),
+        "Raw *** rule should be concealed in compose mode.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"),
+        "Rendered \u{2500} rule should be visible for ***.\nScreen:\n{}",
+        screen,
+    );
+}
+
 /// Test that table columns are aligned (padded to equal widths) in compose mode.
 ///
 /// Given an uneven table, the box-drawing pipe positions should line up
