@@ -705,7 +705,10 @@ impl VirtualTextManager {
                 .then_with(|| a.1.cmp(&b.1))
         });
 
-        results.into_iter().map(|(pos, _, vtext)| (pos, vtext)).collect()
+        results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Build a lookup map for efficient per-character access during rendering
@@ -801,7 +804,10 @@ impl VirtualTextManager {
                 .then_with(|| a.1.cmp(&b.1))
         });
 
-        results.into_iter().map(|(pos, _, vtext)| (pos, vtext)).collect()
+        results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Query only INLINE virtual texts (BeforeChar/AfterChar) in a byte range
@@ -835,7 +841,10 @@ impl VirtualTextManager {
                 .then_with(|| a.1.cmp(&b.1))
         });
 
-        results.into_iter().map(|(pos, _, vtext)| (pos, vtext)).collect()
+        results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Build a lookup map for virtual LINES, keyed by the line's anchor byte position

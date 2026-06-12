@@ -508,9 +508,9 @@ impl Editor {
 
         // Register first (mutable borrow of the image manager); the buffer
         // borrow below is sequential so the two never overlap.
-        let id = self
-            .image_manager_mut()
-            .register(&key, &namespace, PathBuf::from(source), cols, rows);
+        let id =
+            self.image_manager_mut()
+                .register(&key, &namespace, PathBuf::from(source), cols, rows);
 
         if let Some(state) = self
             .windows

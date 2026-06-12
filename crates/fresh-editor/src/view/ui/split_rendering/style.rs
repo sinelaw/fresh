@@ -281,7 +281,8 @@ mod tests {
 
     #[test]
     fn create_wrapped_virtual_lines_no_wrap_returns_one_line() {
-        let lines = create_wrapped_virtual_lines("hello world", Style::default(), None, None, &[], None);
+        let lines =
+            create_wrapped_virtual_lines("hello world", Style::default(), None, None, &[], None);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "hello world");
         assert_eq!(lines[0].line_start, LineStart::AfterInjectedNewline);
@@ -299,7 +300,8 @@ mod tests {
     fn create_wrapped_virtual_lines_splits_no_boundary_at_hard_cap() {
         // No word boundary anywhere — must hard-cap at width.
         let text: String = std::iter::repeat('X').take(50).collect();
-        let lines = create_wrapped_virtual_lines(&text, Style::default(), Some(20), None, &[], None);
+        let lines =
+            create_wrapped_virtual_lines(&text, Style::default(), Some(20), None, &[], None);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].text.chars().count(), 20);
         assert_eq!(lines[1].text.chars().count(), 20);
