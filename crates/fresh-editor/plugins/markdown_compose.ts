@@ -81,6 +81,12 @@ function utf8ByteLen(s: string): number {
   return n;
 }
 
+// Rebuilds by reading the WHOLE buffer: fences are cross-line state, so a
+// partial scan can't tell whether an edit opened or closed one. There is no
+// size cap — markdown files are typically small, and the scan is a single
+// linear string pass. If huge generated markdown ever makes edits feel slow,
+// bail above a byte threshold here (stale ranges degrade gracefully: lines
+// just get markdown styling they shouldn't).
 async function rebuildFenceRanges(bufferId: number): Promise<void> {
   try {
     const len = editor.getBufferLength(bufferId);
@@ -634,9 +640,12 @@ function enableMarkdownCompose(bufferId: number): void {
   // Set layout hints for centered margins
   editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
 
-  // Build the fenced-code-block range cache first so the initial render
-  // already skips markdown processing inside fences, then trigger a refresh
-  // so lines_changed hooks fire for visible content.
+  // Two refreshes, deliberately: the synchronous one below paints compose
+  // mode immediately (no blank frame while the buffer read awaits); the one
+  // chained on rebuildFenceRanges repaints once the fence cache exists, fixing
+  // any lines the first pass styled as markdown that are actually inside a
+  // fence. Dropping the first refresh trades a visible delay for the flicker;
+  // dropping the second leaves fence interiors mis-styled until the next edit.
   void rebuildFenceRanges(bufferId).then(() => editor.refreshLines(bufferId));
   editor.refreshLines(bufferId);
   editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
@@ -1121,7 +1130,10 @@ function processLineConceals(
   // and processed atomically in the same process_commands() batch, avoiding
   // the one-frame glitch where conceals are cleared but not yet rebuilt.
   editor.debug(`[mc] processLine clear+rebuild bytes=${byteStart}..${byteEnd} content="${lineContent.slice(0,40)}"`);
-  editor.clearConcealsInRange(bufferId, byteStart, byteEnd);
+  // Namespace-scoped for the same reason as the overlay clear below: an
+  // unscoped clear also wiped other plugins' conceals on these lines (e.g.
+  // fresh-markdown-preview collapsing rendered mermaid blocks).
+  editor.clearConcealsInRangeForNamespace(bufferId, "md-syntax", byteStart, byteEnd);
   // Only clear our own emphasis overlays — clearing ALL overlays in the range
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);

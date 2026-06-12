@@ -2631,6 +2631,17 @@ pub enum PluginCommand {
         end: usize,
     },
 
+    /// Remove conceal ranges in a byte range, restricted to one namespace.
+    /// Lets a plugin rebuild its own conceals for a line without wiping
+    /// ranges other plugins placed there (same motivation as
+    /// `ClearOverlaysInRangeForNamespace`).
+    ClearConcealsInRangeForNamespace {
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    },
+
     /// Add a collapsed fold range. Hides the byte range
     /// `[start, end)` from rendering — the line containing `start - 1`
     /// (the fold's "header") stays visible while the lines covered by

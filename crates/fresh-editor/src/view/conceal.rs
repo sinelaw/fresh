@@ -170,6 +170,52 @@ impl ConcealManager {
         self.version = self.version.wrapping_add(1);
     }
 
+    /// Like [`remove_in_range`], but only removes ranges belonging to
+    /// `namespace`. Lets one plugin rebuild its conceals for a line without
+    /// destroying another plugin's ranges there (same motivation as
+    /// `clear_overlays_in_range_for_namespace`, issue #2146).
+    pub fn remove_in_range_for_namespace(
+        &mut self,
+        namespace: &OverlayNamespace,
+        range: &Range<usize>,
+        marker_list: &mut MarkerList,
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+        let hits = marker_list.query_range(range.start, range.end);
+        if hits.is_empty() {
+            return;
+        }
+        let mut candidates: Vec<usize> = hits
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut to_remove: Vec<usize> = candidates
+            .into_iter()
+            .filter(|&idx| {
+                let r = &self.ranges[idx];
+                if &r.namespace != namespace {
+                    return false;
+                }
+                let start = marker_list.get_position(r.start_marker).unwrap_or(0);
+                let end = marker_list.get_position(r.end_marker).unwrap_or(0);
+                start < range.end && range.start < end
+            })
+            .collect();
+        if to_remove.is_empty() {
+            return;
+        }
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            self.swap_remove_at(idx, marker_list);
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
     /// Clear all conceal ranges and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
         let had_any = !self.ranges.is_empty();

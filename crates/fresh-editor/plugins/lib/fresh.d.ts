@@ -2510,6 +2510,11 @@ interface EditorAPI {
 	*/
 	clearConcealsInRange(bufferId: number, start: number, end: number): boolean;
 	/**
+	* Clear conceal ranges overlapping a byte range, restricted to one
+	* namespace — other plugins' conceals in the range are untouched.
+	*/
+	clearConcealsInRangeForNamespace(bufferId: number, namespace: string, start: number, end: number): boolean;
+	/**
 	* Add a collapsed fold range. Hides bytes [start, end) from
 	* rendering — the line containing `start - 1` (the fold "header")
 	* stays visible, while subsequent lines covered by the range are
