@@ -158,6 +158,9 @@ struct Registered {
 /// transmit/delete escape sequences flushed to the terminal after a frame.
 pub struct ImageManager {
     capability: GraphicsCapability,
+    /// When true, each emitted kitty escape is wrapped in tmux's DCS
+    /// passthrough so it survives the multiplexer (see [`wrap_tmux`]).
+    tmux_passthrough: bool,
     next_id: u32,
     by_key: HashMap<String, u32>,
     by_namespace: HashMap<String, Vec<u32>>,
@@ -166,10 +169,28 @@ pub struct ImageManager {
     pending_delete: Vec<u32>,
 }
 
+/// Wrap a single terminal escape sequence in tmux's DCS passthrough so tmux
+/// forwards it to the outer terminal verbatim instead of discarding it. Each
+/// `ESC` (0x1b) inside the payload must be doubled; the whole thing is framed
+/// by `ESC P tmux ; … ESC \`. Requires `set -g allow-passthrough on` in tmux.
+fn wrap_tmux(inner: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(inner.len() + 16);
+    out.extend_from_slice(b"\x1bPtmux;");
+    for &b in inner {
+        if b == 0x1b {
+            out.push(0x1b);
+        }
+        out.push(b);
+    }
+    out.extend_from_slice(b"\x1b\\");
+    out
+}
+
 impl ImageManager {
     pub fn new(capability: GraphicsCapability) -> Self {
         ImageManager {
             capability,
+            tmux_passthrough: false,
             next_id: 1,
             by_key: HashMap::new(),
             by_namespace: HashMap::new(),
@@ -177,6 +198,20 @@ impl ImageManager {
             pending_transmit: Vec::new(),
             pending_delete: Vec::new(),
         }
+    }
+
+    /// Like [`new`], but detects the runtime environment: enables tmux
+    /// passthrough wrapping when running inside tmux (`$TMUX` set). Used by
+    /// the editor; tests use [`new`] for byte-exact (unwrapped) output.
+    pub fn new_from_env(capability: GraphicsCapability) -> Self {
+        let mut mgr = Self::new(capability);
+        mgr.tmux_passthrough = std::env::var_os("TMUX").is_some();
+        mgr
+    }
+
+    /// Force tmux passthrough wrapping on/off (overrides env detection).
+    pub fn set_tmux_passthrough(&mut self, on: bool) {
+        self.tmux_passthrough = on;
     }
 
     pub fn capability(&self) -> GraphicsCapability {
@@ -298,10 +333,19 @@ impl ImageManager {
         }
 
         let mut out: Vec<u8> = Vec::new();
+        // Append one complete escape sequence, wrapping it in tmux passthrough
+        // when running inside tmux so the multiplexer forwards it intact.
+        let mut emit = |seq: &str| {
+            if self.tmux_passthrough {
+                out.extend_from_slice(&wrap_tmux(seq.as_bytes()));
+            } else {
+                out.extend_from_slice(seq.as_bytes());
+            }
+        };
 
         for id in self.pending_delete.drain(..) {
             // a=d, d=I: delete the image *and* its placements, freeing data.
-            out.extend_from_slice(format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\").as_bytes());
+            emit(&format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\"));
         }
 
         let transmits: Vec<u32> = self.pending_transmit.drain(..).collect();
@@ -313,14 +357,11 @@ impl ImageManager {
                 // placement size in cells; `q=2` suppresses acknowledgements.
                 let path_b64 = base64::engine::general_purpose::STANDARD
                     .encode(img.path.to_string_lossy().as_bytes());
-                out.extend_from_slice(
-                    format!(
-                        "\x1b_Ga=T,U=1,i={id},f=100,t=f,c={cols},r={rows},q=2;{path_b64}\x1b\\",
-                        cols = img.cols,
-                        rows = img.rows,
-                    )
-                    .as_bytes(),
-                );
+                emit(&format!(
+                    "\x1b_Ga=T,U=1,i={id},f=100,t=f,c={cols},r={rows},q=2;{path_b64}\x1b\\",
+                    cols = img.cols,
+                    rows = img.rows,
+                ));
             }
         }
 
@@ -414,6 +455,22 @@ mod tests {
         // doc2 image survives and is still deduped by key.
         let c2 = mgr.register("c", "doc2", PathBuf::from("/tmp/c.png"), 4, 2);
         assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn tmux_passthrough_wraps_each_sequence() {
+        let mut mgr = ImageManager::new(GraphicsCapability::Kitty);
+        mgr.set_tmux_passthrough(true);
+        mgr.register("a", "ns", PathBuf::from("/tmp/x.png"), 10, 4);
+
+        let seq = mgr.take_escape_sequences();
+        // Framed by tmux DCS passthrough …
+        assert!(seq.starts_with(b"\x1bPtmux;"));
+        assert!(seq.ends_with(b"\x1b\\"));
+        // … and the inner kitty APC's ESCs are doubled (ESC ESC _ G).
+        assert!(seq
+            .windows(4)
+            .any(|w| w == [0x1b, 0x1b, b'_', b'G']));
     }
 
     #[test]
