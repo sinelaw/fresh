@@ -58,6 +58,76 @@ function isComposingInAnySplit(bufferId: number): boolean {
   return info != null && info.is_composing_in_any_split;
 }
 
+// ---------------------------------------------------------------------------
+// Fenced-code-block context.
+//
+// The per-line pipeline (processLineConceals / processLineSoftBreaks /
+// processTableAlignment) has no cross-line context, so without help it
+// treats lines INSIDE ``` fences as markdown — e.g. a TypeScript union
+// `| 'item_assigned'` grows table borders. We cache the byte ranges of all
+// fenced blocks per buffer (rebuilt on enable and after edits) and skip
+// markdown processing for any line inside one.
+// ---------------------------------------------------------------------------
+const fenceRangesByBuffer = new Map<number, Array<{ start: number; end: number }>>();
+
+// UTF-8 byte length of a JS string (buffer offsets are UTF-8 bytes).
+function utf8ByteLen(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.codePointAt(i) as number;
+    if (c > 0xffff) i++; // surrogate pair consumed two UTF-16 units
+    n += c <= 0x7f ? 1 : c <= 0x7ff ? 2 : c <= 0xffff ? 3 : 4;
+  }
+  return n;
+}
+
+async function rebuildFenceRanges(bufferId: number): Promise<void> {
+  try {
+    const len = editor.getBufferLength(bufferId);
+    const text = await editor.getBufferText(bufferId, 0, len);
+    if (typeof text !== "string") return;
+    const ranges: Array<{ start: number; end: number }> = [];
+    const lines = text.split("\n");
+    let offset = 0;
+    let openStart: number | null = null;
+    let fenceChar = "";
+    for (const line of lines) {
+      const lineStart = offset;
+      const lineEnd = lineStart + utf8ByteLen(line);
+      offset = lineEnd + 1; // '\n'
+      const trimmed = line.trim();
+      if (openStart === null) {
+        const m = trimmed.match(/^(```+|~~~+)/);
+        if (m) {
+          openStart = lineStart;
+          fenceChar = m[1][0];
+        }
+      } else if (
+        trimmed.startsWith(fenceChar.repeat(3)) &&
+        trimmed.split(fenceChar).join("").trim() === ""
+      ) {
+        ranges.push({ start: openStart, end: lineEnd });
+        openStart = null;
+      }
+    }
+    if (openStart !== null) ranges.push({ start: openStart, end: offset });
+    fenceRangesByBuffer.set(bufferId, ranges);
+  } catch (_e) {
+    /* keep the previous ranges on failure */
+  }
+}
+
+// True if `byte` falls inside a cached fenced code block (the opening and
+// closing fence lines themselves count as inside).
+function insideFence(bufferId: number, byte: number): boolean {
+  const ranges = fenceRangesByBuffer.get(bufferId);
+  if (!ranges) return false;
+  for (const r of ranges) {
+    if (byte >= r.start && byte <= r.end) return true;
+  }
+  return false;
+}
+
 // Helper: get cached table column widths from per-buffer-per-split view state
 function getTableWidths(bufferId: number): Map<number, TableWidthInfo> | undefined {
   const obj = editor.getViewState(bufferId, "table-widths") as Record<string, { maxW: number[]; allocated: number[] }> | undefined;
@@ -177,7 +247,9 @@ function processTableBorders(
     editor.clearVirtualTextNamespace(bufferId, ns);
 
     const trimmed = line.content.trim();
-    const isTableRow = trimmed.startsWith("|") || trimmed.endsWith("|");
+    const isTableRow =
+      (trimmed.startsWith("|") || trimmed.endsWith("|")) &&
+      !insideFence(bufferId, line.byte_start);
     if (!isTableRow) continue;
 
     const widthInfo = widthMap.get(line.line_number);
@@ -562,7 +634,10 @@ function enableMarkdownCompose(bufferId: number): void {
   // Set layout hints for centered margins
   editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
 
-  // Trigger a refresh so lines_changed hooks fire for visible content
+  // Build the fenced-code-block range cache first so the initial render
+  // already skips markdown processing inside fences, then trigger a refresh
+  // so lines_changed hooks fire for visible content.
+  void rebuildFenceRanges(bufferId).then(() => editor.refreshLines(bufferId));
   editor.refreshLines(bufferId);
   editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
 }
@@ -584,6 +659,7 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearNamespace(bufferId, "md-emphasis");
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
+    fenceRangesByBuffer.delete(bufferId);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -1057,10 +1133,67 @@ function processLineConceals(
   // previous row's emphasis markers.
   const cursorStrictlyOnLine = cursors.some(c => c >= byteStart && c < byteEnd);
 
-  // Skip lines inside code fences (we'd need multi-line context for this;
-  // for now, detect fence lines and code content lines)
   const trimmed = lineContent.trim();
-  if (trimmed.startsWith('```')) return; // fence line itself
+
+  // --- Fenced code blocks ---
+  // Fence marker lines: conceal the ``` markers + language tag (revealed
+  // while the cursor is on the line) so code blocks render as a clean well.
+  if (/^(```|~~~)/.test(trimmed)) {
+    if (!cursorOnLine) {
+      let effLen = lineContent.length;
+      if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+      if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+      if (effLen > 0) {
+        editor.addConceal(
+          bufferId,
+          "md-syntax",
+          byteStart,
+          charToByte(lineContent, effLen, byteStart),
+          null,
+        );
+      }
+    }
+    return;
+  }
+  // Lines inside a fence are code, not markdown: no tables, no emphasis,
+  // no conceals. (Cross-line context comes from the cached fence ranges.)
+  if (insideFence(bufferId, byteStart)) return;
+
+  // --- ATX headings ---
+  // Conceal the `#` markers (revealed while the cursor is on the line) and
+  // style the heading text by level. A terminal can't change font size, so
+  // levels are distinguished by color/weight/underline instead.
+  const headingMatch = lineContent.match(/^(\s{0,3})(#{1,6})\s+/);
+  if (headingMatch) {
+    const level = headingMatch[2].length;
+    const markerStart = charToByte(lineContent, headingMatch[1].length, byteStart);
+    const markerEnd = charToByte(lineContent, headingMatch[0].length, byteStart);
+    if (!cursorOnLine) {
+      editor.addConceal(bufferId, "md-syntax", markerStart, markerEnd, null);
+    }
+    let effLen = lineContent.length;
+    if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+    if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+    const textEnd = charToByte(lineContent, effLen, byteStart);
+    const headingStyles: Record<string, unknown>[] = [
+      { fg: "syntax.keyword", bold: true, underline: true },  // H1
+      { fg: "syntax.function", bold: true, underline: true }, // H2
+      { fg: "syntax.function", bold: true },                  // H3
+      { fg: "syntax.type", bold: true },                      // H4
+      { fg: "syntax.constant", bold: true },                  // H5
+      { fg: "syntax.constant", italic: true },                // H6
+    ];
+    if (textEnd > markerEnd) {
+      editor.addOverlay(
+        bufferId,
+        "md-emphasis",
+        markerEnd,
+        textEnd,
+        headingStyles[Math.min(level, 6) - 1],
+      );
+    }
+    // Fall through: headings may still contain inline emphasis/code/links.
+  }
 
   // --- Table row handling ---
   // Always apply table conceals even when cursor is on the line.
@@ -1337,6 +1470,10 @@ function processLineSoftBreaks(
   // Clear existing soft breaks for this line range
   editor.clearSoftBreaksInRange(bufferId, byteStart, byteEnd);
 
+  // Code lines never wrap and must not be misread as markdown (a `|`-leading
+  // code line would otherwise get table-cell soft breaks).
+  if (insideFence(bufferId, byteStart)) return;
+
   const viewport = editor.getViewport();
   if (!viewport) return;
   const width = effectiveComposeWidth(viewport.width);
@@ -1496,7 +1633,9 @@ function processTableAlignment(
 
   for (const line of lines) {
     const trimmed = line.content.trim();
-    const isTableRow = trimmed.startsWith('|') || trimmed.endsWith('|');
+    const isTableRow =
+      (trimmed.startsWith('|') || trimmed.endsWith('|')) &&
+      !insideFence(bufferId, line.byte_start);
     if (isTableRow && line.line_number === lastLineNum + 1) {
       currentGroup.push(line);
     } else if (isTableRow) {
@@ -1698,10 +1837,14 @@ editor.on("lines_changed", (data) => {
 editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
+  // Keep fence ranges current so typed/removed fences change classification.
+  // The constant cursor_moved refreshes pick the new ranges up next frame.
+  void rebuildFenceRanges(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
+  void rebuildFenceRanges(data.buffer_id);
 });
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
