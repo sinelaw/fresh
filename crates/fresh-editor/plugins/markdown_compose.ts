@@ -899,8 +899,21 @@ function charToByte(lineContent: string, charOffset: number, lineByteStart: numb
 // conceals + overlays) and concealedText (to compute visible table widths).
 // ---------------------------------------------------------------------------
 
+// Superscript form of a footnote label: numeric labels map to Unicode
+// superscript digits (¹, ²³, …); non-numeric labels keep a compact caret
+// form (^note) since most of the alphabet has no superscript codepoint.
+const SUPERSCRIPT_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+function superscriptLabel(label: string): string {
+  let out = "";
+  for (const ch of label) {
+    if (ch < "0" || ch > "9") return "^" + label;
+    out += SUPERSCRIPT_DIGITS[ch.charCodeAt(0) - 48];
+  }
+  return out;
+}
+
 interface InlineSpan {
-  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity';
+  type: 'code' | 'bold-italic' | 'bold' | 'italic' | 'strikethrough' | 'link' | 'entity' | 'footnote';
   matchStart: number;    // char offset of full match start
   matchEnd: number;      // char offset of full match end
   contentStart: number;  // char offset of visible content start
@@ -981,6 +994,22 @@ function findInlineSpans(text: string): InlineSpan[] {
         { start: textEnd, end: me, replacement: ` — ${m[2]}` },
       ],
       linkUrl: m[2],
+    });
+  }
+
+  // 3b. Footnote references: [^1] → superscript ¹. Definition lines
+  // (`[^1]: text`) are excluded by the (?!:) guard and handled per-line in
+  // processLineConceals.
+  const footnoteRe = /\[\^([^\]\s]+)\](?!:)/g;
+  while ((m = footnoteRe.exec(text)) !== null) {
+    if (inCodeSpan(m.index)) continue;
+    const ms = m.index;
+    const me = ms + m[0].length;
+    spans.push({
+      type: 'footnote',
+      matchStart: ms, matchEnd: me,
+      contentStart: ms, contentEnd: me,
+      concealRanges: [{ start: ms, end: me, replacement: superscriptLabel(m[1]) }],
     });
   }
 
@@ -1205,6 +1234,34 @@ function processLineConceals(
       );
     }
     // Fall through: headings may still contain inline emphasis/code/links.
+  }
+
+  // --- Footnote definitions: [^1]: text ---
+  // The `[^1]:` marker renders as the same superscript the in-text reference
+  // uses, and the definition text is dimmed, mirroring GitHub's footnotes
+  // section. Revealed while the cursor is on the line.
+  const footDefMatch = lineContent.match(/^(\s{0,3})\[\^([^\]\s]+)\]:( ?)/);
+  if (footDefMatch) {
+    if (!cursorOnLine) {
+      editor.addConceal(
+        bufferId,
+        "md-syntax",
+        charToByte(lineContent, footDefMatch[1].length, byteStart),
+        charToByte(lineContent, footDefMatch[0].length, byteStart),
+        superscriptLabel(footDefMatch[2]) + " ",
+      );
+    }
+    let effLen = lineContent.length;
+    if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+    if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+    const defTextStart = charToByte(lineContent, footDefMatch[0].length, byteStart);
+    const defTextEnd = charToByte(lineContent, effLen, byteStart);
+    if (defTextEnd > defTextStart) {
+      editor.addOverlay(bufferId, "md-emphasis", defTextStart, defTextEnd, {
+        fg: "syntax.comment",
+      });
+    }
+    // Fall through: definitions may still contain inline emphasis/code/links.
   }
 
   // --- Block quotes ---
@@ -1524,6 +1581,9 @@ function processLineConceals(
           underline: true,
           url: span.linkUrl,
         });
+        break;
+      case 'footnote':
+        editor.addOverlay(bufferId, "md-emphasis", byteCS, byteCE, { fg: "syntax.link" });
         break;
       // entities: no overlay
     }

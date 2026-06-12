@@ -1336,7 +1336,9 @@ fn test_compose_mode_blockquote_bullet_checkbox_hr_rendering() {
 
 ***
 
-after rule
+after rule with a footnote[^1]
+
+[^1]: the footnote text
 ";
 
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1433,6 +1435,24 @@ after rule
     assert!(
         screen.contains("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"),
         "Rendered \u{2500} rule should be visible for ***.\nScreen:\n{}",
+        screen,
+    );
+
+    // Footnotes: `[^1]` references render as superscript ¹, and the
+    // `[^1]:` definition marker collapses to the same superscript.
+    assert!(
+        !screen.contains("[^1]"),
+        "Raw [^1] footnote syntax should be concealed in compose mode.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("footnote\u{00b9}"),
+        "Superscript \u{00b9} should replace the [^1] reference.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        screen.contains("\u{00b9} the footnote text"),
+        "Definition marker should render as \u{00b9} before the footnote text.\nScreen:\n{}",
         screen,
     );
 }
