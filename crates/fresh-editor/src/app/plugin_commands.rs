@@ -524,6 +524,9 @@ impl Editor {
                 VirtualTextPosition::LineBelow
             };
             let blank: String = " ".repeat(cols as usize);
+            // Rows are added top-to-bottom; `query_lines_in_range` breaks
+            // priority ties by insertion order, which keeps them contiguous
+            // and ordered at render time.
             for image_row in 0..rows {
                 state.virtual_texts.add_image_line(
                     &mut state.marker_list,

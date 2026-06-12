@@ -61,3 +61,6 @@ bun.lockb
 dist
 .amp/
 .worktrees/
+
+# macOS Finder metadata
+.DS_Store
