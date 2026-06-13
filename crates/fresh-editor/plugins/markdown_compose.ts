@@ -1117,20 +1117,100 @@ function distributeColumnWidths(maxW: number[], available: number): number[] {
 }
 
 /**
- * Wrap text into lines of at most `width` characters, breaking at word boundaries.
+ * Terminal cell width of a single code point. Tables are padded to align in
+ * *cells*, not code units — an emoji like ✅ is one UTF-16 unit but occupies
+ * two cells, so `.length`-based padding pushes the right border out of line.
+ */
+function charDisplayWidth(cp: number): number {
+  // Zero-width: combining marks, ZWJ, zero-width space, variation selectors.
+  if (
+    cp === 0x200b || cp === 0x200d ||
+    (cp >= 0x0300 && cp <= 0x036f) ||
+    (cp >= 0xfe00 && cp <= 0xfe0f)
+  ) return 0;
+  // Symbols in U+2300–U+27BF that default to emoji presentation (2 cells in
+  // most terminals): watches, weather, ✅ ❌ ❓ ❗ ⭕ etc.
+  if (
+    (cp >= 0x231a && cp <= 0x231b) || (cp >= 0x23e9 && cp <= 0x23ec) ||
+    cp === 0x23f0 || cp === 0x23f3 || (cp >= 0x25fd && cp <= 0x25fe) ||
+    (cp >= 0x2614 && cp <= 0x2615) || (cp >= 0x2648 && cp <= 0x2653) ||
+    cp === 0x267f || cp === 0x2693 || cp === 0x26a1 ||
+    (cp >= 0x26aa && cp <= 0x26ab) || (cp >= 0x26bd && cp <= 0x26be) ||
+    (cp >= 0x26c4 && cp <= 0x26c5) || cp === 0x26ce || cp === 0x26d4 ||
+    cp === 0x26ea || (cp >= 0x26f2 && cp <= 0x26f3) || cp === 0x26f5 ||
+    cp === 0x26fa || cp === 0x26fd || cp === 0x2705 ||
+    (cp >= 0x270a && cp <= 0x270b) || cp === 0x2728 || cp === 0x274c ||
+    cp === 0x274e || (cp >= 0x2753 && cp <= 0x2755) || cp === 0x2757 ||
+    (cp >= 0x2795 && cp <= 0x2797) || cp === 0x27b0 || cp === 0x27bf ||
+    (cp >= 0x2b1b && cp <= 0x2b1c) || cp === 0x2b50 || cp === 0x2b55
+  ) return 2;
+  // East Asian Wide / Fullwidth and the main emoji planes.
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) ||
+    (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f300 && cp <= 0x1f64f) ||
+    (cp >= 0x1f680 && cp <= 0x1f6ff) ||
+    (cp >= 0x1f900 && cp <= 0x1faff) ||
+    (cp >= 0x20000 && cp <= 0x3fffd)
+  ) return 2;
+  return 1;
+}
+
+/** Display width of a string in terminal cells. */
+function displayWidth(text: string): number {
+  let w = 0;
+  let prevBase = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp === 0xfe0f) {
+      // Emoji presentation selector upgrades a narrow base char (e.g. ⚠︎→⚠️)
+      // to two cells.
+      if (prevBase === 1) { w += 1; prevBase = 2; }
+      continue;
+    }
+    const cw = charDisplayWidth(cp);
+    w += cw;
+    if (cw > 0) prevBase = cw;
+  }
+  return w;
+}
+
+/** Longest prefix of `text` whose display width is at most `width`. */
+function truncateToWidth(text: string, width: number): string {
+  let w = 0;
+  let out = '';
+  for (const ch of text) {
+    const cw = charDisplayWidth(ch.codePointAt(0)!);
+    if (w + cw > width) break;
+    out += ch;
+    w += cw;
+  }
+  return out;
+}
+
+/**
+ * Wrap text into lines of at most `width` cells, breaking at word boundaries.
  */
 function wrapText(text: string, width: number): string[] {
-  if (width <= 0 || text.length <= width) return [text];
+  if (width <= 0 || displayWidth(text) <= width) return [text];
   const lines: string[] = [];
   let pos = 0;
   while (pos < text.length) {
-    if (pos + width >= text.length) {
-      lines.push(text.slice(pos));
+    const rest = text.slice(pos);
+    if (displayWidth(rest) <= width) {
+      lines.push(rest);
       break;
     }
-    let breakAt = text.lastIndexOf(' ', pos + width);
+    // Char index just past the last char that fits in `width` cells.
+    const fit = truncateToWidth(rest, width).length || 1;
+    let breakAt = text.lastIndexOf(' ', pos + fit);
     if (breakAt <= pos) {
-      breakAt = pos + width;
+      breakAt = pos + fit;
       lines.push(text.slice(pos, breakAt));
       pos = breakAt;
     } else {
@@ -1403,7 +1483,7 @@ function processLineConceals(
             const wrapW = Math.max(1, colWidths[ci] - 2);
             const wrapped = cellWrapped[ci] || [];
             const text = vl < wrapped.length ? wrapped[vl] : '';
-            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - text.length)) + ' │';
+            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
           }
           visualLines.push(vline);
         }
@@ -1461,7 +1541,7 @@ function processLineConceals(
       if (!cursorStrictlyOnLine && colWidths) {
         for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
           const cellText = concealedText(cells[ci]);
-          if (cellText.length > colWidths[ci]) {
+          if (displayWidth(cellText) > colWidths[ci]) {
             const prevPipe = pipePositions[ci];
             const nextPipe = pipePositions[ci + 1];
             if (prevPipe !== undefined && nextPipe !== undefined) {
@@ -1486,7 +1566,7 @@ function processLineConceals(
           const cellIdx = pipeIdx - 1;
           if (!cursorStrictlyOnLine && colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
             const cellText = concealedText(cells[cellIdx]);
-            const cellWidth = cellText.length;
+            const cellWidth = displayWidth(cellText);
             const allocatedWidth = colWidths[cellIdx];
 
             if (cellWidth > allocatedWidth) {
@@ -1496,9 +1576,12 @@ function processLineConceals(
               const prevPipeCharPos = pipePositions[pipeIdx - 1];
               const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
               const cellByteEnd = pipeByte;
+              // Width-aware truncation can land 1 cell short when it would
+              // split a double-width char; pad back up to the allocation.
+              const cut = truncateToWidth(cellText, allocatedWidth - 1) + '-';
               const truncated = isSeparator
                 ? '─'.repeat(allocatedWidth)
-                : cellText.slice(0, allocatedWidth - 1) + '-';
+                : cut + ' '.repeat(Math.max(0, allocatedWidth - displayWidth(cut)));
               editor.addConceal(bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated);
               truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
             } else {
@@ -1520,7 +1603,9 @@ function processLineConceals(
             editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padding + "│");
           }
           pipeIdx++;
-        } else if (isSeparator && lineContent[i] === '-') {
+        } else if (isSeparator && (lineContent[i] === '-' || lineContent[i] === ':')) {
+          // Alignment colons (`:---:`) render as part of the rule line too —
+          // leaving them visible bleeds `:----:` through the concealed row.
           // Skip per-character conceals that land inside a truncated cell;
           // the cell-wide truncate conceal already handles the rendering.
           const inTruncated = truncatedCellCharRanges.some(r => i >= r.start && i < r.end);
@@ -1838,7 +1923,7 @@ function processTableAlignment(
           // a row. Concealed rows simply get extra padding.
           const isSep = /^[-:\s]+$/.test(row[col]);
           if (!isSep) {
-            maxW = Math.max(maxW, row[col].length);
+            maxW = Math.max(maxW, displayWidth(row[col]));
           }
         }
       }
