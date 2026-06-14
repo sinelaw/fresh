@@ -4037,3 +4037,45 @@ fn test_toggle_file_explorer_side_moves_panel() {
         "Second toggle should return the explorer to its original left position"
     );
 }
+
+/// A configured custom ignore pattern hides matching entries from the tree.
+///
+/// Regression: `file_explorer.custom_ignore_patterns` was parsed from config but
+/// never wired into the ignore matcher, so a file matching a configured pattern
+/// still appeared in the explorer. Without that wiring this test fails — `debug.log`
+/// shows up alongside `keep.rs`.
+#[test]
+fn test_file_explorer_applies_custom_ignore_patterns() {
+    let mut config = Config::default();
+    config.file_explorer.custom_ignore_patterns = vec!["*.log".to_string()];
+
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config_no_plugins(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    // A normal file (should appear) and one matching the configured pattern (should not).
+    fs::write(project_root.join("keep.rs"), "fn main() {}").unwrap();
+    fs::write(project_root.join("debug.log"), "noise").unwrap();
+
+    // Open the file explorer.
+    harness
+        .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait until the directory listing has populated and settled (the non-ignored
+    // file is on screen). `keep.rs` and `debug.log` are siblings loaded in the same
+    // refresh, so once the tree is stable the filtering decision is final.
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains("keep.rs"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("keep.rs"),
+        "non-ignored file should be listed:\n{screen}"
+    );
+    assert!(
+        !screen.contains("debug.log"),
+        "file matching custom_ignore_patterns (*.log) should be hidden:\n{screen}"
+    );
+}
