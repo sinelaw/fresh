@@ -1193,3 +1193,44 @@ fn test_vi_percent_matching_bracket() {
     harness.render().unwrap();
     harness.wait_until(|h| h.cursor_position() == 3).unwrap();
 }
+
+// =============================================================================
+// Insert-mode exit cursor adjustment
+// =============================================================================
+
+/// Leaving insert mode with Escape should move the cursor one column left
+/// (vim behavior): the insert cursor sits one position right of normal, so on
+/// Escape it drops back onto the last edited character.
+#[test]
+fn test_vi_escape_from_insert_moves_cursor_left() {
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    let fixture = TestFixture::new("test.txt", "hello\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Enter insert at the start and type "AB" -> "ABhello", cursor at byte 2.
+    harness
+        .send_key(KeyCode::Char('i'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+
+    harness.type_text("AB").unwrap();
+    harness.render().unwrap();
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+
+    // Escape -> normal mode, and the cursor drops one column left to byte 1.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+    harness.wait_until(|h| h.cursor_position() == 1).unwrap();
+
+    harness.assert_buffer_content("ABhello\n");
+}

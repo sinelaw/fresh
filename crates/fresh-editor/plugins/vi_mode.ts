@@ -500,7 +500,17 @@ function vi_open_above() : void {
 registerHandler("vi_open_above", vi_open_above);
 
 function vi_escape() : void {
+  // When leaving insert mode, vi_mode should move the cursor one
+  // column left (clamped to the line start), since the insert-mode
+  // cursor sits one position right of normal. This aligns with the
+  // actual vi/vim behavior. Guard on the current mode so a
+  // normal-mode Escape (cancel count/operator) does not move the
+  // cursor.
+  const leavingInsert = state.mode === "insert";
   switchMode("normal");
+  if (leavingInsert) {
+    editor.executeAction("move_left_in_line");
+  }
 }
 registerHandler("vi_escape", vi_escape);
 
