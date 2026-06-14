@@ -1067,6 +1067,26 @@ impl Editor {
                 );
                 self.init_file_open_state();
             }
+            Action::SaveAll => {
+                let msg = match self.save_all() {
+                    Ok((saved, failed)) => {
+                        if failed > 0 {
+                            t!(
+                                "status.save_all_partial",
+                                saved = saved.to_string(),
+                                failed = failed.to_string()
+                            )
+                            .to_string()
+                        } else if saved == 0 {
+                            t!("status.save_all_none").to_string()
+                        } else {
+                            t!("status.save_all", count = saved.to_string()).to_string()
+                        }
+                    }
+                    Err(e) => t!("file.save_failed", error = &format!("{}", e)).to_string(),
+                };
+                self.active_window_mut().status_message = Some(msg);
+            }
             Action::Open => {
                 self.start_prompt(t!("file.open_prompt").to_string(), PromptType::OpenFile);
                 self.prefill_open_file_prompt();

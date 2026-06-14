@@ -3122,6 +3122,13 @@ impl MenuConfig {
                         checkbox: None,
                     },
                     MenuItem::Action {
+                        label: t!("menu.file.save_all").to_string(),
+                        action: "save_all".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::HAS_BUFFER.to_string()),
+                        checkbox: None,
+                    },
+                    MenuItem::Action {
                         label: t!("menu.file.revert").to_string(),
                         action: "revert".to_string(),
                         args: HashMap::new(),

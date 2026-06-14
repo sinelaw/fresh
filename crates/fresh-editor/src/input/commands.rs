@@ -203,6 +203,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.save_all",
+        desc_key: "cmd.save_all_desc",
+        action: || Action::SaveAll,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.new_file",
         desc_key: "cmd.new_file_desc",
         action: || Action::New,
