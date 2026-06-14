@@ -31,6 +31,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* Java (jdtls) completion, hover, and other features registered via `client/registerCapability` now work. Fresh modelled JSON-RPC ids as integers, but Eclipse LSP4J servers (jdtls, the Groovy/Kotlin servers, lemminx) send their server-initiated requests with string ids, which Fresh misparsed as notifications — dropping every dynamic capability registration (#2340, reported by @maxandersen).
 * Occurrence highlighting now uses a theme-appropriate background in every shipped theme; the `dracula`, `nord`, and `solarized-dark` themes no longer fall back to a hard-wired dark color that clashed with their palette (#2312).
 * Windows: the TUI attaches to the parent process's stdio instead of failing in `-gui` builds (#2276, reported and fixed by @mokurin000 in #2277).
 * Right-side status bar elements render with configurable separators (#2088, reported and fixed by @PavelLoparev), and cursor column numbers are grapheme-correct (#2090, reported and fixed by @PavelLoparev).

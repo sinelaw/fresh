@@ -158,6 +158,107 @@ done
         Ok(Self { handle, stop_tx })
     }
 
+    /// Spawn a fake LSP server that registers completion *dynamically*, the
+    /// way Eclipse LSP4J servers (jdtls, the Groovy/Kotlin servers, …) do.
+    ///
+    /// Two things make this a faithful jdtls stand-in:
+    /// 1. The static `initialize` result advertises **no** `completionProvider`.
+    /// 2. After `initialized`, it sends a `client/registerCapability` request
+    ///    for `textDocument/completion` whose JSON-RPC id is a **string**
+    ///    (`"dyn-reg-1"`) — LSP4J always uses string ids for the requests it
+    ///    initiates.
+    ///
+    /// A client that types JSON-RPC ids as integers misparses that request as a
+    /// notification (the `id` is dropped), never enables completion, and never
+    /// acks the request — so completion stays dead (sinelaw/fresh#2340).
+    pub fn spawn_with_dynamic_completion(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+# Function to read a message
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+# Main loop
+while true; do
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    case "$method" in
+    "initialize")
+        # Deliberately NO completionProvider here — completion is registered
+        # dynamically once the client signals `initialized` (see below).
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1}}}'
+        ;;
+    "initialized")
+        # Server-to-client request with a STRING id, exactly like jdtls/LSP4J.
+        send_message '{"jsonrpc":"2.0","id":"dyn-reg-1","method":"client/registerCapability","params":{"registrations":[{"id":"completion-reg","method":"textDocument/completion","registerOptions":{"triggerCharacters":["."]}}]}}'
+        ;;
+    "textDocument/completion")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"dynamicCompletion","kind":3,"detail":"fn dynamicCompletion()","insertText":"dynamicCompletion"}]}}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    esac
+done
+"#;
+
+        let script_path = Self::dynamic_completion_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Path to the dynamic-completion script.
+    pub fn dynamic_completion_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_dynamic_completion.sh")
+    }
+
     /// Spawn a fake LSP server that delays semantic token responses.
     pub fn spawn_with_semantic_tokens_delay(
         dir: &std::path::Path,

@@ -132,11 +132,60 @@ pub enum JsonRpcMessage {
     Notification(JsonRpcNotification),
 }
 
+/// A JSON-RPC request/response id.
+///
+/// The LSP base protocol types ids as `integer | string`, and that distinction
+/// is not academic: servers built on Eclipse LSP4J (jdtls, the Groovy/Kotlin
+/// language servers, lemminx, …) send *string* ids for the requests they
+/// initiate, such as `client/registerCapability`. Modelling the id as a plain
+/// `i64` made those requests fail to deserialize as `Request` and — because
+/// `JsonRpcMessage` is `#[serde(untagged)]` — silently fall through to
+/// `Notification`, which ignores the stray `id`. The dynamic-capability handler
+/// therefore never ran, jdtls's dynamically-registered `textDocument/completion`
+/// (and hover, etc.) stayed gated off, and the request was never even
+/// acknowledged (sinelaw/fresh#2340).
+///
+/// `Number` is listed first so numeric ids round-trip as integers; a JSON
+/// string id only matches `Str`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcId {
+    Number(i64),
+    Str(String),
+}
+
+impl JsonRpcId {
+    /// The id as an `i64`, when it is numeric. Fresh only ever issues numeric
+    /// ids for its own outgoing requests, so response correlation keys on this;
+    /// a string id can only have come from a server-initiated request.
+    fn as_i64(&self) -> Option<i64> {
+        match self {
+            JsonRpcId::Number(n) => Some(*n),
+            JsonRpcId::Str(_) => None,
+        }
+    }
+}
+
+impl From<i64> for JsonRpcId {
+    fn from(n: i64) -> Self {
+        JsonRpcId::Number(n)
+    }
+}
+
+impl std::fmt::Display for JsonRpcId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JsonRpcId::Number(n) => write!(f, "{}", n),
+            JsonRpcId::Str(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// A JSON-RPC request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: i64,
+    pub id: JsonRpcId,
     pub method: String,
     pub params: Option<Value>,
 }
@@ -145,7 +194,7 @@ pub struct JsonRpcRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
-    pub id: i64,
+    pub id: JsonRpcId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1080,7 +1129,7 @@ impl LspState {
             .map_err(|e| format!("Failed to serialize params: {}", e))?;
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id,
+            id: JsonRpcId::Number(id),
             method: method.to_string(),
             params: params_value,
         };
@@ -3772,7 +3821,7 @@ fn server_command_is_rust_analyzer(server_command: &str) -> bool {
 }
 
 /// Build a null-result JSON-RPC response for `id`.
-fn null_response(id: i64) -> JsonRpcResponse {
+fn null_response(id: JsonRpcId) -> JsonRpcResponse {
     JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id,
@@ -3913,7 +3962,12 @@ async fn handle_message_dispatch(
     match message {
         JsonRpcMessage::Response(response) => {
             tracing::trace!("Received LSP response for request id={}", response.id);
-            if let Some(tx) = pending.lock().unwrap().remove(&response.id) {
+            // Fresh only issues numeric ids, so a response that correlates to one
+            // of our pending requests must carry a numeric id. A string id here
+            // can only be a stray/echoed server id we never tracked — drop it
+            // rather than letting it look like an unknown request.
+            let pending_id = response.id.as_i64();
+            if let Some(tx) = pending_id.and_then(|id| pending.lock().unwrap().remove(&id)) {
                 let result = if let Some(error) = response.error {
                     log_response_error(error.code, &error.message, server_name, language);
                     Err(format!(
@@ -5111,7 +5165,7 @@ mod tests {
     fn test_json_rpc_request_serialization() {
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            id: 1,
+            id: JsonRpcId::Number(1),
             method: "initialize".to_string(),
             params: Some(serde_json::json!({"rootUri": "file:///test"})),
         };
@@ -5127,7 +5181,7 @@ mod tests {
     fn test_json_rpc_response_serialization() {
         let response = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            id: 1,
+            id: JsonRpcId::Number(1),
             result: Some(serde_json::json!({"success": true})),
             error: None,
         };
@@ -5344,7 +5398,7 @@ mod tests {
     fn test_json_rpc_error_response() {
         let response = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            id: 1,
+            id: JsonRpcId::Number(1),
             result: None,
             error: Some(JsonRpcError {
                 code: -32600,
@@ -5486,12 +5540,48 @@ mod tests {
         match message {
             JsonRpcMessage::Request(request) => {
                 assert_eq!(request.jsonrpc, "2.0");
-                assert_eq!(request.id, 1);
+                assert_eq!(request.id, JsonRpcId::Number(1));
                 assert_eq!(request.method, "initialize");
                 assert!(request.params.is_some());
             }
             _ => panic!("Expected Request"),
         }
+    }
+
+    /// Eclipse LSP4J servers (jdtls, the Groovy/Kotlin servers, lemminx, …)
+    /// send the requests they initiate — notably `client/registerCapability` —
+    /// with a **string** JSON-RPC id. Such a message must still deserialize as
+    /// a `Request` so it reaches the request handler (which records the
+    /// dynamically-registered capability and acks the request).
+    ///
+    /// Before the id type accepted strings this parsed as a `Notification`
+    /// (the untagged enum fell through and the stray `id` was dropped), so
+    /// jdtls's dynamically-registered completion never turned on
+    /// (sinelaw/fresh#2340).
+    #[test]
+    fn string_id_request_deserializes_as_request_not_notification() {
+        let json = r#"{"jsonrpc":"2.0","id":"dyn-reg-1","method":"client/registerCapability","params":{"registrations":[{"id":"completion-reg","method":"textDocument/completion"}]}}"#;
+        let message: JsonRpcMessage = serde_json::from_str(json).unwrap();
+
+        match message {
+            JsonRpcMessage::Request(request) => {
+                assert_eq!(request.id, JsonRpcId::Str("dyn-reg-1".to_string()));
+                assert_eq!(request.method, "client/registerCapability");
+            }
+            other => panic!("expected Request for a string-id message, got {other:?}"),
+        }
+    }
+
+    /// The string id must round-trip on the way back out, so the `null` ack we
+    /// send for a server-initiated request correlates on the server side.
+    #[test]
+    fn null_response_preserves_string_id() {
+        let json = serde_json::to_string(&null_response(JsonRpcId::Str("dyn-reg-1".to_string())))
+            .expect("serialize null response");
+        assert!(
+            json.contains(r#""id":"dyn-reg-1""#),
+            "string id must be echoed verbatim, got: {json}"
+        );
     }
 
     #[test]
@@ -5502,7 +5592,7 @@ mod tests {
         match message {
             JsonRpcMessage::Response(response) => {
                 assert_eq!(response.jsonrpc, "2.0");
-                assert_eq!(response.id, 1);
+                assert_eq!(response.id, JsonRpcId::Number(1));
                 assert!(response.result.is_some());
                 assert!(response.error.is_none());
             }
@@ -5534,7 +5624,7 @@ mod tests {
         match message {
             JsonRpcMessage::Response(response) => {
                 assert_eq!(response.jsonrpc, "2.0");
-                assert_eq!(response.id, 1);
+                assert_eq!(response.id, JsonRpcId::Number(1));
                 assert!(response.result.is_none());
                 assert!(response.error.is_some());
                 let error = response.error.unwrap();

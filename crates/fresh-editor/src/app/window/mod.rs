@@ -2239,6 +2239,19 @@ impl Window {
             .count()
     }
 
+    /// Number of LSP servers for `language` whose effective capabilities
+    /// currently advertise `textDocument/completion`. This reflects
+    /// dynamically-registered providers (`client/registerCapability`), not
+    /// only the static `initialize` result, so tests can wait for a server
+    /// like jdtls to register completion before triggering it.
+    pub fn completion_capable_lsp_server_count(&self, language: &str) -> usize {
+        self.lsp
+            .get_handles(language)
+            .iter()
+            .filter(|sh| sh.capabilities.completion)
+            .count()
+    }
+
     /// Shutdown the LSP server for `language` in this window (marks it
     /// disabled until manual restart). Returns true if a server was
     /// shutdown, false if no server was running for that language.
