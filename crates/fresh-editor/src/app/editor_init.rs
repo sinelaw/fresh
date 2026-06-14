@@ -207,6 +207,7 @@ impl Editor {
             paste_pending: std::collections::HashMap::new(),
             paste_slow_path_just_armed: false,
             paste_render_suppress_until: None,
+            system_clipboard_reader: None,
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,

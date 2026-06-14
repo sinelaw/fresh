@@ -674,14 +674,23 @@ impl Editor {
         let (inline_tx, inline_rx) = std::sync::mpsc::sync_channel::<Option<String>>(1);
         let bridge_sender = sender.clone();
         let thread_request_id = request_id;
+        // The system-clipboard reader (overridable in tests) and the
+        // internal-clipboard snapshot captured *now*. The thread returns
+        // `system.or(internal)`: on a host where the OS clipboard is
+        // unreadable (Termux, where arboard has no Android backend; a
+        // headless TTY; an opt-out) the system read yields `None` and the
+        // paste falls back to Fresh's own internal clipboard — restoring
+        // the in-editor copy/paste round-trip that the pre-async
+        // synchronous path provided (regression from #2155).
+        let reader = self
+            .system_clipboard_reader
+            .unwrap_or(crate::services::clipboard::read_system_clipboard);
+        let internal_fallback = self.clipboard.paste_internal();
         std::thread::Builder::new()
             .name("clipboard-paste".into())
             .spawn(move || {
                 let arboard_start = Instant::now();
-                let text = arboard::Clipboard::new()
-                    .and_then(|mut cb| cb.get_text())
-                    .ok()
-                    .filter(|s| !s.is_empty());
+                let text = reader().or(internal_fallback);
                 let arboard_ms = arboard_start.elapsed().as_millis();
                 let len = text.as_ref().map(|s| s.len()).unwrap_or(0);
                 // Try the inline channel first. If the main thread
@@ -1314,6 +1323,19 @@ impl Editor {
     pub fn set_clipboard_for_test(&mut self, text: String) {
         self.clipboard.set_internal(text);
         self.clipboard.set_internal_only(true);
+    }
+
+    /// Override the async paste path's system-clipboard reader for tests.
+    ///
+    /// Lets a test deterministically simulate a host whose OS clipboard is
+    /// unreadable (e.g. Termux, where arboard has no backend) by passing
+    /// `|| None`, while leaving the system clipboard nominally *enabled* —
+    /// the exact configuration that exposed the lost internal-clipboard
+    /// fallback (#2343). Without this seam a test would read the real host
+    /// clipboard, which is neither deterministic nor isolated.
+    #[doc(hidden)]
+    pub fn set_system_clipboard_reader_for_test(&mut self, reader: fn() -> Option<String>) {
+        self.system_clipboard_reader = Some(reader);
     }
 
     /// Paste from internal clipboard only (for testing)

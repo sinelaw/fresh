@@ -13,6 +13,96 @@ use crossterm::execute;
 use std::io::{stdout, Write};
 use std::sync::Mutex;
 
+/// True when running inside Termux on Android.
+///
+/// Termux exports `TERMUX_VERSION` and sets `$PREFIX` to a path under
+/// `com.termux`. We use this to gate the `termux-clipboard-*` helpers so we
+/// never spawn those processes on a normal Linux/macOS/Windows host.
+fn is_termux() -> bool {
+    if std::env::var_os("TERMUX_VERSION").is_some() {
+        return true;
+    }
+    std::env::var_os("PREFIX")
+        .map(|p| p.to_string_lossy().contains("com.termux"))
+        .unwrap_or(false)
+}
+
+/// Read the Android clipboard via the `termux-clipboard-get` helper.
+///
+/// Returns `None` when not on Termux, when the `termux-api` package isn't
+/// installed (helper missing / non-zero exit), or when the clipboard is empty.
+/// `arboard` has no Android backend, so this is the only way to read the
+/// system clipboard inside Termux.
+///
+/// Deliberately uses `std::process::Command` rather than the editor's
+/// `ProcessSpawner`: the clipboard is a property of the *local* Android
+/// device, so it must never be routed to a remote SSH/container host, and
+/// this runs on the detached background paste thread which has no spawner.
+fn termux_clipboard_get() -> Option<String> {
+    if !is_termux() {
+        return None;
+    }
+    let output = std::process::Command::new("termux-clipboard-get")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Write the Android clipboard via the `termux-clipboard-set` helper.
+///
+/// No-op (returns `false`) when not on Termux or the helper is unavailable.
+fn termux_clipboard_set(text: &str) -> bool {
+    if !is_termux() {
+        return false;
+    }
+    use std::process::{Command, Stdio};
+    let mut child = match Command::new("termux-clipboard-set")
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            tracing::debug!("termux-clipboard-set spawn failed: {}", e);
+            return false;
+        }
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(text.as_bytes()) {
+            tracing::debug!("termux-clipboard-set write failed: {}", e);
+        }
+    }
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Read text from the system clipboard, trying platform backends in order.
+///
+/// On Linux/macOS/Windows this is `arboard` (X11/Wayland/native). On Termux,
+/// where `arboard` has no backend and always errors, it falls back to the
+/// `termux-clipboard-get` helper from the `termux-api` package. Returns `None`
+/// when no backend yields non-empty text.
+///
+/// A fresh `arboard::Clipboard` is created per call (rather than reusing the
+/// persistent `SYSTEM_CLIPBOARD` handle) so this is safe to call from the
+/// background paste thread without contending on the copy-side mutex.
+pub fn read_system_clipboard() -> Option<String> {
+    if let Some(text) = arboard::Clipboard::new()
+        .and_then(|mut cb| cb.get_text())
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        return Some(text);
+    }
+    termux_clipboard_get()
+}
+
 /// Global clipboard holder to maintain X11/Wayland clipboard ownership.
 ///
 /// On X11, the clipboard owner must stay alive to respond to paste requests.
@@ -41,6 +131,10 @@ pub fn copy_to_system_clipboard(text: &str, use_osc52: bool, use_system_clipboar
 
     if use_system_clipboard {
         set_system_clipboard_text(text);
+        // On Termux arboard is a no-op (no Android backend), so also push to
+        // the Android clipboard via the termux-api helper. The call is gated
+        // on `is_termux()` inside, so it costs nothing on other platforms.
+        termux_clipboard_set(text);
     }
 }
 
@@ -228,24 +322,12 @@ impl Clipboard {
             return self.paste_internal();
         }
 
-        // Try arboard crate via the static clipboard (reads from system clipboard)
+        // Read from the system clipboard (arboard on desktop, the
+        // termux-clipboard-get helper on Termux where arboard has no backend).
         if self.use_system_clipboard {
-            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-                // Create clipboard if it doesn't exist yet
-                if guard.is_none() {
-                    if let Ok(cb) = arboard::Clipboard::new() {
-                        *guard = Some(cb);
-                    }
-                }
-
-                if let Some(clipboard) = guard.as_mut() {
-                    if let Ok(text) = clipboard.get_text() {
-                        if !text.is_empty() {
-                            self.internal = text.clone();
-                            return Some(text);
-                        }
-                    }
-                }
+            if let Some(text) = read_system_clipboard() {
+                self.internal = text.clone();
+                return Some(text);
             }
         }
 
@@ -283,21 +365,9 @@ impl Clipboard {
             return false;
         }
 
-        // Check system clipboard via the static clipboard
-        if self.use_system_clipboard {
-            if let Ok(mut guard) = SYSTEM_CLIPBOARD.lock() {
-                if guard.is_none() {
-                    if let Ok(cb) = arboard::Clipboard::new() {
-                        *guard = Some(cb);
-                    }
-                }
-
-                if let Some(clipboard) = guard.as_mut() {
-                    if let Ok(text) = clipboard.get_text() {
-                        return text.is_empty();
-                    }
-                }
-            }
+        // Check the system clipboard (arboard / termux-clipboard-get).
+        if self.use_system_clipboard && read_system_clipboard().is_some() {
+            return false;
         }
 
         true

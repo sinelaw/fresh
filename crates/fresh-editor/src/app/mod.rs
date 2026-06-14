@@ -567,6 +567,15 @@ pub struct Editor {
     /// a single render with the final text.
     pub(super) paste_render_suppress_until: Option<std::time::Instant>,
 
+    /// Test-only override for the system-clipboard reader used by the
+    /// async paste path. `None` in production (the real
+    /// `services::clipboard::read_system_clipboard` is used). Tests set
+    /// this to a deterministic stub — e.g. `|| None` to simulate a
+    /// host with no usable system clipboard (Termux, headless TTY) —
+    /// so the internal-clipboard fallback can be exercised in isolation
+    /// without touching the real host clipboard.
+    pub(super) system_clipboard_reader: Option<fn() -> Option<String>>,
+
     // split_manager and split_view_states moved onto `Window`. Access
     // via `Editor::split_manager()` / `split_manager_mut()` and
     // `Editor::split_view_states()` / `split_view_states_mut()`.

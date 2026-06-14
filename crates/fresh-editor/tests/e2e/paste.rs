@@ -327,6 +327,61 @@ fn test_paste_in_middle() {
 }
 
 // ============================================================================
+// System-clipboard fallback (issue #2343)
+// ============================================================================
+
+/// Regression test for issue #2343 ("paste hasn't worked since 3.10").
+///
+/// On hosts where the OS clipboard can't be read — Termux (arboard has no
+/// Android backend) or a headless TTY — `Ctrl+V` must still paste text that
+/// was copied *inside* Fresh. The async paste rework (#2155, shipped in
+/// 0.3.12) dropped the internal-clipboard fallback the old synchronous path
+/// had, so in-editor copy/paste silently did nothing on Termux: the
+/// background read returned `None` and `paste()` returned without consulting
+/// the internal clipboard.
+///
+/// We simulate the unreadable system clipboard with a reader stub returning
+/// `None`, while leaving the system clipboard nominally *enabled* (the exact
+/// configuration that triggered the bug — internal-only test mode bypasses
+/// the async path entirely and would hide it). The internal clipboard is
+/// populated by a real `Ctrl+C` copy, so this also exercises the full
+/// in-editor copy → paste round-trip.
+///
+/// Without the fix the buffer stays "hello" and this wait never completes
+/// (nextest times it out); with the fix it becomes "hellohello".
+#[test]
+fn test_ctrl_v_falls_back_to_internal_clipboard_when_system_unreadable() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Simulate Termux/headless: the OS clipboard read always yields nothing,
+    // but the system clipboard stays enabled (not internal-only mode).
+    harness
+        .editor_mut()
+        .set_system_clipboard_reader_for_test(|| None);
+
+    // Copy "hello" from inside Fresh (Ctrl+C populates the internal clipboard).
+    harness.type_text("hello").unwrap();
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap(); // select all
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap(); // copy
+
+    // Collapse the selection to the end so the paste appends rather than
+    // replacing the just-copied text.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+
+    // Paste via Ctrl+V — drives the real async system-clipboard path.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // The internal "hello" must be pasted, producing "hellohello".
+    harness.wait_for_buffer_content("hellohello").unwrap();
+}
+
+// ============================================================================
 // Prompt paste tests
 // ============================================================================
 
