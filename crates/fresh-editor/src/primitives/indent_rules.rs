@@ -260,11 +260,25 @@ fn matches(re: &Option<Regex>, text: &str) -> bool {
 /// family. Returns `None` when neither exists, so the caller falls back to the
 /// generic bracket heuristic.
 pub fn rules_for_id(id: &str) -> Option<Arc<IndentRules>> {
-    if let Some(rules) = USER_RULES.read().unwrap().get(id) {
-        return Some(rules.clone());
+    if let Some(rules) = user_rule_for_id(id) {
+        return Some(rules);
     }
     let family = family_for_id(id)?;
     FAMILY_RULES.get(&family).cloned()
+}
+
+/// Look up *only* a user override registered via [`set_user_rule`] for `id`,
+/// ignoring the built-in family fallback.
+///
+/// This is what connects a `[languages.<id>.indent]` block to the editor: a
+/// config-only language (no syntect grammar / no tree-sitter) is keyed by its
+/// config id, which the syntax-name-based lookup can never resolve. Callers that
+/// want *only* the user's explicit rules — and must otherwise defer to the
+/// existing tiering (e.g. the C-style bracket scanner for curly-brace
+/// languages) — use this rather than [`rules_for_id`], whose family fallback
+/// would shadow that tiering.
+pub fn user_rule_for_id(id: &str) -> Option<Arc<IndentRules>> {
+    USER_RULES.read().unwrap().get(id).cloned()
 }
 
 /// Look up rules from a syntect display name (e.g. `"C++"`, `"C#"`,

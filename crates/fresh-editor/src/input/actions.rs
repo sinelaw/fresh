@@ -590,12 +590,30 @@ fn byte_is_code(state: &EditorState, pos: usize) -> bool {
     )
 }
 
+/// Resolve the per-language regex indentation rules for a buffer that has no
+/// tree-sitter grammar.
+///
+/// A user-supplied `[languages.<id>.indent]` override is registered under the
+/// buffer's *config* language id (`state.language`), which the syntax-name
+/// lookup can never resolve for a config-only language with no grammar (e.g. a
+/// user-defined filetype). So those explicit overrides are consulted first, by
+/// config id. Everything else defers to the existing syntect-syntax-name path,
+/// which keeps built-in languages on their established tiering (notably letting
+/// curly-brace languages fall through to the C-style bracket scanner). Returns
+/// `None` when no rules exist either way so the caller can fall back.
+fn buffer_indent_rules(
+    state: &EditorState,
+) -> Option<std::sync::Arc<crate::primitives::indent_rules::IndentRules>> {
+    crate::primitives::indent_rules::user_rule_for_id(&state.language).or_else(|| {
+        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)
+    })
+}
+
 /// Try the per-language regex indentation rules for a buffer that has no
-/// tree-sitter grammar, keyed by the syntect syntax name. Returns `None` when
-/// no rules exist for the language so the caller can fall back.
+/// tree-sitter grammar. Returns `None` when no rules exist for the language so
+/// the caller can fall back.
 fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option<usize> {
-    let rules =
-        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;
+    let rules = buffer_indent_rules(state)?;
     Some(
         rules.calculate_indent(&state.buffer, position, tab_size, |b| {
             byte_is_code(state, b)
@@ -605,8 +623,7 @@ fn rules_indent(state: &EditorState, position: usize, tab_size: usize) -> Option
 
 /// Closing-delimiter variant of [`rules_indent`].
 fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize) -> Option<usize> {
-    let rules =
-        crate::primitives::indent_rules::rules_for_syntax_name(state.highlighter.syntax_name()?)?;
+    let rules = buffer_indent_rules(state)?;
     rules.calculate_dedent_for_delimiter(&state.buffer, position, ch, tab_size, |b| {
         byte_is_code(state, b)
     })

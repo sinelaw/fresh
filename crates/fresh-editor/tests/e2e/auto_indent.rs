@@ -1,6 +1,6 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::Config;
+use fresh::config::{Config, LanguageConfig};
 use tempfile::TempDir;
 
 /// Helper to create a harness with auto-indent enabled
@@ -2129,5 +2129,94 @@ fn test_dart_auto_dedent_closing_brace_top_level() {
         leading_spaces, 0,
         "Dart top-level closing brace should dedent to column 0, got {}. Content:\n{}",
         leading_spaces, content
+    );
+}
+
+/// Build a harness with auto-indent enabled and the given `[languages.<id>]`
+/// entries registered from JSON. Mirrors production config loading: the
+/// languages flow through `reload_indent_overrides`, so any `indent` block is
+/// registered under its config id — exactly the path #2314 exercises.
+fn harness_with_languages(languages: &[(&str, &str)]) -> EditorTestHarness {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    for (id, json) in languages {
+        let lang: LanguageConfig = serde_json::from_str(json).expect("valid LanguageConfig JSON");
+        config.languages.insert((*id).to_string(), lang);
+    }
+    EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap()
+}
+
+/// Regression for #2314: a user-defined language's `increase_indent_pattern`
+/// must indent the following line. The rule is registered under the config id
+/// (`incend`), but before the fix the auto-indent lookup keyed only off the
+/// syntect syntax name — which a config-only language with no grammar never has
+/// — so the pattern was ignored and the new line merely copied the previous
+/// line's indent (here: column 0).
+#[test]
+fn test_config_increase_indent_pattern_applies() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.t1");
+    // `OPEN` is a non-bracket, non-colon token so it can only match the custom
+    // rule, never Fresh's built-in bracket/colon heuristics.
+    std::fs::write(&file_path, "foo OPEN").unwrap();
+
+    let mut harness = harness_with_languages(&[(
+        "incend",
+        r#"{"extensions":["t1"],"tab_size":4,"use_tabs":false,"indent":{"increase_indent_pattern":"OPEN\\s*$"}}"#,
+    )]);
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("foo OPEN");
+
+    // Enter then type — the new line should be one level (4 spaces) deeper.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("child").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "foo OPEN\n    child",
+        "increase_indent_pattern should indent the new line one level; got: {:?}",
+        content
+    );
+}
+
+/// Regression for #2314: a user-defined language's `indent_next_line_pattern`
+/// (a one-shot indent) must also take effect through the config-id lookup.
+#[test]
+fn test_config_indent_next_line_pattern_applies() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.t4");
+    std::fs::write(&file_path, "HDR thing").unwrap();
+
+    let mut harness = harness_with_languages(&[(
+        "indnext",
+        r#"{"extensions":["t4"],"tab_size":4,"use_tabs":false,"indent":{"indent_next_line_pattern":"^\\s*HDR\\b"}}"#,
+    )]);
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("HDR thing");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("body").unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        content, "HDR thing\n    body",
+        "indent_next_line_pattern should indent the immediately following line; got: {:?}",
+        content
     );
 }
