@@ -272,6 +272,48 @@ fn test_lsp_navigation_jumps_to_precise_column() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Regression test for #2301: after confirming a "Go to LSP Symbol" jump,
+/// the status bar must report the symbol's *line* immediately — not just its
+/// column. The jump goes through the plugin `setBufferCursor` op, which moved
+/// the cursor but left the cached primary-cursor line number stale, so the
+/// status bar showed the pre-jump line (`Ln 1`) until the next cursor move.
+/// We assert the full `Ln 6, Col 3` (myMethod is on file line 5 / 1-indexed
+/// line 6) right after the jump, with no intervening cursor movement.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_navigation_status_bar_line_updates_after_jump() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Confirm the starting cursor is on line 1 — the line the bug would leave
+    // stuck in the status bar after the jump.
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 1, Col 1"))?;
+
+    open_symbol_navigation(&mut harness)?;
+
+    // Default selection is MyClass (index 0); step down to myMethod (index 2).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        selected_suggestion_text(h).is_some_and(|t| t.contains("[method] myMethod"))
+    })?;
+
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+    harness.process_async_and_render()?;
+
+    // The status bar must show both the new line AND column with no further
+    // input. Before the fix the line was stale (`Ln 1, Col 3`).
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 6, Col 3"))?;
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 6, Col 3"),
+        "After jumping to myMethod, status bar should read 'Ln 6, Col 3' \
+         immediately (not a stale line). Screen:\n{}",
+        screen
+    );
+
+    Ok(())
+}
+
 /// Preview is non-destructive: browsing the list (and cancelling) never
 /// moves the cursor — only confirming with Enter does.
 #[test]

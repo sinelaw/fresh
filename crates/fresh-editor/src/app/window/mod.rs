@@ -1536,6 +1536,17 @@ impl Window {
                     state.primary_cursor_line_number =
                         crate::model::buffer::LineNumber::Absolute(line);
                 }
+                // Refresh the cached primary-cursor line number. The status bar
+                // reads the line from this cache (the column is computed live),
+                // so a programmatic jump that skips it leaves the status bar
+                // reporting the pre-jump line until the next cursor movement
+                // recomputes it (#2301). Mirror the canonical jump path in
+                // `Window::jump_active_cursor_to`.
+                let clamped = position.min(state.buffer.len());
+                if let Some(pos) = state.buffer.offset_to_position(clamped) {
+                    state.primary_cursor_line_number =
+                        crate::model::buffer::LineNumber::Absolute(pos.line);
+                }
             });
     }
 
