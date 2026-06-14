@@ -3065,4 +3065,47 @@ mod tests {
             }
         }
     }
+
+    /// Regression for #2312: occurrence highlighting must use a
+    /// theme-appropriate background in *every* shipped theme. A theme that
+    /// omits `ui.semantic_highlight_bg` silently inherits the global default
+    /// (a fixed dark color), which is invisible on dark high-contrast themes
+    /// and an inverted block on light themes. Each builtin must therefore
+    /// either define its own highlight color or opt into a modifier-only
+    /// highlight (e.g. `reversed`/`bold`), and the resulting highlight must be
+    /// visibly distinct from the editor background.
+    #[test]
+    fn test_all_builtin_themes_define_visible_occurrence_highlight() {
+        for builtin in BUILTIN_THEMES {
+            let raw: serde_json::Value = serde_json::from_str(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' is not valid JSON: {}", builtin.name, e));
+            let ui = raw.get("ui").and_then(|u| u.as_object());
+            let has_bg = ui.is_some_and(|u| u.contains_key("semantic_highlight_bg"));
+            let has_modifier = ui.is_some_and(|u| u.contains_key("semantic_highlight_modifier"));
+            assert!(
+                has_bg || has_modifier,
+                "Theme '{}' must explicitly define `ui.semantic_highlight_bg` (or a \
+                 `semantic_highlight_modifier`) so occurrence highlighting is theme-appropriate \
+                 instead of falling back to the hard-wired global default (#2312)",
+                builtin.name
+            );
+
+            let theme = Theme::from_json(builtin.json)
+                .unwrap_or_else(|e| panic!("Theme '{}' failed to parse: {}", builtin.name, e));
+            // When the highlight relies purely on a color (no SGR modifier such
+            // as reversed/bold to make it stand out), that color must differ
+            // from the editor background, otherwise the highlight is invisible.
+            if theme
+                .modifier_for_bg_key("ui.semantic_highlight_bg")
+                .is_empty()
+            {
+                assert_ne!(
+                    theme.semantic_highlight_bg, theme.editor_bg,
+                    "Theme '{}': occurrence-highlight background equals the editor background \
+                     (highlight would be invisible) and no modifier compensates (#2312)",
+                    builtin.name
+                );
+            }
+        }
+    }
 }

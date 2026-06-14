@@ -22,6 +22,7 @@
     "bracket_rainbow_6": [189, 147, 249]
   },
   "ui": {
+    "semantic_highlight_bg": [68, 71, 90],
     "tab_active_fg": [248, 248, 242],
     "tab_active_bg": [189, 147, 249],
     "tab_inactive_fg": [248, 248, 242],
