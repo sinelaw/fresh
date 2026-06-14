@@ -5110,13 +5110,34 @@ editor.on("prompt_confirmed", async (args) => {
         const f = pendingDiscardFile;
         if (f) {
             const cwd = gitCwd();
+            // Pick the command that fully reverts the file to its HEAD state,
+            // discarding BOTH staged (index) and unstaged (working-tree)
+            // changes. Plain `git checkout -- <path>` only reverts the working
+            // tree from the index, so a fully-staged file is left untouched
+            // while the UI still claims success (#2318).
+            let cmd: string;
+            let cmdArgs: string[];
             if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path], cwd);
+                // Never committed and not staged: just delete it.
+                cmd = "rm";
+                cmdArgs = ["--", f.path];
+            } else if (f.status === 'A') {
+                // Staged addition with no committed version: its HEAD state is
+                // "does not exist", so a full discard unstages and removes it.
+                cmd = "git";
+                cmdArgs = ["rm", "-f", "--", f.path];
             } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path], cwd);
+                // Tracked file: restore the index and working tree to HEAD.
+                cmd = "git";
+                cmdArgs = ["checkout", "HEAD", "--", f.path];
             }
+            const result = await editor.spawnProcess(cmd, cmdArgs, cwd);
             await refreshMagitData();
-            editor.setStatus(`Discarded: ${f.path}`);
+            if (result.exit_code === 0) {
+                editor.setStatus(`Discarded: ${f.path}`);
+            } else {
+                editor.setStatus(`Discard failed: ${(result.stderr || "").trim() || f.path}`);
+            }
         }
     } else {
         editor.setStatus("Discard cancelled");
