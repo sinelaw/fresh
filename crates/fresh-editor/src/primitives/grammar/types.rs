@@ -1044,6 +1044,14 @@ impl GrammarRegistry {
                 }
             }
 
+            // Only Fresh's dedicated Fish grammar may own `.fish`. Syntect's
+            // stock Bash grammar also advertises the extension (a quirk of its
+            // upstream definition), which would otherwise shadow Fish in the
+            // first-wins extension index since Bash precedes it in the packdump.
+            if syntax.name != "Fish" {
+                extensions.retain(|e| e != "fish");
+            }
+
             catalog.push(GrammarEntry {
                 display_name: syntax.name.clone(),
                 language_id,
@@ -1128,17 +1136,7 @@ impl GrammarRegistry {
                 by_name.insert(short.to_lowercase(), idx);
             }
             for ext in &entry.extensions {
-                let ext_key = ext.to_lowercase();
-                // Syntect's default Bash grammar also advertises `.fish`.
-                // Fresh ships an explicit Fish grammar, so it must win that
-                // extension even though Bash appears earlier in the packdump.
-                if entry.language_id == "fish"
-                    || (entry.engines.syntect.is_none() && entry.engines.tree_sitter.is_some())
-                {
-                    by_extension.insert(ext_key, idx);
-                } else {
-                    by_extension.entry(ext_key).or_insert(idx);
-                }
+                by_extension.entry(ext.to_lowercase()).or_insert(idx);
                 by_filename.entry(ext.clone()).or_insert(idx);
             }
             for filename in &entry.filenames {
@@ -2256,7 +2254,9 @@ mod tests {
     }
 
     #[test]
-    fn test_fish_extension_prefers_fish_grammar_over_bash_fallback() {
+    fn test_fish_extension_resolves_to_fish_grammar_not_bash() {
+        // Syntect's stock Bash grammar also advertises `.fish`; the catalog
+        // strips it so only Fresh's dedicated Fish grammar owns the extension.
         let registry = GrammarRegistry::default();
         let entry = registry
             .find_by_extension("fish")

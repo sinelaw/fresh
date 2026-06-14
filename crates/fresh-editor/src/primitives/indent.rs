@@ -114,9 +114,6 @@ impl IndentCalculator {
                 Language::CSharp => ("csharp", include_str!("../../queries/csharp/indents.scm")),
                 Language::Pascal => ("pascal", include_str!("../../queries/pascal/indents.scm")),
                 Language::Odin => ("odin", include_str!("../../queries/odin/indents.scm")),
-                // Fish uses the regex indent-rules tier, not a bundled
-                // tree-sitter indent query.
-                Language::Fish => return None,
                 // Templ extends Go's grammar; Go's indent rules apply to the Go
                 // portions of a templ file. The HTML/CSS portions fall back to
                 // copy-current-line indent, good enough as an initial heuristic.

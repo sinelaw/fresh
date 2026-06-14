@@ -180,7 +180,6 @@ pub enum Language {
     Php,
     Ruby,
     Bash,
-    Fish,
     Lua,
     Pascal,
     Odin,
@@ -431,7 +430,6 @@ impl Language {
             Language::Php,
             Language::Ruby,
             Language::Bash,
-            Language::Fish,
             Language::Lua,
             Language::Pascal,
             Language::Odin,
@@ -458,7 +456,6 @@ impl Language {
             Self::Php => "php",
             Self::Ruby => "ruby",
             Self::Bash => "bash",
-            Self::Fish => "fish",
             Self::Lua => "lua",
             Self::Pascal => "pascal",
             Self::Odin => "odin",
@@ -505,7 +502,6 @@ impl Language {
             Self::Php => &["php"],
             Self::Ruby => &["rb"],
             Self::Bash => &["sh", "bash"],
-            Self::Fish => &["fish"],
             Self::Lua => &["lua"],
             Self::Pascal => &["pas", "p"],
             Self::Odin => &["odin"],
@@ -532,7 +528,6 @@ impl Language {
             Self::Php => "PHP",
             Self::Ruby => "Ruby",
             Self::Bash => "Bash",
-            Self::Fish => "Fish",
             Self::Lua => "Lua",
             Self::Pascal => "Pascal",
             Self::Odin => "Odin",
@@ -560,7 +555,6 @@ impl Language {
             "php" => Some(Self::Php),
             "ruby" => Some(Self::Ruby),
             "bash" => Some(Self::Bash),
-            "fish" => Some(Self::Fish),
             "lua" => Some(Self::Lua),
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
@@ -603,7 +597,6 @@ impl Language {
             "c#" => Some(Self::CSharp),
             "php" => Some(Self::Php),
             "ruby" => Some(Self::Ruby),
-            "fish" => Some(Self::Fish),
             "lua" => Some(Self::Lua),
             "pascal" => Some(Self::Pascal),
             "odin" => Some(Self::Odin),
@@ -749,12 +742,6 @@ mod tests {
     fn test_templ_detected_from_extension() {
         let path = Path::new("home.templ");
         assert!(matches!(Language::from_path(path), Some(Language::Templ)));
-    }
-
-    #[test]
-    fn test_fish_detected_from_extension() {
-        let path = Path::new("config.fish");
-        assert!(matches!(Language::from_path(path), Some(Language::Fish)));
     }
 
     #[test]

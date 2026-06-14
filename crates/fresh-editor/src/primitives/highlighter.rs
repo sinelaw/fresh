@@ -392,9 +392,6 @@ mod tests {
         let path = std::path::Path::new("test.bash");
         assert!(matches!(Language::from_path(path), Some(Language::Bash)));
 
-        let path = std::path::Path::new("config.fish");
-        assert!(matches!(Language::from_path(path), Some(Language::Fish)));
-
         let path = std::path::Path::new("test.lua");
         assert!(matches!(Language::from_path(path), Some(Language::Lua)));
 
