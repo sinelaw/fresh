@@ -42,10 +42,46 @@ async fn local_captured_env(provider: &EnvProvider) -> Vec<(String, String)> {
         })
         .await
 }
+use std::borrow::Cow;
 use std::path::Path;
 use std::process::ExitStatus;
 use std::sync::Arc;
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+
+/// Resolve a program name to a spawnable form for a *local* child.
+///
+/// On **Windows** this is the fix for the class of "installed but `program
+/// not found`" failures (e.g. issue #2324, `typescript-language-server`).
+/// Node-based CLIs install under `npm -g` as `.cmd`/`.bat` shims, but the
+/// `CreateProcess` path that `std`/`tokio` use only auto-appends `.exe`
+/// when handed a bare name — it does not walk `PATHEXT`. So spawning
+/// `typescript-language-server` fails even though our existence check
+/// ([`crate::services::lsp::command_exists`]) finds the `.cmd` (it goes
+/// through `which`, which *does* honor `PATHEXT`). The two paths disagreed:
+/// the editor reported the server present, then the spawn failed.
+///
+/// Resolving the full path here — also via `which`, so the check and the
+/// spawn agree — hands `Command` a path ending in `.cmd`/`.bat`, which
+/// `std` (≥ 1.77.2) then runs through `cmd.exe` with the
+/// CVE-2024-24576-safe argument escaping. An unresolvable name falls back
+/// to the original string so the spawn still surfaces a meaningful error
+/// rather than masking a genuine typo.
+///
+/// On other platforms it is a pass-through: a plain `PATH` lookup already
+/// does the right thing and pre-resolving would differ only cosmetically.
+#[cfg(windows)]
+fn resolve_program(command: &str) -> Cow<'_, str> {
+    match which::which(command) {
+        Ok(path) => Cow::Owned(path.to_string_lossy().into_owned()),
+        Err(_) => Cow::Borrowed(command),
+    }
+}
+
+/// Non-Windows pass-through — see the Windows variant for rationale.
+#[cfg(not(windows))]
+fn resolve_program(command: &str) -> Cow<'_, str> {
+    Cow::Borrowed(command)
+}
 
 /// Result of spawning a process
 #[derive(Debug, Clone)]
@@ -168,7 +204,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         cwd: Option<String>,
     ) -> Result<SpawnResult, SpawnError> {
         gate(&self.trust, &command, cwd.as_deref())?;
-        let mut cmd = tokio::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(resolve_program(&command).as_ref());
         cmd.args(&args);
         self.apply_env(&mut cmd).await;
         cmd.hide_window();
@@ -204,7 +240,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         use tokio::io::AsyncReadExt;
 
         gate(&self.trust, &command, cwd.as_deref())?;
-        let mut cmd = tokio::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(resolve_program(&command).as_ref());
         cmd.args(&args);
         self.apply_env(&mut cmd).await;
         cmd.hide_window();
@@ -324,7 +360,7 @@ impl ProcessSpawner for LocalProcessSpawner {
         use tokio::io::AsyncWriteExt;
 
         gate(&self.trust, &command, cwd.as_deref())?;
-        let mut cmd = tokio::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(resolve_program(&command).as_ref());
         cmd.args(&args);
         self.apply_env(&mut cmd).await;
         cmd.hide_window();
@@ -722,7 +758,7 @@ impl LongRunningSpawner for LocalLongRunningSpawner {
             cwd.map(|p| p.to_string_lossy()).as_deref(),
         )?;
         let captured = local_captured_env(&self.env).await;
-        let mut cmd = tokio::process::Command::new(command);
+        let mut cmd = tokio::process::Command::new(resolve_program(command).as_ref());
         cmd.args(args)
             // Provider env first, then the per-call env so the caller wins.
             .envs(captured.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -1054,6 +1090,38 @@ impl LongRunningSpawner for RemoteLongRunningSpawner {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    // On non-Windows, `resolve_program` is a pure pass-through: PATH lookup
+    // at spawn time already does the right thing, so the command string must
+    // be returned untouched (no surprise absolute-path rewrites).
+    #[cfg(not(windows))]
+    #[test]
+    fn resolve_program_is_passthrough_on_unix() {
+        assert_eq!(
+            resolve_program("typescript-language-server"),
+            "typescript-language-server"
+        );
+        assert_eq!(resolve_program("sh"), "sh");
+        assert_eq!(resolve_program(""), "");
+    }
+
+    // On Windows, an unresolvable name must fall back to itself so the spawn
+    // still surfaces a meaningful "not found" error rather than a panic, while
+    // a real binary resolves to a full, spawnable path.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_program_falls_back_and_resolves_on_windows() {
+        assert_eq!(
+            resolve_program("fresh-unlikely-binary-name-ygzu9"),
+            "fresh-unlikely-binary-name-ygzu9"
+        );
+        // `cmd` is always present on Windows and resolves to an absolute path.
+        let resolved = resolve_program("cmd");
+        assert!(
+            std::path::Path::new(resolved.as_ref()).is_absolute(),
+            "expected an absolute path, got {resolved:?}"
+        );
+    }
 
     #[tokio::test]
     async fn test_local_spawner() {
