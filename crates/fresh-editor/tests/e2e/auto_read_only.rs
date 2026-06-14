@@ -20,6 +20,9 @@ use std::os::unix::fs::PermissionsExt;
 
 const EDITING_DISABLED_MSG: &str = "Editing disabled in this buffer";
 
+/// Persistent read-only indicator rendered in the status bar (issue #2309).
+const READ_ONLY_INDICATOR: &str = "[RO]";
+
 /// A file without write permission opens read-only by default: keystrokes are
 /// dropped and the "editing disabled" status message appears.
 #[test]
@@ -98,6 +101,63 @@ fn test_auto_read_only_disabled_opens_unwritable_file_editable() {
     assert!(
         !screen.contains(EDITING_DISABLED_MSG),
         "No editing-disabled message expected when auto_read_only is off. Screen:\n{}",
+        screen
+    );
+}
+
+/// A read-only buffer shows the persistent `[RO]` status-bar indicator, while
+/// an editable buffer does not (issue #2309). The indicator is its own status
+/// segment — it must appear in the default layout, which omits `{filename}`.
+#[test]
+fn test_read_only_buffer_shows_ro_status_indicator() {
+    let temp_dir = TempDir::new().unwrap();
+
+    // Library file: opens read-only by default.
+    let lib_dir = temp_dir.path().join("node_modules").join("somelib");
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let ro_file = lib_dir.join("index.js");
+    std::fs::write(&ro_file, "library content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        24,
+        Config::default(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&ro_file).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(READ_ONLY_INDICATOR),
+        "Read-only buffer should show a persistent [RO] status indicator. Screen:\n{}",
+        screen
+    );
+}
+
+/// An editable buffer shows no `[RO]` indicator (issue #2309): the segment is
+/// only present while the buffer is actually read-only.
+#[test]
+fn test_editable_buffer_has_no_ro_status_indicator() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("editable.txt");
+    std::fs::write(&file_path, "editable content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        24,
+        Config::default(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains(READ_ONLY_INDICATOR),
+        "Editable buffer should not show the [RO] status indicator. Screen:\n{}",
         screen
     );
 }

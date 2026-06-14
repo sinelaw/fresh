@@ -976,6 +976,22 @@ impl StatusBarRenderer {
                     token_key: None,
                 })
             }
+            StatusBarElement::ReadOnly => {
+                // Persistent `[RO]` indicator. Renders only while the active
+                // buffer is read-only, as a steady status segment — the
+                // documented affordance that tells the user editing is
+                // disabled *before* they try to type. Independent of the
+                // `{filename}` element (which also carries `[RO]` but is
+                // omitted from the default layout).
+                if !ctx.read_only {
+                    return None;
+                }
+                Some(RenderedElement {
+                    text: "[RO]".to_string(),
+                    kind: ElementKind::Normal,
+                    token_key: None,
+                })
+            }
             StatusBarElement::Cursor => {
                 if !ctx.state.show_cursors {
                     return None;

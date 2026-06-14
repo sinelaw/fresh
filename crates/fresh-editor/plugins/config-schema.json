@@ -59,6 +59,7 @@
             "{messages}"
           ],
           "right": [
+            "{read_only}",
             "{line_ending}",
             "{encoding}",
             "{language}",
@@ -506,6 +507,7 @@
               "{messages}"
             ],
             "right": [
+              "{read_only}",
               "{line_ending}",
               "{encoding}",
               "{language}",
@@ -932,12 +934,13 @@
           "x-dynamically-extendable-status-bar-elements": true
         },
         "right": {
-          "description": "Elements shown on the right side of the status bar.\nDefault: [\"{line_ending}\", \"{encoding}\", \"{language}\", \"{lsp}\", \"{warnings}\", \"{update}\", \"{palette}\"]",
+          "description": "Elements shown on the right side of the status bar.\nDefault: [\"{read_only}\", \"{line_ending}\", \"{encoding}\", \"{language}\", \"{lsp}\", \"{warnings}\", \"{update}\", \"{palette}\"]",
           "type": "array",
           "items": {
             "$ref": "#/$defs/StatusBarElement"
           },
           "default": [
+            "{read_only}",
             "{line_ending}",
             "{encoding}",
             "{language}",
@@ -964,6 +967,10 @@
         {
           "value": "{filename}",
           "name": "Filename"
+        },
+        {
+          "value": "{read_only}",
+          "name": "Read-Only"
         },
         {
           "value": "{cursor}",

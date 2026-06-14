@@ -679,6 +679,7 @@ impl WhitespaceVisibility {
 ///
 /// Elements are specified as strings in the config:
 /// - `"{filename}"` — file path with session/remote prefix, modified and read-only indicators
+/// - `"{read_only}"` — persistent `[RO]` indicator, shown only while the buffer is read-only
 /// - `"{cursor}"` — cursor position as `Ln 1, Col 1`
 /// - `"{cursor:compact}"` — cursor position as `1:1`
 /// - `"{diagnostics}"` — error/warning/info counts (e.g. `E:1 W:2`)
@@ -699,6 +700,10 @@ impl WhitespaceVisibility {
 pub enum StatusBarElement {
     /// File path with session/remote prefix, modified/read-only indicators
     Filename,
+    /// Persistent `[RO]` read-only indicator. Renders only while the active
+    /// buffer is read-only, as a steady status segment independent of the
+    /// `{filename}` element (which is omitted from the default layout).
+    ReadOnly,
     /// Cursor position (default format: `Ln 1, Col 1`)
     Cursor,
     /// Cursor position (compact format: `1:1`)
@@ -751,6 +756,7 @@ impl TryFrom<String> for StatusBarElement {
             .unwrap_or(&s);
         match inner {
             "filename" => Ok(Self::Filename),
+            "read_only" => Ok(Self::ReadOnly),
             "cursor" => Ok(Self::Cursor),
             "cursor:compact" => Ok(Self::CursorCompact),
             "diagnostics" => Ok(Self::Diagnostics),
@@ -783,6 +789,7 @@ impl From<StatusBarElement> for String {
     fn from(e: StatusBarElement) -> String {
         match e {
             StatusBarElement::Filename => "{filename}".to_string(),
+            StatusBarElement::ReadOnly => "{read_only}".to_string(),
             StatusBarElement::Cursor => "{cursor}".to_string(),
             StatusBarElement::CursorCompact => "{cursor:compact}".to_string(),
             StatusBarElement::Diagnostics => "{diagnostics}".to_string(),
@@ -813,6 +820,7 @@ impl schemars::JsonSchema for StatusBarElement {
             "type": "string",
             "x-dual-list-options": [
                 {"value": "{filename}", "name": "Filename"},
+                {"value": "{read_only}", "name": "Read-Only"},
                 {"value": "{cursor}", "name": "Cursor"},
                 {"value": "{cursor:compact}", "name": "Cursor (compact)"},
                 {"value": "{diagnostics}", "name": "Diagnostics"},
@@ -856,6 +864,11 @@ fn default_status_bar_left() -> Vec<StatusBarElement> {
 
 fn default_status_bar_right() -> Vec<StatusBarElement> {
     vec![
+        // `{read_only}` leads the right cluster: it renders only while the
+        // buffer is read-only, giving the documented `[RO]` indicator a
+        // standing home even though `{filename}` (its other host) is omitted
+        // from the default layout.
+        StatusBarElement::ReadOnly,
         StatusBarElement::LineEnding,
         StatusBarElement::Encoding,
         StatusBarElement::Language,
@@ -889,7 +902,7 @@ pub struct StatusBarConfig {
     pub left: Vec<StatusBarElement>,
 
     /// Elements shown on the right side of the status bar.
-    /// Default: ["{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
+    /// Default: ["{read_only}", "{line_ending}", "{encoding}", "{language}", "{lsp}", "{warnings}", "{update}", "{palette}"]
     #[serde(default = "default_status_bar_right")]
     #[schemars(extend("x-section" = "Status Bar", "x-dual-list-sibling" = "/editor/status_bar/left", "x-dynamically-extendable-status-bar-elements" = true))]
     pub right: Vec<StatusBarElement>,
