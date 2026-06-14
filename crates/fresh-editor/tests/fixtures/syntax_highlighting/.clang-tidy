@@ -1,0 +1,8 @@
+# clang-tidy configuration (YAML)
+Checks: "-*,clang-analyzer-*,modernize-*"
+WarningsAsErrors: ""
+HeaderFilterRegex: ".*"
+FormatStyle: file
+CheckOptions:
+  - key: modernize-use-nullptr.NullMacros
+    value: "NULL"

@@ -1,0 +1,9 @@
+# yamllint configuration (YAML)
+extends: default
+rules:
+  line-length:
+    max: 100
+    level: warning
+  trailing-spaces: enable
+  indentation:
+    spaces: 2

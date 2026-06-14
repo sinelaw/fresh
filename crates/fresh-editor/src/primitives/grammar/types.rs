@@ -528,10 +528,21 @@ impl GrammarRegistry {
         map.insert("go.mod".to_string(), gomod_scope.clone());
         map.insert("go.sum".to_string(), gomod_scope);
 
-        // YAML(-ish) files without a .yaml/.yml extension. yarn v1 lockfiles
-        // are a YAML-compatible format, so highlight them as YAML (#2326).
+        // YAML(-ish) files without a .yaml/.yml extension (#2326). These are
+        // formats whose content is unambiguously YAML:
+        //   - yarn v1 lockfiles use a YAML-compatible format.
+        //   - .clang-format / _clang-format and .clang-tidy are YAML (LLVM).
+        //   - .yamllint is yamllint's own YAML config.
         let yaml_scope = "source.yaml".to_string();
-        map.insert("yarn.lock".to_string(), yaml_scope);
+        for filename in [
+            "yarn.lock",
+            ".clang-format",
+            "_clang-format",
+            ".clang-tidy",
+            ".yamllint",
+        ] {
+            map.insert(filename.to_string(), yaml_scope.clone());
+        }
 
         map
     }
