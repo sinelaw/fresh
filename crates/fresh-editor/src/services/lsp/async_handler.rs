@@ -149,6 +149,23 @@ fn log_response_error(code: i64, message: &str, server_name: &str, language: &st
     }
 }
 
+/// The change-sync kind the server negotiated (`textDocumentSync.change`).
+/// Unknown / unset defaults to `NONE`, which callers treat as "not FULL" — i.e. the
+/// server requires ranged incremental changes, so a full-document (`range: None`)
+/// change must be re-expressed (see `handle_did_change_sequential`).
+fn negotiated_change_sync_kind(
+    caps: Option<&ServerCapabilities>,
+) -> lsp_types::TextDocumentSyncKind {
+    use lsp_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
+    match caps.and_then(|c| c.text_document_sync.as_ref()) {
+        Some(TextDocumentSyncCapability::Kind(k)) => *k,
+        Some(TextDocumentSyncCapability::Options(o)) => {
+            o.change.unwrap_or(TextDocumentSyncKind::NONE)
+        }
+        None => TextDocumentSyncKind::NONE,
+    }
+}
+
 /// Check if a document is already open and should skip didOpen.
 /// Returns true if the document is already open (should skip), false if it should proceed.
 fn should_skip_did_open(
@@ -1372,6 +1389,41 @@ impl LspState {
                 self.language
             );
             return Ok(());
+        }
+
+        // A content change with `range: None` is a full-document replacement, which is
+        // only valid when the server negotiated FULL text sync. Strict servers (notably
+        // Roslyn / Microsoft.CodeAnalysis.LanguageServer) negotiate INCREMENTAL and throw
+        // a NullReferenceException in ProtocolConversions.RangeToLinePositionSpan on the
+        // null range — which faults the request queue and closes the server's stdout, so
+        // edits stop syncing and completion/hover die on the line being typed. When the
+        // negotiated kind isn't FULL, re-sync the whole document via didClose + didOpen:
+        // didOpen carries the complete text with no range, so it's correct under any sync
+        // kind. (Per-keystroke edits use ranged incremental changes and are unaffected.)
+        // A full-replace is always emitted as the sole change in its batch (see the
+        // `range: None` construction sites — file reload, workspace restore, plugin
+        // edits, event_apply resync), so nothing meaningful precedes or follows it. If a
+        // future caller ever mixes a full-replace with trailing ranged edits, the
+        // early-return below would silently drop those trailing edits.
+        let full_replace_text = content_changes
+            .iter()
+            .rev()
+            .find(|c| c.range.is_none())
+            .map(|c| c.text.clone());
+        if let Some(full_text) = full_replace_text {
+            let kind = negotiated_change_sync_kind(self.capabilities.lock().unwrap().as_ref());
+            if kind != lsp_types::TextDocumentSyncKind::FULL {
+                tracing::debug!(
+                    "LSP ({}): re-syncing full-document change as didClose+didOpen (server change-sync = {:?}, not FULL): {}",
+                    self.language,
+                    kind,
+                    uri.as_str()
+                );
+                self.handle_did_close(uri.clone()).await?;
+                return self
+                    .handle_did_open_sequential(uri, full_text, (*self.language).clone(), _pending)
+                    .await;
+            }
         }
 
         // Check if this document was recently opened and wait if needed
@@ -5119,6 +5171,68 @@ mod tests {
     /// A `workspace/configuration` request item asking for `section`.
     fn config_item(section: &str) -> Value {
         serde_json::json!({ "section": section })
+    }
+
+    // The full-document didChange → didClose+didOpen re-sync (which fixes the Roslyn
+    // NullReferenceException crash on a `range: None` change under INCREMENTAL sync)
+    // keys off this helper, so pin down how each capability shape is read.
+    #[test]
+    fn negotiated_change_sync_kind_reads_every_capability_shape() {
+        use lsp_types::{
+            TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+        };
+
+        // No capabilities yet (e.g. before initialize) → NONE, so we re-sync (safe).
+        assert_eq!(
+            negotiated_change_sync_kind(None),
+            TextDocumentSyncKind::NONE
+        );
+
+        // Server sent no textDocumentSync at all → NONE.
+        let bare = ServerCapabilities::default();
+        assert_eq!(
+            negotiated_change_sync_kind(Some(&bare)),
+            TextDocumentSyncKind::NONE
+        );
+
+        // Shorthand `Kind(INCREMENTAL)` — what Roslyn sends; must NOT read as FULL.
+        let kind_incremental = ServerCapabilities {
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                TextDocumentSyncKind::INCREMENTAL,
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            negotiated_change_sync_kind(Some(&kind_incremental)),
+            TextDocumentSyncKind::INCREMENTAL
+        );
+
+        // Options form with explicit `change: FULL` — the one case we leave alone.
+        let opts_full = ServerCapabilities {
+            text_document_sync: Some(TextDocumentSyncCapability::Options(
+                TextDocumentSyncOptions {
+                    change: Some(TextDocumentSyncKind::FULL),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            negotiated_change_sync_kind(Some(&opts_full)),
+            TextDocumentSyncKind::FULL
+        );
+
+        // Options form with no `change` field → NONE (treated as not-FULL → re-sync).
+        let opts_none = ServerCapabilities {
+            text_document_sync: Some(TextDocumentSyncCapability::Options(
+                TextDocumentSyncOptions::default(),
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            negotiated_change_sync_kind(Some(&opts_none)),
+            TextDocumentSyncKind::NONE
+        );
     }
 
     #[test]
