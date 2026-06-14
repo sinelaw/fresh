@@ -1721,4 +1721,57 @@ mod tests {
             Some("https://example.com/docs")
         );
     }
+
+    #[test]
+    fn test_linkify_multibyte_surrounding_text() {
+        // Multi-byte prose on both sides of the URL, including a multi-byte
+        // character immediately adjacent to the URL boundaries. Must not panic
+        // (no slicing on a non-char-boundary) and must preserve all content.
+        let mut lines = vec![plain_line("日本語 https://example.com/path → 続き")];
+        linkify_bare_urls(&mut lines);
+
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("a link span");
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com/path"));
+        // No content lost or corrupted across the multi-byte boundaries.
+        assert_eq!(
+            lines[0].plain_text(),
+            "日本語 https://example.com/path → 続き"
+        );
+    }
+
+    #[test]
+    fn test_linkify_url_terminated_by_multibyte_char() {
+        // A non-ASCII character directly after the URL terminates it cleanly at
+        // a char boundary (the arrow is 3 bytes; the period is trimmed).
+        let mut lines = vec![plain_line("https://example.com/x→tail")];
+        linkify_bare_urls(&mut lines);
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.link_url.is_some())
+            .expect("a link span");
+        assert_eq!(link.link_url.as_deref(), Some("https://example.com/x"));
+        assert_eq!(lines[0].plain_text(), "https://example.com/x→tail");
+    }
+
+    #[test]
+    fn test_linkify_emoji_and_combining_marks_preserved() {
+        // Grapheme clusters (ZWJ emoji, combining marks) in surrounding prose
+        // are passed through untouched; only the ASCII URL is split out.
+        let mut lines = vec![plain_line("👨‍👩‍👧 café https://ex.com/a done")];
+        linkify_bare_urls(&mut lines);
+        assert_eq!(
+            lines[0]
+                .spans
+                .iter()
+                .filter_map(|s| s.link_url.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["https://ex.com/a"]
+        );
+        assert_eq!(lines[0].plain_text(), "👨‍👩‍👧 café https://ex.com/a done");
+    }
 }
