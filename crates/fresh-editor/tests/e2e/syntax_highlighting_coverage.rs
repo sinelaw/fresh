@@ -214,6 +214,17 @@ test_highlighting_works!(test_highlight_yarn_lock, "yarn.lock", 2);
 test_highlighting_works!(test_highlight_clang_format, ".clang-format", 2);
 test_highlighting_works!(test_highlight_clang_tidy, ".clang-tidy", 2);
 test_highlighting_works!(test_highlight_yamllint, ".yamllint", 2);
+
+// --- Lock files (highlighted as their underlying format) ---
+test_highlighting_works!(test_highlight_podfile_lock, "Podfile.lock", 2); // YAML
+test_highlighting_works!(test_highlight_pubspec_lock, "pubspec.lock", 2); // YAML
+test_highlighting_works!(test_highlight_cargo_lock, "Cargo.lock", 2); // TOML
+test_highlighting_works!(test_highlight_poetry_lock, "poetry.lock", 2); // TOML
+test_highlighting_works!(test_highlight_uv_lock, "uv.lock", 2); // TOML
+test_highlighting_works!(test_highlight_composer_lock, "composer.lock", 2); // JSON
+test_highlighting_works!(test_highlight_pipfile_lock, "Pipfile.lock", 2); // JSON
+test_highlighting_works!(test_highlight_flake_lock, "flake.lock", 2); // JSON
+test_highlighting_works!(test_highlight_deno_lock, "deno.lock", 2); // JSON
 test_highlighting_works!(test_highlight_dotenv, "hello.env", 2);
 test_highlighting_works!(test_highlight_editorconfig, "hello.editorconfig", 2);
 

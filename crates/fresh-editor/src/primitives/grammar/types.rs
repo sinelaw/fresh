@@ -533,6 +533,7 @@ impl GrammarRegistry {
         //   - yarn v1 lockfiles use a YAML-compatible format.
         //   - .clang-format / _clang-format and .clang-tidy are YAML (LLVM).
         //   - .yamllint is yamllint's own YAML config.
+        //   - Podfile.lock (CocoaPods) and pubspec.lock (Dart pub) are YAML.
         let yaml_scope = "source.yaml".to_string();
         for filename in [
             "yarn.lock",
@@ -540,8 +541,25 @@ impl GrammarRegistry {
             "_clang-format",
             ".clang-tidy",
             ".yamllint",
+            "Podfile.lock",
+            "pubspec.lock",
         ] {
             map.insert(filename.to_string(), yaml_scope.clone());
+        }
+
+        // Lock files whose content is TOML. Cargo.lock is also matched by
+        // syntect's first-line regex, but mapping it explicitly is robust
+        // regardless of the file's first line.
+        let toml_scope = "source.toml".to_string();
+        for filename in ["Cargo.lock", "poetry.lock", "uv.lock"] {
+            map.insert(filename.to_string(), toml_scope.clone());
+        }
+
+        // Lock files whose content is JSON. The JSON grammar has no first-line
+        // regex for a leading `{`, so these need an explicit filename mapping.
+        let json_scope = "source.json".to_string();
+        for filename in ["composer.lock", "Pipfile.lock", "flake.lock", "deno.lock"] {
+            map.insert(filename.to_string(), json_scope.clone());
         }
 
         map

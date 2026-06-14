@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "hash": { "sha256": "abc123" },
+    "requires": { "python_version": "3.11" }
+  },
+  "default": {
+    "requests": { "version": "==2.31.0" }
+  }
+}

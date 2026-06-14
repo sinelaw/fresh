@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": { "owner": "NixOS", "repo": "nixpkgs", "rev": "abc123" }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

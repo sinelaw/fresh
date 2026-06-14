@@ -1,0 +1,7 @@
+{
+  "_readme": ["This file locks the dependencies"],
+  "content-hash": "abc123",
+  "packages": [
+    { "name": "monolog/monolog", "version": "2.8.0" }
+  ]
+}
