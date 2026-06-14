@@ -58,6 +58,5 @@ contexts:
       scope: constant.numeric.fish
 
   commands:
-    - match: '(^|\s)([A-Za-z_./-][A-Za-z0-9_./-]*)'
-      captures:
-        2: support.function.fish
+    - match: '[A-Za-z_./][A-Za-z0-9_./-]*'
+      scope: support.function.fish

@@ -1641,6 +1641,37 @@ mod tests {
     }
 
     #[test]
+    fn test_fish_indented_control_keywords_stay_keywords() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("config.fish"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content =
+            "function greet\n    if test -n \"$name\"\n        echo $name\n    end\nend\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let indented_if = content.find("if test").unwrap();
+        let indented_end = content.find("    end").unwrap() + 4;
+        let column_zero_end = content.rfind("end").unwrap();
+
+        assert_eq!(
+            engine.category_at_position(indented_if),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            engine.category_at_position(indented_end),
+            Some(HighlightCategory::Keyword)
+        );
+        assert_eq!(
+            engine.category_at_position(column_zero_end),
+            Some(HighlightCategory::Keyword)
+        );
+    }
+
+    #[test]
     fn test_tree_sitter_direct() {
         // Verify a tree-sitter highlighter can be created directly for a
         // bundled grammar (TypeScript — most grammars were dropped and are now
