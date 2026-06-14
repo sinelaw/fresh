@@ -43,7 +43,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
-type PendingRequests = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>;
+/// Maps an in-flight LSP request id to the request method and the channel
+/// awaiting its response. The method is retained so error responses can be
+/// classified per-method (see `log_response_error`).
+type PendingRequests = Arc<Mutex<HashMap<i64, (String, oneshot::Sender<Result<Value, String>>)>>>;
 
 /// Grace period after didOpen before sending didChange (in milliseconds)
 /// This gives the LSP server time to process didOpen before receiving changes
@@ -73,30 +76,73 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 const LSP_ERROR_CONTENT_MODIFIED: i64 = -32801;
 const LSP_ERROR_SERVER_CANCELLED: i64 = -32802;
 
+/// RequestFailed (-32803): "A request failed but it was syntactically correct."
+/// The spec wants informational requests (hover, completion, ...) to answer
+/// "nothing here" with a `null` result, but several servers return this error
+/// instead — e.g. asm-lsp replies with `-32803 "No information available"` when
+/// hovering a label or macro that isn't a documented opcode/register
+/// (sinelaw/fresh#2296). For those read-only methods a failure just means "no
+/// info for this position", so it's logged at debug. For methods where a
+/// failure is actionable (formatting, rename, ...) it still warns.
+const LSP_ERROR_REQUEST_FAILED: i64 = -32803;
+
+/// Methods where "the server couldn't produce a result" is a normal, expected
+/// outcome rather than a bug — a `null` result or a soft `RequestFailed` simply
+/// means there is nothing to show at the requested position.
+fn is_informational_method(method: &str) -> bool {
+    matches!(
+        method,
+        "textDocument/hover"
+            | "textDocument/completion"
+            | "textDocument/signatureHelp"
+            | "textDocument/definition"
+            | "textDocument/declaration"
+            | "textDocument/typeDefinition"
+            | "textDocument/implementation"
+            | "textDocument/references"
+            | "textDocument/documentHighlight"
+            | "textDocument/documentSymbol"
+            | "textDocument/inlayHint"
+            | "textDocument/foldingRange"
+    )
+}
+
 /// Whether a JSON-RPC error response should be logged at debug rather than warn.
 /// See `LSP_ERROR_*` constants above for the rationale behind each suppressed code.
 fn is_suppressed_error_code(code: i64) -> bool {
     code == LSP_ERROR_CONTENT_MODIFIED || code == LSP_ERROR_SERVER_CANCELLED
 }
 
+/// Whether an error response for `method` with `code` should be downgraded from
+/// warn to debug. Extends `is_suppressed_error_code` with a method-aware rule:
+/// a `RequestFailed` from an informational request (see `is_informational_method`)
+/// is a routine "no result here", not server misbehaviour.
+fn is_suppressed_response_error(code: i64, method: &str) -> bool {
+    is_suppressed_error_code(code)
+        || (code == LSP_ERROR_REQUEST_FAILED && is_informational_method(method))
+}
+
 /// Log an LSP JSON-RPC error response at the appropriate level.
 ///
-/// Suppressed codes (see `is_suppressed_error_code`) emit a debug record; every
-/// other code emits a warning so genuine server misbehaviour stays visible.
-fn log_response_error(code: i64, message: &str, server_name: &str, language: &str) {
-    if is_suppressed_error_code(code) {
+/// Suppressed errors (see `is_suppressed_response_error`) emit a debug record;
+/// every other error emits a warning so genuine server misbehaviour stays
+/// visible. `method` is the originating request method (e.g. `textDocument/hover`).
+fn log_response_error(code: i64, message: &str, server_name: &str, language: &str, method: &str) {
+    if is_suppressed_response_error(code, method) {
         tracing::debug!(
-            "LSP response from '{}' ({}): {} (code {}), discarding",
+            "LSP response from '{}' ({}) for {}: {} (code {}), discarding",
             server_name,
             language,
+            method,
             message,
             code
         );
     } else {
         tracing::warn!(
-            "LSP response error from '{}' ({}): {} (code {})",
+            "LSP response error from '{}' ({}) for {}: {} (code {})",
             server_name,
             language,
+            method,
             message,
             code
         );
@@ -1135,7 +1181,7 @@ impl LspState {
         };
 
         let (tx, rx) = oneshot::channel();
-        pending.lock().unwrap().insert(id, tx);
+        pending.lock().unwrap().insert(id, (method.to_string(), tx));
 
         if let Err(e) = self.write_message(&request).await {
             pending.lock().unwrap().remove(&id);
@@ -2689,8 +2735,9 @@ struct LspTask {
     /// Next request ID
     next_id: i64,
 
-    /// Pending requests waiting for response
-    pending: HashMap<i64, oneshot::Sender<Result<Value, String>>>,
+    /// Pending requests waiting for response, keyed by request id. The stored
+    /// `String` is the request method (see `PendingRequests`).
+    pending: HashMap<i64, (String, oneshot::Sender<Result<Value, String>>)>,
 
     /// Server capabilities
     capabilities: Option<ServerCapabilities>,
@@ -2922,7 +2969,7 @@ impl LspTask {
                         count,
                         language
                     );
-                    for (id, tx) in pending_guard.drain() {
+                    for (id, (_method, tx)) in pending_guard.drain() {
                         tracing::debug!(
                             "LSP stdout reader: failing pending request id={} for {}",
                             id,
@@ -3967,9 +4014,11 @@ async fn handle_message_dispatch(
             // can only be a stray/echoed server id we never tracked — drop it
             // rather than letting it look like an unknown request.
             let pending_id = response.id.as_i64();
-            if let Some(tx) = pending_id.and_then(|id| pending.lock().unwrap().remove(&id)) {
+            if let Some((method, tx)) =
+                pending_id.and_then(|id| pending.lock().unwrap().remove(&id))
+            {
                 let result = if let Some(error) = response.error {
-                    log_response_error(error.code, &error.message, server_name, language);
+                    log_response_error(error.code, &error.message, server_name, language, &method);
                     Err(format!(
                         "LSP error from '{}' ({}): {} (code {})",
                         server_name, language, error.message, error.code
@@ -5429,6 +5478,78 @@ mod tests {
         assert!(!is_suppressed_error_code(-32603)); // Internal error
         assert!(!is_suppressed_error_code(-32700)); // Parse error
         assert!(!is_suppressed_error_code(0));
+
+        // RequestFailed is NOT a blanket-suppressed code: on its own it still
+        // warns. It is only downgraded for informational methods (below).
+        assert!(!is_suppressed_error_code(LSP_ERROR_REQUEST_FAILED));
+    }
+
+    #[test]
+    fn test_request_failed_suppressed_only_for_informational_methods() {
+        // asm-lsp answers a hover over a non-opcode token with
+        // `-32803 "No information available"` instead of a null result
+        // (sinelaw/fresh#2296). That's a routine "nothing here", so an
+        // informational method must not warn...
+        assert!(is_suppressed_response_error(
+            LSP_ERROR_REQUEST_FAILED,
+            "textDocument/hover"
+        ));
+        assert!(is_suppressed_response_error(
+            LSP_ERROR_REQUEST_FAILED,
+            "textDocument/completion"
+        ));
+
+        // ...but a RequestFailed from a mutating/actionable method is a real
+        // problem the user should be able to see.
+        assert!(!is_suppressed_response_error(
+            LSP_ERROR_REQUEST_FAILED,
+            "textDocument/formatting"
+        ));
+        assert!(!is_suppressed_response_error(
+            LSP_ERROR_REQUEST_FAILED,
+            "textDocument/rename"
+        ));
+
+        // The method gate only applies to RequestFailed; other errors on an
+        // informational method still surface.
+        assert!(!is_suppressed_response_error(-32603, "textDocument/hover"));
+    }
+
+    #[test]
+    fn test_request_failed_on_hover_is_not_logged_as_warn() {
+        // The exact scenario from the bug report: a hover RequestFailed must
+        // stay at debug so a normal "no docs here" hover doesn't spam warnings.
+        let (emitted, contents) = capture_warn_logs(|| {
+            log_response_error(
+                LSP_ERROR_REQUEST_FAILED,
+                "No information available",
+                "asm-lsp",
+                "asm",
+                "textDocument/hover",
+            );
+        });
+        assert!(
+            !emitted,
+            "hover RequestFailed must not notify the WARN channel; got log:\n{}",
+            contents
+        );
+    }
+
+    #[test]
+    fn test_request_failed_on_formatting_still_warns() {
+        let (emitted, _contents) = capture_warn_logs(|| {
+            log_response_error(
+                LSP_ERROR_REQUEST_FAILED,
+                "formatting failed",
+                "some-server",
+                "rust",
+                "textDocument/formatting",
+            );
+        });
+        assert!(
+            emitted,
+            "RequestFailed on an actionable method should still WARN"
+        );
     }
 
     /// Scope a `WarningLogLayer` to the current thread and run `body`. Returns
@@ -5459,7 +5580,13 @@ mod tests {
     fn test_content_modified_and_server_cancelled_are_not_logged_as_warn() {
         for code in [LSP_ERROR_CONTENT_MODIFIED, LSP_ERROR_SERVER_CANCELLED] {
             let (emitted, contents) = capture_warn_logs(|| {
-                log_response_error(code, "expected during editing", "rust-analyzer", "rust");
+                log_response_error(
+                    code,
+                    "expected during editing",
+                    "rust-analyzer",
+                    "rust",
+                    "textDocument/completion",
+                );
             });
             assert!(
                 !emitted,
@@ -5480,6 +5607,7 @@ mod tests {
                 "Unhandled method textDocument/inlayHint",
                 "vscode-json-language-server",
                 "json",
+                "textDocument/inlayHint",
             );
         });
         assert!(
@@ -5498,7 +5626,13 @@ mod tests {
         // InternalError (-32603) and other unexpected codes must continue
         // to surface so genuine server misbehaviour stays visible.
         let (emitted, contents) = capture_warn_logs(|| {
-            log_response_error(-32603, "internal error", "rust-analyzer", "rust");
+            log_response_error(
+                -32603,
+                "internal error",
+                "rust-analyzer",
+                "rust",
+                "textDocument/hover",
+            );
         });
         assert!(
             emitted,
