@@ -4450,3 +4450,86 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         .unwrap();
     harness.wait_until(|h| !file_view_active(h)).unwrap();
 }
+
+/// Issue #2318: file-level Discard (`D`) on a fully-*staged* file reported
+/// "Discarded" but left the staged change intact. The discard ran
+/// `git checkout -- <path>`, which only rewrites the working tree from the
+/// index — so a change that lives entirely in the index (clean working tree)
+/// survived untouched while the status bar still claimed success. The fix
+/// resets the file all the way back to HEAD (`git checkout HEAD -- <path>`),
+/// dropping both the staged and any unstaged edits.
+#[test]
+fn test_issue2318_discard_fully_staged_file_reverts_to_head() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Commit the original file, then make a change and STAGE it so the file
+    // is fully staged with a clean working tree (`git status` → "M ").
+    let calc = repo.create_file("calc.py", "def add(a, b):\n    return a + b\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    repo.create_file("calc.py", "def add(a, b):\n    return a + b  # CHANGED\n");
+    repo.git_add(&["calc.py"]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("# CHANGED"))
+        .unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    // The change is staged, so it shows under the STAGED section.
+    assert!(
+        screen.contains("STAGED") && screen.contains("# CHANGED"),
+        "The staged change should appear under STAGED. Screen:\n{}",
+        screen
+    );
+
+    // Move the cursor down into the file's hunk body, then file-level
+    // Discard (`D`).
+    for _ in 0..5 {
+        harness
+            .send_key(KeyCode::Char('j'), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    // Default suggestion (index 0) is "Discard changes in file".
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // After the discard refreshes the view, the change must be gone from the
+    // diff stream — nothing is left staged or unstaged.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("# CHANGED"))
+        .expect("Discarding the fully-staged file should remove its change from the review diff");
+
+    // The discard must reach the index *and* the working tree: the file on
+    // disk is back to its committed contents and nothing remains staged.
+    let on_disk = fs::read_to_string(&calc).unwrap();
+    assert!(
+        !on_disk.contains("# CHANGED"),
+        "Issue #2318: the working tree should be reverted to HEAD. Got: {on_disk:?}"
+    );
+    let cached = git_command(&repo.path)
+        .args(["diff", "--cached", "--quiet"])
+        .status()
+        .expect("git diff --cached failed to run");
+    assert!(
+        cached.success(),
+        "Issue #2318: nothing should remain staged after discarding the file"
+    );
+}
