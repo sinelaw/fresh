@@ -210,6 +210,7 @@ test_highlighting_works!(test_highlight_tiltfile, "Tiltfile", 2);
 test_highlighting_works!(test_highlight_justfile, "justfile", 2);
 test_highlighting_works!(test_highlight_bazel, "BUILD.bazel", 2);
 test_highlighting_works!(test_highlight_gomod, "go.mod", 2);
+test_highlighting_works!(test_highlight_yarn_lock, "yarn.lock", 2);
 test_highlighting_works!(test_highlight_dotenv, "hello.env", 2);
 test_highlighting_works!(test_highlight_editorconfig, "hello.editorconfig", 2);
 

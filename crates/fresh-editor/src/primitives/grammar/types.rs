@@ -528,6 +528,11 @@ impl GrammarRegistry {
         map.insert("go.mod".to_string(), gomod_scope.clone());
         map.insert("go.sum".to_string(), gomod_scope);
 
+        // YAML(-ish) files without a .yaml/.yml extension. yarn v1 lockfiles
+        // are a YAML-compatible format, so highlight them as YAML (#2326).
+        let yaml_scope = "source.yaml".to_string();
+        map.insert("yarn.lock".to_string(), yaml_scope);
+
         map
     }
 
