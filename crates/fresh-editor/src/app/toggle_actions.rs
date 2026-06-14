@@ -11,7 +11,6 @@ use rust_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};
 use crate::config_io::{ConfigLayer, ConfigResolver};
-use crate::input::keybindings::KeybindingResolver;
 
 use super::Editor;
 
@@ -565,8 +564,12 @@ impl Editor {
             }
         }
 
-        // Always reload keybindings (complex types don't implement PartialEq)
-        *self.keybindings.write().unwrap() = KeybindingResolver::new(&self.config);
+        // Always reload keybindings (complex types don't implement PartialEq),
+        // keeping plugin-contributed bindings alive across the reload (#2307).
+        self.keybindings
+            .write()
+            .unwrap()
+            .reload_from_config(&self.config);
 
         // Update clipboard configuration
         self.clipboard.apply_config(&self.config.clipboard);

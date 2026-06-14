@@ -1546,6 +1546,31 @@ impl KeybindingResolver {
         resolver
     }
 
+    /// Reload all configuration-derived bindings from `config` while
+    /// preserving plugin-contributed runtime state.
+    ///
+    /// The keymap bindings (`default_bindings` / `default_chord_bindings`) and
+    /// the user's custom overrides (`bindings` / `chord_bindings`) are rebuilt
+    /// from scratch exactly as [`KeybindingResolver::new`] does. Plugin state —
+    /// mode bindings registered at runtime via `defineMode` (`plugin_defaults`,
+    /// `plugin_chord_defaults`) and the set of modes inheriting Normal bindings
+    /// (`inheriting_modes`) — is not represented in `config`, so it is carried
+    /// over untouched.
+    ///
+    /// Use this instead of replacing the resolver with a fresh
+    /// [`KeybindingResolver::new`] whenever a config change forces a rebuild
+    /// (switching the active keybinding map, saving settings, editing
+    /// keybindings). Otherwise every plugin-contributed binding is dropped until
+    /// the next restart (issue #2307).
+    pub fn reload_from_config(&mut self, config: &Config) {
+        let mut rebuilt = Self::new(config);
+        // Carry over runtime plugin state, which lives only in the resolver.
+        rebuilt.plugin_defaults = std::mem::take(&mut self.plugin_defaults);
+        rebuilt.plugin_chord_defaults = std::mem::take(&mut self.plugin_chord_defaults);
+        rebuilt.inheriting_modes = std::mem::take(&mut self.inheriting_modes);
+        *self = rebuilt;
+    }
+
     /// Load default bindings from a vector of keybinding definitions (into default_bindings/default_chord_bindings)
     fn load_default_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
@@ -4010,5 +4035,66 @@ mod tests {
                 duplicates.join("\n")
             );
         }
+    }
+
+    /// `reload_from_config` rebuilds config-derived bindings but must preserve
+    /// plugin-contributed runtime state — single keys, chords, and the
+    /// inheriting-modes set — that does not live in config (issue #2307).
+    #[test]
+    fn test_reload_from_config_preserves_plugin_state() {
+        let config = Config::default();
+        let mut resolver = KeybindingResolver::new(&config);
+
+        let mode_ctx = KeyContext::Mode("test-plugin-mode".to_string());
+        let single_action = Action::PluginAction("test-plugin.single".to_string());
+        let chord_action = Action::PluginAction("test-plugin.chord".to_string());
+
+        // Simulate a plugin's defineMode(): a single key, a chord, and a
+        // request to inherit Normal bindings.
+        resolver.load_plugin_default(
+            mode_ctx.clone(),
+            KeyCode::Char('z'),
+            KeyModifiers::NONE,
+            single_action.clone(),
+        );
+        resolver.load_plugin_chord_default(
+            mode_ctx.clone(),
+            vec![
+                (KeyCode::Char('g'), KeyModifiers::NONE),
+                (KeyCode::Char('g'), KeyModifiers::NONE),
+            ],
+            chord_action.clone(),
+        );
+        resolver.set_mode_inherits_normal_bindings("test-plugin-mode", true);
+
+        // A config-triggered rebuild (e.g. switching the active keybinding map).
+        resolver.reload_from_config(&config);
+
+        // Single-key plugin binding survives.
+        let single_event = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert_eq!(
+            resolver.resolve(&single_event, mode_ctx.clone()),
+            single_action,
+            "single-key plugin binding must survive reload_from_config"
+        );
+
+        // Chord plugin binding survives: feed the first `g` as chord state and
+        // the second `g` as the new event to complete the `g g` sequence.
+        let chord_prefix = [(KeyCode::Char('g'), KeyModifiers::NONE)];
+        let second_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert_eq!(
+            resolver.resolve_chord(&chord_prefix, &second_g, mode_ctx.clone()),
+            ChordResolution::Complete(chord_action),
+            "chord plugin binding must survive reload_from_config"
+        );
+
+        // The inheriting-modes set survives: an unbound key falls through to a
+        // Normal binding (Left → MoveLeft) only when the mode inherits.
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&left, mode_ctx),
+            Action::MoveLeft,
+            "inheriting-modes membership must survive reload_from_config"
+        );
     }
 }

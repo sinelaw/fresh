@@ -90,9 +90,12 @@ impl Editor {
             self.config_mut().keybindings.push(binding);
         }
 
-        // Rebuild the keybinding resolver
-        *self.keybindings.write().unwrap() =
-            crate::input::keybindings::KeybindingResolver::new(&self.config);
+        // Rebuild the keybinding resolver, keeping plugin-contributed
+        // bindings alive across the rebuild (#2307).
+        self.keybindings
+            .write()
+            .unwrap()
+            .reload_from_config(&self.config);
 
         // Save to config file via the pending changes mechanism
         let config_value = match serde_json::to_value(&self.config.keybindings) {

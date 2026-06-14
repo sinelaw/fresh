@@ -1662,8 +1662,11 @@ impl Editor {
                         self.start_theme_transition_animation();
                     }
                 }
-                *self.keybindings.write().unwrap() =
-                    crate::input::keybindings::KeybindingResolver::new(&self.config);
+                // Keep plugin-contributed bindings alive across the reload (#2307).
+                self.keybindings
+                    .write()
+                    .unwrap()
+                    .reload_from_config(&self.config);
                 self.clipboard.apply_config(&self.config.clipboard);
                 {
                     let cfg = self.config.editor.clone();
@@ -1862,6 +1865,16 @@ impl Editor {
         if let Err(e) = self.handle_action(action) {
             tracing::warn!("dispatch_action_for_tests: {e}");
         }
+    }
+
+    /// Test-only accessor for the keybinding resolver (issue #2307), so
+    /// tests can register plugin-mode bindings and assert how they resolve
+    /// after config-triggered resolver rebuilds.
+    #[doc(hidden)]
+    pub fn keybindings_for_tests(
+        &self,
+    ) -> std::sync::Arc<std::sync::RwLock<crate::input::keybindings::KeybindingResolver>> {
+        self.keybindings.clone()
     }
 
     /// Test-only accessor for the Live Grep Resume cache (issue #1796).

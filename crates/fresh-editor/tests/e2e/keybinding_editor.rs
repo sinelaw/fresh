@@ -2217,3 +2217,63 @@ fn test_key_not_recorded_without_capture_mode() {
         screen
     );
 }
+
+// ========================
+// Plugin bindings survive keybinding-map switches (issue #2307)
+// ========================
+
+/// Regression test for issue #2307: switching the active keybinding map (and
+/// switching back) must not drop plugin-contributed bindings. Plugins register
+/// mode bindings at runtime via `defineMode`; these live only in the resolver,
+/// not in config. Switching maps rebuilds the resolver from config, which used
+/// to discard every plugin binding until the next restart.
+#[test]
+fn test_switch_keybinding_map_preserves_plugin_bindings() {
+    use fresh::input::keybindings::{Action, KeyContext};
+
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Simulate a plugin registering a mode binding via defineMode(): a single
+    // key `z` bound to a plugin action inside a plugin-owned mode context.
+    let ctx = KeyContext::Mode("test-plugin-mode".to_string());
+    let plugin_action = Action::PluginAction("test-plugin.do-thing".to_string());
+    {
+        let kb = harness.editor().keybindings_for_tests();
+        let mut kb = kb.write().unwrap();
+        kb.load_plugin_default(
+            ctx.clone(),
+            KeyCode::Char('z'),
+            KeyModifiers::NONE,
+            plugin_action.clone(),
+        );
+    }
+
+    let event = crossterm::event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+
+    // Sanity: the plugin binding resolves before any map switch.
+    {
+        let kb = harness.editor().keybindings_for_tests();
+        let resolved = kb.read().unwrap().resolve(&event, ctx.clone());
+        assert_eq!(
+            resolved, plugin_action,
+            "plugin binding should resolve before switching keybinding maps"
+        );
+    }
+
+    // Switch to a different built-in map and back to the original — a
+    // reversible UI action that rebuilds the resolver each time.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SwitchKeybindingMap("emacs".to_string()));
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SwitchKeybindingMap("default".to_string()));
+
+    // The plugin binding must still resolve after the round-trip.
+    let kb = harness.editor().keybindings_for_tests();
+    let resolved = kb.read().unwrap().resolve(&event, ctx);
+    assert_eq!(
+        resolved, plugin_action,
+        "plugin binding must survive switching keybinding maps and back (#2307)"
+    );
+}

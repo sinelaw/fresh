@@ -678,9 +678,12 @@ impl Editor {
             // Update the active keybinding map in config
             self.config_mut().active_keybinding_map = map_name.to_string().into();
 
-            // Reload the keybinding resolver with the new map
-            *self.keybindings.write().unwrap() =
-                crate::input::keybindings::KeybindingResolver::new(&self.config);
+            // Reload the keybinding resolver with the new map, keeping
+            // plugin-contributed bindings alive across the switch (#2307).
+            self.keybindings
+                .write()
+                .unwrap()
+                .reload_from_config(&self.config);
 
             // Persist to config file
             self.save_keybinding_map_to_config();

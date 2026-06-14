@@ -9,7 +9,6 @@
 
 use crate::config::Config;
 use crate::config_io::{ConfigLayer, ConfigResolver};
-use crate::input::keybindings::KeybindingResolver;
 use crate::types::LspServerConfig;
 use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
@@ -146,8 +145,11 @@ impl Editor {
         // Handle plugin enable/disable changes
         self.apply_plugin_config_changes(&old_plugins);
 
-        // Update keybindings
-        *self.keybindings.write().unwrap() = KeybindingResolver::new(&self.config);
+        // Update keybindings, keeping plugin-contributed bindings (#2307).
+        self.keybindings
+            .write()
+            .unwrap()
+            .reload_from_config(&self.config);
 
         // Update LSP configs
         let __active_id = self.active_window;
