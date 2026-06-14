@@ -77,9 +77,21 @@ pub fn render_toggle_aligned(
     // confusable with an empty text input.
     //   checked:   [v]
     //   unchecked: [ ]
+    //   inherited: [-]   (value is unset and falls back to a lower layer)
     const CHIP_WIDTH: u16 = 3;
 
-    let line = if state.checked {
+    let line = if state.inherited {
+        // Neutral chip: the value is inherited/unset, so we deliberately avoid
+        // a definite checked/unchecked glyph that could be read as the user
+        // having set it off (issue #2345).
+        Line::from(vec![
+            Span::styled(padded_label, Style::default().fg(label_color)),
+            Span::styled(": ", Style::default().fg(label_color)),
+            Span::styled("[", Style::default().fg(bracket_color)),
+            Span::styled("-", Style::default().fg(bracket_color)),
+            Span::styled("]", Style::default().fg(bracket_color)),
+        ])
+    } else if state.checked {
         Line::from(vec![
             Span::styled(padded_label, Style::default().fg(label_color)),
             Span::styled(": ", Style::default().fg(label_color)),

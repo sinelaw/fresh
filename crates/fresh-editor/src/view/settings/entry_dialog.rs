@@ -11,6 +11,22 @@ use crate::view::controls::{FocusState, TextInputState};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Snapshot every editable field's rendered value at dialog-build time, keyed
+/// by field name (item path without the leading `/`). See
+/// [`EntryDialogState::baseline_values`].
+fn baseline_from_items(items: &[SettingItem]) -> HashMap<String, Value> {
+    items
+        .iter()
+        .filter(|item| item.path != "__key__")
+        .map(|item| {
+            (
+                item.path.trim_start_matches('/').to_string(),
+                control_to_value(&item.control),
+            )
+        })
+        .collect()
+}
+
 /// State for the entry detail dialog
 #[derive(Debug, Clone)]
 pub struct EntryDialogState {
@@ -64,6 +80,17 @@ pub struct EntryDialogState {
     /// indicator + the Esc discard prompt without relying on a
     /// JSON-equality check that's too noisy at the schema layer.
     pub user_edited: bool,
+    /// Snapshot of each editable field's rendered value at the moment the
+    /// dialog was built, keyed by field name (the item path without its
+    /// leading `/`). Used by [`to_value`] to persist only the fields the
+    /// user actually changed: a nullable field that started out *inherited*
+    /// (`is_null`) and still matches this baseline is written back as
+    /// inherited (omitted) instead of being coerced to a concrete
+    /// `false`/`0`/`""`. Without this, opening a language entry and toggling
+    /// one field would silently freeze every *other* inherited field —
+    /// e.g. writing `line_wrap: false` — which then overrides the global
+    /// `Toggle Line Wrap` command forever (issue #2345).
+    pub baseline_values: HashMap<String, Value>,
 }
 
 impl EntryDialogState {
@@ -145,6 +172,7 @@ impl EntryDialogState {
             format!("Edit {}", schema.name)
         };
 
+        let baseline_values = baseline_from_items(&items);
         let mut result = Self {
             entry_key: key,
             map_path: map_path.to_string(),
@@ -167,6 +195,7 @@ impl EntryDialogState {
             is_single_value,
             is_array_item: false,
             user_edited: false,
+            baseline_values,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -223,6 +252,7 @@ impl EntryDialogState {
             format!("Edit {}", schema.name)
         };
 
+        let baseline_values = baseline_from_items(&items);
         Self {
             entry_key: index.map_or(String::new(), |i| i.to_string()),
             map_path: array_path.to_string(),
@@ -245,6 +275,7 @@ impl EntryDialogState {
             is_single_value: false,
             is_array_item: true,
             user_edited: false,
+            baseline_values,
         }
     }
 
@@ -370,6 +401,18 @@ impl EntryDialogState {
 
             let field_name = item.path.trim_start_matches('/');
             let value = control_to_value(&item.control);
+
+            // Preserve inheritance: a nullable field that opened as inherited
+            // (`is_null`) and was never touched must NOT be written back as a
+            // concrete value, or it stops inheriting from the global/default
+            // layer. We detect "untouched" by comparing against the value the
+            // control rendered when the dialog was built. Toggling/typing
+            // changes that rendered value, so deliberate edits still persist.
+            if item.nullable && item.is_null && self.baseline_values.get(field_name) == Some(&value)
+            {
+                continue;
+            }
+
             obj.insert(field_name.to_string(), value);
         }
 
@@ -1176,7 +1219,7 @@ impl EntryDialogState {
                 return;
             }
             if let SettingControl::Toggle(state) = &mut item.control {
-                state.checked = !state.checked;
+                state.toggle();
             }
         }
     }

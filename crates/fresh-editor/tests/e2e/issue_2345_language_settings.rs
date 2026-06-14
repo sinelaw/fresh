@@ -1,0 +1,183 @@
+//! E2E reproducers for issue #2345 — "html linewrap and broken settings".
+//!
+//! Two distinct, user-visible defects are triggered by editing a language's
+//! settings through **View → Settings → General → Languages → HTML**:
+//!
+//!   1. After enabling *Auto Surround* for HTML and saving, line-wrap can be
+//!      turned off but can never be turned back on for HTML buffers. The root
+//!      cause is that the language entry dialog persists *every* field — even
+//!      the ones the user never touched — coercing inherited/`null` booleans
+//!      (`line_wrap`, `auto_close`, …) to explicit `false`. That writes a
+//!      spurious per-language `line_wrap: false` override which always wins
+//!      over the global `Toggle Line Wrap` command.
+//!
+//!   2. In that same dialog, *Auto Surround* (and the other nullable booleans)
+//!      render as an empty checkbox `[ ]` even though they inherit `true` from
+//!      the global default — so the setting "appears disabled by default" while
+//!      it is actually enabled.
+//!
+//! Both tests drive only keyboard events and assert on rendered output, per
+//! CONTRIBUTING.md ("E2E Tests Observe, Not Inspect").
+
+use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::Config;
+
+/// A short HTML document whose second line is far wider than the viewport and
+/// ends in a distinctive token. The token is only visible on screen when the
+/// line is soft-wrapped; if wrapping is off the line is truncated and the token
+/// scrolls out of view. That makes "is line-wrap actually on?" observable from
+/// rendered output alone.
+const LONG_HTML: &str = "<!DOCTYPE html>\n<p>This is a deliberately very long line of HTML body text that keeps going well past the right edge of the terminal viewport so that it must soft wrap onto additional rows before it can reach the final ENDWRAPTOKEN at the very end here.</p>\n";
+
+/// Build a config with a single `html` language entry so the Settings
+/// "Languages" map is deterministic to navigate. Global `line_wrap` and
+/// `auto_surround` keep their defaults (both `true`).
+fn html_only_config() -> Config {
+    let mut config = Config::default();
+    config.languages.retain(|name, _| name == "html");
+    assert!(
+        config.editor.line_wrap,
+        "precondition: global line_wrap defaults to true"
+    );
+    assert!(
+        config.editor.auto_surround,
+        "precondition: global auto_surround defaults to true"
+    );
+    config
+}
+
+/// Run a command-palette command by name (fuzzy match, pick the top result).
+fn run_command(harness: &mut EditorTestHarness, command: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text(command).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// Return the full text of the first rendered row that contains `needle`.
+fn row_with(harness: &EditorTestHarness, needle: &str) -> String {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .find(|line| line.contains(needle))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// From a freshly opened Settings panel, focus the right-hand list and walk
+/// down to the "Languages" map, then open the (already-focused) `html` entry's
+/// Edit Value dialog. Leaves the dialog open with focus on its first field.
+fn open_html_language_dialog(harness: &mut EditorTestHarness) {
+    harness.open_settings().unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    for _ in 0..40 {
+        if harness.screen_to_string().contains("Languages:") {
+            break;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    assert!(
+        harness.screen_to_string().contains("Languages:"),
+        "could not reach the Languages map in Settings"
+    );
+    // The single `html` entry is already the focused map row ("[Enter to
+    // edit]"). Enter opens its dialog.
+    assert!(
+        harness.screen_to_string().contains("[Enter to edit]"),
+        "html map row should be focused with an edit affordance"
+    );
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("Auto Surround"),
+        "html entry dialog should show the Auto Surround field"
+    );
+}
+
+/// Issue #2345 (1): editing a language's settings must not silently disable
+/// line wrap for that language. After enabling Auto Surround for HTML and
+/// saving, toggling line wrap off and back on must re-wrap the buffer.
+#[test]
+fn issue_2345_html_line_wrap_survives_language_settings_edit() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text_named("page.html", LONG_HTML)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Sanity: line wrap is on by default, so the tail token is visible.
+    harness.assert_screen_contains("ENDWRAPTOKEN");
+
+    // Reproduce the reported flow: enable Auto Surround for HTML and save.
+    open_html_language_dialog(&mut harness);
+    // Fields are alphabetical: Auto Close, Auto Indent, Auto Surround.
+    // From the first field, two Downs land on Auto Surround.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap(); // toggle Auto Surround on
+    harness.render().unwrap();
+    assert!(
+        row_with(&harness, "Auto Surround").contains("[v]"),
+        "Auto Surround should read as checked after toggling it on; row was: {:?}",
+        row_with(&harness, "Auto Surround")
+    );
+    // Save the entry dialog, then save the settings (closes the panel).
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_screen_contains("ENDWRAPTOKEN").unwrap();
+
+    // Now toggle line wrap off, then back on.
+    run_command(&mut harness, "Toggle Line Wrap"); // off
+    harness.assert_screen_not_contains("ENDWRAPTOKEN");
+    run_command(&mut harness, "Toggle Line Wrap"); // on again
+
+    // The buffer must wrap again — the tail token must be back on screen.
+    // Pre-fix this fails: a spurious per-language `line_wrap: false` override
+    // was persisted, so the global toggle can no longer re-enable wrapping.
+    harness.assert_screen_contains("ENDWRAPTOKEN");
+}
+
+/// Issue #2345 (2): in the language entry dialog, a nullable boolean whose
+/// value is inherited (unset) must not be rendered as a plainly disabled
+/// checkbox `[ ]` — that misrepresents an inherited setting as off. It renders
+/// as a neutral `[-]` chip instead.
+#[test]
+fn issue_2345_inherited_auto_surround_shows_neutral_chip() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    harness.render().unwrap();
+
+    open_html_language_dialog(&mut harness);
+
+    // Per-language auto_surround is unset (inherits the global default), so the
+    // dialog must show the neutral inherited chip `[-]`, not a disabled `[ ]`.
+    let row = row_with(&harness, "Auto Surround");
+    assert!(
+        row.contains("Auto Surround"),
+        "Auto Surround row should be rendered; screen was:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        row.contains("[-]") && !row.contains("[ ]"),
+        "inherited Auto Surround should render as neutral `[-]`, not disabled `[ ]`; row was: {:?}",
+        row
+    );
+}

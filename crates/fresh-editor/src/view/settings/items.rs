@@ -1261,7 +1261,16 @@ pub fn build_item_from_value(
                 .and_then(|v| v.as_bool())
                 .or_else(|| schema.default.as_ref().and_then(|d| d.as_bool()))
                 .unwrap_or(false);
-            SettingControl::Toggle(ToggleState::new(checked, &schema.name))
+            // A nullable boolean with no explicit value is *inherited*: render
+            // it as a neutral chip rather than a definite off-state so it isn't
+            // misread as disabled (issue #2345).
+            let inherited = schema.nullable
+                && current_value
+                    .map(|v| v.is_null())
+                    .unwrap_or(schema.default.as_ref().map(|d| d.is_null()).unwrap_or(true));
+            SettingControl::Toggle(
+                ToggleState::new(checked, &schema.name).with_inherited(inherited),
+            )
         }
 
         SettingType::Integer { minimum, maximum } => {

@@ -28,6 +28,12 @@ pub struct ToggleState {
     pub label: String,
     /// Focus state
     pub focus: FocusState,
+    /// When true, this toggle's value is *inherited* (the underlying setting is
+    /// unset/`null` and falls back to a lower layer). It renders as a neutral
+    /// `[-]` chip instead of a definite `[ ]`/`[v]`, so an inherited-`true`
+    /// setting is not misread as disabled (issue #2345). Any explicit toggle
+    /// clears this — the value is then the user's own, not inherited.
+    pub inherited: bool,
 }
 
 impl ToggleState {
@@ -37,12 +43,19 @@ impl ToggleState {
             checked,
             label: label.into(),
             focus: FocusState::Normal,
+            inherited: false,
         }
     }
 
     /// Set the focus state
     pub fn with_focus(mut self, focus: FocusState) -> Self {
         self.focus = focus;
+        self
+    }
+
+    /// Mark this toggle as displaying an inherited (unset) value.
+    pub fn with_inherited(mut self, inherited: bool) -> Self {
+        self.inherited = inherited;
         self
     }
 
@@ -55,6 +68,9 @@ impl ToggleState {
     pub fn toggle(&mut self) {
         if self.is_enabled() {
             self.checked = !self.checked;
+            // An explicit toggle makes the value the user's own choice, so it
+            // is no longer inherited.
+            self.inherited = false;
         }
     }
 }
