@@ -899,3 +899,40 @@ fn test_vi_2dd_delete_two_lines() {
 
     harness.wait_for_buffer_content("line3\nline4\n").unwrap();
 }
+
+// =============================================================================
+// Bug: d% / c% / y% (operator + matching-bracket motion) does nothing
+// =============================================================================
+
+/// `d%` should delete from the cursor through the matching bracket (inclusive),
+/// e.g. on the `(` of "foo(bar)baz" it should leave "foobaz".
+///
+/// Root cause: `applyOperatorWithMotion` resolves a motion to either an atomic
+/// operator action (`atomicOperatorActions`) or a selection-extending action
+/// (`motionToSelection`). The `goto_matching_bracket` motion is in neither map,
+/// so the operator bails out of the "no selection equivalent" branch without
+/// deleting anything. (The normal-mode `%` motion itself works.)
+///
+/// To fix: add a selection-extending action (e.g. `select_to_matching_bracket`)
+/// in the core editor and a `motionToSelection["goto_matching_bracket"]` entry in
+/// the vi_mode plugin, then remove the `#[ignore]`.
+#[test]
+#[ignore]
+fn test_vi_bug_d_percent_ignored() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "foo(bar)baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Move cursor onto the '(' at byte 3.
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+
+    // d% should delete "(bar)" inclusive, leaving "foobaz\n".
+    send_operator_motion(&mut harness, 'd', '%');
+
+    harness.wait_for_buffer_content("foobaz\n").unwrap();
+}

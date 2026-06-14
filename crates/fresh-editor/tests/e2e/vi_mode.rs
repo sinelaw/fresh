@@ -1153,3 +1153,43 @@ fn test_vi_colon_split() {
         })
         .unwrap();
 }
+
+// =============================================================================
+// Matching Bracket Tests
+// =============================================================================
+
+/// Test '%' jumps between matching brackets (both directions).
+#[test]
+fn test_vi_percent_matching_bracket() {
+    let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
+
+    // foo(bar)\n  ->  '(' at byte 3, ')' at byte 7
+    let fixture = TestFixture::new("test.txt", "foo(bar)\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Move cursor onto the '(' at byte 3.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Char('l'), KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+
+    // '%' jumps forward to the matching ')'.
+    harness
+        .send_key(KeyCode::Char('%'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
+
+    // '%' from the ')' jumps back to the '('.
+    harness
+        .send_key(KeyCode::Char('%'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.wait_until(|h| h.cursor_position() == 3).unwrap();
+}

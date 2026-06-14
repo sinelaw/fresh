@@ -456,7 +456,7 @@ function vi_page_up() : void {
 registerHandler("vi_page_up", vi_page_up);
 
 function vi_matching_bracket() : void {
-  editor.executeAction("go_to_matching_bracket");
+  editor.executeAction("goto_matching_bracket");
 }
 registerHandler("vi_matching_bracket", vi_matching_bracket);
 
@@ -1657,8 +1657,13 @@ function vi_op_doc_end(): void {
 }
 registerHandler("vi_op_doc_end", vi_op_doc_end);
 
+// NOTE: operator + `%` (d%/c%/y%) is currently a no-op. `applyOperatorWithMotion`
+// resolves a motion via `atomicOperatorActions` or `motionToSelection`, and
+// `goto_matching_bracket` is in neither map, so it bails without deleting. Making
+// this work needs a selection-extending action (e.g. `select_to_matching_bracket`)
+// plus a `motionToSelection` entry. See test_vi_bug_d_percent_ignored.
 function vi_op_matching_bracket(): void {
-  handleMotionWithOperator("go_to_matching_bracket");
+  handleMotionWithOperator("goto_matching_bracket");
 }
 registerHandler("vi_op_matching_bracket", vi_op_matching_bracket);
 
