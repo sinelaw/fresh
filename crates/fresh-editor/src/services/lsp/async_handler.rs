@@ -5235,6 +5235,145 @@ mod tests {
         );
     }
 
+    // Build an `LspState` wired to a throwaway `cat` child — a stdin sink that drains
+    // our tiny notifications without blocking. Returns the child so the caller keeps it
+    // (and its stdin pipe) alive for the duration of the test; `kill_on_drop` reaps it
+    // when the binding goes out of scope. `change_sync` sets the negotiated
+    // `textDocumentSync.change` capability (None = no capability advertised).
+    fn test_state_with_sync(
+        change_sync: Option<lsp_types::TextDocumentSyncKind>,
+    ) -> (LspState, tokio::process::Child) {
+        let mut child = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn cat as a stdin sink");
+        let stdin = child.stdin.take().expect("child stdin");
+        // async_tx is unused by the didOpen/didChange/didClose paths under test; the
+        // receiver may drop (sends are best-effort) without affecting the assertions.
+        let (async_tx, _async_rx) = std_mpsc::channel();
+        let caps = change_sync.map(|k| ServerCapabilities {
+            text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(k)),
+            ..Default::default()
+        });
+        let state = LspState {
+            stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
+            next_id: Arc::new(AtomicI64::new(1)),
+            capabilities: Arc::new(Mutex::new(caps)),
+            document_versions: Arc::new(Mutex::new(HashMap::new())),
+            pending_opens: Arc::new(Mutex::new(HashMap::new())),
+            initialized: Arc::new(AtomicBool::new(true)),
+            async_tx,
+            language: Arc::new("rust".to_string()),
+            server_name: Arc::new("test-server".to_string()),
+            active_requests: Arc::new(Mutex::new(HashMap::new())),
+            language_id_overrides: Arc::new(HashMap::new()),
+        };
+        (state, child)
+    }
+
+    fn ranged_change(text: &str) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range::new(
+                lsp_types::Position::new(0, 0),
+                lsp_types::Position::new(0, 0),
+            )),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    fn full_change(text: &str) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    // The actual fix: a full-document (`range: None`) change must NOT be sent as a
+    // didChange when the server negotiated INCREMENTAL — Roslyn throws a
+    // NullReferenceException on the null range. It is re-synced via didClose + didOpen,
+    // which removes the document and re-opens it at version 0. The tracked version is a
+    // faithful proxy: a normal didChange increments it, a close+open resets it to 0.
+    // Without the fix this test fails (the full change would bump the version to 2).
+    #[tokio::test]
+    async fn full_document_change_under_incremental_resyncs_via_close_open() {
+        let (state, _child) =
+            test_state_with_sync(Some(lsp_types::TextDocumentSyncKind::INCREMENTAL));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+        let path = PathBuf::from("/test.rs");
+        let version = || state.document_versions.lock().unwrap().get(&path).copied();
+
+        // Open the document so changes aren't skipped; didOpen tracks version 0.
+        state
+            .handle_did_open_sequential(uri.clone(), "fn main() {}".into(), "rust".into(), &pending)
+            .await
+            .unwrap();
+        assert_eq!(version(), Some(0));
+        // Drop the didOpen grace marker so the ranged didChange below doesn't sleep.
+        state.pending_opens.lock().unwrap().clear();
+
+        // A ranged change is unaffected: it goes out as a normal didChange (version bumps).
+        state
+            .handle_did_change_sequential(uri.clone(), vec![ranged_change("x")], &pending)
+            .await
+            .unwrap();
+        assert_eq!(
+            version(),
+            Some(1),
+            "ranged incremental change should pass through as a didChange"
+        );
+
+        // The full-document change re-syncs: didClose (removes) + didOpen (re-adds at 0).
+        state
+            .handle_did_change_sequential(
+                uri.clone(),
+                vec![full_change("fn main() {}\n")],
+                &pending,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            version(),
+            Some(0),
+            "full-document change under INCREMENTAL should re-sync via didClose+didOpen"
+        );
+    }
+
+    // Guard the other side of the condition: under FULL sync the server accepts a
+    // `range: None` change directly, so we must leave it alone — it stays a didChange and
+    // the version bumps (no spurious close+open). Catches an over-eager fix.
+    #[tokio::test]
+    async fn full_document_change_under_full_sync_passes_through() {
+        let (state, _child) = test_state_with_sync(Some(lsp_types::TextDocumentSyncKind::FULL));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+        let path = PathBuf::from("/test.rs");
+
+        state
+            .handle_did_open_sequential(uri.clone(), "fn main() {}".into(), "rust".into(), &pending)
+            .await
+            .unwrap();
+        state.pending_opens.lock().unwrap().clear();
+
+        state
+            .handle_did_change_sequential(
+                uri.clone(),
+                vec![full_change("fn main() {}\n")],
+                &pending,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            state.document_versions.lock().unwrap().get(&path).copied(),
+            Some(1),
+            "under FULL sync a full-document change stays a didChange (no reset)"
+        );
+    }
+
     #[test]
     fn workspace_configuration_resolves_section_from_init_options() {
         // harper-ls pulls the "harper-ls" section; it must receive the inner
