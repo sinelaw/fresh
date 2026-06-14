@@ -2778,15 +2778,15 @@ function selectionLineRange(): { hunk: Hunk; range: { start: number; end: number
     const sel = state.lineSelection;
     const hunk = state.hunks.find(h => h.id === sel.hunkId);
     if (!hunk) return null;
-    // Find the row of this hunk's header in the unified stream.
-    const hunkIdx = state.hunks.indexOf(hunk);
-    let visibleIdx = 0;
-    for (let i = 0; i < hunkIdx; i++) {
-        const h = state.hunks[i];
-        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
-        visibleIdx++;
-    }
-    const headerRow = state.hunkHeaderRows[visibleIdx];
+    // Row of this hunk's header in the unified stream. `hunkRowByHunkId` is
+    // populated for exactly the hunks emitted in the current render, keyed by
+    // id — so it stays correct regardless of focus mode (which paints only the
+    // focused file's body), collapsed files, or staged/unstaged section order.
+    // The previous approach counted hunks across *all* files to index
+    // `hunkHeaderRows`, which overshot whenever the focused hunk wasn't the
+    // first one rendered (e.g. a line in the second file), yielding a null
+    // range and the spurious "no add/remove lines" error.
+    const headerRow = state.hunkRowByHunkId[hunk.id];
     if (headerRow === undefined) return null;
 
     const lo = Math.min(sel.startRow, sel.endRow);
