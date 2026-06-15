@@ -146,6 +146,18 @@ document.addEventListener("keydown",e=>{
   const printable=e.key.length===1 && !e.ctrlKey && !e.metaKey;
   if(printable||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
 });
+// Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
+// The editor does all hit-testing (panes, tabs, scrollbars, separators).
+const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
+const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
+async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
+let dragging=false, lastCell=null;
+document.addEventListener("mousedown",e=>{ const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
+document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
+document.addEventListener("mouseup",e=>{ const c=cellAt(e); dragging=false; sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
+document.addEventListener("contextmenu",e=>e.preventDefault());
+document.addEventListener("wheel",e=>{ const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
+
 let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
 
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize };

@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -124,6 +124,12 @@ fn handle_conn(
         ("POST", "/key") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             apply_key(editor, &v);
+            let s = scene_json(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
+        ("POST", "/mouse") => {
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            apply_mouse(editor, &v);
             let s = scene_json(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
@@ -330,6 +336,53 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     }
     if let Err(e) = editor.handle_key(code, mods) {
         eprintln!("handle_key error: {e}");
+    }
+}
+
+/// Forward a browser mouse/wheel event to the real `Editor::handle_mouse` at
+/// cell coordinates; the editor does all hit-testing (panes, tabs, scrollbars,
+/// separators), exactly as the terminal/GUI frontends do.
+fn apply_mouse(editor: &mut Editor, v: &Value) {
+    let col = v.get("col").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+    let row = v.get("row").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+    let n = v.get("n").and_then(|x| x.as_u64()).unwrap_or(1).clamp(1, 10);
+    let button = match v.get("button").and_then(|b| b.as_str()) {
+        Some("right") => MouseButton::Right,
+        Some("middle") => MouseButton::Middle,
+        _ => MouseButton::Left,
+    };
+    let kind = match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+        "down" => MouseEventKind::Down(button),
+        "up" => MouseEventKind::Up(button),
+        "drag" => MouseEventKind::Drag(button),
+        "moved" => MouseEventKind::Moved,
+        "scrollup" => MouseEventKind::ScrollUp,
+        "scrolldown" => MouseEventKind::ScrollDown,
+        "scrollleft" => MouseEventKind::ScrollLeft,
+        "scrollright" => MouseEventKind::ScrollRight,
+        _ => return,
+    };
+    let mut mods = KeyModifiers::empty();
+    if v.get("ctrl").and_then(|b| b.as_bool()).unwrap_or(false) {
+        mods |= KeyModifiers::CONTROL;
+    }
+    if v.get("alt").and_then(|b| b.as_bool()).unwrap_or(false) {
+        mods |= KeyModifiers::ALT;
+    }
+    if v.get("shift").and_then(|b| b.as_bool()).unwrap_or(false) {
+        mods |= KeyModifiers::SHIFT;
+    }
+    for _ in 0..n {
+        let ev = MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: mods,
+        };
+        if let Err(e) = editor.handle_mouse(ev) {
+            eprintln!("handle_mouse error: {e}");
+            break;
+        }
     }
 }
 
