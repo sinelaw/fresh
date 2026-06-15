@@ -1,7 +1,7 @@
 ---
 title: "What's New in Fresh (0.4.0)"
 date: 2026-06-09
-description: "The multi-window Orchestrator and dock, remote sessions (SSH / Kubernetes) from the UI, universal search across files/buffers/terminals, a reimagined review diff, live diff, terminal path links, environment managers, and a long tail of editor, LSP, and language refinements."
+description: "The multi-window Orchestrator and dock, remote sessions (SSH / Kubernetes) from the UI, universal search across files/buffers/terminals, a reimagined review diff, live diff, terminal path links, and a long tail of editor, LSP, and language refinements."
 outline: false
 ---
 
@@ -9,7 +9,7 @@ outline: false
 
 *Draft — rolling up everything since the [0.3.0 release](../fresh-0.3.0/).*
 
-A dozen point releases since 0.3.0, and the through-line is **working across many sessions and machines from one Fresh process**: a multi-window Orchestrator with a persistent dock, remote sessions you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, environment managers, and the usual long tail of editor, LSP, and language work.
+A dozen point releases since 0.3.0, and the through-line is **working across many sessions and machines from one Fresh process**: a multi-window Orchestrator with a persistent dock, remote sessions you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, and the usual long tail of editor, LSP, and language work.
 
 ## Wave Screensaver
 
@@ -77,16 +77,6 @@ Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`**
 
 <div class="showcase-demo">
   <img src="./terminal-path-links/showcase.gif" alt="Terminal path links demo" />
-</div>
-
-## Workspace Trust & Environments
-
-Open a folder that can run code — a project manifest (`Cargo.toml`, `package.json`, `pyproject.toml`…), a build script, or a direnv/mise env — and Fresh raises a **full-screen security prompt** that names exactly what it found and offers three choices: **Trust folder & Allow Tooling** (run language servers, build scripts, tasks, env activation), **Keep Restricted** (run your *system* tools but block the project's own scripts, env activation, and language servers), or **Block** everything. Trust is **per-session**, surfaced by a clickable **`{trust}`** element that now *leads* the status bar.
-
-For an environment specifically, Fresh detects the `venv` / `.envrc` / `mise` and offers a single **combined trust-and-activate prompt** instead of two dialogs; once trusted, the environment activates and the language servers, formatters, and tools Fresh spawns inherit it. Virtualenvs activate without a prompt, env pills are clickable, and changing the trust level resets only the active session instead of the whole editor.
-
-<div class="showcase-demo">
-  <img src="./workspace-trust/showcase.gif" alt="Workspace trust and environments demo" />
 </div>
 
 ## Go to LSP Symbol

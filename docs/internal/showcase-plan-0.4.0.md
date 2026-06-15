@@ -45,11 +45,12 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   (terminal / claude ↻ / aider ↻ / custom…); picking an agent fills the
   Agent Command, and the `↻ resumes on restart` legend is shown. 160-wide
   so the legend isn't truncated.
-- [x] **workspace-trust** — open an untrusted Rust crate with a `build.rs`;
-  Fresh raises the full-screen "⚠ SECURITY WARNING" prompt naming the markers
-  (Cargo.toml), with Trust / Keep Restricted / Block. ↑ selects "Trust folder &
-  Allow Tooling", Enter flips `{trust}` Restricted → Trusted. Core (no plugin);
-  booted like `main.rs` (trust store + `maybe_prompt_workspace_trust`).
+## Dropped from the 0.4.0 blog
+
+- **workspace-trust** — pulled from the blog post. The trust UX has two
+  divergent prompts and the integrated terminal doesn't inherit the activated
+  env (see issue #2355); not showcasing it until that's resolved. The e2e test
+  `blog_showcase_fresh_0_4_0_workspace_trust` still exists if we revisit it.
 
 ## Tier 1 — headliners still to create
 
@@ -58,8 +59,6 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
 
 
 ## Tier 2 — worth a GIF
-
-*(env-managers is now covered by the **workspace-trust** showcase above.)*
 
 - [ ] **go-to-lsp-symbol** — symbol finder with live preview, precise jump.
 - [ ] **rainbow-brackets** — matching-bracket colorization across the viewport.
@@ -90,11 +89,7 @@ Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` embeds **nine** finished GIFs (orchestrator-dock,
+- The rollup `index.md` embeds **eight** finished GIFs (orchestrator-dock,
   ssh-session, universal-search, wave-screensaver, live-diff, terminal-path-
-  links, review-diff, agent-sessions, workspace-trust). **All Tier-1 GIFs are
-  done.** Remaining work is Tier-2 / mention-only.
-- **Caveat for the workspace-trust copy**: the local integrated terminal does
-  *not* inherit the env-manager's captured env (only LSP / formatters /
-  `spawnProcess` do), so the blog says "language servers, formatters, and tools
-  Fresh spawns" — it does **not** claim terminals pick it up.
+  links, review-diff, agent-sessions). The workspace-trust showcase was dropped
+  (see above). Remaining work is Tier-2 / mention-only.
