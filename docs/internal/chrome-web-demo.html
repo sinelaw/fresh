@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fresh — web chrome (PoC)</title>
+<style>
+  :root {
+    --bg:#1e1e1e; --bg2:#252526; --bg3:#2d2d30; --fg:#d4d4d4; --muted:#9aa0a6;
+    --accent:#0a84ff; --border:#3a3a3a; --tab-active:#1e1e1e;
+  }
+  .fresh.light {
+    --bg:#ffffff; --bg2:#f3f3f3; --bg3:#ececec; --fg:#1f1f1f; --muted:#6b7280;
+    --accent:#0a84ff; --border:#dcdcdc; --tab-active:#ffffff;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body.fresh {
+    display:flex; flex-direction:column; height:100vh;
+    background:var(--bg); color:var(--fg);
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .menubar { display:flex; gap:2px; background:var(--bg3); border-bottom:1px solid var(--border);
+    padding:2px 4px; flex:0 0 auto; }
+  .menu { background:none; border:0; color:var(--fg); padding:4px 10px; border-radius:5px;
+    font:inherit; cursor:default; }
+  .menu:hover { background:var(--accent); color:#fff; }
+  .workspace { flex:1 1 auto; display:flex; min-height:0; }
+  .workspace > * { flex:1 1 auto; }
+  .split { display:grid; min-height:0; min-width:0; width:100%; height:100%; }
+  .divider { background:var(--border); }
+  .divider.vertical { cursor:col-resize; }
+  .divider.horizontal { cursor:row-resize; }
+  .pane { display:flex; flex-direction:column; min-height:0; min-width:0;
+    border:1px solid var(--border); background:var(--bg); }
+  .tabbar { display:flex; background:var(--bg2); border-bottom:1px solid var(--border);
+    flex:0 0 auto; overflow:hidden; }
+  .tab { display:flex; align-items:center; gap:8px; padding:6px 10px; color:var(--muted);
+    border-right:1px solid var(--border); cursor:default; max-width:220px; }
+  .tab.active { background:var(--tab-active); color:var(--fg);
+    box-shadow:inset 0 2px 0 var(--accent); }
+  .tab-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tab-close { opacity:.55; border-radius:4px; padding:0 4px; }
+  .tab-close:hover { opacity:1; background:rgba(127,127,127,.3); }
+  .content { flex:1 1 auto; min-height:0; overflow:auto; }
+  svg.textbody { display:block; width:100%; height:100%;
+    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
+    font-size:13px; }
+  .statusbar { display:flex; justify-content:space-between; background:var(--accent);
+    color:#fff; padding:2px 10px; font-size:12px; flex:0 0 auto; }
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex;
+    align-items:flex-start; justify-content:center; padding-top:12vh; }
+  .popup { background:var(--bg2); color:var(--fg); border:1px solid var(--border);
+    border-radius:10px; min-width:480px; box-shadow:0 18px 60px rgba(0,0,0,.5); overflow:hidden; }
+  .popup header { padding:10px 14px; background:var(--bg3); border-bottom:1px solid var(--border);
+    font-weight:600; }
+  .popup-body { padding:14px; color:var(--muted); }
+</style>
+</head>
+<body class="fresh dark">
+  <nav class="menubar" role="menubar">
+    <button class="menu" role="menuitem" data-menu="0">File</button>
+    <button class="menu" role="menuitem" data-menu="1">Edit</button>
+    <button class="menu" role="menuitem" data-menu="2">Selection</button>
+    <button class="menu" role="menuitem" data-menu="3">View</button>
+    <button class="menu" role="menuitem" data-menu="4">Go</button>
+    <button class="menu" role="menuitem" data-menu="5">Help</button>
+  </nav>
+  <main class="workspace">
+<div class="split vertical" style="grid-template-columns:55fr 5px 45fr"><section class="pane"><div class="tabbar" role="tablist"><div class="tab active" role="tab" aria-selected="true" data-buffer="1"><span class="tab-label">buffer#1</span><span class="tab-close" data-close="1" aria-label="Close">×</span></div></div><div class="content"><svg class="textbody" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet"><text x="6" y="13.5" xml:space="preserve"><tspan x="6.0" fill="#6a9955">// chrome rendered as DOM/CSS, text as SVG &lt;text&gt;</tspan></text><text x="6" y="31.5" xml:space="preserve"></text><text x="6" y="49.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">pub fn </tspan><tspan x="60.6" fill="#dcdcaa">chrome_snapshot</tspan><tspan x="177.6" fill="#d4d4d4">(&amp;self) -&gt; </tspan><tspan x="263.4" fill="#4ec9b0">ChromeSnapshot</tspan><tspan x="372.6" fill="#d4d4d4"> {</tspan></text><text x="6" y="67.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">root = self.split_manager().root();</tspan></text><text x="6" y="85.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">label = </tspan><tspan x="130.8" fill="#ce9178">&quot;buffer&quot;</tspan><tspan x="193.2" fill="#d4d4d4">;</tspan></text><text x="6" y="103.5" xml:space="preserve"><tspan x="6.0" fill="#d4d4d4">}</tspan></text></svg></div></section><div class="divider vertical" role="separator"></div><div class="split horizontal" style="grid-template-rows:60fr 5px 40fr"><section class="pane"><div class="tabbar" role="tablist"><div class="tab" role="tab" aria-selected="false" data-buffer="2"><span class="tab-label">buffer#2</span><span class="tab-close" data-close="2" aria-label="Close">×</span></div></div><div class="content"><svg class="textbody" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet"><text x="6" y="13.5" xml:space="preserve"><tspan x="6.0" fill="#6a9955">// chrome rendered as DOM/CSS, text as SVG &lt;text&gt;</tspan></text><text x="6" y="31.5" xml:space="preserve"></text><text x="6" y="49.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">pub fn </tspan><tspan x="60.6" fill="#dcdcaa">chrome_snapshot</tspan><tspan x="177.6" fill="#d4d4d4">(&amp;self) -&gt; </tspan><tspan x="263.4" fill="#4ec9b0">ChromeSnapshot</tspan><tspan x="372.6" fill="#d4d4d4"> {</tspan></text><text x="6" y="67.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">root = self.split_manager().root();</tspan></text><text x="6" y="85.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">label = </tspan><tspan x="130.8" fill="#ce9178">&quot;buffer&quot;</tspan><tspan x="193.2" fill="#d4d4d4">;</tspan></text><text x="6" y="103.5" xml:space="preserve"><tspan x="6.0" fill="#d4d4d4">}</tspan></text></svg></div></section><div class="divider horizontal" role="separator"></div><section class="pane"><div class="tabbar" role="tablist"><div class="tab" role="tab" aria-selected="false" data-buffer="3"><span class="tab-label">buffer#3</span><span class="tab-close" data-close="3" aria-label="Close">×</span></div></div><div class="content"><svg class="textbody" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet"><text x="6" y="13.5" xml:space="preserve"><tspan x="6.0" fill="#6a9955">// chrome rendered as DOM/CSS, text as SVG &lt;text&gt;</tspan></text><text x="6" y="31.5" xml:space="preserve"></text><text x="6" y="49.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">pub fn </tspan><tspan x="60.6" fill="#dcdcaa">chrome_snapshot</tspan><tspan x="177.6" fill="#d4d4d4">(&amp;self) -&gt; </tspan><tspan x="263.4" fill="#4ec9b0">ChromeSnapshot</tspan><tspan x="372.6" fill="#d4d4d4"> {</tspan></text><text x="6" y="67.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">root = self.split_manager().root();</tspan></text><text x="6" y="85.5" xml:space="preserve"><tspan x="6.0" fill="#569cd6">    let </tspan><tspan x="68.4" fill="#d4d4d4">label = </tspan><tspan x="130.8" fill="#ce9178">&quot;buffer&quot;</tspan><tspan x="193.2" fill="#d4d4d4">;</tspan></text><text x="6" y="103.5" xml:space="preserve"><tspan x="6.0" fill="#d4d4d4">}</tspan></text></svg></div></section></div></div>  </main>
+  <footer class="statusbar" role="status"><span class="st-left">buffer#1</span><span class="st-right">3 pane(s) · 2 divider(s)</span></footer>
+  <div class="scrim" data-popup="0"><div class="popup" role="dialog" aria-label="Command Palette"><header>Command Palette</header><div class="popup-body">Native popup rendered from the chrome snapshot (DOM/CSS).</div></div></div>
+</body>
+</html>

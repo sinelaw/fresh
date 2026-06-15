@@ -82,6 +82,8 @@ pub mod reference_highlight_overlay;
 #[cfg(feature = "runtime")]
 pub mod chrome_layout;
 #[cfg(feature = "runtime")]
+pub mod chrome_html;
+#[cfg(feature = "runtime")]
 pub mod chrome_snapshot;
 #[cfg(feature = "runtime")]
 pub mod split;

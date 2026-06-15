@@ -191,6 +191,58 @@ UI. Pure-browser is a sharable, capability-limited demo.
 | Accessibility / IME | **Best** (real DOM / wrap CM6) | Must hand-roll; weak | Weak |
 | Distribution | No-install URL, or installable (Tauri) | same | same |
 
+#### A.1 — Reference design: Tauri + DOM/CSS chrome + SVG text (PoC built)
+
+This is the concrete, recommended shape of Direction A, and a PoC renderer is in the
+tree (`crates/fresh-editor/src/view/chrome_html.rs`, demo `docs/internal/chrome-web-demo.html`).
+
+**Process model (Tauri-primary):**
+- **Native Rust backend** owns the core — piece tree, LSP subprocesses, QuickJS plugins,
+  **real local files, >4GB** — i.e. none of the pure-browser sandbox losses. The core
+  already produces a serializable **`ChromeSnapshot`** (§ the chrome seam) plus the
+  visible, styled text lines.
+- **Webview frontend** (the OS webview via Tauri/`wry`) renders the UI from those two
+  inputs. In production this is TypeScript; the Rust `chrome_html` renderer emits the
+  *identical markup* so the structure is unit-testable and demoable without a browser.
+
+**The bridge (heed the xi lesson — local but still a serialization boundary):**
+- Frontend → backend: normalized input commands (key/mouse/IME, and chrome events like
+  `SelectTab`/`CloseTab`/`OpenMenu`/`BeginDividerDrag`) via Tauri `invoke`.
+- Backend → frontend: on change, push `{ chrome: ChromeSnapshot, lines: visible-window
+  diff }` via a Tauri event. **Ship only the visible-window line diff (a line cache),
+  never the whole buffer** — the same rule as the WASM bridge; Tauri IPC is local but
+  serialized, so keep the big buffer in Rust and stream only on-screen rows.
+
+**Rendering split (what the PoC proves):**
+- **Chrome = DOM/CSS.** The browser does the *layout*, so the frontend consumes the
+  snapshot's **semantic split tree** directly (no pixel math): each `Split` → a nested
+  `<div class="split vertical|horizontal" style="grid-template-columns|rows:{a}fr 5px
+  {b}fr">` with a `<div class="divider">` track; each `Leaf` → a `<section class="pane">`
+  with a DOM tab bar (`role="tablist"`, native tabs + close affordance) and a content
+  area. Menu bar = `<nav role="menubar">`; status bar = `<footer role="status">`;
+  popups/overlays = `role="dialog"` scrim overlays. Because it's real DOM, **ARIA /
+  screen-reader support comes largely for free** — the big a11y win over the GPU path.
+  (Note: this path uses the *snapshot*, not `chrome_layout`'s pixel rects — those are for
+  the GPU/canvas path where you must position everything yourself.)
+- **Text body = SVG `<text>`/`<tspan>`.** Each visible line is one `<text>`; each
+  syntax run is a `<tspan fill="#..">` at a monospace x-advance. SVG gives precise glyph
+  positioning, crisp scaling/zoom (vector), and trivial per-run coloring; HTML in content
+  is escaped. (A DOM-`<span>`-per-run body is the more-accessible alternative; SVG is what
+  was requested and is better for exact positioning and transforms.)
+- **Input/IME:** DOM `keydown`/`pointer`/`wheel`/composition events normalized and sent to
+  the backend; IME via a hidden `contenteditable`/`<textarea>` overlay (or wrap CodeMirror
+  6's input layer) — do not mutate the DOM during composition.
+
+**What the PoC delivers (verifiable headlessly):** `render_document(&ChromeSnapshot,
+&[WebLine], WebOptions) -> String` produces a self-contained HTML doc; 4 unit tests assert
+the DOM/CSS chrome (menubar/tabs/close/status), the nested CSS-grid split tree with
+dividers, native popups, the SVG `<text>`/`<tspan>` body, and HTML escaping; and
+`examples/chrome_web_demo.rs` generates `docs/internal/chrome-web-demo.html` (3 panes from a
+vertical+horizontal split, 6-item menu bar, a command-palette popup, syntax-colored SVG
+text) — **openable in any browser** to see the chrome. Production work remaining: wrap it in
+a Tauri shell, wire the `invoke`/event bridge with the line-cache diff, and the IME input
+layer.
+
 ### Direction B — Native per-platform GUI / hybrid native chrome
 
 The realistic shape here is a **hybrid**: a native window + **native menus** (`muda`,
