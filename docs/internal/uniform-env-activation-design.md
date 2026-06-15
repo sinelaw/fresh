@@ -191,10 +191,31 @@ through that tool's own clear failure.
 ## Implementation status
 
 - [x] Local: `EnvProvider` delta capture; integrated terminal applies the
-      delta (replaces the full-snapshot + volatile skip-list).
-- [ ] Local spawners (LSP / one-shot) migrate from full snapshot to the delta.
-- [ ] Docker: terminal wrapper gains `-e KEY=VAL` from the delta.
-- [ ] Kube: terminal wrapper gains the `env KEY=VAL …` prefix from the delta.
-- [ ] SSH: python3 launcher via the agent file API; terminal runs
-      `ssh -t host python3 <path>`.
-- [ ] SSH preflight: python3 version assertion + the clear connect-time error.
+      delta (replaces the full-snapshot + volatile skip-list). **Validated
+      end-to-end** (tmux + active `.venv`).
+- [x] SSH: terminal runs `ssh -t host … exec python3 -c '<literal>'`, a single
+      shell-literal token (fish-safe — verified against the fish docs) that
+      decodes + execs a launcher capturing the delta on the remote. No agent
+      PTY, no new dependency. **Validated end-to-end** against a real local
+      `sshd` on a userspace port (active `.venv` → terminal sees the remote
+      env; inactive → unchanged login shell).
+- [x] Docker: the devcontainer plugin's terminal wrapper now passes the
+      `userEnvProbe` env as `-e KEY=VAL` (mirrors the spawner's
+      `build_docker_exec_prefix`). `docker exec -e` semantics confirmed both by
+      the existing production LSP path and empirically. *Not* e2e-validated here
+      (no pullable image / no live devcontainer probe).
+- [x] Kube: `build_kube_terminal_args` exports the in-pod probe env inside the
+      `sh -lc` wrapper it controls (kubectl has no `-e`; the `env`/`export`
+      approach is the documented one). Unit-tested; *not* e2e-validated here (no
+      cluster / kubectl).
+- [x] SSH preflight: the existing exit-127 detection in
+      `connection.rs::ssh_eof_error` surfaces a clear, host-named "Python 3 not
+      found … install it, then reconnect" message; wording sharpened.
+
+Deliberately *not* changed: the local/SSH **LSP / one-shot spawners** keep
+applying the full captured snapshot. That snapshot is `baseline + activation`,
+so the *effective* child env is identical to `baseline + delta` — migrating
+them to the delta form is a cosmetic internal-consistency cleanup, not a
+behavior fix, and is left out to avoid churning working, e2e-tested remote LSP
+paths. The user-facing goal (terminal sees the same env as LSP on every
+backend) is met.

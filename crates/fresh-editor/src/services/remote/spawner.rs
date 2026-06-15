@@ -1028,8 +1028,23 @@ os.execvp(_sh,[_sh,"-l"])
 /// wrapper sets `manages_cwd = true`. A failed `cd` is non-fatal so the shell
 /// always starts; `exec` replaces the wrapper shell so closing the terminal
 /// tears the exec session down cleanly.
-pub fn build_kube_terminal_args(target: &crate::services::remote::KubeTarget) -> Vec<String> {
+pub fn build_kube_terminal_args(
+    target: &crate::services::remote::KubeTarget,
+    base_env: &[(String, String)],
+) -> Vec<String> {
     let mut remote_cmd = String::new();
+    // Apply the captured in-pod env probe to the integrated terminal so it
+    // matches what LSP / spawnProcess get in the pod (issue #2355; see
+    // docs/internal/uniform-env-activation-design.md). `kubectl exec` has no
+    // `-e` flag, so — like the documented `kubectl exec -- env …` / `sh -c
+    // 'export …'` workarounds — we `export` each pair inside the `sh -lc`
+    // wrapper we already control. Values are POSIX-quoted (the parser is the
+    // `sh` we spawn, not the user's interactive shell), so this is data, not
+    // shell-injected. Exports come first so the subsequent `cd`/login shell
+    // inherit them.
+    for (k, v) in base_env {
+        remote_cmd.push_str(&format!("export {}={}; ", k, shell_quote(v)));
+    }
     if let Some(dir) = target.workspace.as_deref().filter(|d| !d.is_empty()) {
         let quoted = shell_quote(dir);
         remote_cmd.push_str(&format!(
@@ -1558,7 +1573,7 @@ mod tests {
             container: Some("app".into()),
             workspace: Some("/workspace".into()),
         };
-        let a = build_kube_terminal_args(&target);
+        let a = build_kube_terminal_args(&target, &[]);
         let expected: Vec<String> = [
             "--context",
             "prod",
@@ -1581,6 +1596,28 @@ mod tests {
     }
 
     #[test]
+    fn build_kube_terminal_args_exports_base_env_before_login_shell() {
+        let target = crate::services::remote::KubeTarget {
+            context: None,
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: None,
+        };
+        let base_env = vec![
+            ("VIRTUAL_ENV".to_string(), "/c/.venv".to_string()),
+            ("MSG".to_string(), "a b".to_string()),
+        ];
+        let a = build_kube_terminal_args(&target, &base_env);
+        // The in-pod env probe is exported (POSIX-quoted) inside the sh -lc
+        // wrapper, before handing off to the login shell.
+        assert_eq!(
+            a.last().unwrap(),
+            "export VIRTUAL_ENV='/c/.venv'; export MSG='a b'; exec ${SHELL:-/bin/sh} -l"
+        );
+    }
+
+    #[test]
     fn build_kube_terminal_args_without_workspace_skips_cd() {
         let target = crate::services::remote::KubeTarget {
             context: None,
@@ -1589,7 +1626,7 @@ mod tests {
             container: None,
             workspace: None,
         };
-        let a = build_kube_terminal_args(&target);
+        let a = build_kube_terminal_args(&target, &[]);
         assert_eq!(
             a,
             vec![

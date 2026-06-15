@@ -455,9 +455,14 @@ async fn ssh_eof_error(
                      credentials are valid (exit code 255)",
                     params
                 ),
+                // 127 is the shell's "command not found" — for our bootstrap
+                // that means `python3` is missing on the remote. Fresh's remote
+                // backend (agent + the integrated terminal's env launcher) runs
+                // on python3, so name the requirement and the fix plainly.
                 Some(127) => format!(
-                    "python3 was not found on the remote host {}. \
-                     Ensure Python 3 is installed on the remote machine",
+                    "Python 3 was not found on the remote host {}. \
+                     Fresh's remote support requires python3 on the remote — \
+                     install it there, then reconnect",
                     params
                 ),
                 Some(code) => format!(

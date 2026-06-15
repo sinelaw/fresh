@@ -1593,6 +1593,16 @@ function buildContainerAuthorityPayload(
   if (workspace) {
     args.push("-w", workspace);
   }
+  // Apply the captured userEnvProbe env to the integrated terminal too, so it
+  // matches what LSP / spawnProcess get inside the container (issue #2355; see
+  // docs/internal/uniform-env-activation-design.md). Mirrors the spawner's
+  // `build_docker_exec_prefix`, which already passes these as `-e` flags;
+  // without them the terminal would drop into `bash -l` with only whatever the
+  // container's default exec env provides. Placed after `-w` and before the
+  // container id, matching docker's flag-parsing rules.
+  for (const [k, v] of baseEnv) {
+    args.push("-e", `${k}=${v}`);
+  }
   args.push(result.containerId, "bash", "-l");
 
   const shortId = result.containerId.slice(0, 12);

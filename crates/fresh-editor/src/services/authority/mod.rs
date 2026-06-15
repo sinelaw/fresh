@@ -150,10 +150,10 @@ impl TerminalWrapper {
     /// wrapper: cwd is pinned through the wrapper's own args, so
     /// `manages_cwd` is true and the terminal manager must not hand the
     /// local PTY a pod-side cwd it can't honour.
-    pub fn kube(target: &KubeTarget) -> Self {
+    pub fn kube(target: &KubeTarget, base_env: &[(String, String)]) -> Self {
         Self {
             command: "kubectl".to_string(),
-            args: build_kube_terminal_args(target),
+            args: build_kube_terminal_args(target, base_env),
             manages_cwd: true,
         }
     }
@@ -485,6 +485,7 @@ impl Authority {
         process_spawner: Arc<dyn ProcessSpawner>,
         long_running_spawner: Arc<dyn LongRunningSpawner>,
         target: &KubeTarget,
+        base_env: &[(String, String)],
         trust: Arc<WorkspaceTrust>,
         env: Arc<crate::services::env_provider::EnvProvider>,
     ) -> Self {
@@ -492,7 +493,7 @@ impl Authority {
             filesystem,
             process_spawner,
             long_running_spawner,
-            terminal_wrapper: TerminalWrapper::kube(target),
+            terminal_wrapper: TerminalWrapper::kube(target, base_env),
             display_label: target.display(),
             path_translation: None,
             workspace_trust: trust,
@@ -535,13 +536,14 @@ impl Authority {
             Arc::clone(&trust),
         ));
         let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
-            KubectlLongRunningSpawner::with_env(target.clone(), base_env, Arc::clone(&trust)),
+            KubectlLongRunningSpawner::with_env(target.clone(), base_env.clone(), Arc::clone(&trust)),
         );
         Self::kube(
             filesystem,
             process_spawner,
             long_running_spawner,
             &target,
+            &base_env,
             trust,
             env,
         )
@@ -1090,7 +1092,7 @@ mod tests {
             container: None,
             workspace: Some("/workspace".into()),
         };
-        let wrapper = TerminalWrapper::kube(&target);
+        let wrapper = TerminalWrapper::kube(&target, &[]);
         assert_eq!(wrapper.command, "kubectl");
         // Re-parented shell must pin cwd through its own args.
         assert!(wrapper.manages_cwd);
