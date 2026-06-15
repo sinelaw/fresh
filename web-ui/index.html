@@ -218,9 +218,10 @@ function menuBarEl(reg){
     // forward to the real editor at the menu label's center cell -> it opens/toggles.
     const col=(m.x??rect.x)+Math.floor((m.w||1)/2);
     el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col,row:barRow}); };
-    // hovering another top-level while a menu is open should switch menus,
-    // matching the TUI: forward a move so the editor re-targets.
-    el.onmouseenter=()=>{ if(reg.menuOpen!=null && reg.menuOpen!==i) sendMouse({kind:"moved",col:(m.x??0),row:barRow}); };
+    // Hover switches menus only while one is open (mirrors the TUI). Uses the
+    // menu's editor cell, and `mousemove` so a stationary cursor never fights
+    // keyboard navigation.
+    el.onmousemove=()=>{ if(reg.menuOpen!=null) hoverMove(col,barRow,"menu:"+i); };
     bar.appendChild(el);
   });
   return bar;
@@ -250,7 +251,9 @@ function itemRow(item, rect, hi){
   const arrow = item.kind==="submenu"?'<span class="arrow">›</span>':"";
   const accel = item.accel?`<span class="accel">${esc(item.accel)}</span>`:"";
   row.innerHTML=`<span class="lab"><span class="check">${check}</span>${esc(item.label)}</span>${accel}${arrow}`;
-  row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});
+  // hover highlights via `mousemove` (never fires on a DOM rebuild under a
+  // stationary cursor), so arrow-key navigation isn't reset by the mouse.
+  row.onmousemove=()=>hoverMove(cell.col,cell.row,"item:"+cell.col+","+cell.row);
   row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
     if(item.enabled===false) return;
     sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
@@ -280,13 +283,16 @@ function menuDropdownEls(reg){
 }
 
 // Solid rounded panels behind the top-level dropdown and each submenu level,
-// sized from the union of that level's item rects.
+// sized from the union of that level's item rects, EXPANDED by one cell on each
+// side. The pipeline still paints the menu (with its box-drawing border) into
+// the cell buffer behind us; the one-cell margin makes the opaque panel cover
+// that border so it doesn't peek out as a coloured frame.
 function dropdownPanels(reg){
   const panels=[];
   const box=(rects)=>{
     if(!rects.length) return null;
-    const x0=Math.min(...rects.map(r=>r.x)), y0=Math.min(...rects.map(r=>r.y));
-    const x1=Math.max(...rects.map(r=>r.x+r.w)), y1=Math.max(...rects.map(r=>r.y+r.h));
+    const x0=Math.min(...rects.map(r=>r.x))-1, y0=Math.min(...rects.map(r=>r.y))-1;
+    const x1=Math.max(...rects.map(r=>r.x+r.w))+1, y1=Math.max(...rects.map(r=>r.y+r.h))+1;
     const p=div("dropdown"); place(p,{x:x0,y:y0,w:x1-x0,h:y1-y0}); return p;
   };
   const top=box(reg.dropdown.items.map(i=>i.rect)); if(top) panels.push(top);
@@ -320,13 +326,17 @@ function tabBarEl(p){
 // through handle_mouse at the pipeline's list cell rect so it stays in sync.
 function paletteEl(p){
   const list = p.listRect || p.outerRect;
+  // Cover the full popup outer rect (incl. the pipeline's box-drawing border,
+  // which is still painted into the cells behind) with the opaque card.
+  const outer = p.outerRect || list;
   const el=div("palette");
-  // Position the card on the list rect, with the input bar stacked above it so
+  // Position the card on the outer rect, with the input bar stacked above it so
   // it reads as one VSCode-style palette. (Clicks use the list cell rect below.)
-  const inputH=34, w=Math.max(360, list?px(list.w,CW):420);
-  const left = list?px(list.x,CW):(window.innerWidth-w)/2;
-  const top  = list?Math.max(4, px(list.y,CH)-inputH):80;
+  const inputH=34, w=outer?Math.max(360,px(outer.w,CW)):420;
+  const left = outer?px(outer.x,CW):(window.innerWidth-w)/2;
+  const top  = outer?Math.max(4, px(outer.y,CH)-inputH):80;
   el.style.left=left+"px"; el.style.top=top+"px"; el.style.width=w+"px";
+  if(outer) el.style.minHeight=(px(outer.y+outer.h,CH)-top)+"px"; // cover the border row at the bottom
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
   // input bar (query + status + count)
@@ -394,6 +404,13 @@ document.addEventListener("keydown",e=>{
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
+// Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
+// pixel under the pointer — native chrome is laid out by CSS, so pixels don't map
+// to the editor's cell columns). Called from `onmousemove` (which, unlike
+// `mouseenter`, never fires on a DOM rebuild under a stationary cursor), and
+// de-duped so keyboard navigation isn't fought and we don't spam the editor.
+let lastHoverKey=null;
+function hoverMove(col,row,key){ if(key===lastHoverKey) return; lastHoverKey=key; sendMouse({kind:"moved",col,row}); }
 let dragging=false, lastCell=null;
 // Chrome (menu bar, dropdown, tabs, status bar) owns its own mouse events and
 // forwards them to the editor at the exact cell rects the pipeline reported.
