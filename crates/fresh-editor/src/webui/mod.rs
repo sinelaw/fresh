@@ -40,13 +40,16 @@ use crate::config;
 use crate::config_io::DirectoryContext;
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 
-pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
+/// Construct a fresh editor exactly as the web bridge does: real plugin runtime
+/// enabled, init.ts loaded, chrome drawn as a semantic model (not cells). Shared
+/// by `run()`, the `/reset` route (scenario isolation) and the parity test
+/// runner so all three drive an identical editor.
+pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
     let cfg = config::Config::load_with_layers(&dir_context, &working_dir);
     let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
 
-    let (mut cols, mut rows) = (140u16, 44u16);
     let mut editor = Editor::with_working_dir(
         cfg,
         cols,
@@ -75,6 +78,41 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
             eprintln!("open_file {f:?} failed: {e}");
         }
     }
+    Ok(editor)
+}
+
+/// Apply one parity-scenario step to the editor: a key, a mouse event at a cell,
+/// an action by name, a literal string to type, or a tick. Shared by the web
+/// `/step` route and the Rust parity runner so both drive identical input.
+pub fn apply_step(editor: &mut Editor, step: &Value) {
+    if let Some(s) = step.get("type").and_then(|t| t.as_str()) {
+        for ch in s.chars() {
+            apply_key(editor, &json!({ "key": ch.to_string() }));
+        }
+    } else if step.get("key").is_some() {
+        apply_key(editor, step);
+    } else if step.get("kind").is_some() {
+        apply_mouse(editor, step);
+    } else if let Some(name) = step.get("action").and_then(|a| a.as_str()) {
+        if let Some(act) = crate::input::keybindings::Action::from_str(
+            name,
+            &std::collections::HashMap::new(),
+        ) {
+            editor.dispatch_action_for_tests(act);
+        }
+    }
+    let _ = crate::app::editor_tick(editor, || Ok(()));
+}
+
+/// Build the semantic scene (the same model the web frontend renders). Public so
+/// the parity runner can assert on the identical scene the browser sees.
+pub fn scene_value(editor: &mut Editor, cols: u16, rows: u16) -> Value {
+    scene_json(editor, cols, rows)
+}
+
+pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
+    let (mut cols, mut rows) = (140u16, 44u16);
+    let mut editor = build_editor(cols, rows, files)?;
 
     let listener = TcpListener::bind(addr)?;
     eprintln!("fresh web bridge on http://{addr}  (real render pipeline, no mocks)");
@@ -85,7 +123,14 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
             Ok(s) => s,
             Err(_) => continue,
         };
-        if let Err(e) = handle_conn(&mut stream, &mut editor, html_path, &mut cols, &mut rows) {
+        if let Err(e) = handle_conn(
+            &mut stream,
+            &mut editor,
+            html_path,
+            &mut cols,
+            &mut rows,
+            files,
+        ) {
             eprintln!("conn error: {e}");
         }
     }
@@ -98,6 +143,7 @@ fn handle_conn(
     html_path: &str,
     cols: &mut u16,
     rows: &mut u16,
+    files: &[PathBuf],
 ) -> Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
@@ -171,6 +217,25 @@ fn handle_conn(
             }
             editor.resize(*cols, *rows);
             let s = tick_scene(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
+        // Parity-harness routes: apply one scenario step, and reset to a fresh
+        // editor so each scenario runs in isolation (mirrors the Rust runner,
+        // which builds a fresh editor per scenario).
+        ("POST", "/step") => {
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            apply_step(editor, &v);
+            let s = scene_json(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
+        ("POST", "/reset") => {
+            *cols = 140;
+            *rows = 44;
+            match build_editor(*cols, *rows, files) {
+                Ok(e) => *editor = e,
+                Err(err) => eprintln!("reset failed: {err}"),
+            }
+            let s = scene_json(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         _ => respond(stream, "404 Not Found", "text/plain", b"not found"),
