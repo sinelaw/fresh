@@ -1103,6 +1103,19 @@ impl SettingsState {
             return;
         }
         let idx = dialog.selected_item;
+        // For a nullable field, "reset" means inherit again (its default is
+        // null). Route through `inherit_field` so the control's inherited state
+        // is set consistently with the per-field [Inherit] button — otherwise
+        // e.g. a toggle wouldn't visibly revert to the neutral chip.
+        if dialog
+            .items
+            .get(idx)
+            .map(|item| item.nullable && !item.read_only)
+            .unwrap_or(false)
+        {
+            dialog.inherit_field(idx);
+            return;
+        }
         let Some(item) = dialog.items.get_mut(idx) else {
             return;
         };

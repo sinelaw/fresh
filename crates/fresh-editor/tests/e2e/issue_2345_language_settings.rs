@@ -181,3 +181,57 @@ fn issue_2345_inherited_auto_surround_shows_neutral_chip() {
         row
     );
 }
+
+/// Issue #2345: each optional (nullable) field in a language entry dialog has a
+/// per-field inherit affordance — a dim `(Inherited)` badge while inherited, and
+/// a clickable `[Inherit]` button while overriding. Clicking it reverts just
+/// that one field to inherited, without touching its siblings.
+#[test]
+fn issue_2345_per_field_inherit_button_reverts_single_field() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    harness.render().unwrap();
+
+    open_html_language_dialog(&mut harness);
+
+    // Every nullable field starts inherited → shows the (Inherited) badge.
+    assert!(
+        row_with(&harness, "Auto Surround").contains("(Inherited)"),
+        "inherited field should show the (Inherited) badge; row: {:?}",
+        row_with(&harness, "Auto Surround")
+    );
+
+    // Override Auto Surround (Auto Close, Auto Indent, Auto Surround; toggle on).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let row = row_with(&harness, "Auto Surround");
+    assert!(
+        row.contains("[v]") && row.contains("[Inherit]"),
+        "an overriding field shows its value plus a clickable [Inherit] button; row: {:?}",
+        row
+    );
+    // A sibling the user never touched stays inherited.
+    assert!(
+        row_with(&harness, "Line Wrap").contains("(Inherited)"),
+        "untouched sibling must stay inherited; row: {:?}",
+        row_with(&harness, "Line Wrap")
+    );
+
+    // Click the [Inherit] button — only Auto Surround is overriding, so it's the
+    // only [Inherit] on screen.
+    let (bx, by) = harness
+        .find_text_on_screen("[Inherit]")
+        .expect("the [Inherit] button should be visible while overriding");
+    harness.mouse_click(bx + 1, by).unwrap();
+    harness.render().unwrap();
+
+    let row = row_with(&harness, "Auto Surround");
+    assert!(
+        row.contains("[-]") && row.contains("(Inherited)"),
+        "after clicking [Inherit], the field reverts to inherited (neutral chip + badge); row: {:?}",
+        row
+    );
+}

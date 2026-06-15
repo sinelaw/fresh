@@ -11,22 +11,6 @@ use crate::view::controls::{FocusState, TextInputState};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Snapshot every editable field's rendered value at dialog-build time, keyed
-/// by field name (item path without the leading `/`). See
-/// [`EntryDialogState::baseline_values`].
-fn baseline_from_items(items: &[SettingItem]) -> HashMap<String, Value> {
-    items
-        .iter()
-        .filter(|item| item.path != "__key__")
-        .map(|item| {
-            (
-                item.path.trim_start_matches('/').to_string(),
-                control_to_value(&item.control),
-            )
-        })
-        .collect()
-}
-
 /// State for the entry detail dialog
 #[derive(Debug, Clone)]
 pub struct EntryDialogState {
@@ -80,17 +64,6 @@ pub struct EntryDialogState {
     /// indicator + the Esc discard prompt without relying on a
     /// JSON-equality check that's too noisy at the schema layer.
     pub user_edited: bool,
-    /// Snapshot of each editable field's rendered value at the moment the
-    /// dialog was built, keyed by field name (the item path without its
-    /// leading `/`). Used by [`to_value`] to persist only the fields the
-    /// user actually changed: a nullable field that started out *inherited*
-    /// (`is_null`) and still matches this baseline is written back as
-    /// inherited (omitted) instead of being coerced to a concrete
-    /// `false`/`0`/`""`. Without this, opening a language entry and toggling
-    /// one field would silently freeze every *other* inherited field —
-    /// e.g. writing `line_wrap: false` — which then overrides the global
-    /// `Toggle Line Wrap` command forever (issue #2345).
-    pub baseline_values: HashMap<String, Value>,
 }
 
 impl EntryDialogState {
@@ -172,7 +145,6 @@ impl EntryDialogState {
             format!("Edit {}", schema.name)
         };
 
-        let baseline_values = baseline_from_items(&items);
         let mut result = Self {
             entry_key: key,
             map_path: map_path.to_string(),
@@ -195,7 +167,6 @@ impl EntryDialogState {
             is_single_value,
             is_array_item: false,
             user_edited: false,
-            baseline_values,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -252,7 +223,6 @@ impl EntryDialogState {
             format!("Edit {}", schema.name)
         };
 
-        let baseline_values = baseline_from_items(&items);
         Self {
             entry_key: index.map_or(String::new(), |i| i.to_string()),
             map_path: array_path.to_string(),
@@ -275,7 +245,6 @@ impl EntryDialogState {
             is_single_value: false,
             is_array_item: true,
             user_edited: false,
-            baseline_values,
         }
     }
 
@@ -361,6 +330,42 @@ impl EntryDialogState {
         self.user_edited = true;
     }
 
+    /// Mark the *focused field* as explicitly edited: flags the dialog dirty
+    /// and clears the field's inherited state. Once the user gives a field a
+    /// value of their own it is no longer inherited, so `to_value` persists it
+    /// and the row shows a definite value rather than the neutral inherited
+    /// chip. Call this from value-changing mutators (not cursor moves).
+    fn mark_field_edited(&mut self) {
+        self.user_edited = true;
+        if let Some(item) = self.current_item_mut() {
+            item.is_null = false;
+            if let SettingControl::Toggle(state) = &mut item.control {
+                state.inherited = false;
+            }
+        }
+    }
+
+    /// Reset the field at `idx` to *inherited* (unset). The value falls back to
+    /// the global/default layer again: the row renders the neutral inherited
+    /// chip / `(Inherited)` badge and `to_value` omits the field. Returns true
+    /// if anything changed. No-op for read-only, non-nullable, or
+    /// already-inherited fields.
+    pub fn inherit_field(&mut self, idx: usize) -> bool {
+        let Some(item) = self.items.get_mut(idx) else {
+            return false;
+        };
+        if item.read_only || !item.nullable || item.is_null {
+            return false;
+        }
+        item.is_null = true;
+        item.modified = false;
+        if let SettingControl::Toggle(state) = &mut item.control {
+            state.inherited = true;
+        }
+        self.user_edited = true;
+        true
+    }
+
     /// Convert dialog state back to JSON value (excludes the __key__ item)
     /// Auto-commit any draft text sitting in a TextList's trailing
     /// `[+] Add new` slot. Without this, saving a dialog while the user
@@ -400,19 +405,22 @@ impl EntryDialogState {
             }
 
             let field_name = item.path.trim_start_matches('/');
-            let value = control_to_value(&item.control);
 
-            // Preserve inheritance: a nullable field that opened as inherited
-            // (`is_null`) and was never touched must NOT be written back as a
-            // concrete value, or it stops inheriting from the global/default
-            // layer. We detect "untouched" by comparing against the value the
-            // control rendered when the dialog was built. Toggling/typing
-            // changes that rendered value, so deliberate edits still persist.
-            if item.nullable && item.is_null && self.baseline_values.get(field_name) == Some(&value)
-            {
+            // Preserve inheritance: a nullable field whose value is inherited
+            // (`is_null`) must NOT be written back as a concrete value, or it
+            // stops inheriting from the global/default layer. `is_null` starts
+            // true for inherited fields, is cleared the moment the user edits
+            // the field (`mark_field_edited`), and is set again by the per-field
+            // Inherit action — so it precisely tracks "did the user give this
+            // field a value of its own?". Without this, opening a language entry
+            // and toggling one field would freeze every *other* inherited field
+            // (e.g. writing `line_wrap: false`), which then overrides the global
+            // Toggle Line Wrap command forever (issue #2345).
+            if item.nullable && item.is_null {
                 continue;
             }
 
+            let value = control_to_value(&item.control);
             obj.insert(field_name.to_string(), value);
         }
 
@@ -988,7 +996,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -1012,7 +1020,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -1039,7 +1047,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {
@@ -1179,7 +1187,7 @@ impl EntryDialogState {
 
     /// Insert newline in JSON editor
     pub fn insert_newline(&mut self) {
-        self.user_edited = true;
+        self.mark_field_edited();
         if !self.editing_text {
             return;
         }
@@ -1212,12 +1220,17 @@ impl EntryDialogState {
 
     /// Toggle boolean value
     pub fn toggle_bool(&mut self) {
-        self.user_edited = true;
+        // Don't allow toggling read-only / non-toggle fields, and don't flag
+        // the dialog dirty when nothing actually changes.
+        let editable = self
+            .current_item()
+            .map(|i| !i.read_only && matches!(i.control, SettingControl::Toggle(_)))
+            .unwrap_or(false);
+        if !editable {
+            return;
+        }
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
-            // Don't allow toggling read-only fields
-            if item.read_only {
-                return;
-            }
             if let SettingControl::Toggle(state) = &mut item.control {
                 state.toggle();
             }
@@ -1239,7 +1252,7 @@ impl EntryDialogState {
 
     /// Move dropdown selection up
     pub fn dropdown_prev(&mut self) {
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(state) = &mut item.control {
                 if state.open {
@@ -1251,7 +1264,7 @@ impl EntryDialogState {
 
     /// Move dropdown selection down
     pub fn dropdown_next(&mut self) {
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::Dropdown(state) = &mut item.control {
                 if state.open {
@@ -1272,7 +1285,7 @@ impl EntryDialogState {
 
     /// Delete the currently focused item from a TextList control
     pub fn delete_list_item(&mut self) {
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             if let SettingControl::TextList(state) = &mut item.control {
                 // Remove the currently focused item if any
@@ -1288,7 +1301,7 @@ impl EntryDialogState {
         if !self.editing_text {
             return;
         }
-        self.user_edited = true;
+        self.mark_field_edited();
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
                 SettingControl::Text(state) => {

@@ -850,6 +850,25 @@ impl Editor {
                     return Ok(false);
                 }
                 let sub_row = click_y - content_y;
+
+                // Per-field [Inherit] button: rendered on the control's first
+                // row at the right edge for overriding nullable fields (mirror
+                // of the renderer in `render_entry_items`). A click there
+                // reverts just this field to inherited. Decide using `item`
+                // first, then mutate `dialog` — keeps the borrows disjoint.
+                let inherit_clicked = item.nullable && !item.is_null && sub_row == 0 && {
+                    let btn_w = format!("[{}]", t!("settings.btn_inherit")).len() as u16 + 1;
+                    let right = layout.inner_x + layout.inner_width;
+                    col + btn_w >= right && col < right
+                };
+                if inherit_clicked {
+                    dialog.inherit_field(idx);
+                    dialog.focus_on_buttons = false;
+                    dialog.selected_item = idx;
+                    dialog.update_focus_states();
+                    return Ok(true);
+                }
+
                 // TextList rows render as: label (sub_row 0), one row
                 // per committed item, then the trailing add-new row.
                 // Map the click to either remove (`[x]`), focus +

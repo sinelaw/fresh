@@ -3663,6 +3663,39 @@ fn render_entry_items(
             item.is_null,
         );
 
+        // Per-field inherit affordance, on the control's first row at the right
+        // edge: a dim `(Inherited)` badge when the value is inherited, or a
+        // clickable `[Inherit]` button when it's overriding. Lets the user
+        // revert a single optional field without hunting for the keyboard
+        // shortcut (issue #2345). Hit-testing mirrors this geometry in
+        // `handle_entry_dialog_item_click`.
+        if item.nullable && !item.read_only && skip_rows == 0 && control_area.width > 0 {
+            let (text, style) = if item.is_null {
+                (
+                    t!("settings.inherited_badge").to_string(),
+                    Style::default()
+                        .fg(theme.line_number_fg)
+                        .add_modifier(Modifier::ITALIC),
+                )
+            } else {
+                (
+                    format!("[{}]", t!("settings.btn_inherit")),
+                    Style::default().fg(theme.line_number_fg),
+                )
+            };
+            let w = text.len() as u16 + 1;
+            let x = control_area
+                .x
+                .saturating_add(control_area.width)
+                .saturating_sub(w);
+            if x > control_area.x {
+                frame.render_widget(
+                    Paragraph::new(text).style(style),
+                    Rect::new(x, screen_y, w, 1),
+                );
+            }
+        }
+
         screen_y += render_height as u16;
         content_y = item_end;
     }
