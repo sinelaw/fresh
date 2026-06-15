@@ -81,7 +81,9 @@ Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`**
 
 ## Workspace Trust & Environments
 
-Each session carries its own **trust level**, and a folder you haven't decided on opens **Restricted** — surfaced by a clickable **`{trust}`** element that now *leads* the status bar. Fresh detects the project's environment (`venv` / `.envrc` direnv / `mise`) and offers a single **combined trust-and-activate prompt** rather than two separate dialogs. Once trusted, the environment activates and the language servers, formatters, and tools Fresh spawns inherit it. Virtualenvs activate without a prompt, env pills in the status bar are clickable, and changing the trust level resets only the active session instead of the whole editor.
+Open a folder that can run code — a project manifest (`Cargo.toml`, `package.json`, `pyproject.toml`…), a build script, or a direnv/mise env — and Fresh raises a **full-screen security prompt** that names exactly what it found and offers three choices: **Trust folder & Allow Tooling** (run language servers, build scripts, tasks, env activation), **Keep Restricted** (run your *system* tools but block the project's own scripts, env activation, and language servers), or **Block** everything. Trust is **per-session**, surfaced by a clickable **`{trust}`** element that now *leads* the status bar.
+
+For an environment specifically, Fresh detects the `venv` / `.envrc` / `mise` and offers a single **combined trust-and-activate prompt** instead of two dialogs; once trusted, the environment activates and the language servers, formatters, and tools Fresh spawns inherit it. Virtualenvs activate without a prompt, env pills are clickable, and changing the trust level resets only the active session instead of the whole editor.
 
 <div class="showcase-demo">
   <img src="./workspace-trust/showcase.gif" alt="Workspace trust and environments demo" />

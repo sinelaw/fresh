@@ -4505,14 +4505,14 @@ fn blog_showcase_fresh_0_4_0_agent_sessions() {
 }
 
 // =========================================================================
-// Blog Post: Workspace Trust & Environments (0.4.0)
+// Blog Post: Workspace Trust (0.4.0)
 // =========================================================================
 
-/// Workspace Trust & Environments — open a project with a `direnv` env, get the
-/// combined "Trust & activate" prompt, and watch the `{trust}` status element
-/// flip from Restricted to Trusted as the environment activates. (A folder you
-/// haven't decided on opens Restricted.)
-#[cfg(feature = "plugins")]
+/// Workspace Trust — open an untrusted project that can run code (here a Rust
+/// crate with a `build.rs`) and Fresh raises a full-screen security prompt that
+/// names the markers it found, with Trust / Keep Restricted / Block choices.
+/// Choosing "Trust folder & Allow Tooling" flips the `{trust}` status element
+/// from Restricted to Trusted.
 #[test]
 #[ignore]
 fn blog_showcase_fresh_0_4_0_workspace_trust() {
@@ -4528,30 +4528,28 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
 
     fresh::i18n::set_locale("en");
     let repo = GitTestRepo::new();
-    // A prod-looking project: a direnv env that exports a deploy token and puts
-    // a `deploy` tool on PATH. Trusting it is a real decision.
+    // A real-looking crate whose project loader would run code: a build script
+    // (proc-macro/codegen) is exactly the "can execute arbitrary code" case.
     repo.create_file(
-        ".envrc",
-        "export DEPLOY_TOKEN=sk-prod-7e2a91c4\nexport REGION=us-east-1\nPATH_add .tools\n",
+        "Cargo.toml",
+        "[package]\nname = \"payments-api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [build-dependencies]\nprost-build = \"0.12\"\n",
     );
     repo.create_file(
-        ".tools/deploy",
-        "#!/bin/sh\necho \"deploying to $REGION\"\n",
+        "build.rs",
+        "fn main() {\n    // generate protobuf bindings at build time\n    \
+         prost_build::compile_protos(&[\"proto/pay.proto\"], &[\"proto\"]).unwrap();\n}\n",
     );
     repo.create_file(
         "src/main.rs",
-        "// prod service\nfn main() {\n    serve();\n}\n",
+        "fn main() {\n    println!(\"charging cards…\");\n}\n",
     );
     repo.git_add_all();
     repo.git_commit("initial");
-    let plugins_dir = repo.path.join("plugins");
-    std::fs::create_dir_all(&plugins_dir).unwrap();
-    copy_plugin_lib(&plugins_dir);
-    copy_plugin(&plugins_dir, "env-manager");
 
     let mut h = EditorTestHarness::with_config_and_working_dir(
         120,
-        32,
+        34,
         fresh::config::Config::default(),
         repo.path.clone(),
     )
@@ -4559,10 +4557,9 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
     h.open_file(&repo.path.join("src/main.rs")).unwrap();
     hide_prompt_line(&mut h);
 
-    // Mirror what `main.rs` runs at launch (the harness skips these): wire a
-    // per-project trust store, resolve trust (an undecided folder → Restricted),
-    // and fire `plugins_loaded` so env-manager detects the environment and
-    // surfaces its combined prompt.
+    // Mirror `main.rs`'s launch: wire a per-project trust store and resolve
+    // trust. An undecided folder with executable-content markers (Cargo.toml,
+    // build.rs) starts Restricted and raises the full-screen trust prompt.
     let store_path = {
         let editor = h.editor();
         editor
@@ -4575,53 +4572,45 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
         .workspace_trust
         .set_store(Some(store));
     h.editor_mut().maybe_prompt_workspace_trust();
-    h.editor_mut().update_plugin_state_snapshot();
-    h.editor_mut().fire_plugins_loaded_hook();
     h.render().unwrap();
 
-    // The folder opens Restricted, and env-manager surfaces its combined prompt.
+    // The folder opens Restricted, and the security prompt names the markers.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("Restricted")
-            && s.contains("Environment detected")
-            && s.contains("Trust & activate")
+        s.contains("Restricted") && s.contains("SECURITY WARNING") && s.contains("Cargo.toml")
     })
     .unwrap();
 
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/workspace-trust",
-        "Workspace Trust & Environments",
-        "Each session carries its own trust level — a folder you haven't decided \
-         on opens Restricted, shown by the clickable {trust} element that now \
-         leads the status bar. Fresh detects the project's environment (venv / \
-         direnv / mise) and offers a single combined trust-and-activate prompt; \
-         once trusted, the env activates and the language servers and tools Fresh \
-         spawns inherit it.",
+        "Workspace Trust",
+        "Open a folder that can run code — a project manifest, a build script, a \
+         direnv/mise env — and Fresh raises a full-screen prompt that names what \
+         it found and lets you Trust, Keep Restricted, or Block. Trust is \
+         per-session, shown by a clickable {trust} element that now leads the \
+         status bar; Restricted runs your system tools but blocks the project's \
+         own scripts, env activation, and language servers.",
     );
 
-    // Open on the Restricted state with the prompt up.
+    // Open on the Restricted state with the full-screen prompt up.
     snap(&mut h, &mut s, None, 150);
-    hold(&mut h, &mut s, 7, 150);
+    hold(&mut h, &mut s, 8, 150);
 
-    // Focus the action popup (Alt+T) and accept its first option,
-    // "Trust & activate".
-    h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
+    // Move the selection from the safe default ("Keep Restricted") up to
+    // "Trust folder & Allow Tooling".
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Alt+T"), 200);
-    hold(&mut h, &mut s, 2, 130);
+    snap(&mut h, &mut s, Some("↑"), 240);
+    hold(&mut h, &mut s, 4, 150);
+
+    // Confirm.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // Trust flips to Trusted and direnv activates.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("Environment detected") && s.contains("Trusted") && !s.contains("Restricted")
+        !s.contains("SECURITY WARNING") && s.contains("Trusted") && !s.contains("Restricted")
     })
     .unwrap();
-    // Let the activation message settle.
-    for _ in 0..10 {
-        std::thread::sleep(std::time::Duration::from_millis(140));
-        h.tick_and_render().unwrap();
-    }
-    snap(&mut h, &mut s, Some("Trust & activate"), 320);
+    snap(&mut h, &mut s, Some("Enter"), 320);
     hold(&mut h, &mut s, 10, 170);
 
     s.finalize().unwrap();

@@ -45,11 +45,11 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   (terminal / claude ↻ / aider ↻ / custom…); picking an agent fills the
   Agent Command, and the `↻ resumes on restart` legend is shown. 160-wide
   so the legend isn't truncated.
-- [x] **workspace-trust** — a prod-looking project with a direnv `.envrc` opens
-  **Restricted** (the `{trust}` element leads the status bar); the combined
-  "Trust & activate" prompt appears, and accepting flips it to **Trusted** +
-  "Activating direnv". Booted like `main.rs` (trust store + `maybe_prompt_
-  workspace_trust` + `fire_plugins_loaded_hook`) so trust starts undecided.
+- [x] **workspace-trust** — open an untrusted Rust crate with a `build.rs`;
+  Fresh raises the full-screen "⚠ SECURITY WARNING" prompt naming the markers
+  (Cargo.toml), with Trust / Keep Restricted / Block. ↑ selects "Trust folder &
+  Allow Tooling", Enter flips `{trust}` Restricted → Trusted. Core (no plugin);
+  booted like `main.rs` (trust store + `maybe_prompt_workspace_trust`).
 
 ## Tier 1 — headliners still to create
 
