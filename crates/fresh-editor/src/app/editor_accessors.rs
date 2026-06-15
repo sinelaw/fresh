@@ -996,6 +996,40 @@ impl Editor {
         &mut self.active_window_mut().chrome_layout
     }
 
+    // --- semantic accessors for the web/GUI chrome (read-only projections) ---
+
+    /// The menu-bar state (which menu is open, highlighted item, condition
+    /// context for `when`/checkbox evaluation).
+    pub(crate) fn menu_state(&self) -> &crate::view::ui::MenuState {
+        &self.menu_state
+    }
+
+    /// The keybinding accelerator for an action (e.g. "Ctrl+S"), if any.
+    pub(crate) fn accelerator_for(&self, action: &str) -> Option<String> {
+        self.keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                kb.find_keybinding_for_action(action, crate::input::keybindings::KeyContext::Normal)
+            })
+    }
+
+    /// Display name for a buffer (tab label), if known.
+    pub(crate) fn buffer_display_name(&self, id: fresh_core::BufferId) -> Option<String> {
+        self.active_window()
+            .buffer_metadata
+            .get(&id)
+            .map(|m| m.display_name.clone())
+    }
+
+    /// Whether a buffer has unsaved changes (for the tab's modified dot).
+    pub(crate) fn buffer_is_modified(&self, id: fresh_core::BufferId) -> bool {
+        self.buffers()
+            .get(&id)
+            .map(|s| s.buffer.is_modified())
+            .unwrap_or(false)
+    }
+
     /// Active window's utility-dock panel-id → buffer-id map.
     /// Each window owns its own dock; switching windows shows a
     /// different (possibly empty) dock.

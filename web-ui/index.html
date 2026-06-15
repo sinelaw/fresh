@@ -7,31 +7,71 @@
 <!--
   Non-terminal UI for Fresh. The REAL editor render pipeline decides what to draw;
   this frontend only re-targets the final drawing:
-    - buffer interiors  -> the real syntax-highlighted CELLS the pipeline drew
-                           in each pane's content_rect (drawn here as SVG text)
-    - chrome (menu/status/tabs/scrollbars/split-borders/file-explorer) -> UI
-                           elements positioned at the rects the pipeline computed
+    - buffer interiors  -> the real syntax-highlighted CELLS the pipeline drew in
+                           each pane's content_rect (drawn here as SVG text).
+    - chrome            -> NATIVE UI elements built from the *semantic* model the
+                           pipeline already computed (menu tree, tabs, status
+                           segments). No chrome is drawn from cells.
+  The editor stays the single source of truth: every chrome interaction is
+  forwarded back through the real Editor::handle_mouse at the cell coordinates
+  the pipeline reported, so highlight / selection / open / close all match the
+  TUI and GUI exactly.
   Served by the bridge that hosts a real Editor:
     cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 -->
 <style>
-  :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#2d2d30;--fg:#d4d4d4;--muted:#9aa0a6;
-    --accent:#0a84ff;--border:#3a3a3a}
+  :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#333;--fg:#d4d4d4;--muted:#9aa0a6;
+    --accent:#0a84ff;--border:#3a3a3a;--menuhi:#0a64c8}
   *{box-sizing:border-box}
+  :focus{outline:none}
   html,body{height:100%;margin:0}
   body{height:100vh;background:var(--bg);color:var(--fg);overflow:hidden;
     font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
   #app{position:relative;width:100vw;height:100vh}
-  /* every chrome element is absolutely placed at the cell-rect the pipeline computed */
   .region{position:absolute;overflow:hidden}
-  .menubar{display:flex;align-items:center;gap:2px;background:var(--bg3);
+
+  /* ---- menu bar (native) ---- */
+  .menubar{display:flex;align-items:center;gap:0;background:var(--bg3);
     border-bottom:1px solid var(--border);padding:0 4px}
-  .menu{padding:3px 10px;border-radius:5px;color:var(--fg)}
-  .menu:hover{background:var(--accent);color:#fff}
+  .menu{padding:0 10px;height:100%;display:flex;align-items:center;border-radius:0;color:var(--fg);cursor:default}
+  .menu:hover{background:#454545}
+  .menu.open{background:var(--menuhi);color:#fff}
+
+  /* ---- menu dropdown (native, positioned at the pipeline's item rects) ---- */
+  /* decorative backing panel sits BEHIND the rows and never eats clicks */
+  .dropdown{position:absolute;z-index:70;pointer-events:none;background:#2b2b2b;border:1px solid #555;
+    border-radius:6px;box-shadow:0 16px 50px rgba(0,0,0,.55)}
+  .mitem,.msep,.mlabel{position:absolute;z-index:81}
+  .mitem{display:flex;align-items:center;gap:18px;padding:0 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .mitem.hi{background:var(--menuhi);color:#fff}
+  .mitem.disabled{color:#6a6a6a}
+  .mitem .lab{flex:1;display:flex;align-items:center;gap:6px}
+  .mitem .accel{color:var(--muted);font-size:11px}
+  .mitem.hi .accel{color:#dfe8ff}
+  .mitem .arrow{color:var(--muted)}
+  .mitem .check{width:12px;display:inline-block;text-align:center}
+  .msep{height:1px;background:#4a4a4a;margin:4px 8px}
+  .mlabel{padding:0 14px;color:var(--muted);font-style:italic}
+
+  /* ---- tabs (native) ---- */
+  .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border);overflow:hidden}
+  .tab{display:flex;align-items:center;gap:6px;padding:0 10px;border-right:1px solid var(--border);
+    color:var(--muted);background:var(--bg2);max-width:220px;cursor:default}
+  .tab.active{color:var(--fg);background:var(--bg)}
+  .tab .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;visibility:hidden}
+  .tab.modified .dot{visibility:visible}
+  .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
+  .tab .x:hover{background:#5a5a5a;color:#fff}
+
+  /* ---- status bar (native) ---- */
   .statusbar{display:flex;align-items:center;background:var(--accent);color:#fff;
-    padding:0 10px;font-size:12px;white-space:pre}
+    padding:0 10px;font-size:12px;gap:0;white-space:pre}
+  .statusbar .txt{padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60vw}
+  .statusbar .seg{padding:0 8px;border-radius:3px;cursor:default}
+  .statusbar .seg:hover{background:rgba(255,255,255,.18)}
+
   .fileexplorer{background:var(--bg2);border-right:1px solid var(--border)}
-  .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border)}
   .pane-content{background:var(--bg)}
   .separator{background:var(--border)}
   .separator:hover{background:var(--accent)}
@@ -55,32 +95,33 @@
 "use strict";
 // --------------------------------------------------------------------------
 // Real-render client. NO local model and NO re-implemented layout: the server
-// runs the real Editor::render and reports the cell grid + the semantic region
-// rects the pipeline already computed. We just place UI at those rects and draw
-// the buffer-interior cells.
+// runs the real Editor::render and reports the cell grid for buffer interiors
+// plus the *semantic* chrome model (menu tree, tabs, status segments) the
+// pipeline already computed. Buffer interiors are drawn as cells; chrome is
+// drawn as native HTML. Every chrome interaction is sent back to the real
+// Editor::handle_mouse at the cell coords the pipeline reported.
 // --------------------------------------------------------------------------
 let scene = null;
-// Cell pixel size — chosen to match a comfortable monospace; all rects are in
-// terminal cells, multiplied by these to get pixels.
-const CW = 8.2, CH = 18;
+const CW = 8.2, CH = 18;        // cell pixel size (terminal cells -> pixels)
 
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const px = (cells, sz) => (cells*sz);
 function place(el, r){ el.style.left=px(r.x,CW)+"px"; el.style.top=px(r.y,CH)+"px"; el.style.width=px(r.w,CW)+"px"; el.style.height=px(r.h,CH)+"px"; }
+function div(cls){ const d=document.createElement("div"); d.className=cls; return d; }
+// cell coordinate to forward to the editor for a click on a chrome rect
+const rectCell = r => ({ col: r.x + Math.floor(r.w/2), row: r.y });
 
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
 function cellsSvg(cells, wCells){
   let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="13">`;
   for(let row=0; row<cells.length; row++){
     const y=(row+1)*CH - 5;
-    // background rects first (reverse video → bg becomes the run's fg color)
     let col=0;
     for(const r of cells[row]){
       const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
       if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
       col+=r.t.length;
     }
-    // glyphs (reverse video swaps fg/bg — used for selections & software cursor)
     s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
     col=0;
     for(const r of cells[row]){
@@ -107,9 +148,9 @@ function render(){
   // file explorer (UI pane; content = its real cells)
   if(reg.fileExplorer){ const d=div("region fileexplorer"); place(d,reg.fileExplorer.rect); d.innerHTML=cellsSvg(reg.fileExplorer.cells, reg.fileExplorer.rect.w); app.appendChild(d); }
 
-  // panes: tab bar (UI) + buffer interior (real cells) + scrollbar (UI)
+  // panes: native tab bar + buffer interior (real cells) + scrollbar (UI)
   for(const p of reg.panes){
-    if(p.tabBar){ const t=div("region tabbar"); place(t,p.tabBar); t.innerHTML=cellsSvg(p.tabCells, p.tabBar.w); app.appendChild(t); }
+    if(p.tabBar) app.appendChild(tabBarEl(p));
     const c=div("region pane-content"); place(c,p.content); c.innerHTML=cellsSvg(p.cells, p.content.w); app.appendChild(c);
     if(p.vscroll && p.vscroll.w>0){
       const sb=div("region scrollbar"); place(sb,p.vscroll); app.appendChild(sb);
@@ -126,13 +167,14 @@ function render(){
     app.appendChild(d);
   }
 
-  // menu bar (UI; items laid out by HTML, text from the pipeline's cells)
-  if(reg.menubar){ const m=div("region menubar"); place(m,reg.menubar.rect); m.innerHTML=menuItemsHtml(reg.menubar.cells); app.appendChild(m); }
-  // status bar (UI; content from the pipeline's cells)
-  if(reg.statusbar){ const s=div("region statusbar"); place(s,reg.statusbar.rect); s.textContent=cellText(reg.statusbar.cells).trim(); app.appendChild(s); }
+  // native menu bar + dropdown
+  if(reg.menubar) app.appendChild(menuBarEl(reg));
+  for(const d of menuDropdownEls(reg)) app.appendChild(d);
 
-  // overlays: menu dropdowns, popups, command palette — floating UI boxes whose
-  // content is the real cells the pipeline drew at the rects it recorded.
+  // native status bar
+  if(reg.statusbar) app.appendChild(statusBarEl(reg.statusbar));
+
+  // non-menu overlays (popups, command palette) still drawn from real cells
   for(const o of (reg.overlays||[])){
     const d=div("overlay"); place(d,o.rect); d.innerHTML=cellsSvg(o.cells, o.rect.w); app.appendChild(d);
   }
@@ -143,12 +185,128 @@ function render(){
     if(inPane){ const c=div("caret"); c.style.left=px(reg.cursor.x,CW)+"px"; c.style.top=px(reg.cursor.y,CH)+"px"; c.style.height=CH+"px"; app.appendChild(c); }
   }
 }
-function div(cls){ const d=document.createElement("div"); d.className=cls; return d; }
-function cellText(cells){ return (cells[0]||[]).map(r=>r.t).join(""); }
-function menuItemsHtml(cells){
-  // Split the (real) menu-bar row text into clickable items on runs of spaces.
-  const text=cellText(cells);
-  return text.split(/\s{2,}/).filter(s=>s.trim()).map(s=>`<span class="menu">${esc(s.trim())}</span>`).join("");
+
+// ---- native menu bar ----------------------------------------------------
+function menuBarEl(reg){
+  const rect=reg.menubar;            // menubar region IS the rect {x,y,w,h}
+  const bar=div("region menubar"); place(bar,{x:rect.x,y:rect.y,w:rect.w,h:1});
+  const barRow=rect.y;
+  reg.menus.forEach((m,i)=>{
+    const el=div("menu"+(reg.menuOpen===i?" open":""));
+    el.textContent=m.label;
+    // forward to the real editor at the menu label's center cell -> it opens/toggles.
+    const col=(m.x??rect.x)+Math.floor((m.w||1)/2);
+    el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col,row:barRow}); };
+    // hovering another top-level while a menu is open should switch menus,
+    // matching the TUI: forward a move so the editor re-targets.
+    el.onmouseenter=()=>{ if(reg.menuOpen!=null && reg.menuOpen!==i) sendMouse({kind:"moved",col:(m.x??0),row:barRow}); };
+    bar.appendChild(el);
+  });
+  return bar;
+}
+
+// Walk submenuPath to the items list shown at a given submenu depth (>=1).
+function submenuItems(reg, depth){
+  let items=reg.menus[reg.menuOpen]?.items||[];
+  for(let d=0; d<depth; d++){
+    const it=items[reg.submenuPath[d]];
+    if(!it||it.kind!=="submenu") return [];
+    items=it.items||[];
+  }
+  return items;
+}
+
+// One native dropdown row, positioned at the pipeline's cell rect.
+// `hi` says whether the editor currently highlights this row.
+function itemRow(item, rect, hi){
+  if(!item) return null;
+  if(item.kind==="sep"){ const s=div("msep"); place(s,rect); s.style.height="1px"; s.style.top=px(rect.y+0.5,CH)+"px"; return s; }
+  if(item.kind==="label"){ const l=div("mlabel"); place(l,rect); l.style.lineHeight=CH+"px"; l.textContent=item.label; return l; }
+  const cell=rectCell(rect);
+  const row=div("mitem"+(hi?" hi":"")+(item.enabled===false?" disabled":""));
+  place(row,rect); row.style.lineHeight=CH+"px";
+  const check = item.checked===true?"✓":"";
+  const arrow = item.kind==="submenu"?'<span class="arrow">›</span>':"";
+  const accel = item.accel?`<span class="accel">${esc(item.accel)}</span>`:"";
+  row.innerHTML=`<span class="lab"><span class="check">${check}</span>${esc(item.label)}</span>${accel}${arrow}`;
+  row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});
+  row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
+    if(item.enabled===false) return;
+    sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+  return row;
+}
+
+function menuDropdownEls(reg){
+  const out=[];
+  if(reg.menuOpen==null || !reg.dropdown) return out;
+  for(const grp of dropdownPanels(reg)) out.push(grp);      // solid backing panels
+  const path=reg.submenuPath||[];
+  // top-level items: highlighted = menuHighlight when no submenu is deeper,
+  // otherwise the parent of the open submenu (path[0]).
+  const items=reg.menus[reg.menuOpen]?.items||[];
+  for(const di of reg.dropdown.items){
+    const hi = path.length===0 ? di.index===reg.menuHighlight : di.index===path[0];
+    const el=itemRow(items[di.index], di.rect, hi); if(el) out.push(el);
+  }
+  // expanded submenu levels
+  for(const su of (reg.dropdown.submenus||[])){
+    const list=submenuItems(reg, su.depth);
+    const deepest = su.depth===path.length;
+    const hi = deepest ? su.index===reg.menuHighlight : su.index===path[su.depth];
+    const el=itemRow(list[su.index], su.rect, hi); if(el) out.push(el);
+  }
+  return out;
+}
+
+// Solid rounded panels behind the top-level dropdown and each submenu level,
+// sized from the union of that level's item rects.
+function dropdownPanels(reg){
+  const panels=[];
+  const box=(rects)=>{
+    if(!rects.length) return null;
+    const x0=Math.min(...rects.map(r=>r.x)), y0=Math.min(...rects.map(r=>r.y));
+    const x1=Math.max(...rects.map(r=>r.x+r.w)), y1=Math.max(...rects.map(r=>r.y+r.h));
+    const p=div("dropdown"); place(p,{x:x0,y:y0,w:x1-x0,h:y1-y0}); return p;
+  };
+  const top=box(reg.dropdown.items.map(i=>i.rect)); if(top) panels.push(top);
+  const byDepth={};
+  for(const su of (reg.dropdown.submenus||[])) (byDepth[su.depth]=byDepth[su.depth]||[]).push(su.rect);
+  for(const d of Object.keys(byDepth)){ const p=box(byDepth[d]); if(p) panels.push(p); }
+  return panels;
+}
+
+// ---- native tab bar -----------------------------------------------------
+function tabBarEl(p){
+  const bar=div("region tabbar"); place(bar,p.tabBar);
+  for(const t of p.tabs){
+    const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":""));
+    if(t.rect){ const c=rectCell(t.rect);
+      el.onmousedown=e=>{ if(e.target.classList.contains("x")) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); }; }
+    const name=document.createElement("span"); name.className="name"; name.textContent=t.label; el.appendChild(name);
+    const dot=document.createElement("span"); dot.className="dot"; el.appendChild(dot);
+    const x=document.createElement("span"); x.className="x"; x.textContent="×";
+    if(t.closeRect){ const cc=rectCell(t.closeRect);
+      x.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cc.col,row:cc.row}); }; }
+    el.appendChild(x);
+    bar.appendChild(el);
+  }
+  return bar;
+}
+
+// ---- native status bar --------------------------------------------------
+function statusBarEl(sb){
+  const bar=div("region statusbar"); place(bar,sb.rect);
+  const segEl=seg=>{
+    const s=document.createElement("span"); s.className=(seg.name==="text"?"txt":"seg"); s.dataset.name=seg.name; s.textContent=seg.text;
+    const c=rectCell({x:seg.x,y:sb.rect.y,w:seg.w,h:1});
+    s.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); };
+    return s;
+  };
+  const segs=sb.segments.filter(s=>s.text);
+  for(const seg of segs.filter(s=>s.side!=="right")) bar.appendChild(segEl(seg));
+  const spacer=document.createElement("span"); spacer.style.flex="1"; bar.appendChild(spacer);
+  for(const seg of segs.filter(s=>s.side==="right")) bar.appendChild(segEl(seg));
+  return bar;
 }
 
 // --- bridge to the real editor ---
@@ -158,20 +316,24 @@ async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW)
   try{ scene=await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json(); render(); }catch(e){} }
 function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
 
-const NAMED=new Set(["Enter","Backspace","Delete","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
+const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
   const printable=e.key.length===1 && !e.ctrlKey && !e.metaKey;
   if(printable||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
 });
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
-// The editor does all hit-testing (panes, tabs, scrollbars, separators).
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
 let dragging=false, lastCell=null;
-document.addEventListener("mousedown",e=>{ const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
+// Chrome (menu bar, dropdown, tabs, status bar) owns its own mouse events and
+// forwards them to the editor at the exact cell rects the pipeline reported.
+// The document-level handlers are the fallback for buffer interiors, scrollbars
+// and separators, so they ignore anything that lands on a chrome element.
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar");
+document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
-document.addEventListener("mouseup",e=>{ const c=cellAt(e); dragging=false; sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
+document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());
 document.addEventListener("wheel",e=>{ const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
 

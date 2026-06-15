@@ -136,9 +136,12 @@ fn handle_conn(
         ("POST", "/action") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             if let Some(name) = v.get("action").and_then(|a| a.as_str()) {
-                if let Some(act) =
-                    crate::input::keybindings::Action::from_str(name, &std::collections::HashMap::new())
-                {
+                let args: std::collections::HashMap<String, Value> = v
+                    .get("args")
+                    .and_then(|a| a.as_object())
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default();
+                if let Some(act) = crate::input::keybindings::Action::from_str(name, &args) {
                     editor.dispatch_action_for_tests(act);
                 }
             }
@@ -251,8 +254,63 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
     Value::Array(rows)
 }
 
+/// Plain text of cells `[x0, x1)` on row `y` of the rendered buffer (no styling).
+/// Used to lift the *text* of a chrome segment (a status-bar indicator) out of
+/// the pipeline's render so the frontend can show it as a native UI label rather
+/// than a cell grid.
+fn text_in_row(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
+    let mut s = String::new();
+    for x in x0..x1 {
+        if let Some(cell) = buf.cell(Position::new(x, y)) {
+            s.push_str(cell.symbol());
+        }
+    }
+    s
+}
+
 /// Build the scene: the real cell grid + semantic chrome regions, all from the
 /// pipeline's own per-frame layout caches.
+/// Convert a single `MenuItem` into the semantic JSON the frontend renders as
+/// native HTML (no cells). Enabled/checked state and accelerators come straight
+/// from the editor so the browser menu mirrors the TUI/GUI menus exactly.
+fn menu_item_json(editor: &Editor, item: &fresh_core::menu::MenuItem) -> Value {
+    use fresh_core::menu::MenuItem::*;
+    match item {
+        Separator { .. } => json!({ "kind": "sep" }),
+        Action {
+            label,
+            action,
+            args,
+            when,
+            checkbox,
+        } => json!({
+            "kind": "action",
+            "label": label,
+            "action": action,
+            "args": args,
+            "accel": editor.accelerator_for(action),
+            "enabled": when
+                .as_ref()
+                .map(|w| editor.menu_state().context.get(w))
+                .unwrap_or(true),
+            "checked": checkbox
+                .as_ref()
+                .map(|c| editor.menu_state().context.get(c)),
+        }),
+        Submenu { label, items } => json!({
+            "kind": "submenu",
+            "label": label,
+            "items": items.iter().map(|i| menu_item_json(editor, i)).collect::<Vec<_>>(),
+        }),
+        DynamicSubmenu { label, .. } => json!({
+            "kind": "submenu",
+            "label": label,
+            "items": [],
+        }),
+        Label { info } => json!({ "kind": "label", "label": info }),
+    }
+}
+
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let (buf, cursor) = render_to_buffer(editor, cols, rows);
     let w = buf.area.width;
@@ -261,13 +319,10 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // Overlays (menu dropdown, popups, command palette) — the pipeline already
     // drew them into the cells and recorded their rects on ChromeLayout; we emit
     // rect + cells so the frontend draws each as a floating UI element.
+    // NOTE: the menu dropdown is NOT included here — it is emitted as a
+    // *semantic* model below and rendered as native UI, not cells.
     let chrome = editor.active_chrome();
     let mut overlay_rects: Vec<Rect> = Vec::new();
-    if let Some(menu) = &chrome.menu_layout {
-        if let Some(r) = union_rect(menu.item_areas.iter().map(|(_, r)| r)) {
-            overlay_rects.push(r);
-        }
-    }
     for p in &chrome.popup_areas {
         overlay_rects.push(p.1);
     }
@@ -283,35 +338,93 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         .map(|r| json!({ "rect": rect_json(*r), "cells": cells_json(&buf, *r) }))
         .collect();
 
-    // --- semantic regions from the pipeline's layout caches ---
+    // Semantic menu model (Option 2: the editor stays the source of truth for
+    // which menu is open / highlighted; the frontend renders native HTML).
+    let menu_areas: std::collections::HashMap<usize, Rect> = chrome
+        .menu_layout
+        .as_ref()
+        .map(|m| m.menu_areas.iter().cloned().collect())
+        .unwrap_or_default();
+    let ms = editor.menu_state();
+    let menu_open = ms.active_menu;
+    let menu_highlight = ms.highlighted_item;
+    let submenu_path = ms.submenu_path.clone();
+    let menus: Vec<Value> = editor
+        .expanded_menu_definitions()
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            json!({
+                "label": m.label,
+                "x": menu_areas.get(&i).map(|r| r.x),
+                "w": menu_areas.get(&i).map(|r| r.width),
+                "items": m.items.iter().map(|it| menu_item_json(editor, it)).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    // Cell geometry of the *currently open* dropdown (and any expanded submenu),
+    // straight from the pipeline's MenuLayout. The frontend positions native HTML
+    // rows at these exact rects and forwards clicks/hovers back through
+    // `handle_mouse`, so the editor stays the single source of truth for which
+    // item is highlighted / selected / closed.
+    let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
+        if ml.item_areas.is_empty() {
+            return None;
+        }
+        let items: Vec<Value> = ml
+            .item_areas
+            .iter()
+            .map(|(idx, r)| json!({ "index": idx, "rect": rect_json(*r) }))
+            .collect();
+        let submenus: Vec<Value> = ml
+            .submenu_areas
+            .iter()
+            .map(|(depth, idx, r)| json!({ "depth": depth, "index": idx, "rect": rect_json(*r) }))
+            .collect();
+        Some(json!({
+            "rect": union_rect(ml.item_areas.iter().map(|(_, r)| r)).map(rect_json),
+            "items": items,
+            "submenus": submenus,
+        }))
+    });
+
+    // --- per-window geometry from the pipeline's layout cache ---
+    let active_buffer = editor.active_buffer();
     let layout = editor.active_layout();
     let content = layout.editor_content_area.unwrap_or(Rect::new(0, 0, w, h));
-
-    // menu bar = the band above the editor content; status bar = the row below it.
-    let menubar = if content.y > 0 {
-        Some(Rect::new(0, 0, w, content.y))
-    } else {
-        None
-    };
-    let status_y = content.y.saturating_add(content.height);
-    let statusbar = if status_y < h {
-        Some(Rect::new(0, status_y, w, 1))
-    } else {
-        None
-    };
+    let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
 
     let panes: Vec<Value> = layout
         .split_areas
         .iter()
         .map(|(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
-            let tab_bar = layout.tab_layouts.get(leaf).map(|t| t.bar_area);
+            let tl = layout.tab_layouts.get(leaf);
+            let tabs: Vec<Value> = tl
+                .map(|t| {
+                    t.tabs
+                        .iter()
+                        .map(|tab| {
+                            let bid = tab.target.as_buffer();
+                            json!({
+                                "bufferId": bid.map(|b| b.0),
+                                "label": bid.and_then(|b| editor.buffer_display_name(b))
+                                    .unwrap_or_else(|| "untitled".into()),
+                                "active": bid == Some(active_buffer),
+                                "modified": bid.map(|b| editor.buffer_is_modified(b)).unwrap_or(false),
+                                "rect": rect_json(tab.tab_area),
+                                "closeRect": rect_json(tab.close_area),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             json!({
                 "leaf": leaf.0 .0,
                 "buffer": bufid.0,
                 "content": rect_json(*content_rect),
                 "cells": cells_json(&buf, *content_rect),
-                "tabBar": tab_bar.map(rect_json),
-                "tabCells": tab_bar.map(|r| cells_json(&buf, r)),
+                "tabBar": tl.map(|t| rect_json(t.bar_area)),
+                "tabs": tabs,
                 "vscroll": rect_json(*scrollbar_rect),
                 "thumbStart": thumb_s,
                 "thumbEnd": thumb_e,
@@ -330,13 +443,79 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
         .collect();
 
-    let file_explorer = layout.file_explorer_area.map(|r| {
-        json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) })
+    let file_explorer = layout
+        .file_explorer_area
+        .map(|r| json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) }));
+
+    // Semantic status bar. The pipeline records *where* each indicator sits
+    // (col ranges on ChromeLayout) and what it means; we lift each segment's
+    // text out of the rendered row and emit a labeled model so the frontend can
+    // draw native pills (left message + right indicators), not a cell grid.
+    let statusbar = chrome.status_bar_area.map(|(sy, sx, sw)| {
+        let bar_end = sx.saturating_add(sw);
+        let mid = sx.saturating_add(sw / 2);
+        // All indicators the pipeline placed, in column order.
+        let mut ind: Vec<(&str, (u16, u16, u16), Option<String>)> = Vec::new();
+        let mut push = |name: &'static str, area: Option<(u16, u16, u16)>| {
+            if let Some(a) = area {
+                ind.push((name, a, None));
+            }
+        };
+        push("lsp", chrome.status_bar_lsp_area);
+        push("warning", chrome.status_bar_warning_area);
+        push("language", chrome.status_bar_language_area);
+        push("encoding", chrome.status_bar_encoding_area);
+        push("lineEnding", chrome.status_bar_line_ending_area);
+        push("remote", chrome.status_bar_remote_area);
+        push("trust", chrome.status_bar_trust_area);
+        push("message", chrome.status_bar_message_area);
+        for (key, a) in &chrome.status_bar_plugin_token_areas {
+            ind.push(("plugin", *a, Some(key.clone())));
+        }
+        ind.sort_by_key(|(_, (_, start, _), _)| *start);
+
+        // Tile the whole bar: labeled indicators + the untracked text runs
+        // between them (file name / Ln,Col live there). Whitespace-only gaps are
+        // dropped so the left/right indicator groups separate cleanly.
+        let mut segments: Vec<Value> = Vec::new();
+        let mut emit_gap = |segs: &mut Vec<Value>, from: u16, to: u16| {
+            if to > from {
+                let t = text_in_row(&buf, sy, from, to);
+                if !t.trim().is_empty() {
+                    segs.push(json!({
+                        "name": "text", "key": Value::Null, "text": t.trim().to_string(),
+                        "x": from, "w": to - from, "side": if from < mid {"left"} else {"right"},
+                    }));
+                }
+            }
+        };
+        let mut cur = sx;
+        for (name, (row, start, end), key) in &ind {
+            emit_gap(&mut segments, cur, *start);
+            segments.push(json!({
+                "name": name, "key": key,
+                "text": text_in_row(&buf, *row, *start, *end).trim().to_string(),
+                "x": start, "w": end.saturating_sub(*start),
+                "side": if *start < mid {"left"} else {"right"},
+            }));
+            cur = (*end).max(cur);
+        }
+        emit_gap(&mut segments, cur, bar_end);
+
+        json!({
+            "rect": rect_json(Rect::new(sx, sy, sw, 1)),
+            "segments": segments,
+        })
     });
 
     let regions = json!({
-        "menubar": menubar.map(|r| json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) })),
-        "statusbar": statusbar.map(|r| json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) })),
+        "menubar": menubar_rect.map(rect_json),
+        "menus": menus,
+        "menuOpen": menu_open,
+        "menuHighlight": menu_highlight,
+        "submenuPath": submenu_path,
+        "dropdown": dropdown,
+        "statusbar": statusbar,
         "fileExplorer": file_explorer,
         "panes": panes,
         "separators": separators,
