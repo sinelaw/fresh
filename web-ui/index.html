@@ -3,28 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fresh — web UI prototype</title>
+<title>Fresh — web UI (real editor)</title>
 <!--
-  Interactive, self-contained browser prototype of Fresh's non-terminal UI.
-  Open this file directly in any browser.
+  Non-terminal UI for Fresh, wired END-TO-END to the REAL Rust editor — no mocks.
+  Serve it with the bridge (which hosts a real `Editor`):
+     cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8137 <files...>
+  then open http://127.0.0.1:8137 .
 
-  - Chrome (menu bar, tabs, split panes + dividers, status bar, command palette)
-    is DOM/CSS. Text body is SVG <text>/<tspan>. This mirrors the Rust reference
-    renderer in crates/fresh-editor/src/view/chrome_html.rs.
-  - Interactivity runs against an in-browser MOCK model (buffers, cursor, splits).
-    The `Backend` object is the seam: in a Tauri build, `Backend.send(event)` calls
-    window.__TAURI__.invoke(...) and a 'chrome-update' event re-renders from the
-    real Rust core (which owns the piece tree, LSP, plugins, real/GB files). The UI
-    code does not change — only the Backend implementation.
+  Chrome (menu bar, tabs, split panes + dividers, status bar) is DOM/CSS, rendered
+  from the editor's real ChromeSnapshot. The text body is SVG <text>/<tspan>,
+  rendered from real buffer contents. Keystrokes are POSTed to /key and run through
+  the real `Editor::handle_key`; the page re-renders from the editor's new state.
 
-  Try: type, Backspace/Enter/arrows/Home/End, click a tab, click ×, drag the
-  divider between panes, Cmd/Ctrl+P (command palette), click a menu, Esc.
+  Partial wire (more coming): keyboard editing is fully live. Tab/divider/menu
+  clicks and a live caret are wired next.
 -->
 <style>
   :root{
     --bg:#1e1e1e;--bg2:#252526;--bg3:#2d2d30;--fg:#d4d4d4;--muted:#9aa0a6;
-    --accent:#0a84ff;--border:#3a3a3a;--tab-active:#1e1e1e;--caret:#aeafad;
-    --sel:rgba(38,79,120,.7);
+    --accent:#0a84ff;--border:#3a3a3a;--tab-active:#1e1e1e;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -32,395 +29,121 @@
     font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
     user-select:none;overflow:hidden}
   .menubar{display:flex;gap:2px;background:var(--bg3);border-bottom:1px solid var(--border);
-    padding:2px 4px;flex:0 0 auto;position:relative;z-index:30}
+    padding:2px 4px;flex:0 0 auto}
   .menu{background:none;border:0;color:var(--fg);padding:4px 10px;border-radius:5px;font:inherit;cursor:default}
-  .menu:hover,.menu.open{background:var(--accent);color:#fff}
-  .menu-dropdown{position:absolute;top:100%;background:var(--bg2);border:1px solid var(--border);
-    border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:4px;min-width:200px;z-index:40}
-  .menu-item{padding:6px 12px;border-radius:5px;display:flex;justify-content:space-between;gap:24px;cursor:default}
-  .menu-item:hover{background:var(--accent);color:#fff}
-  .menu-item .key{color:var(--muted)}
-  .menu-item:hover .key{color:#dfe}
-  .menu-sep{height:1px;background:var(--border);margin:4px 6px}
+  .menu:hover{background:var(--accent);color:#fff}
   .workspace{flex:1 1 auto;display:flex;min-height:0}
   .workspace>*{flex:1 1 auto}
   .split{display:grid;min-height:0;min-width:0;width:100%;height:100%}
   .divider{background:var(--border)}
-  .divider:hover{background:var(--accent)}
-  .divider.vertical{cursor:col-resize}
-  .divider.horizontal{cursor:row-resize}
+  .divider.vertical{cursor:col-resize}.divider.horizontal{cursor:row-resize}
   .pane{display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--border);background:var(--bg)}
   .pane.active{border-color:#454545}
   .tabbar{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);flex:0 0 auto;overflow:hidden}
   .tab{display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--muted);
-    border-right:1px solid var(--border);cursor:default;max-width:220px}
+    border-right:1px solid var(--border);max-width:240px}
   .tab.active{background:var(--tab-active);color:var(--fg);box-shadow:inset 0 2px 0 var(--accent)}
   .tab-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tab-close{opacity:.55;border-radius:4px;padding:0 5px}
-  .tab-close:hover{opacity:1;background:rgba(127,127,127,.35)}
-  .content{flex:1 1 auto;min-height:0;overflow:hidden;position:relative}
-  svg.textbody{display:block;width:100%;height:100%;
-    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
+  .content{flex:1 1 auto;min-height:0;overflow:auto;position:relative}
+  svg.textbody{display:block;width:100%;min-height:100%;
+    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;font-size:13px}
   .gutter{fill:var(--muted);opacity:.55}
-  .caret{stroke:var(--caret);stroke-width:1.5;animation:blink 1.05s steps(1) infinite}
-  @keyframes blink{50%{opacity:0}}
   .statusbar{display:flex;justify-content:space-between;background:var(--accent);color:#fff;
     padding:2px 10px;font-size:12px;flex:0 0 auto}
-  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:flex-start;
-    justify-content:center;padding-top:11vh;z-index:50}
-  .palette{background:var(--bg2);border:1px solid var(--border);border-radius:10px;min-width:520px;
-    max-width:70vw;box-shadow:0 18px 60px rgba(0,0,0,.55);overflow:hidden}
-  .palette input{width:100%;border:0;outline:0;background:var(--bg3);color:var(--fg);
-    padding:12px 14px;font:14px/1.2 inherit}
-  .palette ul{list-style:none;margin:0;padding:6px;max-height:46vh;overflow:auto}
-  .palette li{padding:8px 12px;border-radius:6px;display:flex;justify-content:space-between;gap:24px}
-  .palette li.sel{background:var(--accent);color:#fff}
-  .palette li .hint{color:var(--muted)}
-  .palette li.sel .hint{color:#eef}
-  #toast{position:fixed;right:14px;bottom:30px;background:var(--bg3);border:1px solid var(--border);
-    border-radius:8px;padding:8px 14px;opacity:0;transition:opacity .2s;z-index:60}
-  #toast.show{opacity:1}
+  #err{position:fixed;left:0;right:0;bottom:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="toast"></div>
+<div id="err"></div>
 
 <script>
 "use strict";
-// ---------------------------------------------------------------------------
-// Model (in-browser mock — the Backend seam swaps this for the Rust core)
-// ---------------------------------------------------------------------------
-const SYNTAX = [ // toy highlighter: [regex, color]
-  [/\b(fn|let|pub|use|mut|struct|enum|impl|match|if|else|for|while|return|self|crate|mod)\b/, "#569cd6"],
-  [/\b([A-Z][A-Za-z0-9_]*)\b/, "#4ec9b0"],
-  [/"[^"]*"/, "#ce9178"],
-  [/\/\/.*$/, "#6a9955"],
-  [/\b(\d+)\b/, "#b5cea8"],
+// --------------------------------------------------------------------------
+// Real-editor client. NO local model: every render comes from /state, every
+// edit is POSTed to /key and applied by the real Rust Editor.
+// --------------------------------------------------------------------------
+let view = null; // { chrome:{menubar, split_layout, overlays, active_buffer, divider_count}, active, buffers:{id:{name,lines}} }
+
+const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// Toy syntax coloring for display (the real highlighter is wired next).
+const SYNTAX=[
+  [/\b(fn|let|pub|use|mut|struct|enum|impl|match|if|else|for|while|return|self|crate|mod|const|async|await|move|where|trait|type)\b/,"#569cd6"],
+  [/\b([A-Z][A-Za-z0-9_]*)\b/,"#4ec9b0"],
+  [/"[^"]*"/,"#ce9178"],[/\/\/.*$/,"#6a9955"],[/\b(\d+)\b/,"#b5cea8"],
 ];
 function highlight(line){
-  // Produce [{text,color}] runs. Simple non-overlapping scan.
-  const marks = new Array(line.length).fill("#d4d4d4");
-  for(const [re,color] of SYNTAX){
-    const g = new RegExp(re.source, "g");
-    let m; while((m = g.exec(line))){ for(let i=m.index;i<m.index+m[0].length;i++) marks[i]=color; if(m.index===g.lastIndex) g.lastIndex++; }
-  }
-  const runs=[]; let i=0;
-  while(i<line.length){ let j=i; const c=marks[i]; while(j<line.length && marks[j]===c) j++; runs.push({text:line.slice(i,j),color:c}); i=j; }
+  const marks=new Array(line.length).fill("#d4d4d4");
+  for(const [re,color] of SYNTAX){const g=new RegExp(re.source,"g");let m;while((m=g.exec(line))){for(let i=m.index;i<m.index+m[0].length;i++)marks[i]=color;if(m.index===g.lastIndex)g.lastIndex++;}}
+  const runs=[];let i=0;while(i<line.length){let j=i;const c=marks[i];while(j<line.length&&marks[j]===c)j++;runs.push({t:line.slice(i,j),c});i=j;}
   return runs;
 }
 
-function buf(id,name,text){ return {id,name,lines:text.split("\n"),cursor:{line:0,col:0},top:0,modified:false}; }
-
-const state = {
-  metrics:{charW:7.9,lineH:19,fontPx:13,gutterW:46},
-  menubar:[
-    {label:"File",items:[["New File","Cmd N"],["Open…","Cmd O"],null,["Save","Cmd S"],["Close Tab","Cmd W"]]},
-    {label:"Edit",items:[["Undo","Cmd Z"],["Redo","Cmd ⇧ Z"],null,["Cut","Cmd X"],["Copy","Cmd C"],["Paste","Cmd V"]]},
-    {label:"Selection",items:[["Select All","Cmd A"],["Expand",""]]},
-    {label:"View",items:[["Command Palette","Cmd P"],["Split Right",""],["Toggle Status",""]]},
-    {label:"Go",items:[["Go to Line","Cmd G"],["Next Tab","Cmd ⇥"]]},
-    {label:"Help",items:[["About Fresh",""]]},
-  ],
-  buffers:{
-    1:buf(1,"chrome_snapshot.rs",
-`// Fresh web UI — chrome as DOM/CSS, text as SVG <text>
-// Type here: arrows, Backspace, Enter, Home/End all work.
-
-pub fn chrome_snapshot(&self) -> ChromeSnapshot {
-    let root = self.split_manager().root();
-    let label = "buffer";
-    ChromeSnapshot { menubar, split_layout, tabs }
-}`),
-    2:buf(2,"app.js",
-`function render(){
-    const app = document.getElementById("app");
-    app.innerHTML = renderChrome(state);
+function render(){
+  if(!view){document.getElementById("app").textContent="connecting to editor…";return;}
+  const ch=view.chrome;
+  let h=`<nav class="menubar" role="menubar">`;
+  (ch.menubar||[]).forEach((label,i)=>{h+=`<button class="menu" data-menu="${i}">${esc(label)}</button>`;});
+  h+=`</nav><main class="workspace">${renderNode(ch.split_layout)}</main>`;
+  const ab=view.buffers[String(view.active)];
+  h+=`<footer class="statusbar"><span>${esc(ab?ab.name:"")}</span>`+
+     `<span>buffer#${view.active} · ${ab?ab.lineCount:0} lines · live · real Editor (handle_key)</span></footer>`;
+  document.getElementById("app").innerHTML=h;
 }
-// click a tab above, or drag the divider →`),
-    3:buf(3,"README.md",
-`# Fresh (web)
-A modern, non-terminal UI prototype.
 
-- DOM/CSS chrome, SVG text body
-- press Cmd/Ctrl+P for the command palette`),
-  },
-  // Split tree: left = buffer 1, right column = buffer 2 over buffer 3.
-  tree:{type:"split",dir:"vertical",ratio:.55,
-        first:{type:"leaf",buffer:1},
-        second:{type:"split",dir:"horizontal",ratio:.6,
-                first:{type:"leaf",buffer:2},
-                second:{type:"leaf",buffer:3}}},
-  activeBuffer:1,
-  overlay:null, // {kind:"palette", query, items, sel}
-  openMenu:null, // menu index
-};
-
-// ---------------------------------------------------------------------------
-// Rendering: ChromeSnapshot(state) -> DOM/CSS + SVG. Mirrors chrome_html.rs.
-// ---------------------------------------------------------------------------
-const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-
-function renderChrome(){
-  let h = `<nav class="menubar" role="menubar">`;
-  state.menubar.forEach((m,i)=>{ h += `<button class="menu${state.openMenu===i?' open':''}" data-menu="${i}">${esc(m.label)}</button>`; });
-  if(state.openMenu!=null){
-    const m = state.menubar[state.openMenu];
-    h += `<div class="menu-dropdown" style="left:${state.openMenu*54+4}px">`;
-    m.items.forEach(it=>{ h += it? `<div class="menu-item" data-cmd="${esc(it[0])}"><span>${esc(it[0])}</span><span class="key">${esc(it[1])}</span></div>` : `<div class="menu-sep"></div>`; });
-    h += `</div>`;
+function renderNode(node){
+  if(!node) return "";
+  if(node.Leaf) return renderPane(node.Leaf.buffer_id);
+  if(node.Grouped) return renderNode(node.Grouped.layout);
+  if(node.Split){
+    const sp=node.Split, a=Math.round(sp.ratio*100), b=100-a;
+    const vert=sp.direction==="Vertical";
+    const cls=vert?"split vertical":"split horizontal";
+    const style=vert?`grid-template-columns:${a}fr 6px ${b}fr`:`grid-template-rows:${a}fr 6px ${b}fr`;
+    const dcls=vert?"divider vertical":"divider horizontal";
+    return `<div class="${cls}" style="${style}">${renderNode(sp.first)}<div class="${dcls}"></div>${renderNode(sp.second)}</div>`;
   }
-  h += `</nav><main class="workspace">${renderNode(state.tree)}</main>`;
-  const ab = state.buffers[state.activeBuffer];
-  h += `<footer class="statusbar"><span>${esc(ab?ab.name:"")}${ab&&ab.modified?" ●":""}</span>`+
-       `<span>Ln ${ab?ab.cursor.line+1:0}, Col ${ab?ab.cursor.col+1:0} · UTF-8 · Rust · web-ui prototype</span></footer>`;
-  if(state.overlay && state.overlay.kind==="palette") h += renderPalette();
-  return h;
-}
-function renderNode(n){
-  if(n.type==="leaf") return renderPane(n.buffer);
-  const a=Math.round(n.ratio*100), b=100-a;
-  const cls = n.dir==="vertical"?"split vertical":"split horizontal";
-  const style = n.dir==="vertical"?`grid-template-columns:${a}fr 6px ${b}fr`:`grid-template-rows:${a}fr 6px ${b}fr`;
-  const dcls = n.dir==="vertical"?"divider vertical":"divider horizontal";
-  return `<div class="${cls}" style="${style}">${renderNode(n.first)}`+
-         `<div class="${dcls}" data-divider="${n.id}"></div>${renderNode(n.second)}</div>`;
+  return "";
 }
 function renderPane(bid){
-  const b=state.buffers[bid]; const active = bid===state.activeBuffer;
-  let h = `<section class="pane${active?' active':''}" data-pane="${bid}">`;
-  h += `<div class="tabbar" role="tablist"><div class="tab${active?' active':''}" data-buffer="${bid}">`+
-       `<span class="tab-label">${esc(b.name)}${b.modified?" ●":""}</span>`+
-       `<span class="tab-close" data-close="${bid}">×</span></div></div>`;
-  h += `<div class="content" data-content="${bid}">${renderText(b,active)}</div></section>`;
-  return h;
-}
-function renderText(b,active){
-  const {charW,lineH,gutterW}=state.metrics;
-  let s = `<svg class="textbody" data-svg="${b.id}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet" font-size="${state.metrics.fontPx}">`;
+  const b=view.buffers[String(bid)]||{name:"buffer#"+bid,lines:[]};
+  const active=bid===view.active;
+  let h=`<section class="pane${active?' active':''}" data-pane="${bid}">`;
+  h+=`<div class="tabbar" role="tablist"><div class="tab${active?' active':''}" data-buffer="${bid}"><span class="tab-label">${esc(b.name)}</span></div></div>`;
+  h+=`<div class="content"><svg class="textbody" data-svg="${bid}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet" height="${Math.max(1,b.lines.length)*19}">`;
+  const gw=46;
   for(let i=0;i<b.lines.length;i++){
-    const y=(i+1)*lineH - lineH*0.28;
-    s += `<text class="gutter" x="${gutterW-10}" y="${y.toFixed(1)}" text-anchor="end">${i+1}</text>`;
-    s += `<text x="${gutterW}" y="${y.toFixed(1)}" xml:space="preserve">`;
-    let col=0; for(const r of highlight(b.lines[i])){ const x=gutterW+col*charW; s+=`<tspan x="${x.toFixed(1)}" fill="${r.color}">${esc(r.text)}</tspan>`; col+=r.text.length; }
-    s += `</text>`;
+    const y=(i+1)*19-5;
+    h+=`<text class="gutter" x="${gw-10}" y="${y}" text-anchor="end">${i+1}</text><text x="${gw}" y="${y}" xml:space="preserve">`;
+    let col=0;for(const r of highlight(b.lines[i])){const x=gw+col*7.9;h+=`<tspan x="${x.toFixed(1)}" fill="${r.c}">${esc(r.t)}</tspan>`;col+=r.t.length;}
+    h+=`</text>`;
   }
-  if(active){ // caret
-    const cx=gutterW + b.cursor.col*charW;
-    const cy=b.cursor.line*lineH + 3;
-    s += `<line class="caret" x1="${cx.toFixed(1)}" y1="${cy}" x2="${cx.toFixed(1)}" y2="${(cy+lineH-5)}"/>`;
-  }
-  s += `</svg>`;
-  return s;
-}
-function renderPalette(){
-  const o=state.overlay;
-  let h=`<div class="scrim" data-scrim="1"><div class="palette"><input id="pal-input" placeholder="Go to file or run a command…" value="${esc(o.query)}" autofocus><ul>`;
-  o.items.forEach((it,i)=>{ h+=`<li class="${i===o.sel?'sel':''}" data-pick="${i}"><span>${esc(it.label)}</span><span class="hint">${esc(it.hint)}</span></li>`; });
-  h+=`</ul></div></div>`;
+  h+=`</svg></div></section>`;
   return h;
 }
 
-// ---------------------------------------------------------------------------
-// Backend seam. Mock now; Tauri later (window.__TAURI__.invoke / event listen).
-// ---------------------------------------------------------------------------
-const Backend = {
-  mode: (typeof window!=="undefined" && window.__TAURI__) ? "tauri" : "mock",
-  // The UI sends normalized chrome/input events here.
-  send(ev){
-    if(this.mode==="tauri"){ window.__TAURI__.invoke("apply_event",{event:ev}); return; }
-    Mock.apply(ev); render();
-  },
-};
+// --- bridge to the real editor ---
+async function refresh(){ const r=await fetch("/state"); view=await r.json(); render(); }
+async function sendKey(desc){
+  try{ const r=await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(desc)});
+       view=await r.json(); render(); }
+  catch(e){ showErr("key send failed: "+e); }
+}
+function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
 
-// ---------------------------------------------------------------------------
-// Mock core: applies events to the in-browser model (stand-in for Rust core).
-// ---------------------------------------------------------------------------
-const Mock = {
-  apply(ev){
-    const b=state.buffers[state.activeBuffer];
-    switch(ev.t){
-      case "SelectTab": state.activeBuffer=ev.buffer; break;
-      case "CloseTab": closeBuffer(ev.buffer); break;
-      case "FocusPane": state.activeBuffer=ev.buffer; break;
-      case "OpenMenu": state.openMenu = (state.openMenu===ev.index?null:ev.index); break;
-      case "RunCommand": runCommand(ev.cmd); break;
-      case "DragDivider": setRatio(ev.id, ev.ratio); break;
-      case "MoveCursor": setCursor(b, ev.line, ev.col); break;
-      case "Key": editKey(b, ev.key); break;
-      case "OpenPalette": openPalette(); break;
-      case "PaletteQuery": state.overlay.query=ev.q; refreshPalette(); break;
-      case "PaletteMove": if(state.overlay) state.overlay.sel=Math.max(0,Math.min(state.overlay.items.length-1,state.overlay.sel+ev.d)); break;
-      case "PalettePick": palettePick(ev.index); break;
-      case "Escape": state.overlay=null; state.openMenu=null; break;
-    }
-  }
-};
-
-// --- editing primitives on the mock buffer ---
-function clampCursor(b){ b.cursor.line=Math.max(0,Math.min(b.lines.length-1,b.cursor.line)); b.cursor.col=Math.max(0,Math.min(b.lines[b.cursor.line].length,b.cursor.col)); }
-function setCursor(b,line,col){ b.cursor.line=line; b.cursor.col=col; clampCursor(b); }
-function editKey(b,key){
-  const c=b.cursor; const line=b.lines[c.line];
-  if(key==="ArrowLeft"){ if(c.col>0)c.col--; else if(c.line>0){c.line--;c.col=b.lines[c.line].length;} }
-  else if(key==="ArrowRight"){ if(c.col<line.length)c.col++; else if(c.line<b.lines.length-1){c.line++;c.col=0;} }
-  else if(key==="ArrowUp"){ if(c.line>0){c.line--;c.col=Math.min(c.col,b.lines[c.line].length);} }
-  else if(key==="ArrowDown"){ if(c.line<b.lines.length-1){c.line++;c.col=Math.min(c.col,b.lines[c.line].length);} }
-  else if(key==="Home"){ c.col=0; }
-  else if(key==="End"){ c.col=line.length; }
-  else if(key==="Backspace"){
-    if(c.col>0){ b.lines[c.line]=line.slice(0,c.col-1)+line.slice(c.col); c.col--; b.modified=true; }
-    else if(c.line>0){ const prev=b.lines[c.line-1]; c.col=prev.length; b.lines[c.line-1]=prev+line; b.lines.splice(c.line,1); c.line--; b.modified=true; }
-  }
-  else if(key==="Delete"){
-    if(c.col<line.length){ b.lines[c.line]=line.slice(0,c.col)+line.slice(c.col+1); b.modified=true; }
-    else if(c.line<b.lines.length-1){ b.lines[c.line]=line+b.lines[c.line+1]; b.lines.splice(c.line+1,1); b.modified=true; }
-  }
-  else if(key==="Enter"){ b.lines.splice(c.line+1,0,line.slice(c.col)); b.lines[c.line]=line.slice(0,c.col); c.line++; c.col=0; b.modified=true; }
-  else if(key.length===1){ b.lines[c.line]=line.slice(0,c.col)+key+line.slice(c.col); c.col++; b.modified=true; }
-  clampCursor(b);
-}
-function closeBuffer(id){
-  delete state.buffers[id];
-  pruneTree(id);
-  const ids=Object.keys(state.buffers).map(Number);
-  if(state.activeBuffer===id) state.activeBuffer = ids[0]||0;
-}
-function pruneTree(id){ // collapse any leaf showing a closed buffer
-  function walk(n){
-    if(n.type==="leaf") return n.buffer===id?null:n;
-    n.first=walk(n.first); n.second=walk(n.second);
-    if(!n.first) return n.second; if(!n.second) return n.first; return n;
-  }
-  state.tree = walk(state.tree) || {type:"leaf",buffer:Object.keys(state.buffers).map(Number)[0]||0};
-}
-function setRatio(id,r){ // find split by id and set ratio
-  function walk(n){ if(n.type!=="split")return; if(n.id===id){n.ratio=Math.max(.1,Math.min(.9,r));return;} walk(n.first); walk(n.second);} walk(state.tree);
-}
-// Command palette
-function paletteItems(q){
-  const items=[];
-  for(const id in state.buffers) items.push({label:state.buffers[id].name,hint:"buffer",action:()=>{state.activeBuffer=Number(id);}});
-  [["Split Right",()=>splitActive("vertical")],["Split Down",()=>splitActive("horizontal")],
-   ["New File",()=>newBuffer()],["About Fresh",()=>toast("Fresh — web UI prototype")]]
-   .forEach(([label,action])=>items.push({label,hint:"command",action}));
-  q=q.toLowerCase();
-  return q? items.filter(it=>it.label.toLowerCase().includes(q)) : items;
-}
-function openPalette(){ state.overlay={kind:"palette",query:"",sel:0,items:paletteItems("")}; }
-function refreshPalette(){ state.overlay.items=paletteItems(state.overlay.query); state.overlay.sel=0; }
-function palettePick(i){ const it=state.overlay.items[i]; state.overlay=null; if(it) it.action(); }
-function runCommand(cmd){
-  state.openMenu=null;
-  if(cmd==="Command Palette") return openPalette();
-  if(cmd==="Close Tab") return closeBuffer(state.activeBuffer);
-  if(cmd==="Split Right") return splitActive("vertical");
-  if(cmd==="New File") return newBuffer();
-  if(cmd==="Save"){ const b=state.buffers[state.activeBuffer]; if(b)b.modified=false; return toast("Saved "+(b?b.name:"")); }
-  toast(cmd);
-}
-let nextId=100, nextSplit=1;
-function newBuffer(){ const id=nextId++; state.buffers[id]=buf(id,"untitled-"+id,""); state.activeBuffer=id; replaceActiveLeaf({type:"leaf",buffer:id}); }
-function splitActive(dir){
-  const id=nextId++; state.buffers[id]=buf(id,"untitled-"+id,"");
-  replaceActiveLeaf({type:"split",dir,ratio:.5,id:nextSplit++,
-     first:{type:"leaf",buffer:state.activeBuffer},second:{type:"leaf",buffer:id}});
-  state.activeBuffer=id;
-}
-function replaceActiveLeaf(node){
-  function walk(n){ if(n.type==="leaf") return n.buffer===state.activeBuffer?node:n; n.first=walk(n.first); n.second=walk(n.second); return n; }
-  state.tree=walk(state.tree);
-}
-function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("show"),1600); }
-// give split nodes ids for divider dragging
-(function idSplits(n){ if(n.type==="split"){ if(n.id==null)n.id=nextSplit++; idSplits(n.first); idSplits(n.second);} })(state.tree);
-
-// ---------------------------------------------------------------------------
-// Render + event wiring (event delegation so re-render keeps handlers)
-// ---------------------------------------------------------------------------
-function render(){
-  document.getElementById("app").innerHTML = renderChrome();
-  if(state.overlay && state.overlay.kind==="palette"){ const inp=document.getElementById("pal-input"); if(inp){ inp.focus(); inp.setSelectionRange(inp.value.length,inp.value.length);} }
-}
-
-function paneOfTarget(el){ const p=el.closest && el.closest("[data-pane]"); return p?Number(p.getAttribute("data-pane")):null; }
-
-document.addEventListener("mousedown",e=>{
-  const t=e.target;
-  if(t.dataset && t.dataset.divider!=null){ startDividerDrag(Number(t.dataset.divider),t.closest(".split"),e); e.preventDefault(); return; }
-  if(t.dataset && t.dataset.close!=null){ Backend.send({t:"CloseTab",buffer:Number(t.dataset.close)}); e.stopPropagation(); return; }
-  if(t.dataset && t.dataset.menu!=null){ Backend.send({t:"OpenMenu",index:Number(t.dataset.menu)}); return; }
-  const mi=t.closest && t.closest(".menu-item"); if(mi){ Backend.send({t:"RunCommand",cmd:mi.getAttribute("data-cmd")}); return; }
-  const tab=t.closest && t.closest(".tab"); if(tab){ Backend.send({t:"SelectTab",buffer:Number(tab.getAttribute("data-buffer"))}); return; }
-  const pick=t.closest && t.closest("[data-pick]"); if(pick){ Backend.send({t:"PalettePick",index:Number(pick.getAttribute("data-pick"))}); return; }
-  if(t.dataset && t.dataset.scrim!=null && t===e.currentTarget===false && t.classList.contains("scrim")){ Backend.send({t:"Escape"}); return; }
-  // click inside a pane's text → focus pane + place caret
-  const content=t.closest && t.closest("[data-content]");
-  if(content){
-    const bid=Number(content.getAttribute("data-content"));
-    if(bid!==state.activeBuffer) Backend.send({t:"FocusPane",buffer:bid});
-    placeCaretFromClick(bid,content,e);
-    return;
-  }
-  if(state.openMenu!=null){ state.openMenu=null; render(); }
-});
-
-function placeCaretFromClick(bid,content,e){
-  const b=state.buffers[bid]; if(!b) return;
-  const r=content.getBoundingClientRect();
-  const {charW,lineH,gutterW}=state.metrics;
-  const y=e.clientY-r.top + (b.top||0);
-  const x=e.clientX-r.left;
-  const line=Math.max(0,Math.min(b.lines.length-1,Math.floor(y/lineH)));
-  const col=Math.max(0,Math.min(b.lines[line].length,Math.round((x-gutterW)/charW)));
-  Backend.send({t:"MoveCursor",line,col});
-}
-
-function startDividerDrag(id,splitEl,e){
-  const vertical = splitEl.classList.contains("vertical");
-  const r=splitEl.getBoundingClientRect();
-  function move(ev){
-    const ratio = vertical ? (ev.clientX-r.left)/r.width : (ev.clientY-r.top)/r.height;
-    Backend.send({t:"DragDivider",id,ratio});
-  }
-  function up(){ document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up); }
-  document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
-}
-
-document.addEventListener("input",e=>{ if(e.target.id==="pal-input") Backend.send({t:"PaletteQuery",q:e.target.value}); });
-document.addEventListener("wheel",e=>{
-  const content=e.target.closest && e.target.closest("[data-content]"); if(!content) return;
-  const b=state.buffers[Number(content.getAttribute("data-content"))]; if(!b) return;
-  b.top=Math.max(0,(b.top||0)+e.deltaY); render(); // (prototype: re-render; real path scrolls the SVG viewport)
-},{passive:true});
-
+const NAMED=new Set(["Enter","Backspace","Delete","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
-  // Command palette toggle.
-  if((e.metaKey||e.ctrlKey) && (e.key==="p"||e.key==="P")){ e.preventDefault(); Backend.send(state.overlay?{t:"Escape"}:{t:"OpenPalette"}); return; }
-  if(state.overlay && state.overlay.kind==="palette"){
-    if(e.key==="Escape"){ e.preventDefault(); Backend.send({t:"Escape"}); }
-    else if(e.key==="ArrowDown"){ e.preventDefault(); Backend.send({t:"PaletteMove",d:1}); }
-    else if(e.key==="ArrowUp"){ e.preventDefault(); Backend.send({t:"PaletteMove",d:-1}); }
-    else if(e.key==="Enter"){ e.preventDefault(); Backend.send({t:"PalettePick",index:state.overlay.sel}); }
-    return;
+  const printable = e.key.length===1 && !e.ctrlKey && !e.metaKey;
+  if(printable || NAMED.has(e.key)){
+    e.preventDefault();
+    sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey});
   }
-  if(state.openMenu!=null && e.key==="Escape"){ Backend.send({t:"Escape"}); return; }
-  // Menu accelerators.
-  if((e.metaKey||e.ctrlKey)){
-    if(e.key==="s"||e.key==="S"){ e.preventDefault(); return Backend.send({t:"RunCommand",cmd:"Save"}); }
-    if(e.key==="w"||e.key==="W"){ e.preventDefault(); return Backend.send({t:"CloseTab",buffer:state.activeBuffer}); }
-    if(e.key==="n"||e.key==="N"){ e.preventDefault(); return Backend.send({t:"RunCommand",cmd:"New File"}); }
-    return; // leave other shortcuts to the browser
-  }
-  // Plain editing keys → active buffer.
-  const editing=["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","Backspace","Delete","Enter"];
-  if(editing.includes(e.key) || e.key.length===1){ e.preventDefault(); Backend.send({t:"Key",key:e.key}); }
 });
 
-// Debug/testing hook: expose the model so headless drivers (Playwright) can assert.
-window.fresh = { state, Backend, render };
-
-render();
+// expose for headless drivers / debugging
+window.fresh = { get view(){return view;}, refresh, sendKey };
+refresh();
 </script>
 </body>
 </html>

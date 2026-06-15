@@ -47,6 +47,10 @@ pub mod client;
 #[cfg(feature = "runtime")]
 pub mod server;
 
+// Local HTTP bridge hosting the real Editor for the web UI frontend (no mocks).
+#[cfg(feature = "runtime")]
+pub mod webui;
+
 // View module - available for runtime, WASM, and dev-bins (schema generation)
 // Most submodules are runtime-only, but theme types are always available
 #[cfg(any(feature = "runtime", feature = "wasm", feature = "dev-bins"))]
