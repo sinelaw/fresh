@@ -630,6 +630,12 @@ fn test_split_with_minimal_height() {
 fn test_clipboard_shared_across_splits() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
 
+    // Use the internal-only clipboard so copy/paste doesn't read or write the
+    // host's real clipboard. Besides keeping the test parallel-safe in CI, this
+    // makes paste fully synchronous (Ctrl+V otherwise races a background arboard
+    // read against a timer), which is what made this test flaky.
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
     // Type and select text in first buffer
     harness.type_text("CopyThis").unwrap();
     // Select all

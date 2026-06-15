@@ -13,6 +13,12 @@ fn send_text(harness: &mut EditorTestHarness, text: &str) {
 fn test_settings_paste() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
+    // Isolate from the host clipboard: the Ctrl+C below writes the copied
+    // text to the internal clipboard and the later Ctrl+V reads it back from
+    // there, so the copy/paste round-trip can't be corrupted by (or corrupt)
+    // a parallel test sharing the real OS clipboard.
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
     // Set clipboard content to "rust"
     send_text(&mut harness, "rust");
     harness
