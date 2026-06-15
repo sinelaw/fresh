@@ -71,6 +71,24 @@
   .statusbar .seg{padding:0 8px;border-radius:3px;cursor:default}
   .statusbar .seg:hover{background:rgba(255,255,255,.18)}
 
+  /* ---- command palette / picker (native) ---- */
+  .palette{position:absolute;z-index:90;display:flex;flex-direction:column;
+    background:#2b2b2b;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);overflow:hidden}
+  .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid #3a3a3a;background:#1f1f1f}
+  .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+  .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
+  .palette .pinput .status{color:var(--muted);font-size:11px}
+  .palette .pinput .count{color:var(--muted);font-size:11px}
+  .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
+  .palette .prow{display:flex;align-items:center;gap:10px;padding:3px 12px;cursor:default;color:var(--fg)}
+  .palette .prow.sel{background:var(--menuhi);color:#fff}
+  .palette .prow.disabled{color:#6a6a6a}
+  .palette .prow .ptext{flex:0 0 auto}
+  .palette .prow .pdesc{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette .prow.sel .pdesc{color:#dfe8ff}
+  .palette .prow .pkey{color:var(--muted);font-size:11px;border:1px solid #555;border-radius:3px;padding:0 5px}
+  .palette .prow.sel .pkey{color:#fff;border-color:#9bbcf0}
+  .palette .ptitle{padding:6px 12px;color:var(--muted);font-size:11px;border-bottom:1px solid #3a3a3a}
   .fileexplorer{background:var(--bg2);border-right:1px solid var(--border)}
   .pane-content{background:var(--bg)}
   .separator{background:var(--border)}
@@ -174,10 +192,13 @@ function render(){
   // native status bar
   if(reg.statusbar) app.appendChild(statusBarEl(reg.statusbar));
 
-  // non-menu overlays (popups, command palette) still drawn from real cells
+  // misc popups/dialogs still drawn from real cells
   for(const o of (reg.overlays||[])){
     const d=div("overlay"); place(d,o.rect); d.innerHTML=cellsSvg(o.cells, o.rect.w); app.appendChild(d);
   }
+
+  // native command palette / picker (semantic; routes back to the real editor)
+  if(reg.palette) app.appendChild(paletteEl(reg.palette));
 
   // live caret from the pipeline's real cursor cell (if inside a pane)
   if(reg.cursor){
@@ -293,6 +314,52 @@ function tabBarEl(p){
   return bar;
 }
 
+// ---- native command palette / picker ------------------------------------
+// The editor owns the query, the filtered suggestions, the selection and the
+// scroll window; we render them natively and forward row clicks / wheel back
+// through handle_mouse at the pipeline's list cell rect so it stays in sync.
+function paletteEl(p){
+  const list = p.listRect || p.outerRect;
+  const el=div("palette");
+  // Position the card on the list rect, with the input bar stacked above it so
+  // it reads as one VSCode-style palette. (Clicks use the list cell rect below.)
+  const inputH=34, w=Math.max(360, list?px(list.w,CW):420);
+  const left = list?px(list.x,CW):(window.innerWidth-w)/2;
+  const top  = list?Math.max(4, px(list.y,CH)-inputH):80;
+  el.style.left=left+"px"; el.style.top=top+"px"; el.style.width=w+"px";
+
+  if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
+  // input bar (query + status + count)
+  const bar=div("pinput");
+  const q=document.createElement("span"); q.className="q";
+  q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
+  bar.appendChild(q);
+  if(p.status){ const st=document.createElement("span"); st.className="status"; st.textContent=p.status; bar.appendChild(st); }
+  const cnt=document.createElement("span"); cnt.className="count";
+  cnt.textContent=(p.total!=null)?((p.selected!=null?p.selected+1:0)+" / "+p.total):"";
+  bar.appendChild(cnt);
+  el.appendChild(bar);
+
+  // results list — render the editor's visible window so rows map 1:1 to cells
+  const listBox=div("plist");
+  const start=p.scrollStart||0, n=p.visibleCount||p.suggestions.length;
+  for(let j=0;j<n;j++){
+    const idx=start+j; const s=p.suggestions[idx]; if(!s) break;
+    const row=div("prow"+(idx===p.selected?" sel":"")+(s.disabled?" disabled":""));
+    const tx=document.createElement("span"); tx.className="ptext"; tx.textContent=s.text; row.appendChild(tx);
+    const ds=document.createElement("span"); ds.className="pdesc"; ds.textContent=s.description||""; row.appendChild(ds);
+    if(s.keybinding){ const k=document.createElement("span"); k.className="pkey"; k.textContent=s.keybinding; row.appendChild(k); }
+    if(list){ const cell={col:list.x+1,row:list.y+j};
+      row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); }; }
+    listBox.appendChild(row);
+  }
+  // wheel over the list scrolls the editor's suggestion window
+  if(list){ listBox.addEventListener("wheel",e=>{ e.stopPropagation();
+    sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:list.x+1,row:list.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true}); }
+  el.appendChild(listBox);
+  return el;
+}
+
 // ---- native status bar --------------------------------------------------
 function statusBarEl(sb){
   const bar=div("region statusbar"); place(bar,sb.rect);
@@ -318,8 +385,10 @@ function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
-  const printable=e.key.length===1 && !e.ctrlKey && !e.metaKey;
-  if(printable||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
+  // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
+  // shortcuts reach the editor) and the named navigation/edit keys.
+  const single=e.key.length===1;
+  if(single||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
 });
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
@@ -330,7 +399,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

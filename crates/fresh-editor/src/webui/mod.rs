@@ -311,16 +311,31 @@ fn menu_item_json(editor: &Editor, item: &fresh_core::menu::MenuItem) -> Value {
     }
 }
 
+/// Short tag for a prompt type, so the frontend can label the palette/picker.
+fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
+    use crate::view::prompt::PromptType::*;
+    match t {
+        QuickOpen => "quickopen",
+        LiveGrep => "livegrep",
+        Search | ReplaceSearch | QueryReplaceSearch => "search",
+        OpenFile | OpenFileWithEncoding { .. } => "openfile",
+        SaveFileAs => "saveas",
+        GotoLine | GotoByteOffset => "goto",
+        _ => "input",
+    }
+}
+
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let (buf, cursor) = render_to_buffer(editor, cols, rows);
     let w = buf.area.width;
     let h = buf.area.height;
 
-    // Overlays (menu dropdown, popups, command palette) — the pipeline already
-    // drew them into the cells and recorded their rects on ChromeLayout; we emit
-    // rect + cells so the frontend draws each as a floating UI element.
-    // NOTE: the menu dropdown is NOT included here — it is emitted as a
-    // *semantic* model below and rendered as native UI, not cells.
+    // Overlays (misc popups/dialogs) — the pipeline already drew them into the
+    // cells and recorded their rects on ChromeLayout; we emit rect + cells so the
+    // frontend draws each as a floating UI element.
+    // NOTE: neither the menu dropdown NOR the command palette / picker are
+    // included here — both are emitted as *semantic* models below and rendered
+    // as native UI, not cells.
     let chrome = editor.active_chrome();
     let mut overlay_rects: Vec<Rect> = Vec::new();
     for p in &chrome.popup_areas {
@@ -328,9 +343,6 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     }
     for g in &chrome.global_popup_areas {
         overlay_rects.push(g.1);
-    }
-    if let Some(r) = chrome.suggestions_outer_area {
-        overlay_rects.push(r);
     }
     let overlays: Vec<Value> = overlay_rects
         .iter()
@@ -508,6 +520,53 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
     });
 
+    // Semantic command palette / picker. The pipeline records the popup
+    // geometry; the editor's prompt holds the query + filtered suggestions +
+    // selection. We emit a semantic model rendered as native HTML (no cells) and
+    // route clicks back through handle_mouse at the pipeline's list cell rect so
+    // selection/confirm stay authoritative. Only emit it for prompts that show a
+    // picker list (or a floating overlay) — bottom-row text prompts are skipped.
+    let sugg_outer = chrome.suggestions_outer_area;
+    let sugg_area = chrome.suggestions_area;
+    let prompt_results = chrome.prompt_results_area;
+    let palette = editor.active_window().prompt.as_ref().and_then(|p| {
+        if p.suggestions.is_empty() && !p.overlay {
+            return None;
+        }
+        let suggestions: Vec<Value> = p
+            .suggestions
+            .iter()
+            .map(|s| {
+                json!({
+                    "text": s.text,
+                    "description": s.description,
+                    "keybinding": s.keybinding,
+                    "disabled": s.disabled,
+                })
+            })
+            .collect();
+        let title: String = p.title.iter().map(|t| t.text.as_str()).collect();
+        let list_rect = sugg_area.map(|(r, _, _, _)| r).or(prompt_results);
+        let (scroll_start, visible, total) = sugg_area
+            .map(|(_, s, v, t)| (s, v, t))
+            .unwrap_or((p.scroll_offset, p.suggestions.len(), p.suggestions.len()));
+        Some(json!({
+            "query": p.input,
+            "message": p.message,
+            "promptType": prompt_type_tag(&p.prompt_type),
+            "overlay": p.overlay,
+            "title": title,
+            "status": p.status,
+            "selected": p.selected_suggestion,
+            "scrollStart": scroll_start,
+            "visibleCount": visible,
+            "total": total,
+            "outerRect": sugg_outer.map(rect_json),
+            "listRect": list_rect.map(rect_json),
+            "suggestions": suggestions,
+        }))
+    });
+
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
         "menus": menus,
@@ -520,6 +579,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "panes": panes,
         "separators": separators,
         "overlays": overlays,
+        "palette": palette,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
     });
 

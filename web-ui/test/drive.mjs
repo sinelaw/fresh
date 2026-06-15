@@ -55,6 +55,23 @@ check('NO cells/svg inside the dropdown', (await page.locator('.dropdown svg').c
 await page.screenshot({ path: `${SHOTS}/22-native-menu.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
+console.log('\n[command palette = native HTML from the prompt model]');
+await page.locator('body').click();      // focus the page so Ctrl+P reaches the editor
+await page.keyboard.press('Control+p');
+await page.waitForTimeout(300);
+const sp = await scene(page);
+check('editor opened the picker (palette in scene)', !!sp.regions.palette, 'no palette');
+check('palette rendered as native .palette card', (await page.locator('.palette').count()) >= 1);
+check('palette has native rows (.prow)', (await page.locator('.palette .prow').count()) >= 1);
+check('NO svg/cells inside the palette', (await page.locator('.palette svg').count()) === 0);
+await page.screenshot({ path: `${SHOTS}/23-native-palette.png` });
+await page.keyboard.type('split');
+await page.waitForTimeout(300);
+const sp2 = await scene(page);
+check('typing filtered the real suggestion list', sp2.regions.palette && sp2.regions.palette.total < sp.regions.palette.total, `before=${sp.regions.palette.total} after=${sp2.regions.palette && sp2.regions.palette.total}`);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+check('Escape closed the palette', !(await scene(page)).regions.palette);
+
 console.log('\n[edit through the real pipeline]');
 await page.mouse.click(300, 300);
 await page.keyboard.type('QWZX');
