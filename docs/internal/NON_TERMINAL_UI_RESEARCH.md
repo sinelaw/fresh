@@ -399,6 +399,52 @@ This lets a modern frontend render chrome natively immediately (the high-visibil
 while the text body can stay cell-grid until Phase 3 swaps in a real GPU text surface — all
 without disturbing the terminal product and without serialization on the hot path.
 
+### 4.1 Worked example: splits and tabs
+
+Splits and tabs are the clearest concrete case of the grid-vs-semantic decision, and the
+reason to prefer the Neovim-style hybrid over a flat `Backend`-level swap — a flat cell-grid
+backend can *never* give native draggable tabs or per-pane fonts. Neovim already solved exactly
+this with two dedicated extensions (`ext_tabline`, `ext_multigrid`); the design maps 1:1.
+
+**Today in Fresh:** tabs are a 1-row cell tab bar per split (`view/ui/tabs.rs`; tab/buffer
+state in `app/buffer_management.rs`, `buffer_groups.rs`). Splits are a tree of regions, each a
+**sub-rectangle of the single grid** (`view/ui/split_rendering/`), with line-wrap at the
+region's cell width and per-pane focus tracked in `app/active_focus.rs` (active buffer per
+split, LRU). The terminal renders this fine and `fresh-gui` already shows it in a GPU
+window — it just isn't modern.
+
+**Tabs → `ext_tabline`.** Emit a semantic `Tabline { tabs: [{title, modified, icon,
+buffer_id}], active }` (Neovim's `tabline_update`). The terminal lowers it to today's cell tab
+bar unchanged; a GUI draws **native tabs** — close buttons, drag-to-reorder, overflow menu,
+middle-click-close, file-type icons. The core stays the source of truth for order/active/buffer;
+the backend owns pixel chrome and reports "clicked/closed/reordered/dragged tab X" via the
+normalized input vocabulary. **A cheap Phase-2 win** — high visual payoff, zero change to the
+text body.
+
+**Splits → `ext_multigrid`.** Instead of one grid with sub-rects, each pane gets its **own
+grid/surface** the backend positions (`win_pos`). The core keeps the *logical* split tree
+(which buffer is where, focus); the backend owns pixel geometry. This is what unlocks the
+things a single shared grid **cannot** do: pixel-precise **smooth draggable dividers** (not
+cell-snapped), **per-pane independent font size/zoom**, native per-pane scrollbars + smooth
+scroll, and **tear-off** a pane into a separate OS window (the daemon's existing `OpenWindow`
+capability is the hook). This is a Phase-3 change, landing alongside the modern text body.
+
+**Two complications splits/tabs force (both already in §5):**
+1. **Hit-testing must become pane-relative.** Today mouse events are global `(col,row)`. With
+   proportional fonts + multigrid, the *backend* must resolve pixel → `(pane/grid id, logical
+   position)`, so the seam's mouse event carries a **pane/grid id + logical position**, not a
+   global cell coordinate (exactly Neovim's `nvim_input_mouse(button, action, grid, row,
+   col)`). Focus stays core-owned (`FocusManager`); the backend translates native pane/window
+   focus into "focus pane X".
+2. **Per-pane wrap is the xi resize-race in miniature.** Each pane's wrap width becomes a
+   pixel measurement (pane width + font metrics). xi flagged word-wrap-during-resize across an
+   async boundary as a tearing source — the concrete reason the seam stays **in-process and
+   synchronous**: GUI resizes a pane → core re-wraps that pane synchronously → no race.
+
+**Phasing:** Phase 2 — tabs go semantic (native tab bar); splits stay cell sub-rectangles (they
+render fine, just with a GPU-drawn divider). Phase 3 — splits become per-window grids, enabling
+per-pane fonts, pixel dividers, independent zoom, and tear-off.
+
 ---
 
 ## 5. Cross-cutting: input, focus, IME, accessibility
