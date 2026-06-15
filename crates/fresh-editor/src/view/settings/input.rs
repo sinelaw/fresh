@@ -482,6 +482,11 @@ impl SettingsState {
                 }
             }
             KeyCode::Enter => {
+                // Per-field [Inherit] button focused → inherit this field.
+                if self.entry_dialog_inherit_focused_field() {
+                    return InputResult::Consumed;
+                }
+
                 // Check button state first with immutable borrow
                 // Button layout: [Save, Cancel] or [Save, Cancel, Delete].
                 // Save = 0, Cancel = 1, Delete = 2 (when present).
@@ -554,6 +559,11 @@ impl SettingsState {
                 }
             }
             KeyCode::Char(' ') => {
+                // Per-field [Inherit] button focused → inherit this field.
+                if self.entry_dialog_inherit_focused_field() {
+                    return InputResult::Consumed;
+                }
+
                 // Space toggles booleans, activates dropdowns (but doesn't submit form)
                 let control_action = self.entry_dialog().and_then(|dialog| {
                     if dialog.focus_on_buttons {

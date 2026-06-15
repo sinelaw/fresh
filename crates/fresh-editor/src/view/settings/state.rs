@@ -1095,6 +1095,23 @@ impl SettingsState {
     /// read-only / non-modified / no-default fields. The dialog itself
     /// becomes dirty (user_edited = true) so the title flips to
     /// `• modified`, signalling that the parent still owes a save.
+    /// If keyboard focus is on a field's per-field `[Inherit]` button, inherit
+    /// that field and return true (so Enter/Space consume the key). This is the
+    /// discoverable, Tab-reachable counterpart to `Ctrl+R`.
+    pub fn entry_dialog_inherit_focused_field(&mut self) -> bool {
+        let Some(dialog) = self.entry_dialog_mut() else {
+            return false;
+        };
+        if dialog.focus_on_buttons || !dialog.inherit_focused {
+            return false;
+        }
+        let idx = dialog.selected_item;
+        dialog.inherit_field(idx);
+        dialog.inherit_focused = false;
+        dialog.update_focus_states();
+        true
+    }
+
     pub fn reset_focused_entry_field(&mut self) {
         let Some(dialog) = self.entry_dialog_mut() else {
             return;

@@ -3670,12 +3670,21 @@ fn render_entry_items(
         // shortcut (issue #2345). Hit-testing mirrors this geometry in
         // `handle_entry_dialog_item_click`.
         if item.nullable && !item.read_only && skip_rows == 0 && control_area.width > 0 {
+            let btn_focused = dialog.inherit_focused && dialog.selected_item == idx;
             let (text, style) = if item.is_null {
                 (
                     t!("settings.inherited_badge").to_string(),
                     Style::default()
                         .fg(theme.line_number_fg)
                         .add_modifier(Modifier::ITALIC),
+                )
+            } else if btn_focused {
+                (
+                    format!("[{}]", t!("settings.btn_inherit")),
+                    Style::default()
+                        .fg(theme.menu_hover_fg)
+                        .bg(theme.menu_hover_bg)
+                        .add_modifier(Modifier::BOLD),
                 )
             } else {
                 (

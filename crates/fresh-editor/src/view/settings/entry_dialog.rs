@@ -64,6 +64,13 @@ pub struct EntryDialogState {
     /// indicator + the Esc discard prompt without relying on a
     /// JSON-equality check that's too noisy at the schema layer.
     pub user_edited: bool,
+    /// When true, keyboard focus is on the *currently selected field's*
+    /// per-field `[Inherit]` button rather than on the field's control.
+    /// Lets users Tab onto the inherit affordance and activate it with
+    /// Enter/Space — the discoverable counterpart to `Ctrl+R`. Only ever
+    /// true for an overriding, non-composite nullable field (the ones that
+    /// render the button).
+    pub inherit_focused: bool,
 }
 
 impl EntryDialogState {
@@ -167,6 +174,7 @@ impl EntryDialogState {
             is_single_value,
             is_array_item: false,
             user_edited: false,
+            inherit_focused: false,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -245,6 +253,7 @@ impl EntryDialogState {
             is_single_value: false,
             is_array_item: true,
             user_edited: false,
+            inherit_focused: false,
         }
     }
 
@@ -451,6 +460,19 @@ impl EntryDialogState {
     /// through their internal entries and [+] Add new row before moving to the
     /// next dialog item. When at the last editable item, wraps to buttons.
     /// When on the last button, wraps back to the first editable item.
+    /// True when the field at `idx` renders a focusable per-field `[Inherit]`
+    /// button: an overriding (non-inherited), editable, non-composite nullable
+    /// field. Inherited fields show a non-interactive badge instead, and
+    /// composite controls keep their own internal sub-navigation.
+    fn item_has_inherit_stop(&self, idx: usize) -> bool {
+        self.items
+            .get(idx)
+            .map(|item| {
+                item.nullable && !item.is_null && !item.read_only && !item.control.is_composite()
+            })
+            .unwrap_or(false)
+    }
+
     pub fn focus_next(&mut self) {
         if self.editing_text {
             return;
@@ -465,15 +487,30 @@ impl EntryDialogState {
                     self.focus_on_buttons = false;
                     self.selected_item = self.first_editable_index;
                     self.sub_focus = None;
+                    self.inherit_focused = false;
                     self.init_composite_focus(true);
                 }
+            }
+        } else if self.inherit_focused {
+            // Leaving this field's [Inherit] button → next field (or buttons).
+            self.inherit_focused = false;
+            if self.selected_item + 1 < self.items.len() {
+                self.selected_item += 1;
+                self.sub_focus = None;
+                self.init_composite_focus(true);
+            } else {
+                self.focus_on_buttons = true;
+                self.focused_button = 0;
             }
         } else {
             // Try navigating within a composite control first
             let handled = self.try_composite_focus_next();
             if !handled {
-                // Composite is at its exit boundary (or not a composite) — advance to next item
-                if self.selected_item + 1 < self.items.len() {
+                // Composite at its exit boundary (or not a composite). If this
+                // field has an [Inherit] button, stop there before advancing.
+                if self.item_has_inherit_stop(self.selected_item) {
+                    self.inherit_focused = true;
+                } else if self.selected_item + 1 < self.items.len() {
                     self.selected_item += 1;
                     self.sub_focus = None;
                     self.init_composite_focus(true);
@@ -509,8 +546,13 @@ impl EntryDialogState {
                     self.selected_item = self.items.len().saturating_sub(1);
                     self.sub_focus = None;
                     self.init_composite_focus(false);
+                    // The last element of a field is its [Inherit] button.
+                    self.inherit_focused = self.item_has_inherit_stop(self.selected_item);
                 }
             }
+        } else if self.inherit_focused {
+            // From the [Inherit] button back to this field's control.
+            self.inherit_focused = false;
         } else {
             // Try navigating within a composite control first
             let handled = self.try_composite_focus_prev();
@@ -520,6 +562,9 @@ impl EntryDialogState {
                     self.selected_item -= 1;
                     self.sub_focus = None;
                     self.init_composite_focus(false);
+                    // Going backwards lands on the previous field's last
+                    // element, which is its [Inherit] button when present.
+                    self.inherit_focused = self.item_has_inherit_stop(self.selected_item);
                 } else {
                     // Before first editable item, go to buttons
                     self.focus_on_buttons = true;
@@ -747,11 +792,15 @@ impl EntryDialogState {
     /// Update focus states for all items
     pub fn update_focus_states(&mut self) {
         for (idx, item) in self.items.iter_mut().enumerate() {
-            let state = if !self.focus_on_buttons && idx == self.selected_item {
-                FocusState::Focused
-            } else {
-                FocusState::Normal
-            };
+            // When focus is on the field's [Inherit] button, the control itself
+            // is not the active element, so render it Normal — only the button
+            // shows the focused highlight.
+            let state =
+                if !self.focus_on_buttons && idx == self.selected_item && !self.inherit_focused {
+                    FocusState::Focused
+                } else {
+                    FocusState::Normal
+                };
 
             match &mut item.control {
                 SettingControl::Toggle(s) => s.focus = state,
