@@ -12,10 +12,17 @@ Fedora builds from source on its own infrastructure (Koji), driven by the
 | `fresh-editor.spec` | Fedora-style spec: builds the `fresh` TUI binary from source, bundles vendored crates. |
 | `gen-vendor.sh` | Produces the `*-vendor.tar.zst` dependency tarball (Source1). |
 | `gen-bundled-license.sh` | Computes the bundled-dependency `License:` expression. |
+| `docker-build.sh` | Builds the RPM from source in a Fedora **container** — for smoke-testing the spec on a non-Fedora host. |
 
 All commands below assume a **Fedora host** (or toolbox/mock chroot). This repo
 was developed on Arch, which has none of `dnf`/`mock`/`rpmbuild`/`rust2rpm`, so
-the build/lint steps cannot be run here — run them on Fedora.
+the build/lint steps cannot be run there directly.
+
+> **Quick local smoke test (any host with Docker):** `./fedora/docker-build.sh`
+> stages the source + vendored deps and runs `rpmbuild` inside `fedora:41`,
+> dropping the resulting RPMs in `fedora/out/`. This is a convenience check of
+> the spec, **not** a substitute for the clean-chroot `mock` build and
+> `fedora-review` run that the official review requires (steps 4–5 below).
 
 ---
 
