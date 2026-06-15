@@ -94,24 +94,21 @@ fn test_review_sidebar_lists_files() {
     init_tracing_from_env();
     let repo = repo_with_modification();
     let mut harness = harness_for(&repo);
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
 
-    assert!(
-        screen.contains("FILES") || screen.contains("UNSTAGED"),
-        "sidebar section header should be visible. Screen:\n{}",
-        screen
-    );
-    assert!(
-        screen.contains("main.rs"),
-        "the modified file should appear in the sidebar. Screen:\n{}",
-        screen
-    );
-    // The sidebar row carries the add count (the file has added lines).
-    assert!(
-        screen.contains("+3") || screen.contains("+4") || screen.contains("+5"),
-        "sidebar row should show an add count. Screen:\n{}",
-        screen
-    );
+    // The sidebar is populated asynchronously after the toolbar (with its
+    // "next hunk" hint) appears, while "Generating Review Diff Stream..." is
+    // still showing. Wait for the section header, the file row, and its add
+    // count rather than snapshotting a single (possibly early) frame.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            (s.contains("FILES") || s.contains("UNSTAGED"))
+                && s.contains("main.rs")
+                // The sidebar row carries the add count (the file has added lines).
+                && (s.contains("+3") || s.contains("+4") || s.contains("+5"))
+        })
+        .unwrap();
 }
 
 /// §5.1 — `1` switches to the side-by-side split, `2` returns to the
