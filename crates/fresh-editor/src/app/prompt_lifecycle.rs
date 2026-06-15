@@ -1014,6 +1014,18 @@ impl Editor {
         self.active_window().prompt.is_some()
     }
 
+    /// Whether the active prompt is a search/replace prompt that exposes the
+    /// match-mode toggles (case sensitive / whole word / regex). Gates both
+    /// the search-options bar and the `ToggleSearch*` actions so those keys
+    /// stay inert in unrelated prompts (e.g. the save/discard/cancel close
+    /// confirmation).
+    pub fn active_prompt_has_search_options(&self) -> bool {
+        self.active_window()
+            .prompt
+            .as_ref()
+            .is_some_and(|p| p.prompt_type.has_search_options())
+    }
+
     /// Get or create a prompt history for the given key
     pub(super) fn get_or_create_prompt_history(
         &mut self,

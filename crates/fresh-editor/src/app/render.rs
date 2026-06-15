@@ -115,16 +115,7 @@ impl Editor {
         // rendering uses an up-to-date layout. See the
         // "Recompute layout if mid-render commands changed state"
         // block below.)
-        let mut show_search_options = self.active_window().prompt.as_ref().is_some_and(|p| {
-            matches!(
-                p.prompt_type,
-                PromptType::Search
-                    | PromptType::ReplaceSearch
-                    | PromptType::Replace { .. }
-                    | PromptType::QueryReplaceSearch
-                    | PromptType::QueryReplace { .. }
-            )
-        });
+        let mut show_search_options = self.active_prompt_has_search_options();
 
         // Hide status bar when suggestions popup or file browser
         // popup is shown — those popups float just above the prompt
@@ -540,16 +531,7 @@ impl Editor {
             // the next frame, where the layout is built consistently
             // from the start.
             if dispatched_any {
-                show_search_options = self.active_window().prompt.as_ref().is_some_and(|p| {
-                    matches!(
-                        p.prompt_type,
-                        PromptType::Search
-                            | PromptType::ReplaceSearch
-                            | PromptType::Replace { .. }
-                            | PromptType::QueryReplaceSearch
-                            | PromptType::QueryReplace { .. }
-                    )
-                });
+                show_search_options = self.active_prompt_has_search_options();
                 prompt_is_overlay = self
                     .active_window()
                     .prompt

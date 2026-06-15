@@ -1277,26 +1277,26 @@
       "when": "prompt"
     },
     {
-      "comment": "Prompt context - Search options",
+      "comment": "Search options — bound in the narrower 'searchPrompt' context (a sub-context of 'prompt' that is active only while a find/replace prompt is up). This keeps Alt+C/Alt+W/Alt+R/Alt+I from firing in unrelated prompts (e.g. the save/discard/cancel close confirmation), where Alt+W previously toggled whole-word match mode instead of being inert. searchPrompt falls through to 'prompt' for all generic editing keys.",
       "key": "c",
       "modifiers": ["alt"],
       "action": "toggle_search_case_sensitive",
       "args": {},
-      "when": "prompt"
+      "when": "searchPrompt"
     },
     {
       "key": "w",
       "modifiers": ["alt"],
       "action": "toggle_search_whole_word",
       "args": {},
-      "when": "prompt"
+      "when": "searchPrompt"
     },
     {
       "key": "r",
       "modifiers": ["alt"],
       "action": "toggle_search_regex",
       "args": {},
-      "when": "prompt"
+      "when": "searchPrompt"
     },
     {
       "comment": "Toggle confirm each in search/replace (mnemonic: I for Interactive)",
@@ -1304,7 +1304,7 @@
       "modifiers": ["alt"],
       "action": "toggle_search_confirm_each",
       "args": {},
-      "when": "prompt"
+      "when": "searchPrompt"
     },
     {
       "comment": "File browser - toggle hidden files (mnemonic: dotfiles start with '.')",

@@ -225,6 +225,13 @@ pub enum KeyContext {
     Normal,
     /// Prompt/minibuffer is active
     Prompt,
+    /// A find/replace search prompt is active. A narrowing of `Prompt`: it
+    /// owns the match-mode toggles (case / whole word / regex / confirm-each)
+    /// and falls through to `Prompt` for every generic editing/navigation key.
+    /// Keeping these toggles out of the broad `Prompt` scope is what stops
+    /// e.g. Alt+W from flipping whole-word match mode while an unrelated
+    /// prompt (the save/discard/cancel close confirmation) is up.
+    SearchPrompt,
     /// Popup window is visible
     Popup,
     /// Completion popup is visible (LSP or non-LSP). Takes precedence over `Popup`
@@ -281,7 +288,22 @@ impl KeyContext {
 
     /// Check if a context should allow input
     pub fn allows_text_input(&self) -> bool {
-        matches!(self, Self::Normal | Self::Prompt | Self::FileExplorer)
+        matches!(
+            self,
+            Self::Normal | Self::Prompt | Self::SearchPrompt | Self::FileExplorer
+        )
+    }
+
+    /// The context whose bindings this context inherits when it has no binding
+    /// of its own for a key. `SearchPrompt` is a narrowing of `Prompt`, so it
+    /// inherits all of `Prompt`'s editing/navigation/confirm keys and only
+    /// adds (or overrides) the few search-option toggles it owns. Checked
+    /// after this context's own bindings but before the Normal fallthrough.
+    pub fn parent_context(&self) -> Option<Self> {
+        match self {
+            Self::SearchPrompt => Some(Self::Prompt),
+            _ => None,
+        }
     }
 
     /// Parse context from a "when" string
@@ -293,6 +315,7 @@ impl KeyContext {
         Some(match trimmed {
             "global" => Self::Global,
             "prompt" => Self::Prompt,
+            "searchPrompt" | "search_prompt" => Self::SearchPrompt,
             "popup" => Self::Popup,
             "completion" => Self::Completion,
             "fileExplorer" | "file_explorer" => Self::FileExplorer,
@@ -312,6 +335,7 @@ impl KeyContext {
             Self::Global => "global".to_string(),
             Self::Normal => "normal".to_string(),
             Self::Prompt => "prompt".to_string(),
+            Self::SearchPrompt => "searchPrompt".to_string(),
             Self::Popup => "popup".to_string(),
             Self::Completion => "completion".to_string(),
             Self::FileExplorer => "fileExplorer".to_string(),
@@ -1890,6 +1914,24 @@ impl KeybindingResolver {
             }
         }
 
+        // Fall through to the parent context's bindings (e.g. SearchPrompt →
+        // Prompt) so a narrowed context inherits all of its parent's keys and
+        // only owns/overrides the few it declares. Checked after this context's
+        // own bindings but before the Normal fallthrough below, so the parent's
+        // editing/navigation keys outrank Normal.
+        if let Some(parent) = context.parent_context() {
+            if let Some(parent_bindings) = self.bindings.get(&parent) {
+                if let Some(action) = parent_bindings.get(norm) {
+                    return action.clone();
+                }
+            }
+            if let Some(parent_bindings) = self.default_bindings.get(&parent) {
+                if let Some(action) = parent_bindings.get(norm) {
+                    return action.clone();
+                }
+            }
+        }
+
         // Fall back to Normal context bindings.
         // Contexts with allows_normal_fallthrough (e.g. CompositeBuffer) get ALL
         // Normal bindings; other contexts only get application-wide actions.
@@ -3207,6 +3249,14 @@ mod tests {
             Some(KeyContext::Prompt)
         );
         assert_eq!(
+            KeyContext::from_when_clause("searchPrompt"),
+            Some(KeyContext::SearchPrompt)
+        );
+        assert_eq!(
+            KeyContext::from_when_clause("search_prompt"),
+            Some(KeyContext::SearchPrompt)
+        );
+        assert_eq!(
             KeyContext::from_when_clause("popup"),
             Some(KeyContext::Popup)
         );
@@ -3220,7 +3270,13 @@ mod tests {
     fn test_key_context_to_when_clause() {
         assert_eq!(KeyContext::Normal.to_when_clause(), "normal");
         assert_eq!(KeyContext::Prompt.to_when_clause(), "prompt");
+        assert_eq!(KeyContext::SearchPrompt.to_when_clause(), "searchPrompt");
         assert_eq!(KeyContext::Popup.to_when_clause(), "popup");
+        // Round-trips through from_when_clause.
+        assert_eq!(
+            KeyContext::from_when_clause(&KeyContext::SearchPrompt.to_when_clause()),
+            Some(KeyContext::SearchPrompt)
+        );
     }
 
     #[test]
@@ -3248,6 +3304,58 @@ mod tests {
         assert_eq!(
             resolver.resolve(&up_event, KeyContext::Normal),
             Action::MoveUp
+        );
+    }
+
+    #[test]
+    fn test_search_prompt_owns_toggles_and_inherits_prompt() {
+        let config = Config::default();
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
+
+        // Alt+W toggles whole-word ONLY in the SearchPrompt context.
+        assert_eq!(
+            resolver.resolve(&alt_w, KeyContext::SearchPrompt),
+            Action::ToggleSearchWholeWord,
+        );
+        // In the broad Prompt context (e.g. the save/discard/cancel close
+        // confirmation) Alt+W must NOT toggle whole-word — that was the bug.
+        assert_ne!(
+            resolver.resolve(&alt_w, KeyContext::Prompt),
+            Action::ToggleSearchWholeWord,
+        );
+
+        // The other match-mode toggles are likewise SearchPrompt-only.
+        let alt_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT);
+        let alt_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_c, KeyContext::SearchPrompt),
+            Action::ToggleSearchCaseSensitive,
+        );
+        assert_eq!(
+            resolver.resolve(&alt_r, KeyContext::SearchPrompt),
+            Action::ToggleSearchRegex,
+        );
+
+        // SearchPrompt inherits all generic editing/navigation keys from its
+        // parent Prompt context (Enter confirms, Esc cancels, text types).
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&enter, KeyContext::SearchPrompt),
+            resolver.resolve(&enter, KeyContext::Prompt),
+        );
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&esc, KeyContext::SearchPrompt),
+            resolver.resolve(&esc, KeyContext::Prompt),
+        );
+        assert_eq!(
+            resolver.resolve(
+                &KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty()),
+                KeyContext::SearchPrompt,
+            ),
+            Action::InsertChar('x'),
         );
     }
 

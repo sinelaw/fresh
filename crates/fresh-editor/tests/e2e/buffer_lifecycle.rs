@@ -29,6 +29,64 @@ fn test_save_unnamed_buffer_shows_save_as_prompt() {
     harness.assert_screen_contains("Save as:");
 }
 
+/// Regression: Alt+W must not toggle "whole word" search while the
+/// save/discard/cancel close confirmation is up.
+///
+/// Alt+W is `close_tab` in the normal context. When closing a *modified*
+/// buffer it raises the (s)ave/(d)iscard/(C)ancel prompt — at which point a
+/// second Alt+W used to leak into the search-options toggle (the binding lived
+/// in the broad `prompt` context). The toggles now live in the narrower
+/// `searchPrompt` context, active only for find/replace prompts, so Alt+W is
+/// inert here and the close prompt stays put.
+#[test]
+fn test_alt_w_does_not_toggle_whole_word_in_close_prompt() {
+    let mut config = Config::default();
+    config.editor.hot_exit = false;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+
+    // Modify the buffer so closing it requires confirmation.
+    harness.type_text("Modified content").unwrap();
+    harness.render().unwrap();
+
+    // Alt+W = close_tab → save/discard/cancel confirmation for the dirty buffer.
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("(d)iscard");
+
+    // A second Alt+W must be inert here — not flip whole-word match mode.
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_not_contains("Whole word");
+    // The close confirmation is still the active prompt.
+    harness.assert_screen_contains("(d)iscard");
+}
+
+/// Counterpart to the regression above: inside an actual search prompt Alt+W
+/// still toggles whole-word match mode (its `searchPrompt`-context binding).
+#[test]
+fn test_alt_w_toggles_whole_word_in_search_prompt() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.render().unwrap();
+
+    // Open the find prompt; the search-options bar shows the toggles.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Whole Word");
+
+    // Alt+W flips whole-word match mode here.
+    harness
+        .send_key(KeyCode::Char('w'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Whole word search enabled");
+}
+
 /// Test that quitting with modified buffers shows confirmation and doesn't quit immediately
 #[test]
 fn test_quit_with_modified_buffers_shows_confirmation() {

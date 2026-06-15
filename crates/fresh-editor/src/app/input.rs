@@ -325,10 +325,19 @@ impl Editor {
             });
         }
         if self.is_prompting() {
+            // Find/replace prompts resolve in the narrower `SearchPrompt`
+            // context, which owns the match-mode toggles and otherwise falls
+            // through to `Prompt`. Every other prompt stays in `Prompt`, so
+            // the toggle keys (Alt+W etc.) never fire outside an actual search.
+            let key_context = if self.active_prompt_has_search_options() {
+                KeyContext::SearchPrompt
+            } else {
+                KeyContext::Prompt
+            };
             layers.push(Layer {
                 kind: LayerKind::Prompt,
                 owns_keyboard: true,
-                key_context: Some(KeyContext::Prompt),
+                key_context: Some(key_context),
                 blocks_terminal_input: true,
             });
         }
@@ -1954,6 +1963,9 @@ impl Editor {
             Action::ListBookmarks => {
                 self.active_window_mut().list_bookmarks();
             }
+            Action::ToggleSearchCaseSensitive if !self.active_prompt_has_search_options() => {}
+            Action::ToggleSearchWholeWord if !self.active_prompt_has_search_options() => {}
+            Action::ToggleSearchRegex if !self.active_prompt_has_search_options() => {}
             Action::ToggleSearchCaseSensitive => {
                 self.active_window_mut().search_case_sensitive =
                     !self.active_window().search_case_sensitive;

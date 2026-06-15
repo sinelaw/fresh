@@ -1842,10 +1842,21 @@ impl StatusBarRenderer {
             .fg(theme.menu_hover_fg)
             .bg(theme.menu_hover_bg);
 
-        // Helper to look up keybinding for an action (Prompt context first, then Global)
+        // Helper to look up keybinding for an action. The search-option toggles
+        // live in the SearchPrompt context; fall back to Prompt then Global so a
+        // user override in either still surfaces in the hint.
         let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
             keybindings
-                .get_keybinding_for_action(action, crate::input::keybindings::KeyContext::Prompt)
+                .get_keybinding_for_action(
+                    action,
+                    crate::input::keybindings::KeyContext::SearchPrompt,
+                )
+                .or_else(|| {
+                    keybindings.get_keybinding_for_action(
+                        action,
+                        crate::input::keybindings::KeyContext::Prompt,
+                    )
+                })
                 .or_else(|| {
                     keybindings.get_keybinding_for_action(
                         action,

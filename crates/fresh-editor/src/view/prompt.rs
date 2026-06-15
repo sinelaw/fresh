@@ -185,6 +185,26 @@ impl PromptType {
     pub fn click_confirms(&self) -> bool {
         !matches!(self, PromptType::ReloadWithEncoding)
     }
+
+    /// Whether this prompt is one of the search/replace prompts that exposes
+    /// the match-mode toggles (case sensitive / whole word / regex).
+    ///
+    /// This is the single source of truth for "are search options in scope":
+    /// it gates both the rendering of the search-options bar and the
+    /// `ToggleSearch*` actions, so the toggle keys are inert in unrelated
+    /// prompts like the (s)ave/(d)iscard/(C)ancel close confirmation
+    /// (otherwise Alt+W there would silently flip whole-word match mode —
+    /// see issue with Alt+W leaking into the close-buffer prompt).
+    pub fn has_search_options(&self) -> bool {
+        matches!(
+            self,
+            PromptType::Search
+                | PromptType::ReplaceSearch
+                | PromptType::Replace { .. }
+                | PromptType::QueryReplaceSearch
+                | PromptType::QueryReplace { .. }
+        )
+    }
 }
 
 /// Prompt state for the minibuffer
