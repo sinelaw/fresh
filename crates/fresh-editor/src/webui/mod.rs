@@ -172,14 +172,38 @@ fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Re
     Ok(())
 }
 
-/// Run the real render pipeline into an in-memory cell buffer.
-fn render_to_buffer(editor: &mut Editor, cols: u16, rows: u16) -> Buffer {
+/// Run the real render pipeline into an in-memory cell buffer, returning the
+/// rendered cells and the real hardware-cursor cell the pipeline set (if any).
+fn render_to_buffer(editor: &mut Editor, cols: u16, rows: u16) -> (Buffer, Option<(u16, u16)>) {
+    use ratatui::backend::Backend;
     let backend = TestBackend::new(cols, rows);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| editor.render(frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+    terminal.draw(|frame| editor.render(frame)).expect("draw");
+    let buf = terminal.backend().buffer().clone();
+    let cursor = terminal
+        .backend_mut()
+        .get_cursor_position()
+        .ok()
+        .map(|p| (p.x, p.y));
+    (buf, cursor)
+}
+
+/// Union of a set of rects (None if empty).
+fn union_rect<'a>(rects: impl Iterator<Item = &'a Rect>) -> Option<Rect> {
+    let mut acc: Option<Rect> = None;
+    for r in rects {
+        acc = Some(match acc {
+            None => *r,
+            Some(a) => {
+                let x0 = a.x.min(r.x);
+                let y0 = a.y.min(r.y);
+                let x1 = (a.x + a.width).max(r.x + r.width);
+                let y1 = (a.y + a.height).max(r.y + r.height);
+                Rect::new(x0, y0, x1 - x0, y1 - y0)
+            }
+        });
+    }
+    acc
 }
 
 fn rect_json(r: Rect) -> Value {
@@ -230,9 +254,34 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
 /// Build the scene: the real cell grid + semantic chrome regions, all from the
 /// pipeline's own per-frame layout caches.
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
-    let buf = render_to_buffer(editor, cols, rows);
+    let (buf, cursor) = render_to_buffer(editor, cols, rows);
     let w = buf.area.width;
     let h = buf.area.height;
+
+    // Overlays (menu dropdown, popups, command palette) — the pipeline already
+    // drew them into the cells and recorded their rects on ChromeLayout; we emit
+    // rect + cells so the frontend draws each as a floating UI element.
+    let chrome = editor.active_chrome();
+    let mut overlay_rects: Vec<Rect> = Vec::new();
+    if let Some(menu) = &chrome.menu_layout {
+        if let Some(r) = union_rect(menu.item_areas.iter().map(|(_, r)| r)) {
+            overlay_rects.push(r);
+        }
+    }
+    for p in &chrome.popup_areas {
+        overlay_rects.push(p.1);
+    }
+    for g in &chrome.global_popup_areas {
+        overlay_rects.push(g.1);
+    }
+    if let Some(r) = chrome.suggestions_outer_area {
+        overlay_rects.push(r);
+    }
+    let overlays: Vec<Value> = overlay_rects
+        .iter()
+        .filter(|r| r.width > 0 && r.height > 0)
+        .map(|r| json!({ "rect": rect_json(*r), "cells": cells_json(&buf, *r) }))
+        .collect();
 
     // --- semantic regions from the pipeline's layout caches ---
     let layout = editor.active_layout();
@@ -291,6 +340,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "fileExplorer": file_explorer,
         "panes": panes,
         "separators": separators,
+        "overlays": overlays,
+        "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
     });
 
     json!({ "w": w, "h": h, "regions": regions })

@@ -38,6 +38,10 @@
   .scrollbar{background:transparent}
   .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:#5a5a5a}
   .thumb:hover{background:#7a7a7a}
+  .caret{position:absolute;background:#aeafad;width:2px;z-index:40;animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .overlay{position:absolute;z-index:60;background:var(--bg2);border:1px solid #555;
+    border-radius:8px;box-shadow:0 16px 50px rgba(0,0,0,.55);overflow:hidden}
   svg.cells{display:block;width:100%;height:100%;
     font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
@@ -69,18 +73,19 @@ function cellsSvg(cells, wCells){
   let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="13">`;
   for(let row=0; row<cells.length; row++){
     const y=(row+1)*CH - 5;
-    // background rects first
+    // background rects first (reverse video → bg becomes the run's fg color)
     let col=0;
     for(const r of cells[row]){
-      if(r.bg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${r.bg}"/>`; }
+      const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
+      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
       col+=r.t.length;
     }
-    // glyphs
+    // glyphs (reverse video swaps fg/bg — used for selections & software cursor)
     s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
     col=0;
     for(const r of cells[row]){
       const x=px(col,CW);
-      const fill=r.r?(r.bg||"#1e1e1e"):(r.fg||"#d4d4d4"); // reverse: swap-ish
+      const fill=r.r?(r.bg||"#1e1e1e"):(r.fg||"#d4d4d4");
       const weight=r.b?` font-weight="bold"`:"";
       const style=r.i?` font-style="italic"`:"";
       const deco=r.u?` text-decoration="underline"`:"";
@@ -125,6 +130,18 @@ function render(){
   if(reg.menubar){ const m=div("region menubar"); place(m,reg.menubar.rect); m.innerHTML=menuItemsHtml(reg.menubar.cells); app.appendChild(m); }
   // status bar (UI; content from the pipeline's cells)
   if(reg.statusbar){ const s=div("region statusbar"); place(s,reg.statusbar.rect); s.textContent=cellText(reg.statusbar.cells).trim(); app.appendChild(s); }
+
+  // overlays: menu dropdowns, popups, command palette — floating UI boxes whose
+  // content is the real cells the pipeline drew at the rects it recorded.
+  for(const o of (reg.overlays||[])){
+    const d=div("overlay"); place(d,o.rect); d.innerHTML=cellsSvg(o.cells, o.rect.w); app.appendChild(d);
+  }
+
+  // live caret from the pipeline's real cursor cell (if inside a pane)
+  if(reg.cursor){
+    const inPane=reg.panes.some(p=>reg.cursor.x>=p.content.x && reg.cursor.x<p.content.x+p.content.w && reg.cursor.y>=p.content.y && reg.cursor.y<p.content.y+p.content.h);
+    if(inPane){ const c=div("caret"); c.style.left=px(reg.cursor.x,CW)+"px"; c.style.top=px(reg.cursor.y,CH)+"px"; c.style.height=CH+"px"; app.appendChild(c); }
+  }
 }
 function div(cls){ const d=document.createElement("div"); d.className=cls; return d; }
 function cellText(cells){ return (cells[0]||[]).map(r=>r.t).join(""); }
