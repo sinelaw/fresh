@@ -127,6 +127,18 @@ fn handle_conn(
             let s = scene_json(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
+        ("POST", "/action") => {
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            if let Some(name) = v.get("action").and_then(|a| a.as_str()) {
+                if let Some(act) =
+                    crate::input::keybindings::Action::from_str(name, &std::collections::HashMap::new())
+                {
+                    editor.dispatch_action_for_tests(act);
+                }
+            }
+            let s = scene_json(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
         ("POST", "/resize") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {
