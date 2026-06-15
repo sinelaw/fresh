@@ -44,6 +44,9 @@ pub struct ChromeSnapshot {
     /// Number of internal split containers (dividers) in the tree — a quick
     /// scalar a GUI uses to know how many draggable dividers to render.
     pub divider_count: usize,
+    /// The active buffer id, so a layout pass can mark the focused pane without
+    /// re-querying the editor.
+    pub active_buffer: usize,
 }
 
 /// One tab/pane entry, derived from a leaf (or grouped node) of the split tree.
@@ -94,6 +97,7 @@ impl Editor {
             tabs,
             overlays,
             divider_count,
+            active_buffer: active_buffer.0,
         }
     }
 }
