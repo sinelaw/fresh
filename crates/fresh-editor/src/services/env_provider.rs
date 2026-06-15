@@ -320,8 +320,10 @@ fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
 
 /// Marker printed between the baseline and activated env dumps in the delta
 /// capture. A fixed, unlikely token — env values never legitimately contain it,
-/// so it cleanly splits the two halves of the output.
-const DELTA_SENTINEL: &str = "__FRESH_ENV_DELTA_SENTINEL_b3f1c2__";
+/// so it cleanly splits the two halves of the output. `pub(crate)` so the SSH
+/// remote launcher ([`crate::services::remote::spawner::ssh_remote_env_launcher`])
+/// can split on the identical marker when it captures the delta on the remote.
+pub(crate) const DELTA_SENTINEL: &str = "__FRESH_ENV_DELTA_SENTINEL_b3f1c2__";
 
 /// Build the script for a *delta* capture: dump the env once (baseline — login
 /// shell in the project dir, recipe not yet run), print the sentinel, run the

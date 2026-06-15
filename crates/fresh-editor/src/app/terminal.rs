@@ -98,6 +98,29 @@ impl Window {
         self.authority().env_provider.current_local_delta_blocking()
     }
 
+    /// Apply the activated environment to a *re-parented* terminal wrapper
+    /// (SSH / container), the remote counterpart of [`Self::terminal_env_delta`]
+    /// (which handles the local host shell via `CommandBuilder.env`). For SSH,
+    /// rewrite the remote login-shell `exec` into a python3 launcher that
+    /// captures + applies the activation on the remote before handing off to the
+    /// user's shell, so the SSH terminal sees the same env LSP/`spawnProcess`
+    /// already get (issue #2355). Returns the wrapper unchanged when no env is
+    /// active or the wrapper isn't an SSH re-parent. (Container backends apply
+    /// their captured env through their own wrapper flags; see the design doc.)
+    pub(crate) fn apply_remote_terminal_env(&self, mut wrapper: TerminalWrapper) -> TerminalWrapper {
+        use crate::services::remote::{ssh_remote_env_launcher, SSH_EXEC_LOGIN_SHELL};
+
+        if wrapper.command == "ssh" && self.authority().env_provider.is_active() {
+            let recipe = self.authority().env_provider.snippet();
+            if let Some(last) = wrapper.args.last_mut() {
+                if last.contains(SSH_EXEC_LOGIN_SHELL) {
+                    *last = last.replace(SSH_EXEC_LOGIN_SHELL, &ssh_remote_env_launcher(&recipe));
+                }
+            }
+        }
+        wrapper
+    }
+
     /// Get terminal dimensions appropriate for spawning a PTY in this
     /// window. Derived from the window's cached screen size minus a
     /// small constant for menu/status chrome.
@@ -173,6 +196,7 @@ impl Window {
             Some(argv) if !argv.is_empty() => self.authority().terminal_command(&argv),
             _ => self.resolved_terminal_wrapper(),
         };
+        let wrapper = self.apply_remote_terminal_env(wrapper);
         let env_delta = self.terminal_env_delta(&wrapper);
         match self.terminal_manager.spawn(
             cols,

@@ -768,6 +768,7 @@ impl crate::app::window::Window {
             Some(argv) => self.authority().terminal_command(argv),
             None => self.resolved_terminal_wrapper(),
         };
+        let wrapper_for_spawn = self.apply_remote_terminal_env(wrapper_for_spawn);
         let env_delta = self.terminal_env_delta(&wrapper_for_spawn);
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,

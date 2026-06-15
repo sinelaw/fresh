@@ -947,9 +947,72 @@ pub fn build_ssh_terminal_args(
             "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
         ));
     }
-    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    remote_cmd.push_str(SSH_EXEC_LOGIN_SHELL);
     a.push(remote_cmd);
     a
+}
+
+/// The tail of the SSH terminal's remote command: hand control to the user's
+/// login shell. Factored into a constant so the activated-env path can find and
+/// rewrite exactly this segment into a launcher (see
+/// [`ssh_remote_env_launcher`]) without re-deriving the whole command.
+pub const SSH_EXEC_LOGIN_SHELL: &str = "exec ${SHELL:-/bin/sh} -l";
+
+/// Build the replacement for [`SSH_EXEC_LOGIN_SHELL`] that applies the activated
+/// environment (venv/direnv/mise) in the SSH-backed integrated terminal before
+/// handing off to the user's login shell — the remote analogue of the local
+/// terminal's `CommandBuilder.env` injection (issue #2355; see
+/// `docs/internal/uniform-env-activation-design.md`).
+///
+/// The result is `exec python3 -c '<literal>'`. python3 is already required on
+/// every SSH remote (it runs the agent), so this adds no dependency and needs
+/// no agent-PTY work — the existing `ssh -t` keeps providing the PTY. The
+/// `'<literal>'` is a single shell-literal token containing no single quotes, so
+/// the user's *login* shell (which `ssh` uses to parse the command — possibly
+/// fish) passes it through verbatim regardless of its quoting rules. The literal
+/// base64-decodes and `exec`s a python launcher that, on the remote: captures
+/// the activation **delta** (run the recipe in `bash`, diff against a clean
+/// login env), applies it to `os.environ` as data — never re-parsed by the
+/// user's interactive shell — then `exec`s `$SHELL -l`. Capturing on the remote
+/// keeps everything one round-trip and always fresh; the recipe is embedded as
+/// a JSON string literal (safe for any byte content).
+pub fn ssh_remote_env_launcher(recipe: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let recipe_json = serde_json::to_string(recipe).unwrap_or_else(|_| "\"\"".to_string());
+    // NB: the Rust raw string is the *python source*. `\\n` here is two chars
+    // (backslash, n) in the source, which python parses to a single `\n` for
+    // `printf` to turn into a newline. `{{` / `}}` are literal braces.
+    let launcher_src = format!(
+        r#"import os,subprocess
+_r={recipe_json}
+_S="{sentinel}"
+_script="command env; printf '%s\\n' '"+_S+"'; "+_r+"; command env"
+try:
+    _o=subprocess.run(["bash","-lc",_script],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL).stdout.decode("utf-8","replace")
+except Exception:
+    _o=""
+def _p(t):
+    d={{}}
+    for ln in t.splitlines():
+        i=ln.find("=")
+        if i>0: d[ln[:i]]=ln[i+1:]
+    return d
+if _S in _o:
+    _b,_a=_o.split(_S,1)
+    _bb=_p(_b); _aa=_p(_a)
+    for k,v in _aa.items():
+        if _bb.get(k)!=v: os.environ[k]=v
+    for k in list(_bb):
+        if k not in _aa: os.environ.pop(k,None)
+_sh=os.environ.get("SHELL") or "/bin/sh"
+os.execvp(_sh,[_sh,"-l"])
+"#,
+        sentinel = crate::services::env_provider::DELTA_SENTINEL,
+    );
+
+    let b64 = BASE64.encode(launcher_src.as_bytes());
+    format!("exec python3 -c 'import base64;exec(base64.b64decode(\"{b64}\").decode())'")
 }
 
 /// Build the `kubectl` argv that opens the integrated terminal as an
@@ -1415,6 +1478,51 @@ mod tests {
         assert_eq!(a, expected);
         // No BatchMode — interactive auth must be able to prompt in the PTY.
         assert!(!a.iter().any(|s| s == "BatchMode=yes"));
+        // The exec tail is exactly the shared constant the env path rewrites.
+        assert!(a.last().unwrap().ends_with(SSH_EXEC_LOGIN_SHELL));
+    }
+
+    #[test]
+    fn ssh_remote_env_launcher_is_a_safe_single_quoted_python_oneliner() {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+        let recipe = "eval \"$(direnv export bash)\"";
+        let launcher = ssh_remote_env_launcher(recipe);
+
+        // Shape: replaces the login-shell exec with a python3 -c invocation.
+        assert!(launcher.starts_with("exec python3 -c '"));
+        assert!(launcher.ends_with('\''));
+        // The python argument is a single shell-literal token: no *inner* single
+        // quotes, so the user's login shell (bash/zsh/fish) passes it verbatim
+        // regardless of its quoting rules.
+        let inner = launcher
+            .trim_start_matches("exec python3 -c '")
+            .trim_end_matches('\'');
+        assert!(!inner.contains('\''), "inner literal must not contain a single quote");
+
+        // The base64 blob decodes to python that embeds the recipe and splits on
+        // the same sentinel the local delta capture uses.
+        let b64 = inner
+            .trim_start_matches("import base64;exec(base64.b64decode(\"")
+            .trim_end_matches("\").decode())");
+        let src = String::from_utf8(BASE64.decode(b64).unwrap()).unwrap();
+        assert!(src.contains("direnv export bash"), "recipe must be embedded");
+        assert!(src.contains(crate::services::env_provider::DELTA_SENTINEL));
+        assert!(src.contains("os.execvp"));
+    }
+
+    #[test]
+    fn ssh_launcher_embeds_recipes_with_quotes_safely() {
+        // A recipe containing single quotes must not break the outer literal.
+        let recipe = "export X='a b'; source ./.venv/bin/activate";
+        let launcher = ssh_remote_env_launcher(recipe);
+        let inner = launcher
+            .trim_start_matches("exec python3 -c '")
+            .trim_end_matches('\'');
+        assert!(
+            !inner.contains('\''),
+            "recipe quotes must be base64-encapsulated, never leak into the literal"
+        );
     }
 
     #[test]
