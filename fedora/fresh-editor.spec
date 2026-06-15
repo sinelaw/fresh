@@ -63,8 +63,12 @@ is installed.}
 
 %prep
 %autosetup -n %{archivedir} -p1
-# Unpack the vendor tarball and point cargo at it (writes .cargo/config.toml).
-%cargo_prep -v %{name}-%{version}-vendor
+# Unpack the vendored crate sources (Source1). Fedora's %cargo_prep does NOT
+# auto-extract a vendor tarball — its -V flag errors on Fedora — so we extract
+# it ourselves; the resulting directory name must match the -v argument below.
+tar --extract --file %{SOURCE1}
+# Point cargo at the vendored sources (writes .cargo/config.toml, offline mode).
+%cargo_prep -v vendor
 
 %build
 # Build only the `fresh` terminal binary from the fresh-editor crate with its
@@ -74,10 +78,10 @@ is installed.}
 %cargo_build -- -p fresh-editor --bin fresh
 
 %install
-# %%cargo_build places the binary under the cargo target dir; install it
-# explicitly rather than via %%cargo_install so the GUI/dev binaries in the
-# workspace are not pulled in.
-install -Dpm0755 target/rpm/release/%{appname} %{buildroot}%{_bindir}/%{appname}
+# %%cargo_build builds the `rpm` profile into target/rpm/ (it also symlinks
+# target/release -> rpm). Install the binary explicitly rather than via
+# %%cargo_install so the GUI/dev binaries in the workspace are not pulled in.
+install -Dpm0755 target/rpm/%{appname} %{buildroot}%{_bindir}/%{appname}
 
 # Man page
 install -Dpm0644 crates/fresh-editor/resources/%{appname}.1 %{buildroot}%{_mandir}/man1/%{appname}.1

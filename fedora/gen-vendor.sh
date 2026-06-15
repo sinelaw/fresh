@@ -21,8 +21,10 @@ VERSION="$(awk -F'"' '
 ' Cargo.toml)"
 test -n "$VERSION"
 
-PREFIX="fresh-editor-${VERSION}-vendor"
-OUT="${PREFIX}.tar.zst"
+# Output filename matches Source1 in the spec; the tarball's top-level
+# directory is "vendor" to match `%cargo_prep -v vendor`.
+PREFIX="vendor"
+OUT="fresh-editor-${VERSION}-vendor.tar.zst"
 
 echo ">> Vendoring dependencies for fresh-editor ${VERSION}"
 

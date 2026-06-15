@@ -13,6 +13,7 @@ Fedora builds from source on its own infrastructure (Koji), driven by the
 | `gen-vendor.sh` | Produces the `*-vendor.tar.zst` dependency tarball (Source1). |
 | `gen-bundled-license.sh` | Computes the bundled-dependency `License:` expression. |
 | `docker-build.sh` | Builds the RPM from source in a Fedora **container** — for smoke-testing the spec on a non-Fedora host. |
+| `Dockerfile` | Builder image (toolchain + BuildRequires) used by `docker-build.sh`; needs Fedora 43+ for rustc ≥ 1.93 (oxc MSRV). |
 
 All commands below assume a **Fedora host** (or toolbox/mock chroot). This repo
 was developed on Arch, which has none of `dnf`/`mock`/`rpmbuild`/`rust2rpm`, so
