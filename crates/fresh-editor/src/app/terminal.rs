@@ -77,21 +77,25 @@ impl Window {
             .with_user_shell_override(self.resources.config.terminal.shell.as_ref())
     }
 
-    /// The activated-environment overlay (venv/direnv/mise) to inject into a
-    /// newly spawned terminal, so it inherits the same env that LSP servers and
-    /// `spawnProcess` already get (issue #2355). Captured only for a **local**
-    /// host shell: `manages_cwd` marks docker/ssh-style wrappers whose inner
-    /// shell runs on another host, where these locally-captured pairs would be
-    /// both wrong and unreachable (the env this `CommandBuilder` sets lands on
+    /// The activated-environment delta (venv/direnv/mise) to apply to a newly
+    /// spawned terminal, so it inherits the same env that LSP servers and
+    /// `spawnProcess` already get (issue #2355; see
+    /// docs/internal/uniform-env-activation-design.md). Captured only for a
+    /// **local** host shell: `manages_cwd` marks docker/ssh-style wrappers whose
+    /// inner shell runs on another host, where this locally-captured delta would
+    /// be both wrong and unreachable (the env this `CommandBuilder` sets lands on
     /// the `docker`/`ssh` client process, not the remote shell). Those backends
-    /// carry their own captured env through their spawners instead. Empty when
-    /// no env is active or capture fails — the terminal degrades to the
-    /// inherited env exactly as before.
-    pub(crate) fn terminal_env_overlay(&self, wrapper: &TerminalWrapper) -> Vec<(String, String)> {
+    /// apply their own delta in the wrapper (the per-backend apply paths in the
+    /// design doc). Empty when no env is active or capture fails — the terminal
+    /// degrades to the inherited env exactly as before.
+    pub(crate) fn terminal_env_delta(
+        &self,
+        wrapper: &TerminalWrapper,
+    ) -> crate::services::env_provider::EnvDelta {
         if wrapper.manages_cwd {
-            return Vec::new();
+            return crate::services::env_provider::EnvDelta::default();
         }
-        self.authority().env_provider.current_local_blocking()
+        self.authority().env_provider.current_local_delta_blocking()
     }
 
     /// Get terminal dimensions appropriate for spawning a PTY in this
@@ -169,7 +173,7 @@ impl Window {
             Some(argv) if !argv.is_empty() => self.authority().terminal_command(&argv),
             _ => self.resolved_terminal_wrapper(),
         };
-        let env_overlay = self.terminal_env_overlay(&wrapper);
+        let env_delta = self.terminal_env_delta(&wrapper);
         match self.terminal_manager.spawn(
             cols,
             rows,
@@ -177,7 +181,7 @@ impl Window {
             Some(log_path.clone()),
             Some(backing_path),
             wrapper,
-            env_overlay,
+            env_delta,
         ) {
             Ok(terminal_id) => {
                 self.terminal_log_files.insert(terminal_id, log_path);

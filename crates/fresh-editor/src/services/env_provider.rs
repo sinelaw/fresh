@@ -43,13 +43,41 @@ struct State {
     snippet: String,
     /// Project directory the snippet runs in.
     dir: Option<PathBuf>,
-    /// Last capture, keyed by the env-inputs hash it was produced under.
+    /// Last full-snapshot capture, keyed by the env-inputs hash it was produced
+    /// under. Used by [`EnvProvider::current`] (LSP / one-shot spawns).
     cache: Option<Cached>,
+    /// Last *delta* capture (activation changes over a clean login shell),
+    /// keyed by the same hash. Used by the integrated terminal.
+    delta_cache: Option<CachedDelta>,
 }
 
 struct Cached {
     inputs_hash: u64,
     vars: Vec<(String, String)>,
+}
+
+struct CachedDelta {
+    inputs_hash: u64,
+    delta: EnvDelta,
+}
+
+/// An environment **delta**: the changes the activation recipe introduces over
+/// a clean login shell. `set` are keys to add/override; `unset` are keys the
+/// recipe removed. Applying a delta to a child's environment is shell-agnostic
+/// and carries only the activation's contribution — never volatile shell
+/// bookkeeping (`PWD`, `SHLVL`, …), which is identical in baseline and
+/// activated and so diffs out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnvDelta {
+    pub set: Vec<(String, String)>,
+    pub unset: Vec<String>,
+}
+
+impl EnvDelta {
+    /// No changes — applying it is a no-op (inactive env or capture failure).
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty() && self.unset.is_empty()
+    }
 }
 
 /// Shared, live environment recipe.
@@ -70,6 +98,7 @@ impl EnvProvider {
                 snippet: String::new(),
                 dir: None,
                 cache: None,
+                delta_cache: None,
             }),
             store: RwLock::new(None),
         }
@@ -100,6 +129,7 @@ impl EnvProvider {
                         s.snippet = snippet;
                         s.dir = dir;
                         s.cache = None;
+                        s.delta_cache = None;
                     }
                 }
             }
@@ -116,6 +146,7 @@ impl EnvProvider {
             s.snippet = snippet.clone();
             s.dir = dir.clone();
             s.cache = None;
+            s.delta_cache = None;
         }
         if let Ok(store) = self.store.read() {
             if let Some(store) = store.as_ref() {
@@ -134,6 +165,7 @@ impl EnvProvider {
         if let Ok(mut s) = self.state.write() {
             s.snippet.clear();
             s.cache = None;
+            s.delta_cache = None;
         }
         if let Ok(store) = self.store.read() {
             if let Some(store) = store.as_ref() {
@@ -202,17 +234,19 @@ impl EnvProvider {
         vars
     }
 
-    /// Synchronous sibling of [`Self::current`] for a *local* backend: capture
-    /// the active env by running the snippet through `$SHELL -lc … command env`
-    /// on this host, **blocking** the caller. The integrated-terminal spawn is a
-    /// synchronous, non-tokio path (portable-pty + OS threads) and so cannot
-    /// `await` the async capture; this is how the terminal picks up the same
-    /// activated env that LSP/`spawnProcess` get. Shares the input-hash cache
-    /// with [`Self::current`], so once any spawner has captured for the current
-    /// inputs this returns immediately with no subprocess. Empty when inactive
-    /// or on failure — the caller degrades to the inherited env.
-    pub fn current_local_blocking(&self) -> Vec<(String, String)> {
-        self.capture_blocking(|script| {
+    /// Capture the activation **delta** for a *local* backend by running the
+    /// recipe through `$SHELL -lc` on this host, **blocking** the caller.
+    ///
+    /// The integrated-terminal spawn is a synchronous, non-tokio path
+    /// (portable-pty + OS threads) and so cannot `await` the async capture; this
+    /// is how the terminal applies the same activation everything else gets. The
+    /// returned [`EnvDelta`] carries only what the recipe changed over a clean
+    /// login shell, so applying it to the child's env is shell-agnostic and free
+    /// of volatile shell bookkeeping. Shares a hash-keyed cache, so repeated
+    /// terminal opens with unchanged env inputs run no subprocess. Empty when
+    /// inactive or on failure — the caller degrades to the inherited env.
+    pub fn current_local_delta_blocking(&self) -> EnvDelta {
+        self.capture_delta_blocking(|script| {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
             let output = std::process::Command::new(&shell)
                 .arg("-lc")
@@ -224,45 +258,42 @@ impl EnvProvider {
         })
     }
 
-    /// Shared body for a blocking capture: snapshot the recipe, serve from the
-    /// input-hash cache when warm, otherwise run `run` (the host's raw shell
-    /// invocation) and cache the parsed result. Mirrors [`Self::current`]'s
-    /// caching but with a synchronous `run`. `run` MUST be a raw spawn that does
-    /// not apply this provider's env, or capture would recurse.
-    fn capture_blocking(
-        &self,
-        run: impl FnOnce(String) -> Option<String>,
-    ) -> Vec<(String, String)> {
+    /// Shared body for a blocking delta capture: serve from the input-hash cache
+    /// when warm, otherwise run `run` (the host's raw shell invocation over the
+    /// baseline+activated capture script) and cache the diff. `run` MUST be a
+    /// raw spawn that does not apply this provider's env, or capture would
+    /// recurse.
+    fn capture_delta_blocking(&self, run: impl FnOnce(String) -> Option<String>) -> EnvDelta {
         let (snippet, dir) = match self.state.read() {
             Ok(s) => (s.snippet.clone(), s.dir.clone()),
-            Err(_) => return Vec::new(),
+            Err(_) => return EnvDelta::default(),
         };
         if snippet.trim().is_empty() {
-            return Vec::new();
+            return EnvDelta::default();
         }
 
         let hash = inputs_hash(dir.as_deref());
         if let Ok(s) = self.state.read() {
-            if let Some(c) = &s.cache {
+            if let Some(c) = &s.delta_cache {
                 if c.inputs_hash == hash {
-                    return c.vars.clone();
+                    return c.delta.clone();
                 }
             }
         }
 
-        let script = build_capture_script(&snippet, dir.as_deref());
+        let script = build_delta_capture_script(&snippet, dir.as_deref());
         let Some(stdout) = run(script) else {
-            return Vec::new();
+            return EnvDelta::default();
         };
-        let vars = parse_env(&stdout);
+        let delta = parse_delta(&stdout);
 
         if let Ok(mut s) = self.state.write() {
-            s.cache = Some(Cached {
+            s.delta_cache = Some(CachedDelta {
                 inputs_hash: hash,
-                vars: vars.clone(),
+                delta: delta.clone(),
             });
         }
-        vars
+        delta
     }
 }
 
@@ -285,6 +316,73 @@ fn build_capture_script(snippet: &str, dir: Option<&Path>) -> String {
     // `command env` bypasses any `env` function/alias.
     script.push_str("command env");
     script
+}
+
+/// Marker printed between the baseline and activated env dumps in the delta
+/// capture. A fixed, unlikely token — env values never legitimately contain it,
+/// so it cleanly splits the two halves of the output.
+const DELTA_SENTINEL: &str = "__FRESH_ENV_DELTA_SENTINEL_b3f1c2__";
+
+/// Build the script for a *delta* capture: dump the env once (baseline — login
+/// shell in the project dir, recipe not yet run), print the sentinel, run the
+/// recipe, then dump the env again (activated). Diffing the two halves yields
+/// exactly what the recipe changed — see [`parse_delta`]. The `cd` precedes the
+/// baseline dump so direnv (which keys off cwd) is still inactive in the
+/// baseline and only activates in the second half.
+fn build_delta_capture_script(snippet: &str, dir: Option<&Path>) -> String {
+    let mut script = String::new();
+    if let Some(d) = dir {
+        script.push_str("cd ");
+        script.push_str(&shell_quote(&d.to_string_lossy()));
+        script.push_str("; ");
+    }
+    script.push_str("command env; printf '%s\\n' ");
+    script.push_str(&shell_quote(DELTA_SENTINEL));
+    script.push_str("; ");
+    let snippet = snippet.trim();
+    if !snippet.is_empty() {
+        script.push_str(snippet);
+        script.push_str("; ");
+    }
+    script.push_str("command env");
+    script
+}
+
+/// Diff a delta-capture's output into an [`EnvDelta`]. Splits on
+/// [`DELTA_SENTINEL`] into baseline and activated halves; a key whose value is
+/// new or changed in the activated half is a `set` (in activated order), and a
+/// key present in the baseline but gone from the activated half is an `unset`.
+/// Volatile keys identical in both halves (`PWD`, `SHLVL`, …) diff out and never
+/// appear. If the sentinel is missing (capture malformed), returns an empty
+/// delta rather than guessing.
+fn parse_delta(stdout: &str) -> EnvDelta {
+    let Some((baseline_text, activated_text)) = stdout.split_once(DELTA_SENTINEL) else {
+        return EnvDelta::default();
+    };
+    let baseline = parse_env(baseline_text);
+    let activated = parse_env(activated_text);
+
+    let baseline_lookup: std::collections::HashMap<&str, &str> = baseline
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut set = Vec::new();
+    for (k, v) in &activated {
+        if baseline_lookup.get(k.as_str()) != Some(&v.as_str()) {
+            set.push((k.clone(), v.clone()));
+        }
+    }
+
+    let activated_keys: std::collections::HashSet<&str> =
+        activated.iter().map(|(k, _)| k.as_str()).collect();
+    let unset = baseline
+        .iter()
+        .filter(|(k, _)| !activated_keys.contains(k.as_str()))
+        .map(|(k, _)| k.clone())
+        .collect();
+
+    EnvDelta { set, unset }
 }
 
 /// Parse `env` output (`KEY=VALUE` lines) into pairs. Lines without `=` or with
@@ -452,6 +550,18 @@ mod tests {
     }
 
     #[test]
+    fn build_delta_capture_script_shape() {
+        let s = build_delta_capture_script("source .venv/bin/activate", Some(Path::new("/p")));
+        assert_eq!(
+            s,
+            format!(
+                "cd '/p'; command env; printf '%s\\n' '{DELTA_SENTINEL}'; \
+                 source .venv/bin/activate; command env"
+            )
+        );
+    }
+
+    #[test]
     fn parse_env_basics() {
         let out = "PATH=/a:/b\nVIRTUAL_ENV=/p/.venv\nWEIRD=a=b=c\n=skipme\nnoeq\n";
         let vars = parse_env(out);
@@ -529,20 +639,49 @@ mod tests {
         assert_eq!(n.get(), 2, "input change should force a re-capture");
     }
 
-    #[test]
-    fn blocking_capture_inactive_returns_empty_without_running() {
-        let p = EnvProvider::inactive();
-        let ran = std::cell::Cell::new(false);
-        let vars = p.capture_blocking(|_script| {
-            ran.set(true);
-            Some("X=1".to_string())
-        });
-        assert!(vars.is_empty());
-        assert!(!ran.get(), "blocking capture must not run when inactive");
+    /// Build a delta-capture stdout from a baseline and an activated env block.
+    fn delta_output(baseline: &str, activated: &str) -> String {
+        format!("{baseline}\n{DELTA_SENTINEL}\n{activated}")
     }
 
     #[test]
-    fn blocking_capture_caches_and_shares_cache_with_current() {
+    fn parse_delta_extracts_added_changed_and_removed() {
+        // baseline → activated: PATH changed, VIRTUAL_ENV added, GONE removed,
+        // HOME unchanged (must diff out), SHLVL unchanged (volatile diffs out).
+        let out = delta_output(
+            "HOME=/h\nPATH=/usr/bin\nGONE=1\nSHLVL=3",
+            "HOME=/h\nPATH=/p/.venv/bin:/usr/bin\nVIRTUAL_ENV=/p/.venv\nSHLVL=3",
+        );
+        let d = parse_delta(&out);
+        assert_eq!(
+            d.set,
+            vec![
+                ("PATH".into(), "/p/.venv/bin:/usr/bin".into()),
+                ("VIRTUAL_ENV".into(), "/p/.venv".into()),
+            ]
+        );
+        assert_eq!(d.unset, vec!["GONE".to_string()]);
+    }
+
+    #[test]
+    fn parse_delta_missing_sentinel_is_empty() {
+        assert!(parse_delta("HOME=/h\nPATH=/usr/bin").is_empty());
+    }
+
+    #[test]
+    fn delta_capture_inactive_returns_empty_without_running() {
+        let p = EnvProvider::inactive();
+        let ran = std::cell::Cell::new(false);
+        let d = p.capture_delta_blocking(|_script| {
+            ran.set(true);
+            Some(delta_output("A=1", "A=1\nB=2"))
+        });
+        assert!(d.is_empty());
+        assert!(!ran.get(), "delta capture must not run when inactive");
+    }
+
+    #[test]
+    fn delta_capture_caches_on_unchanged_inputs() {
         let tmp = tempfile::tempdir().unwrap();
         let p = EnvProvider::inactive();
         p.set("true".into(), Some(tmp.path().to_path_buf()));
@@ -550,17 +689,14 @@ mod tests {
         let calls = std::cell::Cell::new(0);
         let run = || {
             calls.set(calls.get() + 1);
-            Some("FOO=bar\nPATH=/x\n".to_string())
+            Some(delta_output("PATH=/usr/bin", "PATH=/usr/bin\nFOO=bar"))
         };
 
-        let v1 = p.capture_blocking(|_s| run());
-        assert_eq!(
-            v1,
-            vec![("FOO".into(), "bar".into()), ("PATH".into(), "/x".into())]
-        );
-        // Second blocking call hits the cache — no re-run.
-        let v2 = p.capture_blocking(|_s| run());
-        assert_eq!(v2, v1);
+        let d1 = p.capture_delta_blocking(|_s| run());
+        assert_eq!(d1.set, vec![("FOO".into(), "bar".into())]);
+        // Second call hits the cache — no re-run.
+        let d2 = p.capture_delta_blocking(|_s| run());
+        assert_eq!(d2, d1);
         assert_eq!(calls.get(), 1, "warm cache should prevent a second capture");
     }
 
