@@ -65,7 +65,7 @@ The review diff picked up a real review workflow: a **file sidebar** grouped by 
 
 ## Live Diff
 
-The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter. Especially handy for watching an agent rewrite a file under you.
+The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter, with **word-level highlighting** inside changed line pairs. Especially handy for watching an agent rewrite a file under you.
 
 <div class="showcase-demo">
   <img src="./live-diff/showcase.gif" alt="Live diff demo" />
@@ -73,15 +73,19 @@ The experimental **Live Diff** plugin overlays a unified diff *inside the editab
 
 ## Terminal Path Links
 
-Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`** (or `Ctrl+hover`) any `path:line` in the output — including in scrollback — to jump straight to that file and line. Fresh also tracks the shell's working directory via OSC 7 so relative paths resolve correctly.
+Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`** (or `Ctrl+hover`) any `path:line` in the output — including in scrollback — to jump straight to that file and line. Fresh also tracks the shell's working directory via OSC 7 so relative paths resolve correctly. Going the other way, **send the selection (or current line) to the terminal** to run a snippet REPL-style without leaving the editor.
 
 <div class="showcase-demo">
   <img src="./terminal-path-links/showcase.gif" alt="Terminal path links demo" />
 </div>
 
-## Environment Managers
+## Workspace Trust & Environments
 
-A built-in **environment-manager** plugin detects a project's `venv` / `.envrc` (direnv) / `mise` setup and, via **Env: Activate**, injects that environment into *every* process Fresh spawns — LSP servers, formatters, terminals, and plugin subprocesses — with an opt-in `env` status-bar element. Activation is on-demand and respects Workspace Trust.
+Each session carries its own **trust level**, and a folder you haven't decided on opens **Restricted** — surfaced by a clickable **`{trust}`** element that now *leads* the status bar. Fresh detects the project's environment (`venv` / `.envrc` direnv / `mise`) and offers a single **combined trust-and-activate prompt** rather than two separate dialogs. Once trusted, the environment activates and the language servers, formatters, and tools Fresh spawns inherit it. Virtualenvs activate without a prompt, env pills in the status bar are clickable, and changing the trust level resets only the active session instead of the whole editor.
+
+<div class="showcase-demo">
+  <img src="./workspace-trust/showcase.gif" alt="Workspace trust and environments demo" />
+</div>
 
 ## Go to LSP Symbol
 
@@ -92,7 +96,8 @@ A symbol finder with live preview: filter your document's symbols, see source-li
 ### Editing & Navigation
 
 - **Rainbow bracket colorization** for matching brackets across the viewport.
-- **Occurrence highlighting** toggle for the word under the cursor.
+- **Occurrence highlighting** toggle for the word under the cursor; the current-line highlight now hides while text is selected.
+- A **Clear Search** action (and a plugin API exposing the active search state).
 - **Distribute clipboard across cursors** — VS Code-style column-mode paste when the clipboard line count matches the cursor count.
 - **Add Cursors to Line Ends**, **Move to Next / Previous Paragraph**, and **Go to line with selection**.
 - **User-configurable indentation rules** — VS Code-style regex tiers via `[languages.<id>.indent]`.
@@ -107,16 +112,18 @@ A symbol finder with live preview: filter your document's symbols, see source-li
 ### File Explorer
 
 - **Compact directories** (`com.example.name`, VS Code/IntelliJ-style), **follow-active-buffer**, natural-order filename sort, and context-menu **Duplicate** / **Copy (Relative) Path**.
+- A plugin **slot-override API** — plugins can set per-entry icons, status, and name color.
 
 ### Settings & Themes
 
 - Settings UI overhaul: **tree-view categories**, **direct number typing**, inline list editing, and **`Ctrl+R`** to reset a field to its default.
+- New options: **`lsp_enabled`** (disable all LSP globally), **`auto_read_only`** (turn off automatic read-only mode for foreign files), and a **configurable status-bar separator** with its own theme keys.
 - **Theme inheritance** with `extends: "builtin://dark"`, plus a new **`terminal`** theme that uses your terminal's own palette.
-- **Animations** framework — tab-switch slide and a cursor-jump trail (toggleable).
+- **Animations** framework — tab-switch slide, a cursor-jump trail, and a color-transition on theme switch (toggleable).
+- Press **`q`** to close the *Keyboard Shortcuts* and *Fresh Manual* viewers.
 
 ### Platform & Plugins
 
-- **Workspace Trust** groundwork — a per-project trust level and a `workspaceTrustLevel()` plugin API.
 - **LSP over SSH** runs the language server on the remote host.
 - Status-bar element registration API (`git_statusbar`), `tab_actions`, plugin-registered config items, overlay toolbar widgets, and `editor.httpFetch`.
 - A **minimal static musl** Linux binary, and an ~18 MB smaller default binary from trimming bundled grammars.

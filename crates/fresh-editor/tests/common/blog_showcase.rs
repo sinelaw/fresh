@@ -318,8 +318,9 @@ fn render_showcase_frame(
 
     // Key indicator badge (bottom-right corner)
     if let Some(key) = key_indicator {
-        let badge_text = key;
-        let text_len = badge_text.len() as u16;
+        // Escape for XML — key labels can contain `&`, `<`, etc.
+        let badge_text = xml_escape(key);
+        let text_len = key.len() as u16;
         let badge_w = text_len * 13 + 32;
         let badge_h: u16 = 36;
         let badge_x = svg_width - badge_w - 16;
