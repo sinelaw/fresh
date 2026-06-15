@@ -94,10 +94,11 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
 - [~] Phase 2: shared semantic projections in the core (`view/scene.rs`),
   reusing the existing `EditorTestApi` projections (`PromptView`/`PopupView`/
   `Caret`) as the model wherever they already exist — NOT a parallel format.
-  Done: `Editor::menu_view()` is the single derivation of the menu tree
-  (labels, enabled/checked, accelerators, open/highlight/submenu); the web
-  bridge serializes it and its bespoke `menu_item_json` is gone. TODO: tabs,
-  status bar, palette (reuse `PromptView`), popups (reuse `PopupView`).
+  Done: `Editor::menu_view()`, `tab_bar_view()`, `status_view()`,
+  `palette_view()` are the single derivations of the menu tree / tabs / status
+  segments / palette; the web bridge only serializes them and all the bespoke
+  bridge derivation is gone. TODO: popups (reuse `PopupView`) — still drawn as
+  cells in the web frontend.
 - [ ] Phase 3: TUI renderers consume the same projections. MenuRenderer takes the
   menu *content* from `menu_view()` (geometry/`MenuLayout` stays the renderer's
   output) so the menu tree / enabled / checked / accel logic exists in exactly

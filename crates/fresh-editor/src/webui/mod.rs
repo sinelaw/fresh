@@ -314,37 +314,6 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
     Value::Array(rows)
 }
 
-/// Plain text of cells `[x0, x1)` on row `y` of the rendered buffer (no styling).
-/// Used to lift the *text* of a chrome segment (a status-bar indicator) out of
-/// the pipeline's render so the frontend can show it as a native UI label rather
-/// than a cell grid.
-fn text_in_row(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
-    let mut s = String::new();
-    for x in x0..x1 {
-        if let Some(cell) = buf.cell(Position::new(x, y)) {
-            s.push_str(cell.symbol());
-        }
-    }
-    s
-}
-
-/// Build the scene: the real cell grid + semantic chrome regions. The semantic
-/// chrome (menus, …) is derived once in the core and only serialized here.
-///
-/// Short tag for a prompt type, so the frontend can label the palette/picker.
-fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
-    use crate::view::prompt::PromptType::*;
-    match t {
-        QuickOpen => "quickopen",
-        LiveGrep => "livegrep",
-        Search | ReplaceSearch | QueryReplaceSearch => "search",
-        OpenFile | OpenFileWithEncoding { .. } => "openfile",
-        SaveFileAs => "saveas",
-        GotoLine | GotoByteOffset => "goto",
-        _ => "input",
-    }
-}
-
 /// Advance the editor one "tick" (drain async LSP/plugin/file messages, fire
 /// timers, step animations) exactly as the TUI event loop does, then build the
 /// scene. This is what lets the browser frontend get fresh frames by polling
@@ -391,7 +360,6 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let dropdown = get("dropdown");
 
     // --- per-window geometry from the pipeline's layout cache ---
-    let active_buffer = editor.active_buffer();
     let layout = editor.active_layout();
     let content = layout.editor_content_area.unwrap_or(Rect::new(0, 0, w, h));
     let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
@@ -400,33 +368,15 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         .split_areas
         .iter()
         .map(|(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
-            let tl = layout.tab_layouts.get(leaf);
-            let tabs: Vec<Value> = tl
-                .map(|t| {
-                    t.tabs
-                        .iter()
-                        .map(|tab| {
-                            let bid = tab.target.as_buffer();
-                            json!({
-                                "bufferId": bid.map(|b| b.0),
-                                "label": bid.and_then(|b| editor.buffer_display_name(b))
-                                    .unwrap_or_else(|| "untitled".into()),
-                                "active": bid == Some(active_buffer),
-                                "modified": bid.map(|b| editor.buffer_is_modified(b)).unwrap_or(false),
-                                "rect": rect_json(tab.tab_area),
-                                "closeRect": rect_json(tab.close_area),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Tabs are derived once in the core (`Editor::tab_bar_view`).
+            let tb = editor.tab_bar_view(*leaf);
             json!({
                 "leaf": leaf.0 .0,
                 "buffer": bufid.0,
                 "content": rect_json(*content_rect),
                 "cells": cells_json(&buf, *content_rect),
-                "tabBar": tl.map(|t| rect_json(t.bar_area)),
-                "tabs": tabs,
+                "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
+                "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
                 "vscroll": rect_json(*scrollbar_rect),
                 "thumbStart": thumb_s,
                 "thumbEnd": thumb_e,
@@ -449,113 +399,11 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         .file_explorer_area
         .map(|r| json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) }));
 
-    // Semantic status bar. The pipeline records *where* each indicator sits
-    // (col ranges on ChromeLayout) and what it means; we lift each segment's
-    // text out of the rendered row and emit a labeled model so the frontend can
-    // draw native pills (left message + right indicators), not a cell grid.
-    let statusbar = chrome.status_bar_area.map(|(sy, sx, sw)| {
-        let bar_end = sx.saturating_add(sw);
-        let mid = sx.saturating_add(sw / 2);
-        // All indicators the pipeline placed, in column order.
-        let mut ind: Vec<(&str, (u16, u16, u16), Option<String>)> = Vec::new();
-        let mut push = |name: &'static str, area: Option<(u16, u16, u16)>| {
-            if let Some(a) = area {
-                ind.push((name, a, None));
-            }
-        };
-        push("lsp", chrome.status_bar_lsp_area);
-        push("warning", chrome.status_bar_warning_area);
-        push("language", chrome.status_bar_language_area);
-        push("encoding", chrome.status_bar_encoding_area);
-        push("lineEnding", chrome.status_bar_line_ending_area);
-        push("remote", chrome.status_bar_remote_area);
-        push("trust", chrome.status_bar_trust_area);
-        push("message", chrome.status_bar_message_area);
-        for (key, a) in &chrome.status_bar_plugin_token_areas {
-            ind.push(("plugin", *a, Some(key.clone())));
-        }
-        ind.sort_by_key(|(_, (_, start, _), _)| *start);
-
-        // Tile the whole bar: labeled indicators + the untracked text runs
-        // between them (file name / Ln,Col live there). Whitespace-only gaps are
-        // dropped so the left/right indicator groups separate cleanly.
-        let mut segments: Vec<Value> = Vec::new();
-        let mut emit_gap = |segs: &mut Vec<Value>, from: u16, to: u16| {
-            if to > from {
-                let t = text_in_row(&buf, sy, from, to);
-                if !t.trim().is_empty() {
-                    segs.push(json!({
-                        "name": "text", "key": Value::Null, "text": t.trim().to_string(),
-                        "x": from, "w": to - from, "side": if from < mid {"left"} else {"right"},
-                    }));
-                }
-            }
-        };
-        let mut cur = sx;
-        for (name, (row, start, end), key) in &ind {
-            emit_gap(&mut segments, cur, *start);
-            segments.push(json!({
-                "name": name, "key": key,
-                "text": text_in_row(&buf, *row, *start, *end).trim().to_string(),
-                "x": start, "w": end.saturating_sub(*start),
-                "side": if *start < mid {"left"} else {"right"},
-            }));
-            cur = (*end).max(cur);
-        }
-        emit_gap(&mut segments, cur, bar_end);
-
-        json!({
-            "rect": rect_json(Rect::new(sx, sy, sw, 1)),
-            "segments": segments,
-        })
-    });
-
-    // Semantic command palette / picker. The pipeline records the popup
-    // geometry; the editor's prompt holds the query + filtered suggestions +
-    // selection. We emit a semantic model rendered as native HTML (no cells) and
-    // route clicks back through handle_mouse at the pipeline's list cell rect so
-    // selection/confirm stay authoritative. Only emit it for prompts that show a
-    // picker list (or a floating overlay) — bottom-row text prompts are skipped.
-    let sugg_outer = chrome.suggestions_outer_area;
-    let sugg_area = chrome.suggestions_area;
-    let prompt_results = chrome.prompt_results_area;
-    let palette = editor.active_window().prompt.as_ref().and_then(|p| {
-        if p.suggestions.is_empty() && !p.overlay {
-            return None;
-        }
-        let suggestions: Vec<Value> = p
-            .suggestions
-            .iter()
-            .map(|s| {
-                json!({
-                    "text": s.text,
-                    "description": s.description,
-                    "keybinding": s.keybinding,
-                    "disabled": s.disabled,
-                })
-            })
-            .collect();
-        let title: String = p.title.iter().map(|t| t.text.as_str()).collect();
-        let list_rect = sugg_area.map(|(r, _, _, _)| r).or(prompt_results);
-        let (scroll_start, visible, total) = sugg_area
-            .map(|(_, s, v, t)| (s, v, t))
-            .unwrap_or((p.scroll_offset, p.suggestions.len(), p.suggestions.len()));
-        Some(json!({
-            "query": p.input,
-            "message": p.message,
-            "promptType": prompt_type_tag(&p.prompt_type),
-            "overlay": p.overlay,
-            "title": title,
-            "status": p.status,
-            "selected": p.selected_suggestion,
-            "scrollStart": scroll_start,
-            "visibleCount": visible,
-            "total": total,
-            "outerRect": sugg_outer.map(rect_json),
-            "listRect": list_rect.map(rect_json),
-            "suggestions": suggestions,
-        }))
-    });
+    // Semantic status bar and command palette are derived once in the core
+    // (`Editor::status_view` / `Editor::palette_view`); the bridge only
+    // serializes them. See crates/fresh-editor/src/view/scene.rs.
+    let statusbar = serde_json::to_value(editor.status_view(&buf)).unwrap_or(Value::Null);
+    let palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
 
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),

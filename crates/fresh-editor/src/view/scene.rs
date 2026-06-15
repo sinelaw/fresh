@@ -12,6 +12,8 @@
 //! as-is; the field names match the JSON the browser frontend already consumes.
 
 use crate::app::Editor;
+use fresh_core::LeafId;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -224,5 +226,246 @@ impl Editor {
             submenu_path: ms.submenu_path.clone(),
             dropdown,
         }
+    }
+}
+
+// ─────────────────────────── tabs ───────────────────────────
+
+/// One tab in a pane's tab bar (semantic; geometry from the pipeline's
+/// TabLayout for click/close hit-testing).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabView {
+    pub buffer_id: Option<usize>,
+    pub label: String,
+    pub active: bool,
+    pub modified: bool,
+    pub rect: RectView,
+    pub close_rect: RectView,
+}
+
+/// A pane's tab bar: the bar rect (when laid out) and its tabs.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TabBarView {
+    pub bar: Option<RectView>,
+    pub tabs: Vec<TabView>,
+}
+
+// ─────────────────────────── status bar ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusSegment {
+    pub name: &'static str,
+    pub key: Option<String>,
+    pub text: String,
+    pub x: u16,
+    pub w: u16,
+    pub side: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusView {
+    pub rect: RectView,
+    pub segments: Vec<StatusSegment>,
+}
+
+/// Plain text of cells `[x0, x1)` on row `y` of a rendered buffer. Used to lift
+/// a status-bar segment's text out of the render (the built-in segments are not
+/// otherwise exposed semantically — a Phase-3 cleanup will have the status
+/// renderer emit the model directly).
+fn text_in_row(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
+    let mut s = String::new();
+    for x in x0..x1 {
+        if let Some(cell) = buf.cell(ratatui::layout::Position::new(x, y)) {
+            s.push_str(cell.symbol());
+        }
+    }
+    s
+}
+
+// ─────────────────────────── command palette / picker ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SuggestionView {
+    pub text: String,
+    pub description: Option<String>,
+    pub keybinding: Option<String>,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteView {
+    pub query: String,
+    pub message: String,
+    pub prompt_type: &'static str,
+    pub overlay: bool,
+    pub title: String,
+    pub status: String,
+    pub selected: Option<usize>,
+    pub scroll_start: usize,
+    pub visible_count: usize,
+    pub total: usize,
+    pub outer_rect: Option<RectView>,
+    pub list_rect: Option<RectView>,
+    pub suggestions: Vec<SuggestionView>,
+}
+
+/// Stable tag for a prompt type so the frontend can label the palette/picker.
+fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
+    use crate::view::prompt::PromptType::*;
+    match t {
+        QuickOpen => "quickopen",
+        LiveGrep => "livegrep",
+        Search | ReplaceSearch | QueryReplaceSearch => "search",
+        OpenFile | OpenFileWithEncoding { .. } => "openfile",
+        SaveFileAs => "saveas",
+        GotoLine | GotoByteOffset => "goto",
+        _ => "input",
+    }
+}
+
+impl Editor {
+    /// Semantic tab bar for a pane (leaf). Single derivation of tab labels /
+    /// active / modified shared by the TUI tab renderer and the web bridge.
+    pub fn tab_bar_view(&self, leaf: LeafId) -> TabBarView {
+        let active = self.active_buffer();
+        let layout = self.active_layout();
+        match layout.tab_layouts.get(&leaf) {
+            None => TabBarView::default(),
+            Some(tl) => TabBarView {
+                bar: Some(RectView::from(tl.bar_area)),
+                tabs: tl
+                    .tabs
+                    .iter()
+                    .map(|tab| {
+                        let bid = tab.target.as_buffer();
+                        TabView {
+                            buffer_id: bid.map(|b| b.0),
+                            label: bid
+                                .and_then(|b| self.buffer_display_name(b))
+                                .unwrap_or_else(|| "untitled".into()),
+                            active: bid == Some(active),
+                            modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
+                            rect: RectView::from(tab.tab_area),
+                            close_rect: RectView::from(tab.close_area),
+                        }
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// Semantic status bar: the whole bar tiled into labeled indicator segments
+    /// plus the untracked text runs between them (file name / Ln,Col). The
+    /// segment *text* is lifted from the rendered `buf` for now. Single
+    /// derivation shared by both frontends.
+    pub fn status_view(&self, buf: &Buffer) -> Option<StatusView> {
+        let chrome = self.active_chrome();
+        let (sy, sx, sw) = chrome.status_bar_area?;
+        let bar_end = sx.saturating_add(sw);
+        let mid = sx.saturating_add(sw / 2);
+        let side = |x: u16| if x < mid { "left" } else { "right" };
+
+        let mut ind: Vec<(&'static str, (u16, u16, u16), Option<String>)> = Vec::new();
+        let mut push = |name: &'static str, area: Option<(u16, u16, u16)>| {
+            if let Some(a) = area {
+                ind.push((name, a, None));
+            }
+        };
+        push("lsp", chrome.status_bar_lsp_area);
+        push("warning", chrome.status_bar_warning_area);
+        push("language", chrome.status_bar_language_area);
+        push("encoding", chrome.status_bar_encoding_area);
+        push("lineEnding", chrome.status_bar_line_ending_area);
+        push("remote", chrome.status_bar_remote_area);
+        push("trust", chrome.status_bar_trust_area);
+        push("message", chrome.status_bar_message_area);
+        for (key, a) in &chrome.status_bar_plugin_token_areas {
+            ind.push(("plugin", *a, Some(key.clone())));
+        }
+        ind.sort_by_key(|(_, (_, start, _), _)| *start);
+
+        let mut segments: Vec<StatusSegment> = Vec::new();
+        let mut emit_gap = |segs: &mut Vec<StatusSegment>, from: u16, to: u16| {
+            if to > from {
+                let t = text_in_row(buf, sy, from, to);
+                if !t.trim().is_empty() {
+                    segs.push(StatusSegment {
+                        name: "text",
+                        key: None,
+                        text: t.trim().to_string(),
+                        x: from,
+                        w: to - from,
+                        side: side(from),
+                    });
+                }
+            }
+        };
+        let mut cur = sx;
+        for (name, (row, start, end), key) in &ind {
+            emit_gap(&mut segments, cur, *start);
+            segments.push(StatusSegment {
+                name,
+                key: key.clone(),
+                text: text_in_row(buf, *row, *start, *end).trim().to_string(),
+                x: *start,
+                w: end.saturating_sub(*start),
+                side: side(*start),
+            });
+            cur = (*end).max(cur);
+        }
+        emit_gap(&mut segments, cur, bar_end);
+
+        Some(StatusView {
+            rect: RectView {
+                x: sx,
+                y: sy,
+                w: sw,
+                h: 1,
+            },
+            segments,
+        })
+    }
+
+    /// Semantic command palette / picker, derived from the active prompt and the
+    /// pipeline's suggestion-popup geometry. `None` unless a picker list (or a
+    /// floating overlay) is showing. Single derivation shared by both frontends.
+    pub fn palette_view(&self) -> Option<PaletteView> {
+        let chrome = self.active_chrome();
+        let sugg_outer = chrome.suggestions_outer_area;
+        let sugg_area = chrome.suggestions_area;
+        let prompt_results = chrome.prompt_results_area;
+        let p = self.active_window().prompt.as_ref()?;
+        if p.suggestions.is_empty() && !p.overlay {
+            return None;
+        }
+        let (scroll_start, visible, total) = sugg_area
+            .map(|(_, s, v, t)| (s, v, t))
+            .unwrap_or((p.scroll_offset, p.suggestions.len(), p.suggestions.len()));
+        Some(PaletteView {
+            query: p.input.clone(),
+            message: p.message.clone(),
+            prompt_type: prompt_type_tag(&p.prompt_type),
+            overlay: p.overlay,
+            title: p.title.iter().map(|t| t.text.as_str()).collect(),
+            status: p.status.clone(),
+            selected: p.selected_suggestion,
+            scroll_start,
+            visible_count: visible,
+            total,
+            outer_rect: sugg_outer.map(RectView::from),
+            list_rect: sugg_area.map(|(r, _, _, _)| r).or(prompt_results).map(RectView::from),
+            suggestions: p
+                .suggestions
+                .iter()
+                .map(|s| SuggestionView {
+                    text: s.text.clone(),
+                    description: s.description.clone(),
+                    keybinding: s.keybinding.clone(),
+                    disabled: s.disabled,
+                })
+                .collect(),
+        })
     }
 }
