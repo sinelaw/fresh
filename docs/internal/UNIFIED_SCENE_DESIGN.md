@@ -91,6 +91,15 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
 - [x] Phase 1: `suppress_chrome_cells` render flag threaded through MenuRenderer /
   SuggestionsRenderer; pipeline records chrome layout but skips drawing it to
   cells; web frontend cover/blank hacks deleted. TUI unchanged (flag off).
-- [ ] Phase 2: typed `ChromeModel` + `Editor::chrome_model()`.
-- [ ] Phase 3: TUI chrome renderers consume the model.
+- [~] Phase 2: shared semantic projections in the core (`view/scene.rs`),
+  reusing the existing `EditorTestApi` projections (`PromptView`/`PopupView`/
+  `Caret`) as the model wherever they already exist — NOT a parallel format.
+  Done: `Editor::menu_view()` is the single derivation of the menu tree
+  (labels, enabled/checked, accelerators, open/highlight/submenu); the web
+  bridge serializes it and its bespoke `menu_item_json` is gone. TODO: tabs,
+  status bar, palette (reuse `PromptView`), popups (reuse `PopupView`).
+- [ ] Phase 3: TUI renderers consume the same projections. MenuRenderer takes the
+  menu *content* from `menu_view()` (geometry/`MenuLayout` stays the renderer's
+  output) so the menu tree / enabled / checked / accel logic exists in exactly
+  one place. Then tabs/status/suggestions likewise.
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.

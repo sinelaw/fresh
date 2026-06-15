@@ -85,6 +85,7 @@ pub mod chrome_layout;
 pub mod chrome_html;
 #[cfg(feature = "runtime")]
 pub mod chrome_snapshot;
+pub mod scene;
 #[cfg(feature = "runtime")]
 pub mod split;
 #[cfg(feature = "runtime")]

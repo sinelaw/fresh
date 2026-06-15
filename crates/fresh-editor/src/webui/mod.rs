@@ -269,24 +269,6 @@ fn render_to_buffer(editor: &mut Editor, cols: u16, rows: u16) -> (Buffer, Optio
     (buf, cursor)
 }
 
-/// Union of a set of rects (None if empty).
-fn union_rect<'a>(rects: impl Iterator<Item = &'a Rect>) -> Option<Rect> {
-    let mut acc: Option<Rect> = None;
-    for r in rects {
-        acc = Some(match acc {
-            None => *r,
-            Some(a) => {
-                let x0 = a.x.min(r.x);
-                let y0 = a.y.min(r.y);
-                let x1 = (a.x + a.width).max(r.x + r.width);
-                let y1 = (a.y + a.height).max(r.y + r.height);
-                Rect::new(x0, y0, x1 - x0, y1 - y0)
-            }
-        });
-    }
-    acc
-}
-
 fn rect_json(r: Rect) -> Value {
     json!({ "x": r.x, "y": r.y, "w": r.width, "h": r.height })
 }
@@ -346,49 +328,9 @@ fn text_in_row(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
     s
 }
 
-/// Build the scene: the real cell grid + semantic chrome regions, all from the
-/// pipeline's own per-frame layout caches.
-/// Convert a single `MenuItem` into the semantic JSON the frontend renders as
-/// native HTML (no cells). Enabled/checked state and accelerators come straight
-/// from the editor so the browser menu mirrors the TUI/GUI menus exactly.
-fn menu_item_json(editor: &Editor, item: &fresh_core::menu::MenuItem) -> Value {
-    use fresh_core::menu::MenuItem::*;
-    match item {
-        Separator { .. } => json!({ "kind": "sep" }),
-        Action {
-            label,
-            action,
-            args,
-            when,
-            checkbox,
-        } => json!({
-            "kind": "action",
-            "label": label,
-            "action": action,
-            "args": args,
-            "accel": editor.accelerator_for(action),
-            "enabled": when
-                .as_ref()
-                .map(|w| editor.menu_state().context.get(w))
-                .unwrap_or(true),
-            "checked": checkbox
-                .as_ref()
-                .map(|c| editor.menu_state().context.get(c)),
-        }),
-        Submenu { label, items } => json!({
-            "kind": "submenu",
-            "label": label,
-            "items": items.iter().map(|i| menu_item_json(editor, i)).collect::<Vec<_>>(),
-        }),
-        DynamicSubmenu { label, .. } => json!({
-            "kind": "submenu",
-            "label": label,
-            "items": [],
-        }),
-        Label { info } => json!({ "kind": "label", "label": info }),
-    }
-}
-
+/// Build the scene: the real cell grid + semantic chrome regions. The semantic
+/// chrome (menus, …) is derived once in the core and only serialized here.
+///
 /// Short tag for a prompt type, so the frontend can label the palette/picker.
 fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
     use crate::view::prompt::PromptType::*;
@@ -437,55 +379,16 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         .map(|r| json!({ "rect": rect_json(*r), "cells": cells_json(&buf, *r) }))
         .collect();
 
-    // Semantic menu model (Option 2: the editor stays the source of truth for
-    // which menu is open / highlighted; the frontend renders native HTML).
-    let menu_areas: std::collections::HashMap<usize, Rect> = chrome
-        .menu_layout
-        .as_ref()
-        .map(|m| m.menu_areas.iter().cloned().collect())
-        .unwrap_or_default();
-    let ms = editor.menu_state();
-    let menu_open = ms.active_menu;
-    let menu_highlight = ms.highlighted_item;
-    let submenu_path = ms.submenu_path.clone();
-    let menus: Vec<Value> = editor
-        .expanded_menu_definitions()
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            json!({
-                "label": m.label,
-                "x": menu_areas.get(&i).map(|r| r.x),
-                "w": menu_areas.get(&i).map(|r| r.width),
-                "items": m.items.iter().map(|it| menu_item_json(editor, it)).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-    // Cell geometry of the *currently open* dropdown (and any expanded submenu),
-    // straight from the pipeline's MenuLayout. The frontend positions native HTML
-    // rows at these exact rects and forwards clicks/hovers back through
-    // `handle_mouse`, so the editor stays the single source of truth for which
-    // item is highlighted / selected / closed.
-    let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
-        if ml.item_areas.is_empty() {
-            return None;
-        }
-        let items: Vec<Value> = ml
-            .item_areas
-            .iter()
-            .map(|(idx, r)| json!({ "index": idx, "rect": rect_json(*r) }))
-            .collect();
-        let submenus: Vec<Value> = ml
-            .submenu_areas
-            .iter()
-            .map(|(depth, idx, r)| json!({ "depth": depth, "index": idx, "rect": rect_json(*r) }))
-            .collect();
-        Some(json!({
-            "rect": union_rect(ml.item_areas.iter().map(|(_, r)| r)).map(rect_json),
-            "items": items,
-            "submenus": submenus,
-        }))
-    });
+    // Semantic menu model — derived once in the core (`Editor::menu_view`) and
+    // shared with the TUI renderer; the bridge only serializes it. See
+    // crates/fresh-editor/src/view/scene.rs.
+    let menu_view = serde_json::to_value(editor.menu_view()).unwrap_or_else(|_| json!({}));
+    let get = |k: &str| menu_view.get(k).cloned().unwrap_or(Value::Null);
+    let menus = get("menus");
+    let menu_open = get("menuOpen");
+    let menu_highlight = get("menuHighlight");
+    let submenu_path = get("submenuPath");
+    let dropdown = get("dropdown");
 
     // --- per-window geometry from the pipeline's layout cache ---
     let active_buffer = editor.active_buffer();
