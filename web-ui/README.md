@@ -10,18 +10,30 @@ mock model. See `docs/internal/NON_TERMINAL_UI_RESEARCH.md` (Direction A).
 - **Editing is real** — keystrokes are POSTed to `/key` and run through the real
   `Editor::handle_key`; the page re-renders from the editor's new state.
 
-## Architecture (the seam)
+## Architecture (taps the real render pipeline)
 
 ```
 browser (web-ui/index.html)  ──HTTP──►  fresh::webui bridge  ──►  real Editor
-  DOM/CSS chrome + SVG text   GET /state  (single-threaded,        (piece tree,
-  keydown ─► POST /key        POST /key    hosts the Editor)        handle_key, …)
+  chrome = UI/DOM @ rects     GET /state   runs Editor::render    (piece tree,
+  buffer interior = real      POST /key    into a cell buffer,    highlighter,
+  highlighted CELLS (SVG)      POST /resize reads the pipeline's   handle_key, …)
+  keydown ─► POST /key                      layout caches + cells
 ```
 
-The bridge (`crates/fresh-editor/src/webui/mod.rs`) is the same `Backend` seam a
-Tauri build would use (`invoke`/event) — just over localhost so it runs headless.
-Per the xi-editor lesson it should ship only the visible-window line diff; the PoC
-currently sends whole-buffer text (bounded to 1000 lines).
+The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs the **actual**
+`Editor::render` once into an in-memory `Buffer`, then reads the geometry the
+pipeline already aggregated for the frame — `WindowLayoutCache`
+(`split_areas` = per-pane content_rect + scrollbar + thumb, `separator_areas`,
+`tab_layouts`, `file_explorer_area`) and `ChromeLayout` — and slices the rendered
+cells. **Nothing is re-implemented:** layout, syntax highlighting, tabs,
+scrollbars and split borders all come from the pipeline. Only the final drawing is
+re-targeted: buffer interiors are emitted as the real highlighted cells (drawn as
+SVG), and chrome (menu bar, status bar, tabs, scrollbars, split borders, file
+explorer) is emitted as semantic region rects rendered as UI/DOM elements.
+
+It is the same `Backend` seam a Tauri build would use (`invoke`/event), over
+localhost so it runs headless. (Next: ship only the visible-window cell diff
+rather than the whole frame, per the xi-editor lesson.)
 
 ## Run it
 

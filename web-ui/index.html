@@ -3,54 +3,44 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fresh — web UI (real editor)</title>
+<title>Fresh — web UI (real render pipeline)</title>
 <!--
-  Non-terminal UI for Fresh, wired END-TO-END to the REAL Rust editor — no mocks.
-  Serve it with the bridge (which hosts a real `Editor`):
-     cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8137 <files...>
-  then open http://127.0.0.1:8137 .
-
-  Chrome (menu bar, tabs, split panes + dividers, status bar) is DOM/CSS, rendered
-  from the editor's real ChromeSnapshot. The text body is SVG <text>/<tspan>,
-  rendered from real buffer contents. Keystrokes are POSTed to /key and run through
-  the real `Editor::handle_key`; the page re-renders from the editor's new state.
-
-  Partial wire (more coming): keyboard editing is fully live. Tab/divider/menu
-  clicks and a live caret are wired next.
+  Non-terminal UI for Fresh. The REAL editor render pipeline decides what to draw;
+  this frontend only re-targets the final drawing:
+    - buffer interiors  -> the real syntax-highlighted CELLS the pipeline drew
+                           in each pane's content_rect (drawn here as SVG text)
+    - chrome (menu/status/tabs/scrollbars/split-borders/file-explorer) -> UI
+                           elements positioned at the rects the pipeline computed
+  Served by the bridge that hosts a real Editor:
+    cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 -->
 <style>
-  :root{
-    --bg:#1e1e1e;--bg2:#252526;--bg3:#2d2d30;--fg:#d4d4d4;--muted:#9aa0a6;
-    --accent:#0a84ff;--border:#3a3a3a;--tab-active:#1e1e1e;
-  }
+  :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#2d2d30;--fg:#d4d4d4;--muted:#9aa0a6;
+    --accent:#0a84ff;--border:#3a3a3a}
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
-  body{display:flex;flex-direction:column;height:100vh;background:var(--bg);color:var(--fg);
-    font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
-    user-select:none;overflow:hidden}
-  .menubar{display:flex;gap:2px;background:var(--bg3);border-bottom:1px solid var(--border);
-    padding:2px 4px;flex:0 0 auto}
-  .menu{background:none;border:0;color:var(--fg);padding:4px 10px;border-radius:5px;font:inherit;cursor:default}
+  body{height:100vh;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
+  #app{position:relative;width:100vw;height:100vh}
+  /* every chrome element is absolutely placed at the cell-rect the pipeline computed */
+  .region{position:absolute;overflow:hidden}
+  .menubar{display:flex;align-items:center;gap:2px;background:var(--bg3);
+    border-bottom:1px solid var(--border);padding:0 4px}
+  .menu{padding:3px 10px;border-radius:5px;color:var(--fg)}
   .menu:hover{background:var(--accent);color:#fff}
-  .workspace{flex:1 1 auto;display:flex;min-height:0}
-  .workspace>*{flex:1 1 auto}
-  .split{display:grid;min-height:0;min-width:0;width:100%;height:100%}
-  .divider{background:var(--border)}
-  .divider.vertical{cursor:col-resize}.divider.horizontal{cursor:row-resize}
-  .pane{display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--border);background:var(--bg)}
-  .pane.active{border-color:#454545}
-  .tabbar{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);flex:0 0 auto;overflow:hidden}
-  .tab{display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--muted);
-    border-right:1px solid var(--border);max-width:240px}
-  .tab.active{background:var(--tab-active);color:var(--fg);box-shadow:inset 0 2px 0 var(--accent)}
-  .tab-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .content{flex:1 1 auto;min-height:0;overflow:auto;position:relative}
-  svg.textbody{display:block;width:100%;min-height:100%;
-    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;font-size:13px}
-  .gutter{fill:var(--muted);opacity:.55}
-  .statusbar{display:flex;justify-content:space-between;background:var(--accent);color:#fff;
-    padding:2px 10px;font-size:12px;flex:0 0 auto}
-  #err{position:fixed;left:0;right:0;bottom:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none}
+  .statusbar{display:flex;align-items:center;background:var(--accent);color:#fff;
+    padding:0 10px;font-size:12px;white-space:pre}
+  .fileexplorer{background:var(--bg2);border-right:1px solid var(--border)}
+  .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border)}
+  .pane-content{background:var(--bg)}
+  .separator{background:var(--border)}
+  .separator:hover{background:var(--accent)}
+  .scrollbar{background:transparent}
+  .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:#5a5a5a}
+  .thumb:hover{background:#7a7a7a}
+  svg.cells{display:block;width:100%;height:100%;
+    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
+  #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
 </style>
 </head>
 <body>
@@ -60,90 +50,106 @@
 <script>
 "use strict";
 // --------------------------------------------------------------------------
-// Real-editor client. NO local model: every render comes from /state, every
-// edit is POSTed to /key and applied by the real Rust Editor.
+// Real-render client. NO local model and NO re-implemented layout: the server
+// runs the real Editor::render and reports the cell grid + the semantic region
+// rects the pipeline already computed. We just place UI at those rects and draw
+// the buffer-interior cells.
 // --------------------------------------------------------------------------
-let view = null; // { chrome:{menubar, split_layout, overlays, active_buffer, divider_count}, active, buffers:{id:{name,lines}} }
+let scene = null;
+// Cell pixel size — chosen to match a comfortable monospace; all rects are in
+// terminal cells, multiplied by these to get pixels.
+const CW = 8.2, CH = 18;
 
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const px = (cells, sz) => (cells*sz);
+function place(el, r){ el.style.left=px(r.x,CW)+"px"; el.style.top=px(r.y,CH)+"px"; el.style.width=px(r.w,CW)+"px"; el.style.height=px(r.h,CH)+"px"; }
 
-// Toy syntax coloring for display (the real highlighter is wired next).
-const SYNTAX=[
-  [/\b(fn|let|pub|use|mut|struct|enum|impl|match|if|else|for|while|return|self|crate|mod|const|async|await|move|where|trait|type)\b/,"#569cd6"],
-  [/\b([A-Z][A-Za-z0-9_]*)\b/,"#4ec9b0"],
-  [/"[^"]*"/,"#ce9178"],[/\/\/.*$/,"#6a9955"],[/\b(\d+)\b/,"#b5cea8"],
-];
-function highlight(line){
-  const marks=new Array(line.length).fill("#d4d4d4");
-  for(const [re,color] of SYNTAX){const g=new RegExp(re.source,"g");let m;while((m=g.exec(line))){for(let i=m.index;i<m.index+m[0].length;i++)marks[i]=color;if(m.index===g.lastIndex)g.lastIndex++;}}
-  const runs=[];let i=0;while(i<line.length){let j=i;const c=marks[i];while(j<line.length&&marks[j]===c)j++;runs.push({t:line.slice(i,j),c});i=j;}
-  return runs;
+// Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
+function cellsSvg(cells, wCells){
+  let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="13">`;
+  for(let row=0; row<cells.length; row++){
+    const y=(row+1)*CH - 5;
+    // background rects first
+    let col=0;
+    for(const r of cells[row]){
+      if(r.bg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${r.bg}"/>`; }
+      col+=r.t.length;
+    }
+    // glyphs
+    s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
+    col=0;
+    for(const r of cells[row]){
+      const x=px(col,CW);
+      const fill=r.r?(r.bg||"#1e1e1e"):(r.fg||"#d4d4d4"); // reverse: swap-ish
+      const weight=r.b?` font-weight="bold"`:"";
+      const style=r.i?` font-style="italic"`:"";
+      const deco=r.u?` text-decoration="underline"`:"";
+      s+=`<tspan x="${x.toFixed(1)}" fill="${fill}"${weight}${style}${deco}>${esc(r.t)}</tspan>`;
+      col+=r.t.length;
+    }
+    s+=`</text>`;
+  }
+  s+=`</svg>`;
+  return s;
 }
 
 function render(){
-  if(!view){document.getElementById("app").textContent="connecting to editor…";return;}
-  const ch=view.chrome;
-  let h=`<nav class="menubar" role="menubar">`;
-  (ch.menubar||[]).forEach((label,i)=>{h+=`<button class="menu" data-menu="${i}">${esc(label)}</button>`;});
-  h+=`</nav><main class="workspace">${renderNode(ch.split_layout)}</main>`;
-  const ab=view.buffers[String(view.active)];
-  h+=`<footer class="statusbar"><span>${esc(ab?ab.name:"")}</span>`+
-     `<span>buffer#${view.active} · ${ab?ab.lineCount:0} lines · live · real Editor (handle_key)</span></footer>`;
-  document.getElementById("app").innerHTML=h;
-}
+  const app=document.getElementById("app");
+  if(!scene){ app.textContent="connecting to editor…"; return; }
+  app.innerHTML="";
+  const reg=scene.regions;
 
-function renderNode(node){
-  if(!node) return "";
-  if(node.Leaf) return renderPane(node.Leaf.buffer_id);
-  if(node.Grouped) return renderNode(node.Grouped.layout);
-  if(node.Split){
-    const sp=node.Split, a=Math.round(sp.ratio*100), b=100-a;
-    const vert=sp.direction==="Vertical";
-    const cls=vert?"split vertical":"split horizontal";
-    const style=vert?`grid-template-columns:${a}fr 6px ${b}fr`:`grid-template-rows:${a}fr 6px ${b}fr`;
-    const dcls=vert?"divider vertical":"divider horizontal";
-    return `<div class="${cls}" style="${style}">${renderNode(sp.first)}<div class="${dcls}"></div>${renderNode(sp.second)}</div>`;
+  // file explorer (UI pane; content = its real cells)
+  if(reg.fileExplorer){ const d=div("region fileexplorer"); place(d,reg.fileExplorer.rect); d.innerHTML=cellsSvg(reg.fileExplorer.cells, reg.fileExplorer.rect.w); app.appendChild(d); }
+
+  // panes: tab bar (UI) + buffer interior (real cells) + scrollbar (UI)
+  for(const p of reg.panes){
+    if(p.tabBar){ const t=div("region tabbar"); place(t,p.tabBar); t.innerHTML=cellsSvg(p.tabCells, p.tabBar.w); app.appendChild(t); }
+    const c=div("region pane-content"); place(c,p.content); c.innerHTML=cellsSvg(p.cells, p.content.w); app.appendChild(c);
+    if(p.vscroll && p.vscroll.w>0){
+      const sb=div("region scrollbar"); place(sb,p.vscroll); app.appendChild(sb);
+      const th=document.createElement("div"); th.className="thumb";
+      th.style.top=px(p.thumbStart,CH)+"px"; th.style.height=Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))+"px";
+      sb.appendChild(th);
+    }
   }
-  return "";
+
+  // split borders
+  for(const s of reg.separators){
+    const d=div("region separator");
+    if(s.vertical) place(d,{x:s.x,y:s.y,w:1,h:s.len}); else place(d,{x:s.x,y:s.y,w:s.len,h:1});
+    app.appendChild(d);
+  }
+
+  // menu bar (UI; items laid out by HTML, text from the pipeline's cells)
+  if(reg.menubar){ const m=div("region menubar"); place(m,reg.menubar.rect); m.innerHTML=menuItemsHtml(reg.menubar.cells); app.appendChild(m); }
+  // status bar (UI; content from the pipeline's cells)
+  if(reg.statusbar){ const s=div("region statusbar"); place(s,reg.statusbar.rect); s.textContent=cellText(reg.statusbar.cells).trim(); app.appendChild(s); }
 }
-function renderPane(bid){
-  const b=view.buffers[String(bid)]||{name:"buffer#"+bid,lines:[]};
-  const active=bid===view.active;
-  let h=`<section class="pane${active?' active':''}" data-pane="${bid}">`;
-  h+=`<div class="tabbar" role="tablist"><div class="tab${active?' active':''}" data-buffer="${bid}"><span class="tab-label">${esc(b.name)}</span></div></div>`;
-  h+=`<div class="content"><svg class="textbody" data-svg="${bid}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin meet" height="${Math.max(1,b.lines.length)*19}">`;
-  const gw=46;
-  for(let i=0;i<b.lines.length;i++){
-    const y=(i+1)*19-5;
-    h+=`<text class="gutter" x="${gw-10}" y="${y}" text-anchor="end">${i+1}</text><text x="${gw}" y="${y}" xml:space="preserve">`;
-    let col=0;for(const r of highlight(b.lines[i])){const x=gw+col*7.9;h+=`<tspan x="${x.toFixed(1)}" fill="${r.c}">${esc(r.t)}</tspan>`;col+=r.t.length;}
-    h+=`</text>`;
-  }
-  h+=`</svg></div></section>`;
-  return h;
+function div(cls){ const d=document.createElement("div"); d.className=cls; return d; }
+function cellText(cells){ return (cells[0]||[]).map(r=>r.t).join(""); }
+function menuItemsHtml(cells){
+  // Split the (real) menu-bar row text into clickable items on runs of spaces.
+  const text=cellText(cells);
+  return text.split(/\s{2,}/).filter(s=>s.trim()).map(s=>`<span class="menu">${esc(s.trim())}</span>`).join("");
 }
 
 // --- bridge to the real editor ---
-async function refresh(){ const r=await fetch("/state"); view=await r.json(); render(); }
-async function sendKey(desc){
-  try{ const r=await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(desc)});
-       view=await r.json(); render(); }
-  catch(e){ showErr("key send failed: "+e); }
-}
+async function refresh(){ try{ scene=await (await fetch("/state")).json(); render(); }catch(e){ showErr("load failed: "+e); } }
+async function sendKey(d){ try{ scene=await (await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)})).json(); render(); }catch(e){ showErr("key failed: "+e); } }
+async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW)), rows=Math.max(8,Math.floor(window.innerHeight/CH));
+  try{ scene=await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json(); render(); }catch(e){} }
 function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
-  const printable = e.key.length===1 && !e.ctrlKey && !e.metaKey;
-  if(printable || NAMED.has(e.key)){
-    e.preventDefault();
-    sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey});
-  }
+  const printable=e.key.length===1 && !e.ctrlKey && !e.metaKey;
+  if(printable||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
 });
+let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
 
-// expose for headless drivers / debugging
-window.fresh = { get view(){return view;}, refresh, sendKey };
-refresh();
+window.fresh = { get scene(){return scene;}, refresh, sendKey, resize };
+resize(); // sets size to the window, then renders
 </script>
 </body>
 </html>
