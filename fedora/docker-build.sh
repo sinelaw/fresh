@@ -4,39 +4,44 @@
 # This lets you exercise fresh-editor.spec on a non-Fedora host (the project is
 # developed on Arch). It mirrors what Koji/mock do — build from a source
 # tarball with vendored deps — using a plain `rpmbuild` in a Fedora image with
-# all BuildRequires dnf-installed. (mock adds clean-chroot isolation; for a
-# local smoke test rpmbuild-in-container is enough and far simpler.)
+# all BuildRequires installed. (mock adds clean-chroot isolation; for a local
+# smoke test rpmbuild-in-container is enough and far simpler.)
+#
+# The slow toolchain/BuildRequires install is baked into a builder image
+# (fedora/Dockerfile) so it is paid once; re-running this script after a spec
+# edit only re-does the fast vendor + rpmbuild steps.
 #
 # Usage:   ./fedora/docker-build.sh            # full build
 #          FEDORA=rawhide ./fedora/docker-build.sh
+#          REBUILD_IMAGE=1 ./fedora/docker-build.sh   # force builder rebuild
 # Output RPMs are copied to ./fedora/out/ on the host.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FEDORA="${FEDORA:-41}"
-IMAGE="fedora:${FEDORA}"
+# Fedora 43+ ships rustc 1.96, needed by the oxc crates (MSRV 1.93). Fedora 41
+# (rustc 1.91) is too old.
+FEDORA="${FEDORA:-43}"
+TAG="fresh-fedora-builder:${FEDORA}"
 OUT="${REPO_ROOT}/fedora/out"
 mkdir -p "${OUT}"
 
-echo ">> Building fresh-editor RPM in ${IMAGE} (repo: ${REPO_ROOT})"
+# 1. Builder image (toolchain + BuildRequires). Built once, reused after.
+if [[ "${REBUILD_IMAGE:-0}" == "1" ]] || ! docker image inspect "${TAG}" >/dev/null 2>&1; then
+    echo ">> Building builder image ${TAG} (one-time, slow: installs the toolchain)"
+    docker build --build-arg "FEDORA=${FEDORA}" -t "${TAG}" -f "${REPO_ROOT}/fedora/Dockerfile" "${REPO_ROOT}/fedora"
+else
+    echo ">> Reusing builder image ${TAG}"
+fi
 
-# Mount the repo read-only; the container copies it to a writable build dir so
-# the host tree is never modified (no vendor/, no target/ leakage).
+# 2. Packaging steps against the pre-baked image (no dnf at runtime).
+echo ">> Building fresh-editor RPM in ${TAG} (repo: ${REPO_ROOT})"
 docker run --rm \
     -v "${REPO_ROOT}:/src:ro" \
     -v "${OUT}:/out" \
     -e VERSION=0.4.0 \
-    "${IMAGE}" \
+    "${TAG}" \
     bash -euo pipefail -c '
 set -x
-
-echo "::: installing toolchain + BuildRequires"
-dnf -y install \
-    rust cargo rust-packaging rpm-build rpmdevtools \
-    gcc clang pkgconf-pkg-config desktop-file-utils \
-    zstd tar gzip findutils gawk git-core >/dev/null
-
-rpmdev-setuptree
 
 echo "::: staging source tree (excluding target/.git/node_modules)"
 DIR="fresh-${VERSION}"
@@ -50,15 +55,16 @@ cd "/build/${DIR}"
 
 echo "::: vendoring crate dependencies (offline build needs this)"
 mkdir -p .cargo
-# Plain cargo vendor (cargo-vendor-filterer is not in Fedora repos); the spec
-# unpacks this as the fresh-editor-${VERSION}-vendor directory.
-cargo vendor "../fresh-editor-${VERSION}-vendor" > .cargo/vendor-config.toml
-echo "vendored $(find ../fresh-editor-${VERSION}-vendor -maxdepth 1 -mindepth 1 -type d | wc -l) crates"
+# Plain cargo vendor (cargo-vendor-filterer is not in Fedora repos). Vendor to a
+# sibling "vendor" dir; the spec extracts Source1 into a directory of that name.
+cargo vendor "../vendor" > .cargo/vendor-config.toml
+echo "vendored $(find ../vendor -maxdepth 1 -mindepth 1 -type d | wc -l) crates"
 
 echo "::: building Source0 + Source1 tarballs"
 cd /build
 tar --owner=0 --group=0 -czf ~/rpmbuild/SOURCES/fresh-${VERSION}.tar.gz "fresh-${VERSION}"
-tar --owner=0 --group=0 -caf ~/rpmbuild/SOURCES/fresh-editor-${VERSION}-vendor.tar.zst "fresh-editor-${VERSION}-vendor"
+# Source1 top-level dir is "vendor" (matches %cargo_prep -v vendor in the spec).
+tar --owner=0 --group=0 -caf ~/rpmbuild/SOURCES/fresh-editor-${VERSION}-vendor.tar.zst "vendor"
 
 cp "/build/fresh-${VERSION}/fedora/fresh-editor.spec" ~/rpmbuild/SPECS/
 
