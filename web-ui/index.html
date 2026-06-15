@@ -387,11 +387,26 @@ function statusBarEl(sb){
 }
 
 // --- bridge to the real editor ---
-async function refresh(){ try{ scene=await (await fetch("/state")).json(); render(); }catch(e){ showErr("load failed: "+e); } }
-async function sendKey(d){ try{ scene=await (await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)})).json(); render(); }catch(e){ showErr("key failed: "+e); } }
+// Apply a scene from any endpoint, re-rendering only when it actually changed
+// so the idle poll loop doesn't churn the DOM (or restart the caret blink).
+let sceneStr=null;
+function applyScene(s){ const str=JSON.stringify(s); if(str===sceneStr) return; sceneStr=str; scene=s; render(); }
+async function refresh(){ try{ applyScene(await (await fetch("/state")).json()); }catch(e){ showErr("load failed: "+e); } }
+async function sendKey(d){ try{ applyScene(await (await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)})).json()); }catch(e){ showErr("key failed: "+e); } }
 async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW)), rows=Math.max(8,Math.floor(window.innerHeight/CH));
-  try{ scene=await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json(); render(); }catch(e){} }
+  try{ applyScene(await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json()); }catch(e){} }
 function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
+
+// Poll loop: each GET /state ticks the real editor (drains async LSP/plugin/file
+// events, steps animations) just like the TUI's 60fps loop, so frames advance
+// without user input. Poll fast while something is animating / pending, slowly
+// when idle (just to pick up async events). setTimeout (not setInterval) so polls
+// never overlap.
+async function poll(){
+  await refresh();
+  const active = scene && scene.regions && scene.regions.poll && scene.regions.poll.active;
+  setTimeout(poll, active ? 40 : 500);
+}
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
@@ -426,7 +441,7 @@ document.addEventListener("wheel",e=>{ const c=cellAt(e); const n=Math.min(8,Mat
 let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
 
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize };
-resize(); // sets size to the window, then renders
+resize().then(poll); // size to the window, render, then start the frame poll loop
 </script>
 </body>
 </html>

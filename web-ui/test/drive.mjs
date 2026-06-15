@@ -23,6 +23,7 @@ const paneText = s => s.regions.panes[0].cells.map(r => r.map(x => x.t).join('')
 const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', e => errs.push(String(e))); page.on('console', m => { if (m.type() === 'error') errs.push('console:' + m.text()); });
+let stateReqs = 0; page.on('request', r => { if (r.url().endsWith('/state')) stateReqs++; });
 await page.goto(URL, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.scene && window.fresh.scene.regions.panes.length > 0);
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); // close any menu left open in the live editor
@@ -79,6 +80,13 @@ await page.waitForFunction(() => window.fresh.scene.regions.panes[0].cells.map(r
 const s2 = await scene(page);
 check('typed text appears in the real pipeline-rendered cells', paneText(s2).includes('QWZX'), `head="${paneText(s2).slice(0, 40)}"`);
 await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
+
+console.log('\n[frame pump advances without user input, like the TUI loop]');
+const reqs0 = stateReqs;
+await page.waitForTimeout(1600);   // no input at all
+check('GET /state keeps ticking the editor with no input', stateReqs > reqs0 + 1, `reqs ${reqs0}->${stateReqs}`);
+check('idle poll is throttled, not a busy loop', (stateReqs - reqs0) < 12, `polls=${stateReqs - reqs0}`);
+check('scene carries a poll pacing hint', !!(await scene(page)).regions.poll);
 
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 await browser.close();

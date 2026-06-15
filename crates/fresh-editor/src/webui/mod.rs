@@ -118,19 +118,19 @@ fn handle_conn(
         }
         ("GET", "/favicon.ico") => respond(stream, "204 No Content", "image/x-icon", b""),
         ("GET", "/state") => {
-            let s = scene_json(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/key") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             apply_key(editor, &v);
-            let s = scene_json(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/mouse") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             apply_mouse(editor, &v);
-            let s = scene_json(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/action") => {
@@ -145,7 +145,7 @@ fn handle_conn(
                     editor.dispatch_action_for_tests(act);
                 }
             }
-            let s = scene_json(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/resize") => {
@@ -157,7 +157,7 @@ fn handle_conn(
                 *rows = (r as u16).clamp(8, 200);
             }
             editor.resize(*cols, *rows);
-            let s = scene_json(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         _ => respond(stream, "404 Not Found", "text/plain", b"not found"),
@@ -323,6 +323,15 @@ fn prompt_type_tag(t: &crate::view::prompt::PromptType) -> &'static str {
         GotoLine | GotoByteOffset => "goto",
         _ => "input",
     }
+}
+
+/// Advance the editor one "tick" (drain async LSP/plugin/file messages, fire
+/// timers, step animations) exactly as the TUI event loop does, then build the
+/// scene. This is what lets the browser frontend get fresh frames by polling
+/// rather than only in response to its own input.
+fn tick_scene(editor: &mut Editor, cols: u16, rows: u16) -> Value {
+    let _ = crate::app::editor_tick(editor, || Ok(()));
+    scene_json(editor, cols, rows)
 }
 
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
@@ -581,6 +590,14 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "overlays": overlays,
         "palette": palette,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
+        // Pacing hint for the frontend's poll loop: when something is animating /
+        // an LSP spinner is live / a timer is pending, poll fast; otherwise idle
+        // slowly (just to pick up async LSP/file events).
+        "poll": json!({
+            "active": editor.active_window().animations.is_active()
+                || editor.active_window().has_active_lsp_progress()
+                || editor.next_periodic_redraw_deadline().is_some(),
+        }),
     });
 
     json!({ "w": w, "h": h, "regions": regions })
