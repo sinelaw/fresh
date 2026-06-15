@@ -18,6 +18,7 @@
 //! closure must run a **raw** spawn that does not itself apply this provider's
 //! env — otherwise capturing the env would recurse.
 
+use crate::services::process_hidden::HideWindow;
 use std::collections::hash_map::DefaultHasher;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
@@ -188,6 +189,69 @@ impl EnvProvider {
 
         let script = build_capture_script(&snippet, dir.as_deref());
         let Some(stdout) = run(script).await else {
+            return Vec::new();
+        };
+        let vars = parse_env(&stdout);
+
+        if let Ok(mut s) = self.state.write() {
+            s.cache = Some(Cached {
+                inputs_hash: hash,
+                vars: vars.clone(),
+            });
+        }
+        vars
+    }
+
+    /// Synchronous sibling of [`Self::current`] for a *local* backend: capture
+    /// the active env by running the snippet through `$SHELL -lc … command env`
+    /// on this host, **blocking** the caller. The integrated-terminal spawn is a
+    /// synchronous, non-tokio path (portable-pty + OS threads) and so cannot
+    /// `await` the async capture; this is how the terminal picks up the same
+    /// activated env that LSP/`spawnProcess` get. Shares the input-hash cache
+    /// with [`Self::current`], so once any spawner has captured for the current
+    /// inputs this returns immediately with no subprocess. Empty when inactive
+    /// or on failure — the caller degrades to the inherited env.
+    pub fn current_local_blocking(&self) -> Vec<(String, String)> {
+        self.capture_blocking(|script| {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            let output = std::process::Command::new(&shell)
+                .arg("-lc")
+                .arg(&script)
+                .hide_window()
+                .output()
+                .ok()?;
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        })
+    }
+
+    /// Shared body for a blocking capture: snapshot the recipe, serve from the
+    /// input-hash cache when warm, otherwise run `run` (the host's raw shell
+    /// invocation) and cache the parsed result. Mirrors [`Self::current`]'s
+    /// caching but with a synchronous `run`. `run` MUST be a raw spawn that does
+    /// not apply this provider's env, or capture would recurse.
+    fn capture_blocking(
+        &self,
+        run: impl FnOnce(String) -> Option<String>,
+    ) -> Vec<(String, String)> {
+        let (snippet, dir) = match self.state.read() {
+            Ok(s) => (s.snippet.clone(), s.dir.clone()),
+            Err(_) => return Vec::new(),
+        };
+        if snippet.trim().is_empty() {
+            return Vec::new();
+        }
+
+        let hash = inputs_hash(dir.as_deref());
+        if let Ok(s) = self.state.read() {
+            if let Some(c) = &s.cache {
+                if c.inputs_hash == hash {
+                    return c.vars.clone();
+                }
+            }
+        }
+
+        let script = build_capture_script(&snippet, dir.as_deref());
+        let Some(stdout) = run(script) else {
             return Vec::new();
         };
         let vars = parse_env(&stdout);
@@ -463,6 +527,41 @@ mod tests {
             .await;
         assert_eq!(v2, vec![("A".into(), "2".into())]);
         assert_eq!(n.get(), 2, "input change should force a re-capture");
+    }
+
+    #[test]
+    fn blocking_capture_inactive_returns_empty_without_running() {
+        let p = EnvProvider::inactive();
+        let ran = std::cell::Cell::new(false);
+        let vars = p.capture_blocking(|_script| {
+            ran.set(true);
+            Some("X=1".to_string())
+        });
+        assert!(vars.is_empty());
+        assert!(!ran.get(), "blocking capture must not run when inactive");
+    }
+
+    #[test]
+    fn blocking_capture_caches_and_shares_cache_with_current() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = EnvProvider::inactive();
+        p.set("true".into(), Some(tmp.path().to_path_buf()));
+
+        let calls = std::cell::Cell::new(0);
+        let run = || {
+            calls.set(calls.get() + 1);
+            Some("FOO=bar\nPATH=/x\n".to_string())
+        };
+
+        let v1 = p.capture_blocking(|_s| run());
+        assert_eq!(
+            v1,
+            vec![("FOO".into(), "bar".into()), ("PATH".into(), "/x".into())]
+        );
+        // Second blocking call hits the cache — no re-run.
+        let v2 = p.capture_blocking(|_s| run());
+        assert_eq!(v2, v1);
+        assert_eq!(calls.get(), 1, "warm cache should prevent a second capture");
     }
 
     #[tokio::test]

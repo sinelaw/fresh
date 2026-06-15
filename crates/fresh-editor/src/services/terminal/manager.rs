@@ -287,6 +287,7 @@ impl TerminalManager {
         log_path: Option<std::path::PathBuf>,
         backing_path: Option<std::path::PathBuf>,
         terminal_wrapper: crate::services::authority::TerminalWrapper,
+        env_overlay: Vec<(String, String)>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -342,6 +343,23 @@ impl TerminalManager {
                     // provider form, producing prompts like
                     // `PS Microsoft.PowerShell.Core\FileSystem::\\?\C:\…>`.
                     cmd.cwd(strip_verbatim_prefix(dir).as_ref());
+                }
+            }
+
+            // Apply the activated-environment overlay (venv/direnv/mise) so the
+            // integrated terminal inherits the same env that LSP servers,
+            // formatters, and plugin `spawnProcess` already get — otherwise the
+            // status bar says "Environment active" while the terminal silently
+            // runs the *system* toolchain with none of the project's vars
+            // (issue #2355). The caller passes the captured snapshot only for a
+            // local host shell (empty for docker/ssh wrappers, whose inner shell
+            // runs on another host this `CommandBuilder` env can't reach). Set
+            // before TERM/FRESH_SESSION below so those control vars win over any
+            // same-named key in the snapshot. Shell-managed volatiles (PWD,
+            // SHLVL, …) are skipped so the spawned shell re-derives them.
+            for (k, v) in &env_overlay {
+                if !is_volatile_terminal_env_key(k) {
+                    cmd.env(k, v);
                 }
             }
 
@@ -803,6 +821,18 @@ pub(crate) fn strip_verbatim_prefix(path: &std::path::Path) -> Cow<'_, std::path
     }
 }
 
+/// Whether an env key captured from the activated environment is shell-managed
+/// and must NOT be injected into a freshly spawned interactive shell. The
+/// snapshot comes from running `command env` after a login shell + activation,
+/// so it carries bookkeeping vars the new shell sets for itself: forcing a
+/// stale `SHLVL` would break level counting, and `PWD`/`OLDPWD`/`_` would point
+/// at the capture context rather than where the shell actually starts. The
+/// activation deltas we *do* want (PATH, VIRTUAL_ENV, project vars) are left
+/// alone.
+fn is_volatile_terminal_env_key(key: &str) -> bool {
+    matches!(key, "PWD" | "OLDPWD" | "SHLVL" | "_")
+}
+
 /// Detect the user's shell
 pub fn detect_shell() -> String {
     // Try $SHELL environment variable first
@@ -831,6 +861,18 @@ mod tests {
     fn test_terminal_id_display() {
         let id = TerminalId(42);
         assert_eq!(format!("{}", id), "Terminal-42");
+    }
+
+    #[test]
+    fn volatile_env_keys_are_skipped_activation_deltas_kept() {
+        // Shell-managed bookkeeping must not be force-injected.
+        for k in ["PWD", "OLDPWD", "SHLVL", "_"] {
+            assert!(is_volatile_terminal_env_key(k), "{k} should be skipped");
+        }
+        // The vars that activation actually sets must be injected.
+        for k in ["PATH", "VIRTUAL_ENV", "DEPLOY_TOKEN", "MISE_SHELL"] {
+            assert!(!is_volatile_terminal_env_key(k), "{k} should be kept");
+        }
     }
 
     /// Terminal ids are per-window: each manager numbers from 0, so two

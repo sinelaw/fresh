@@ -768,6 +768,7 @@ impl crate::app::window::Window {
             Some(argv) => self.authority().terminal_command(argv),
             None => self.resolved_terminal_wrapper(),
         };
+        let env_overlay = self.terminal_env_overlay(&wrapper_for_spawn);
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
@@ -775,6 +776,7 @@ impl crate::app::window::Window {
             Some(log_path.clone()),
             Some(backing_path.clone()),
             wrapper_for_spawn,
+            env_overlay,
         ) {
             Ok(id) => id,
             Err(e) => {
