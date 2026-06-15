@@ -73,6 +73,19 @@ check('typing filtered the real suggestion list', sp2.regions.palette && sp2.reg
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 check('Escape closed the palette', !(await scene(page)).regions.palette);
 
+console.log('\n[popups = native HTML from the popup model, NOT cells]');
+await page.locator('body').click();
+await page.locator('.statusbar .seg[data-name="remote"]').first().click();   // opens the Remote indicator popup
+await page.waitForTimeout(300);
+const pv = await scene(page);
+check('editor reports a popup', (pv.regions.popups || []).length >= 1, 'popups=' + (pv.regions.popups || []).length);
+check('popup rendered as native .popup', (await page.locator('.popup').count()) >= 1);
+check('popup has native rows (.popup-row)', (await page.locator('.popup .popup-row').count()) >= 1);
+check('NO svg/cells inside the popup', (await page.locator('.popup svg').count()) === 0);
+await page.screenshot({ path: `${SHOTS}/24-native-popup.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+check('Escape closed the popup', ((await scene(page)).regions.popups || []).length === 0);
+
 console.log('\n[edit through the real pipeline]');
 await page.mouse.click(300, 300);
 await page.keyboard.type('QWZX');

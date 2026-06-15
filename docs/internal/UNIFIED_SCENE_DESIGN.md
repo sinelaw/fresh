@@ -91,14 +91,14 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
 - [x] Phase 1: `suppress_chrome_cells` render flag threaded through MenuRenderer /
   SuggestionsRenderer; pipeline records chrome layout but skips drawing it to
   cells; web frontend cover/blank hacks deleted. TUI unchanged (flag off).
-- [~] Phase 2: shared semantic projections in the core (`view/scene.rs`),
-  reusing the existing `EditorTestApi` projections (`PromptView`/`PopupView`/
-  `Caret`) as the model wherever they already exist — NOT a parallel format.
-  Done: `Editor::menu_view()`, `tab_bar_view()`, `status_view()`,
-  `palette_view()` are the single derivations of the menu tree / tabs / status
-  segments / palette; the web bridge only serializes them and all the bespoke
-  bridge derivation is gone. TODO: popups (reuse `PopupView`) — still drawn as
-  cells in the web frontend.
+- [x] Phase 2: shared semantic projections in the core (`view/scene.rs`).
+  `Editor::menu_view()`, `tab_bar_view()`, `status_view()`, `palette_view()` and
+  `popups_view()` are the single derivations of the menu tree / tabs / status
+  segments / palette / popups (completion, hover, action, list, text). The web
+  bridge only *serializes* them — every bespoke chrome builder is gone, and the
+  frontend has ZERO cell-drawn chrome (buffer interiors only). Geometry comes
+  from the pipeline's layout caches so clicks/scroll route back through the
+  existing `handle_mouse` hit-testers.
 - [ ] Phase 3: TUI renderers consume the same projections. MenuRenderer takes the
   menu *content* from `menu_view()` (geometry/`MenuLayout` stays the renderer's
   output) so the menu tree / enabled / checked / accel logic exists in exactly

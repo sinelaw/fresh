@@ -328,25 +328,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let w = buf.area.width;
     let h = buf.area.height;
 
-    // Overlays (misc popups/dialogs) — the pipeline already drew them into the
-    // cells and recorded their rects on ChromeLayout; we emit rect + cells so the
-    // frontend draws each as a floating UI element.
-    // NOTE: neither the menu dropdown NOR the command palette / picker are
-    // included here — both are emitted as *semantic* models below and rendered
-    // as native UI, not cells.
-    let chrome = editor.active_chrome();
-    let mut overlay_rects: Vec<Rect> = Vec::new();
-    for p in &chrome.popup_areas {
-        overlay_rects.push(p.1);
-    }
-    for g in &chrome.global_popup_areas {
-        overlay_rects.push(g.1);
-    }
-    let overlays: Vec<Value> = overlay_rects
-        .iter()
-        .filter(|r| r.width > 0 && r.height > 0)
-        .map(|r| json!({ "rect": rect_json(*r), "cells": cells_json(&buf, *r) }))
-        .collect();
+    // Semantic popups (completion / hover / action / list / text) — derived once
+    // in the core (`Editor::popups_view`) and rendered as native UI, not cells.
+    let popups = serde_json::to_value(editor.popups_view()).unwrap_or_else(|_| json!([]));
 
     // Semantic menu model — derived once in the core (`Editor::menu_view`) and
     // shared with the TUI renderer; the bridge only serializes it. See
@@ -416,7 +400,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "fileExplorer": file_explorer,
         "panes": panes,
         "separators": separators,
-        "overlays": overlays,
+        "popups": popups,
         "palette": palette,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
         // Pacing hint for the frontend's poll loop: when something is animating /

@@ -98,8 +98,20 @@
   .thumb:hover{background:#7a7a7a}
   .caret{position:absolute;background:#aeafad;width:2px;z-index:40;animation:blink 1.05s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
-  .overlay{position:absolute;z-index:60;background:var(--bg2);border:1px solid #555;
-    border-radius:8px;box-shadow:0 16px 50px rgba(0,0,0,.55);overflow:hidden}
+  /* ---- popups (completion / hover / action / list / text) — native ---- */
+  .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
+    border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;font-size:12px;display:flex;flex-direction:column}
+  .popup .popup-title{padding:3px 10px;color:var(--fg);background:#2d2d30;border-bottom:1px solid #3a3a3a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .popup .popup-desc{padding:2px 10px;color:var(--muted);border-bottom:1px solid #3a3a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .popup .popup-body{overflow:auto;max-height:60vh}
+  .popup .popup-row{display:flex;align-items:center;gap:8px;padding:1px 10px;white-space:nowrap;color:var(--fg);cursor:default}
+  .popup .popup-row.sel{background:var(--menuhi);color:#fff}
+  .popup .popup-row.disabled{color:#6a6a6a}
+  .popup .popup-row .ptext2{flex:0 0 auto}
+  .popup .popup-row .pdetail{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+  .popup .popup-row.sel .pdetail{color:#dfe8ff}
+  .popup .popup-row .picon{width:14px;text-align:center;flex:0 0 auto}
+  .popup .popup-line{padding:0 10px;white-space:pre;color:var(--fg)}
   svg.cells{display:block;width:100%;height:100%;
     font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
@@ -192,10 +204,8 @@ function render(){
   // native status bar
   if(reg.statusbar) app.appendChild(statusBarEl(reg.statusbar));
 
-  // misc popups/dialogs still drawn from real cells
-  for(const o of (reg.overlays||[])){
-    const d=div("overlay"); place(d,o.rect); d.innerHTML=cellsSvg(o.cells, o.rect.w); app.appendChild(d);
-  }
+  // native popups (completion / hover / action / list / text) — semantic, not cells
+  for(const p of (reg.popups||[])) app.appendChild(popupEl(p));
 
   // native command palette / picker (semantic; routes back to the real editor)
   if(reg.palette) app.appendChild(paletteEl(reg.palette));
@@ -384,6 +394,37 @@ function statusBarEl(sb){
   return bar;
 }
 
+// ---- native popups (completion / hover / action / list / text) ----------
+// The editor owns content, selection and scroll; we render natively and forward
+// row clicks / wheel back through handle_mouse at the popup's content cells, so
+// the existing popup hit-tester resolves them (no re-implemented logic).
+function popupEl(p){
+  const el=div("popup"); place(el,p.rect);
+  if(p.title){ const t=div("popup-title"); t.textContent=p.title; el.appendChild(t); }
+  if(p.description){ const d=div("popup-desc"); d.textContent=p.description; el.appendChild(d); }
+  const body=div("popup-body");
+  const cr=p.contentRect, n=Math.max(0,cr.h), start=p.scrollOffset||0;
+  if(p.content.type==="list"){
+    const items=p.content.items||[];
+    for(let j=0;j<n;j++){
+      const idx=start+j, it=items[idx]; if(!it) break;
+      const row=div("popup-row"+(idx===p.content.selected?" sel":"")+(it.disabled?" disabled":""));
+      if(it.icon){ const ic=document.createElement("span"); ic.className="picon"; ic.textContent=it.icon; row.appendChild(ic); }
+      const tx=document.createElement("span"); tx.className="ptext2"; tx.textContent=it.text; row.appendChild(tx);
+      if(it.detail){ const dt=document.createElement("span"); dt.className="pdetail"; dt.textContent=it.detail; row.appendChild(dt); }
+      const cell={col:cr.x+1,row:cr.y+j};
+      row.onmousedown=e=>{ if(it.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+      body.appendChild(row);
+    }
+  } else {
+    const lines=p.content.lines||[];
+    for(let j=0;j<n;j++){ const ln=lines[start+j]; if(ln===undefined) break; const d=div("popup-line"); d.textContent=ln; body.appendChild(d); }
+  }
+  el.appendChild(body);
+  el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:cr.x+1,row:cr.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  return el;
+}
+
 // --- bridge to the real editor ---
 // Apply a scene from any endpoint, re-rendering only when it actually changed
 // so the idle poll loop doesn't churn the DOM (or restart the caret blink).
@@ -429,7 +470,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

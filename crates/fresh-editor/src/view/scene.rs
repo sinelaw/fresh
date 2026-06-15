@@ -469,3 +469,113 @@ impl Editor {
         })
     }
 }
+
+// ─────────────────────────── popups (completion / hover / action / list / text) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PopupItemView {
+    pub text: String,
+    pub detail: Option<String>,
+    pub icon: Option<String>,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum PopupContentView {
+    List {
+        items: Vec<PopupItemView>,
+        selected: usize,
+    },
+    Lines {
+        lines: Vec<String>,
+    },
+}
+
+/// A floating popup (completion menu, hover doc, action chooser, …) projected
+/// semantically. Geometry (`rect`/`content_rect`) is the pipeline's popup layout
+/// so the frontend can position the native box and forward clicks/scroll back
+/// through `handle_mouse` — the existing popup hit-tester resolves them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenePopup {
+    pub kind: &'static str,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub rect: RectView,
+    pub content_rect: RectView,
+    pub scroll_offset: usize,
+    pub content: PopupContentView,
+}
+
+fn project_popup(
+    p: &crate::view::popup::Popup,
+    outer: Rect,
+    inner: Rect,
+    scroll: usize,
+) -> ScenePopup {
+    use crate::view::popup::{PopupContent, PopupKind};
+    let kind = match p.kind {
+        PopupKind::Completion => "completion",
+        PopupKind::Hover => "hover",
+        PopupKind::Action => "action",
+        PopupKind::List => "list",
+        PopupKind::Text => "text",
+    };
+    let content = match &p.content {
+        PopupContent::List { items, selected } => PopupContentView::List {
+            items: items
+                .iter()
+                .map(|i| PopupItemView {
+                    text: i.text.clone(),
+                    detail: i.detail.clone(),
+                    icon: i.icon.clone(),
+                    disabled: i.disabled,
+                })
+                .collect(),
+            selected: *selected,
+        },
+        PopupContent::Text(lines) | PopupContent::Custom(lines) => PopupContentView::Lines {
+            lines: lines.clone(),
+        },
+        PopupContent::Markdown(styled) => PopupContentView::Lines {
+            lines: styled
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+                .collect(),
+        },
+    };
+    ScenePopup {
+        kind,
+        title: p.title.clone(),
+        description: p.description.clone(),
+        rect: RectView::from(outer),
+        content_rect: RectView::from(inner),
+        scroll_offset: scroll,
+        content,
+    }
+}
+
+impl Editor {
+    /// All visible popups across the per-buffer and global stacks, projected
+    /// semantically. Single derivation shared by the web frontend (native HTML)
+    /// and available to the TUI compositor; geometry comes from the pipeline's
+    /// popup-area caches so clicks/scroll route through the existing hit-tester.
+    pub fn popups_view(&self) -> Vec<ScenePopup> {
+        let chrome = self.active_chrome();
+        let mut out = Vec::new();
+        let locals = self.active_state().popups.all();
+        for (idx, outer, inner, scroll, _n, _sb, _t) in &chrome.popup_areas {
+            if let Some(p) = locals.get(*idx) {
+                out.push(project_popup(p, *outer, *inner, *scroll));
+            }
+        }
+        let globals = self.global_popups.all();
+        for (idx, outer, inner, scroll, _n) in &chrome.global_popup_areas {
+            if let Some(p) = globals.get(*idx) {
+                out.push(project_popup(p, *outer, *inner, *scroll));
+            }
+        }
+        out
+    }
+}
