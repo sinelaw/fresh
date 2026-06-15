@@ -277,3 +277,51 @@ fn issue_2345_inherit_button_reachable_by_tab() {
         row
     );
 }
+
+/// Issue #2345: Shift+Tab reaches the per-field `[Inherit]` button too. Tabbing
+/// forward past an overriding field's button to the next field, then
+/// Shift+Tab once, must land back on that button (not skip it), so Enter there
+/// inherits the right field.
+#[test]
+fn issue_2345_inherit_button_reachable_by_back_tab() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    harness.render().unwrap();
+
+    open_html_language_dialog(&mut harness);
+
+    // Override Auto Surround (Auto Close, Auto Indent, Auto Surround; toggle on).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        row_with(&harness, "Auto Surround").contains("[v]"),
+        "precondition: Auto Surround overriding; row: {:?}",
+        row_with(&harness, "Auto Surround")
+    );
+
+    // Forward: control -> [Inherit] button -> next field.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Shift+Tab once lands back on Auto Surround's [Inherit] button; Enter
+    // inherits it. If Shift+Tab had skipped the button, Enter would not inherit
+    // Auto Surround and the assertion below would fail.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let row = row_with(&harness, "Auto Surround");
+    assert!(
+        row.contains("[-]") && row.contains("(Inherited)"),
+        "Shift+Tab to [Inherit] then Enter should revert the field to inherited; row: {:?}",
+        row
+    );
+}
