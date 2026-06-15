@@ -1490,6 +1490,7 @@ impl Editor {
             );
             let hover_target = self.active_window().mouse_state.hover_target.clone();
             let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
+            let draw_chrome = !self.suppress_chrome_cells;
             let expanded = self.expanded_menus_cache.get().expect("just updated");
             let keybindings = self.keybindings.read().unwrap();
             let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
@@ -1505,6 +1506,7 @@ impl Editor {
                 Some(&mut crate::app::types::CellThemeRecorder::new(
                     &mut menu_runs,
                 )),
+                draw_chrome,
             );
             drop(keybindings);
             self.active_chrome_mut().menu_layout = Some(new_menu_layout);
@@ -2133,6 +2135,7 @@ impl Editor {
             &*self.theme.read().unwrap(),
             self.active_window().mouse_state.hover_target.as_ref(),
             true,
+            !self.suppress_chrome_cells,
         );
         let chrome = self.active_chrome_mut();
         chrome.suggestions_area = new_suggestions_area;
@@ -3173,6 +3176,7 @@ impl Editor {
                 width: results_area.width.saturating_sub(scrollbar_w),
                 height: results_area.height,
             };
+            let draw_chrome = !self.suppress_chrome_cells;
             self.active_chrome_mut().suggestions_area = SuggestionsRenderer::render_with_hover(
                 frame,
                 list_area,
@@ -3180,6 +3184,7 @@ impl Editor {
                 &theme,
                 self.active_window_mut().mouse_state.hover_target.as_ref(),
                 false,
+                draw_chrome,
             );
             if self.active_chrome_mut().suggestions_area.is_some() {
                 self.active_chrome_mut().suggestions_outer_area = Some(list_area);

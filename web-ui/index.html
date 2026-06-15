@@ -283,16 +283,15 @@ function menuDropdownEls(reg){
 }
 
 // Solid rounded panels behind the top-level dropdown and each submenu level,
-// sized from the union of that level's item rects, EXPANDED by one cell on each
-// side. The pipeline still paints the menu (with its box-drawing border) into
-// the cell buffer behind us; the one-cell margin makes the opaque panel cover
-// that border so it doesn't peek out as a coloured frame.
+// sized from the union of that level's item rects. (The pipeline no longer draws
+// the menu into the cells behind us — suppress_chrome_cells — so the panel needs
+// only back the items, with no cover-up margin.)
 function dropdownPanels(reg){
   const panels=[];
   const box=(rects)=>{
     if(!rects.length) return null;
-    const x0=Math.min(...rects.map(r=>r.x))-1, y0=Math.min(...rects.map(r=>r.y))-1;
-    const x1=Math.max(...rects.map(r=>r.x+r.w))+1, y1=Math.max(...rects.map(r=>r.y+r.h))+1;
+    const x0=Math.min(...rects.map(r=>r.x)), y0=Math.min(...rects.map(r=>r.y));
+    const x1=Math.max(...rects.map(r=>r.x+r.w)), y1=Math.max(...rects.map(r=>r.y+r.h));
     const p=div("dropdown"); place(p,{x:x0,y:y0,w:x1-x0,h:y1-y0}); return p;
   };
   const top=box(reg.dropdown.items.map(i=>i.rect)); if(top) panels.push(top);
@@ -336,7 +335,6 @@ function paletteEl(p){
   const left = outer?px(outer.x,CW):(window.innerWidth-w)/2;
   const top  = outer?Math.max(4, px(outer.y,CH)-inputH):80;
   el.style.left=left+"px"; el.style.top=top+"px"; el.style.width=w+"px";
-  if(outer) el.style.minHeight=(px(outer.y+outer.h,CH)-top)+"px"; // cover the border row at the bottom
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
   // input bar (query + status + count)

@@ -31,7 +31,7 @@ impl SuggestionsRenderer {
         prompt: &Prompt,
         theme: &crate::view::theme::Theme,
     ) -> Option<(Rect, usize, usize, usize)> {
-        Self::render_with_hover(frame, area, prompt, theme, None, true)
+        Self::render_with_hover(frame, area, prompt, theme, None, true, true)
     }
 
     /// Render the suggestions popup with hover highlighting.
@@ -49,6 +49,9 @@ impl SuggestionsRenderer {
         theme: &crate::view::theme::Theme,
         hover_target: Option<&crate::app::HoverTarget>,
         with_border: bool,
+        // When false, compute + return layout but skip emitting cells (the host
+        // renders the palette from the semantic model). See UNIFIED_SCENE_DESIGN.md.
+        draw: bool,
     ) -> Option<(Rect, usize, usize, usize)> {
         if prompt.suggestions.is_empty() {
             return None;
@@ -475,8 +478,10 @@ impl SuggestionsRenderer {
             )));
         }
 
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
+        if draw {
+            let paragraph = Paragraph::new(lines).block(block);
+            frame.render_widget(paragraph, area);
+        }
 
         // Return area info for mouse hit testing
         Some((

@@ -263,6 +263,7 @@ impl Editor {
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
             full_redraw_requested: false,
+            suppress_chrome_cells: false,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             warning_log: None,

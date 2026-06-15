@@ -503,6 +503,9 @@ impl MenuRenderer {
         hover_target: Option<&crate::app::HoverTarget>,
         mnemonics_enabled: bool,
         mut rec: Option<&mut CellThemeRecorder>,
+        // When false, compute + record layout but skip emitting cells (the host
+        // renders the menu from the semantic model). See UNIFIED_SCENE_DESIGN.md.
+        draw: bool,
     ) -> MenuLayout {
         let mut layout = MenuLayout::new(area);
         // Seed the menu bar with its base keys; each label overwrites its own
@@ -628,9 +631,11 @@ impl MenuRenderer {
             current_x += label_width + 1;
         }
 
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).style(Style::default().bg(theme.menu_bg));
-        frame.render_widget(paragraph, area);
+        if draw {
+            let line = Line::from(spans);
+            let paragraph = Paragraph::new(line).style(Style::default().bg(theme.menu_bg));
+            frame.render_widget(paragraph, area);
+        }
 
         // Render dropdown if a menu is active
         if let Some(active_idx) = menu_state.active_menu {
@@ -647,6 +652,7 @@ impl MenuRenderer {
                     hover_target,
                     &mut layout,
                     rec,
+                    draw,
                 );
             }
         }
@@ -668,6 +674,7 @@ impl MenuRenderer {
         hover_target: Option<&crate::app::HoverTarget>,
         layout: &mut MenuLayout,
         mut rec: Option<&mut CellThemeRecorder>,
+        draw: bool,
     ) {
         // Calculate the x position of the top-level dropdown based on menu index
         // Skip hidden menus (those with `when` conditions that evaluate to false)
@@ -722,6 +729,7 @@ impl MenuRenderer {
                 &menu_state.context,
                 layout,
                 rec.as_deref_mut(),
+                draw,
             );
 
             // If not at the deepest level, navigate into the submenu for next iteration
@@ -799,6 +807,7 @@ impl MenuRenderer {
         context: &MenuContext,
         layout: &mut MenuLayout,
         mut rec: Option<&mut CellThemeRecorder>,
+        draw: bool,
     ) -> Rect {
         let max_width = Self::calculate_dropdown_width(items);
         let dropdown_height = items.len() + 2; // +2 for borders
@@ -1027,8 +1036,10 @@ impl MenuRenderer {
             .border_style(Style::default().fg(theme.menu_border_fg))
             .style(Style::reset().bg(theme.menu_dropdown_bg));
 
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, dropdown_area);
+        if draw {
+            let paragraph = Paragraph::new(lines).block(block);
+            frame.render_widget(paragraph, dropdown_area);
+        }
 
         dropdown_area
     }

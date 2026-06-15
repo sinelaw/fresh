@@ -857,6 +857,15 @@ pub struct Editor {
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,
 
+    /// When true, the render pipeline computes chrome *layout* (menu, dropdown,
+    /// command palette / suggestions) and records it on the layout caches as
+    /// usual, but SKIPS drawing those chrome layers into the cell buffer. Hosts
+    /// that render chrome from the semantic model instead of cells (the web /
+    /// Tauri frontends) set this so they get pane-only cells with no chrome to
+    /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
+    /// See docs/internal/UNIFIED_SCENE_DESIGN.md (Phase 1).
+    pub(crate) suppress_chrome_cells: bool,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,

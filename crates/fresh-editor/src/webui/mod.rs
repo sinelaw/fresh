@@ -53,10 +53,23 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
         rows,
         Some(working_dir),
         dir_context,
-        false,
+        true, // plugins_enabled: load the real plugin runtime (git, orchestrator,
+              // env manager, …) so the web UI is as full-featured as the TUI.
         crate::view::color_support::ColorCapability::TrueColor,
         fs,
     )?;
+    // Mirror the TUI boot: load the user's init.ts and fire the plugins-loaded
+    // lifecycle hook. Plugin loads run on the plugin thread and arrive via the
+    // AsyncBridge, which `editor_tick` (run on every poll) drains — so by the
+    // time the UI settles the plugin menus/commands are present.
+    editor.load_init_script_async(true);
+    editor.fire_plugins_loaded_hook();
+
+    // We render chrome (menu, dropdown, command palette) as native HTML from the
+    // semantic model, so tell the pipeline to compute chrome *layout* but not draw
+    // it into the cells — the cell buffer carries pane interiors only, with no
+    // chrome to hide. See docs/internal/UNIFIED_SCENE_DESIGN.md (Phase 1).
+    editor.suppress_chrome_cells = true;
     for f in files {
         if let Err(e) = editor.open_file(f) {
             eprintln!("open_file {f:?} failed: {e}");
