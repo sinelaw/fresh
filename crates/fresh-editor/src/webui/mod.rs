@@ -97,7 +97,9 @@ pub fn apply_step(editor: &mut Editor, step: &Value) {
         if let Some(act) =
             crate::input::keybindings::Action::from_str(name, &std::collections::HashMap::new())
         {
-            editor.dispatch_action_for_tests(act);
+            if let Err(e) = editor.handle_action(act) {
+                eprintln!("[webui] action error: {e}");
+            }
         }
     }
     // Drain async work / step animations. The `bool` (needs-render) is moot —
@@ -230,7 +232,9 @@ fn handle_conn(
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default();
                 if let Some(act) = crate::input::keybindings::Action::from_str(name, &args) {
-                    editor.dispatch_action_for_tests(act);
+                    if let Err(e) = editor.handle_action(act) {
+                        eprintln!("[webui] action error: {e}");
+                    }
                 }
             }
             let s = tick_scene(editor, *cols, *rows).to_string();
@@ -367,8 +371,12 @@ fn handle_conn(
 }
 
 fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Result<()> {
+    // No CORS header: the frontend is served from this same origin, so it needs
+    // none, and `Access-Control-Allow-Origin: *` would let any site the user
+    // visits read `/state` (live buffer contents) cross-origin. Same-origin
+    // policy is the protection here.
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes())?;
