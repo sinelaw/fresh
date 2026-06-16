@@ -1715,7 +1715,15 @@ impl StatusBarRenderer {
             let start_col = used_left;
 
             if width <= remaining {
-                let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
+                // `segments` is consumed only by the web (`status_view`); the
+                // TUI (`draw`) never reads it, so don't allocate the per-segment
+                // text/Vec on the terminal hot path.
+                let seg_text = (!draw).then(|| {
+                    item_spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                });
                 spans.extend(item_spans);
                 used_left += width;
 
@@ -1739,13 +1747,15 @@ impl StatusBarRenderer {
                     area.x + start_col as u16,
                     area.x + (start_col + width) as u16,
                 );
-                layout.segments.push(StatusSegmentInfo {
-                    name: element_kind_name(kind),
-                    key: token_key.clone(),
-                    text: seg_text,
-                    x: area.x + start_col as u16,
-                    w: width as u16,
-                });
+                if let Some(text) = seg_text {
+                    layout.segments.push(StatusSegmentInfo {
+                        name: element_kind_name(kind),
+                        key: token_key.clone(),
+                        text,
+                        x: area.x + start_col as u16,
+                        w: width as u16,
+                    });
+                }
             } else {
                 // Overflow: truncate the concatenated text of this element.
                 // Per-span styling is lost for the overflowed slice — we fall
@@ -1760,7 +1770,7 @@ impl StatusBarRenderer {
                     ctx.warning_level,
                     ctx.lsp_indicator_state,
                 );
-                let seg_text = truncated.clone();
+                let seg_text = (!draw).then(|| truncated.clone());
                 spans.push(Span::styled(truncated, overflow_style));
 
                 if let Some(r) = rec.as_deref_mut() {
@@ -1784,13 +1794,15 @@ impl StatusBarRenderer {
                     area.x + start_col as u16,
                     area.x + (start_col + truncated_width) as u16,
                 );
-                layout.segments.push(StatusSegmentInfo {
-                    name: element_kind_name(kind),
-                    key: token_key.clone(),
-                    text: seg_text,
-                    x: area.x + start_col as u16,
-                    w: truncated_width as u16,
-                });
+                if let Some(text) = seg_text {
+                    layout.segments.push(StatusSegmentInfo {
+                        name: element_kind_name(kind),
+                        key: token_key.clone(),
+                        text,
+                        x: area.x + start_col as u16,
+                        w: truncated_width as u16,
+                    });
+                }
                 break;
             }
         }
@@ -1853,14 +1865,17 @@ impl StatusBarRenderer {
                 current_col,
                 current_col + width as u16,
             );
-            let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
-            layout.segments.push(StatusSegmentInfo {
-                name: element_kind_name(kind),
-                key: token_key.clone(),
-                text: seg_text,
-                x: current_col,
-                w: width as u16,
-            });
+            if !draw {
+                // Web-only semantic model; skip the allocation on the TUI path.
+                let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
+                layout.segments.push(StatusSegmentInfo {
+                    name: element_kind_name(kind),
+                    key: token_key.clone(),
+                    text: seg_text,
+                    x: current_col,
+                    w: width as u16,
+                });
+            }
             spans.extend(item_spans);
             current_col += width as u16;
         }

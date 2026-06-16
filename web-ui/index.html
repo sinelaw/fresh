@@ -1194,7 +1194,7 @@ document.addEventListener("keydown",e=>{
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
-async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
+async function sendMouse(o){ try{ applyScene(await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("mouse failed: "+err); } }
 async function sendWidget(o){ try{ applyScene(await (await fetch("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("widget failed: "+err); } }
 async function sendSettings(o){ try{ applyScene(await (await fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("settings failed: "+err); } }
 async function sendKbedit(o){ try{ applyScene(await (await fetch("/kbedit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("kbedit failed: "+err); } }
