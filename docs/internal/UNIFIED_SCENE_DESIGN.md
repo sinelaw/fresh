@@ -165,4 +165,11 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     toggle/number/dropdown/text fully interactive; map/duallist/json/objectarray
     + entry dialogs read-only fallback, then iterate. Large.
   - [~] **Calibration wizard** — deprecate (not converting).
+  - [x] **Right-click / new-tab context menus** — `context_menu_view()` (one
+    model via the menus' own accessors), native render, click → `handle_mouse`
+    at `(x+1, y+1+i)`; right-click forwarded from native tabs/explorer rows.
+  - [x] **Keybinding editor / event-debug / theme-info** — `aux_modals_view()`
+    projects each as a titled line list (bindings / event log / theme key info),
+    rendered as a native modal; keyboard drives them via `handle_key`. All cells
+    gated on `!suppress_chrome_cells`.
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.

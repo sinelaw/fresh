@@ -1477,27 +1477,35 @@ impl Editor {
             );
         }
 
+        // Keybinding editor + event-debug: the web renders these natively from
+        // `aux_modals_view`; paint cells only for the TUI.
+        let draw_aux = !self.suppress_chrome_cells;
+
         // Render keybinding editor if active
-        if let Some(ref mut kb_editor) = self.keybinding_editor {
-            crate::view::dimming::apply_dimming(frame, chrome_area);
-            crate::view::keybinding_editor::render_keybinding_editor(
-                frame,
-                chrome_area,
-                kb_editor,
-                &*self.theme.read().unwrap(),
-            );
+        if draw_aux {
+            if let Some(ref mut kb_editor) = self.keybinding_editor {
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::keybinding_editor::render_keybinding_editor(
+                    frame,
+                    chrome_area,
+                    kb_editor,
+                    &*self.theme.read().unwrap(),
+                );
+            }
         }
 
         // Render event debug dialog if active
-        if let Some(ref debug) = self.active_window().event_debug {
-            // Dim the editor content behind the dialog modal
-            crate::view::dimming::apply_dimming(frame, chrome_area);
-            crate::view::event_debug::render_event_debug(
-                frame,
-                chrome_area,
-                debug,
-                &*self.theme.read().unwrap(),
-            );
+        if draw_aux {
+            if let Some(ref debug) = self.active_window().event_debug {
+                // Dim the editor content behind the dialog modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::event_debug::render_event_debug(
+                    frame,
+                    chrome_area,
+                    debug,
+                    &*self.theme.read().unwrap(),
+                );
+            }
         }
 
         // The workspace-trust prompt is a blocking, top-most security modal.
@@ -1662,7 +1670,10 @@ impl Editor {
         // screen cell that may sit over the dock column, so draw it after
         // the dock — otherwise the dock paints over it and its "Open in
         // Theme Editor" button is hidden and unclickable.
-        self.render_theme_info_popup(frame);
+        // Web renders the theme-info popup natively from `aux_modals_view`.
+        if !self.suppress_chrome_cells {
+            self.render_theme_info_popup(frame);
+        }
 
         if self.floating_widget_panel.is_some() {
             // A `fullscreen` modal paints over the whole frame, covering the

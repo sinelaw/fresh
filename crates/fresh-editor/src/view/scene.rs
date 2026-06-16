@@ -843,3 +843,117 @@ impl Editor {
         None
     }
 }
+
+// ─────────────────────────── auxiliary modals (keybindings / event-debug / theme-info) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuxLine {
+    pub text: String,
+    pub selected: bool,
+}
+
+/// A small/secondary modal projected as a titled list of text lines. Covers the
+/// keybinding editor (binding list), the event-debug log, and the theme-info
+/// popup — read-mostly surfaces whose interaction (nav / Esc / rebind) already
+/// flows through `handle_key`. `rect` anchors the theme popup; `None` ⇒ the
+/// frontend centers it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuxModalView {
+    pub kind: &'static str,
+    pub title: String,
+    pub rect: Option<RectView>,
+    pub lines: Vec<AuxLine>,
+    pub footer: Option<String>,
+}
+
+impl Editor {
+    /// The active auxiliary modal (keybinding editor / event-debug / theme-info),
+    /// projected as a titled line list for native rendering. Only one shows at a
+    /// time. Cells for these are suppressed on the web; keyboard drives them.
+    pub fn aux_modals_view(&self) -> Option<AuxModalView> {
+        // Keybinding editor — the resolved binding list (filtered) + selection.
+        if let Some(kb) = &self.keybinding_editor {
+            let lines = kb
+                .filtered_indices
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &bi)| {
+                    kb.bindings.get(bi).map(|b| AuxLine {
+                        text: format!(
+                            "{:<18} {:<30} {}",
+                            b.key_display, b.action_display, b.context
+                        ),
+                        selected: i == kb.selected,
+                    })
+                })
+                .collect();
+            return Some(AuxModalView {
+                kind: "keybindings",
+                title: rust_i18n::t!("keybinding_editor.title").into_owned(),
+                rect: None,
+                lines,
+                footer: Some(format!("{} · ↑↓ navigate · Esc close", kb.active_keymap)),
+            });
+        }
+        let w = self.active_window();
+        // Event-debug log.
+        if let Some(ed) = &w.event_debug {
+            let mut lines: Vec<AuxLine> = ed
+                .history
+                .iter()
+                .map(|r| AuxLine {
+                    text: r.description.clone(),
+                    selected: false,
+                })
+                .collect();
+            if lines.is_empty() {
+                lines.push(AuxLine {
+                    text: rust_i18n::t!("event_debug.no_events").into_owned(),
+                    selected: false,
+                });
+            }
+            return Some(AuxModalView {
+                kind: "eventDebug",
+                title: rust_i18n::t!("event_debug.title").into_owned(),
+                rect: None,
+                lines,
+                footer: Some(rust_i18n::t!("event_debug.help_text").into_owned()),
+            });
+        }
+        // Theme-info popup (anchored at its click position).
+        if let Some(ti) = &w.theme_info_popup {
+            let info = &ti.info;
+            let mut lines = vec![AuxLine {
+                text: format!("Region: {}", info.region),
+                selected: false,
+            }];
+            if let Some(k) = &info.fg_key {
+                lines.push(AuxLine {
+                    text: format!("Foreground: {k}"),
+                    selected: false,
+                });
+            }
+            if let Some(k) = &info.bg_key {
+                lines.push(AuxLine {
+                    text: format!("Background: {k}"),
+                    selected: false,
+                });
+            }
+            return Some(AuxModalView {
+                kind: "themeInfo",
+                title: "Theme".to_string(),
+                rect: Some(RectView {
+                    x: ti.position.0,
+                    y: ti.position.1,
+                    w: 0,
+                    h: 0,
+                }),
+                lines,
+                footer: None,
+            });
+        }
+        None
+    }
+}

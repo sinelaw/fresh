@@ -150,6 +150,15 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  /* native auxiliary modals (keybindings / event-debug / theme-info) */
+  .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px;max-height:80vh}
+  .auxmodal.centered{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:520px;max-width:80vw}
+  .auxmodal.anchored{position:absolute;min-width:240px}
+  .auxmodal .am-title{padding:5px 12px;font-weight:600;border-bottom:1px solid var(--border);background:var(--bg3)}
+  .auxmodal .am-body{overflow:auto;padding:4px 0}
+  .auxmodal .am-line{padding:1px 12px;white-space:pre;font-family:ui-monospace,monospace;color:var(--fg)}
+  .auxmodal .am-line.sel{background:var(--menuhi);color:#fff}
+  .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);font-size:11px}
   /* native right-click / new-tab context menu */
   .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;font-size:12px;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
@@ -277,6 +286,9 @@ function render(){
 
   // native right-click / new-tab context menu
   if(reg.contextMenu) app.appendChild(contextMenuEl(reg.contextMenu));
+
+  // native auxiliary modals (keybinding editor / event-debug / theme-info)
+  if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) app.appendChild(el);
 
   // native workspace-trust modal
   if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
@@ -574,6 +586,24 @@ function widgetEl(spec, ctx){
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
+// Native auxiliary modals (keybinding editor / event-debug / theme-info). A
+// titled list of lines; anchored (theme-info) or centered. Interaction (nav /
+// Esc / rebind) already flows through handle_key, so this is render-only.
+function auxModalEls(m){
+  const out=[];
+  const anchored = m.rect && (m.rect.x || m.rect.y);
+  if(!anchored){ const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim); }
+  const el=div("region auxmodal "+(anchored?"anchored":"centered")+" am-"+m.kind);
+  if(anchored){ el.style.left=px(m.rect.x,CW)+"px"; el.style.top=px(m.rect.y,CH)+"px"; }
+  const title=div("am-title"); title.textContent=m.title; el.appendChild(title);
+  const body=div("am-body");
+  for(const ln of m.lines){ const r=div("am-line"+(ln.selected?" sel":"")); r.textContent=ln.text||" "; body.appendChild(r); }
+  el.appendChild(body);
+  if(m.footer){ const f=div("am-footer"); f.textContent=m.footer; el.appendChild(f); }
+  out.push(el);
+  return out;
+}
+
 // Native right-click / new-tab context menu. Rendered at the menu's cell
 // position; clicking item i forwards a click at (x+1, y+1+i) — the cell the
 // editor's hit-test resolves to that item (`item_idx = row - y - 1`).
@@ -704,7 +734,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
