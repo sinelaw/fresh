@@ -75,7 +75,11 @@
   /* ---- command palette / picker (native) ---- */
   .palette{position:absolute;z-index:90;display:flex;flex-direction:column;
     background:#2b2b2b;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);overflow:hidden}
-  .palette-preview{position:absolute;z-index:89;background:var(--bg);border-left:1px solid var(--border);overflow:hidden}
+  .palette.with-preview{overflow:hidden}
+  .palette .pbody{display:flex;align-items:stretch;min-height:0}
+  .palette .pbody .plist{max-height:none;border-right:1px solid var(--border)}
+  .palette .ppreview{background:var(--bg);overflow:hidden}
+  .palette .ppreview svg.cells{width:100%;height:100%}
   .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid #3a3a3a;background:#1f1f1f}
   .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:ellipsis}
   .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
@@ -394,16 +398,10 @@ function render(){
   // native popups (completion / hover / action / list / text) — semantic, not cells
   for(const p of (reg.popups||[])) app.appendChild(popupEl(p));
 
-  // native command palette / picker (semantic; routes back to the real editor)
-  if(reg.palette){ app.appendChild(paletteEl(reg.palette));
-    // live-grep / quick-open preview: real buffer cells drawn into a framed
-    // pane to the right of the list (positioned at the editor's preview rect).
-    if(reg.palette.previewRect && reg.palette.previewCells){
-      const pv=div("region palette-preview"); place(pv, reg.palette.previewRect);
-      pv.innerHTML=cellsSvg(reg.palette.previewCells, reg.palette.previewRect.w);
-      app.appendChild(pv);
-    }
-  }
+  // native command palette / picker (semantic; routes back to the real editor).
+  // The live-grep / quick-open preview pane is rendered inside the card by
+  // paletteEl (a results|preview body), matching the TUI's single box.
+  if(reg.palette) app.appendChild(paletteEl(reg.palette));
 
   // native plugin widget panels (floating / dock)
   if(reg.widgets) for(const s of reg.widgets) app.appendChild(widgetSurfaceEl(s));
@@ -546,14 +544,39 @@ function tabBarEl(p){
 // The editor owns the query, the filtered suggestions, the selection and the
 // scroll window; we render them natively and forward row clicks / wheel back
 // through handle_mouse at the pipeline's list cell rect so it stays in sync.
+// Build the scrollable results list (rows map 1:1 to the editor's visible
+// suggestion window; clicks/wheel route back through handle_mouse at the list
+// cell rect so the editor stays the source of truth).
+function paletteListEl(p, list){
+  const listBox=div("plist");
+  const start=p.scrollStart||0, n=p.visibleCount||p.suggestions.length;
+  for(let j=0;j<n;j++){
+    const idx=start+j; const s=p.suggestions[idx]; if(!s) break;
+    const row=div("prow"+(idx===p.selected?" sel":"")+(s.disabled?" disabled":""));
+    const tx=document.createElement("span"); tx.className="ptext"; tx.textContent=s.text; row.appendChild(tx);
+    const ds=document.createElement("span"); ds.className="pdesc"; ds.textContent=s.description||""; row.appendChild(ds);
+    if(s.keybinding){ const k=document.createElement("span"); k.className="pkey"; k.textContent=s.keybinding; row.appendChild(k); }
+    if(list){ const cell={col:list.x+1,row:list.y+j};
+      row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); }; }
+    listBox.appendChild(row);
+  }
+  if(list){ listBox.addEventListener("wheel",e=>{ e.stopPropagation();
+    sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:list.x+1,row:list.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true}); }
+  return listBox;
+}
+
 function paletteEl(p){
   const list = p.listRect || p.outerRect;
-  // Cover the full popup outer rect (incl. the pipeline's box-drawing border,
-  // which is still painted into the cells behind) with the opaque card.
-  const outer = p.outerRect || list;
-  const el=div("palette");
+  // When the overlay has a preview pane, the card spans BOTH columns and lays
+  // out exactly like the TUI's single box: a full-width header (title/toolbar/
+  // input) on top, then a body split into results | preview below. Otherwise
+  // it's the compact VSCode-style command palette over the list rect.
+  const hasPreview = !!(p.previewRect && p.previewCells && list);
+  let outer = p.outerRect || list;
+  if(hasPreview){ outer = {x:list.x, y:list.y, w:(p.previewRect.x+p.previewRect.w)-list.x, h:list.h}; }
+  const el=div("palette"+(hasPreview?" with-preview":""));
   // Position the card on the outer rect, with the input bar stacked above it so
-  // it reads as one VSCode-style palette. (Clicks use the list cell rect below.)
+  // it reads as one palette. (Clicks use the list cell rect below.)
   const inputH=34, w=outer?Math.max(360,px(outer.w,CW)):420;
   const left = outer?px(outer.x,CW):(window.innerWidth-w)/2;
   const top  = outer?Math.max(4, px(outer.y,CH)-inputH):80;
@@ -573,23 +596,19 @@ function paletteEl(p){
   bar.appendChild(cnt);
   el.appendChild(bar);
 
-  // results list — render the editor's visible window so rows map 1:1 to cells
-  const listBox=div("plist");
-  const start=p.scrollStart||0, n=p.visibleCount||p.suggestions.length;
-  for(let j=0;j<n;j++){
-    const idx=start+j; const s=p.suggestions[idx]; if(!s) break;
-    const row=div("prow"+(idx===p.selected?" sel":"")+(s.disabled?" disabled":""));
-    const tx=document.createElement("span"); tx.className="ptext"; tx.textContent=s.text; row.appendChild(tx);
-    const ds=document.createElement("span"); ds.className="pdesc"; ds.textContent=s.description||""; row.appendChild(ds);
-    if(s.keybinding){ const k=document.createElement("span"); k.className="pkey"; k.textContent=s.keybinding; row.appendChild(k); }
-    if(list){ const cell={col:list.x+1,row:list.y+j};
-      row.onmousedown=e=>{ if(s.disabled) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); }; }
-    listBox.appendChild(row);
+  const listBox=paletteListEl(p, list);
+  if(hasPreview){
+    // body: results (left, list-rect width) | preview cells (right, framed)
+    const body=div("pbody");
+    listBox.style.flex="0 0 "+px(list.w,CW)+"px";
+    const h=px(p.previewRect.h,CH)+"px"; listBox.style.maxHeight=h;
+    const pv=div("ppreview"); pv.style.flex="1"; pv.style.height=h;
+    pv.innerHTML=cellsSvg(p.previewCells, p.previewRect.w);
+    body.appendChild(listBox); body.appendChild(pv);
+    el.appendChild(body);
+  } else {
+    el.appendChild(listBox);
   }
-  // wheel over the list scrolls the editor's suggestion window
-  if(list){ listBox.addEventListener("wheel",e=>{ e.stopPropagation();
-    sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:list.x+1,row:list.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true}); }
-  el.appendChild(listBox);
   return el;
 }
 
