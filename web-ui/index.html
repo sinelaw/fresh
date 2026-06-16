@@ -150,6 +150,10 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  .w-list-cards{gap:4px;padding:2px}
+  .w-list-card{border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:default;background:rgba(255,255,255,.02)}
+  .w-list-card.sel{border-color:var(--accent);background:var(--menuhi)}
+  .w-list-card .w-section{border:none;padding:0}
   /* native Settings (full modal) */
   .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(960px,90vw);height:min(640px,86vh);
     background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
@@ -663,13 +667,26 @@ function widgetEl(spec, ctx){
     const el=div("w-list");
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const sel=inst?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
-    (spec.items||[]).forEach((it,i)=>{
-      const row=div("w-list-row"+(i===sel?" sel":""));
-      row.textContent=entryText(it);
-      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
-      el.appendChild(row);
-    });
-    if(!(spec.items||[]).length){ const empty=div("w-list-empty"); empty.textContent="(empty)"; el.appendChild(empty); }
+    const specs=spec.itemSpecs||[];
+    if(specs.length){
+      // Card list: each logical item is a WidgetSpec (e.g. a LabeledSection
+      // "card"); the whole card is one select hit. Overrides `items`.
+      el.classList.add("w-list-cards");
+      specs.forEach((s,i)=>{
+        const card=div("w-list-card"+(i===sel?" sel":""));
+        card.appendChild(widgetEl(s, ctx));
+        card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
+        el.appendChild(card);
+      });
+    } else {
+      (spec.items||[]).forEach((it,i)=>{
+        const row=div("w-list-row"+(i===sel?" sel":""));
+        row.textContent=entryText(it);
+        row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
+        el.appendChild(row);
+      });
+      if(!(spec.items||[]).length){ const empty=div("w-list-empty"); empty.textContent="(empty)"; el.appendChild(empty); }
+    }
     return el;
   }
   if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
