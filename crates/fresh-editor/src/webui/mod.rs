@@ -301,6 +301,16 @@ fn handle_conn(
             let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
+        ("POST", "/kbedit") => {
+            // Native keybinding-editor click: select the display row the frontend
+            // rendered (same as a TUI row click). Other interactions are keyboard.
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            if let Some(a) = v.get("a").and_then(|x| x.as_u64()) {
+                editor.kbedit_select_display_row(a as usize);
+            }
+            let s = tick_scene(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
         ("POST", "/resize") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {

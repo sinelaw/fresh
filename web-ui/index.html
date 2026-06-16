@@ -798,11 +798,13 @@ function keybindingEditorEls(kb){
   const tbl=div("kb-table");
   const head=div("kb-row kb-head"); for(const c of ["Key","Action","Description","Context","Source"]){ const s=document.createElement("span"); s.className="kb-col kb-"+c.toLowerCase(); s.textContent=c; head.appendChild(s); } tbl.appendChild(head);
   const start=kb.scrollOffset||0, n=kb.viewport||kb.rows.length;
+  const kbHit=i=>e=>{ e.preventDefault(); e.stopPropagation(); sendKbedit({a:i}); };
   for(let j=0;j<n;j++){ const idx=start+j, r=kb.rows[idx]; if(!r) break;
-    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=(r.collapsed?"▶ ":"▼ ")+r.name+" ("+r.count+")"; tbl.appendChild(row); continue; }
+    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=(r.collapsed?"▶ ":"▼ ")+r.name+" ("+r.count+")"; row.onmousedown=kbHit(idx); tbl.appendChild(row); continue; }
     const row=div("kb-row"+(r.selected?" sel":""));
     const cols=[["key",r.key],["action",r.action],["description",r.description],["context",r.context],["source",r.source]];
     for(const [cls,txt] of cols){ const s=document.createElement("span"); s.className="kb-col kb-"+cls; s.textContent=txt||""; row.appendChild(s); }
+    row.onmousedown=kbHit(idx);
     tbl.appendChild(row);
   }
   el.appendChild(tbl);
@@ -988,6 +990,7 @@ const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
 async function sendWidget(o){ try{ applyScene(await (await fetch("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("widget failed: "+err); } }
 async function sendSettings(o){ try{ applyScene(await (await fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("settings failed: "+err); } }
+async function sendKbedit(o){ try{ applyScene(await (await fetch("/kbedit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("kbedit failed: "+err); } }
 // click handler that forwards a SettingsHit (kind + indices) to the editor
 function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b}); }; }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
