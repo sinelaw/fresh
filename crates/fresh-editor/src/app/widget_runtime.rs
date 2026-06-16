@@ -13,6 +13,27 @@ use crate::model::event::{BufferId, LeafId, SplitId};
 
 use super::Editor;
 
+/// Render a floating panel's spec, choosing the marker-gutter
+/// renderer when the panel opted into the `▸ ` focus marker (the
+/// Orchestrator New Session form) and the plain renderer otherwise.
+/// Centralised so the mount / update / rerender paths can't drift on
+/// which renderer a given panel uses. Lives here (not in the
+/// `plugins`-gated `plugin_dispatch`) so the non-plugin rerender path
+/// can call it in plugin-less builds.
+pub(super) fn render_floating_spec(
+    focus_marker: bool,
+    spec: &fresh_core::api::WidgetSpec,
+    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
+    prev_focus_key: &str,
+    panel_width: u32,
+) -> crate::widgets::RenderOutput {
+    if focus_marker {
+        crate::widgets::render_spec_with_marker(spec, prev, prev_focus_key, panel_width)
+    } else {
+        crate::widgets::render_spec(spec, prev, prev_focus_key, panel_width)
+    }
+}
+
 /// Walk a `Tree`'s flat `nodes` and return the absolute indices of
 /// nodes that are currently visible — i.e. every ancestor is in
 /// `expanded`. Mirrors the renderer's filter so dispatcher and
@@ -242,7 +263,7 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.focus_marker)
                 .unwrap_or(false);
-            let out = super::plugin_dispatch::render_floating_spec(
+            let out = render_floating_spec(
                 focus_marker,
                 spec,
                 &prev,

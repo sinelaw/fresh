@@ -370,10 +370,13 @@ fn completion_popup_scrolls_with_down_arrow() {
         "precondition: `alpha_09/` must be off-screen before scrolling",
     );
 
-    // Press Down enough times to walk selection to the last
-    // candidate. Auto-scroll should snap the window so
-    // `alpha_09/` is visible at the bottom.
-    for _ in 0..9 {
+    // Press Down enough times to walk selection to the last candidate.
+    // The first `↓` only *steps into* the dropdown (highlighting the top
+    // row without moving), so reaching the 10th candidate (index 9) from
+    // the top takes one enter-press plus nine moves = ten presses.
+    // Auto-scroll should snap the window so `alpha_09/` is visible at the
+    // bottom.
+    for _ in 0..10 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
@@ -433,9 +436,17 @@ fn selection_highlight_does_not_overlap_right_border() {
     open_new_session_form(&mut harness);
     type_many_alphas_prefix_and_wait(&mut harness, &workspace);
 
-    // `alpha_00/` is the first candidate, selected by default
-    // (the host resets `selectedIndex` to 0 whenever the
-    // candidate list updates).
+    // A freshly surfaced popup paints no highlighted row — Enter still
+    // acts on the form. The first `↓` steps into the dropdown and
+    // highlights the top row (`alpha_00/`, index 0) without moving the
+    // selection off it, so we get a selected row to check the border
+    // against.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.tick_and_render().unwrap();
+
+    // `alpha_00/` is the first candidate, now selected after the `↓`
+    // stepped into the dropdown (the host keeps `selectedIndex` at 0
+    // when first entering the list).
     let (_text_col, row) = harness
         .find_text_on_screen("alpha_00/")
         .expect("`alpha_00/` should be visible as the first candidate row");
@@ -557,12 +568,20 @@ fn completion_candidates_left_aligned_with_input_value() {
         .position(|l| l.contains("alpha_dir/") && l.contains(&workspace_str))
         .expect("popup row with `alpha_dir/` should be on screen");
 
-    let input_col = lines[input_row]
-        .find(&workspace_str)
-        .expect("input row should contain the workspace path");
-    let popup_col = lines[popup_row]
-        .find(&workspace_str)
-        .expect("popup row should contain the workspace path");
+    // Compare *display* columns, not byte offsets: the focus-marker
+    // gutter puts a multibyte `▸` (3 bytes, 1 column) ahead of the input
+    // value, so a raw `find()` byte offset would diverge from the popup
+    // row's even when the two are visually aligned. Counting chars up to
+    // the match gives the column (every glyph in the leading chrome —
+    // `│`, `▸`, spaces, `[` — is one display column wide).
+    let display_col = |line: &str| -> usize {
+        let b = line
+            .find(&workspace_str)
+            .expect("row should contain the workspace path");
+        line[..b].chars().count()
+    };
+    let input_col = display_col(lines[input_row]);
+    let popup_col = display_col(lines[popup_row]);
 
     assert_eq!(
         input_col, popup_col,
@@ -833,15 +852,48 @@ fn tab_is_linear_one_stop_per_radio_group() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = open_form_on(&workspace);
 
+    // Advance to the single "Run in:" stop — the anchor for one cycle.
+    // (The form opens focused on Project Path, so the "Run in:" tab is a
+    // few stops away.)
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Run in:") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the 'Run in:' stop. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+
+    // Walk exactly one full cycle: collect the focused line at each stop
+    // starting from the "Run in:" anchor, tabbing until the marker lands
+    // back on a "Run in:" line. Counting over a fixed number of presses
+    // would over-count once the press count exceeds the cycle length;
+    // bounding on "back to the anchor" makes the assertions independent
+    // of how many fields the active backend has.
+    let mut cycle_lines = vec![focused_line(&harness.screen_to_string())];
+    loop {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        let line = focused_line(&harness.screen_to_string());
+        if line.contains("Run in:") {
+            break; // back to the anchor — one full cycle walked
+        }
+        cycle_lines.push(line);
+        assert!(
+            cycle_lines.len() < 20,
+            "focus cycle never returned to the 'Run in:' anchor. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+
     let mut run_in_stops = 0;
     let mut agent_stops = 0;
     let mut saw_create = false;
     let mut saw_inactive_option = false;
-
-    // A generous cap on the cycle length; the form has well under 12
-    // tab stops on a non-git workspace.
-    for _ in 0..12 {
-        let line = focused_line(&harness.screen_to_string());
+    for line in &cycle_lines {
         if line.contains("Run in:") {
             run_in_stops += 1;
             // The marker must precede the *active* backend (Local), not
@@ -865,8 +917,6 @@ fn tab_is_linear_one_stop_per_radio_group() {
         if line.contains("Create Session") {
             saw_create = true;
         }
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-        harness.tick_and_render().unwrap();
     }
 
     assert!(

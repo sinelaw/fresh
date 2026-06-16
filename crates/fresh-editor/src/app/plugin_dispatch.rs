@@ -24,25 +24,6 @@ use crate::view::split::SplitViewState;
 use super::window::Window;
 use super::{Editor, FloatingWidgetState};
 
-/// Render a floating panel's spec, choosing the marker-gutter
-/// renderer when the panel opted into the `▸ ` focus marker (the
-/// Orchestrator New Session form) and the plain renderer otherwise.
-/// Centralised so the mount / update / rerender paths can't drift on
-/// which renderer a given panel uses.
-pub(super) fn render_floating_spec(
-    focus_marker: bool,
-    spec: &fresh_core::api::WidgetSpec,
-    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-    prev_focus_key: &str,
-    panel_width: u32,
-) -> crate::widgets::RenderOutput {
-    if focus_marker {
-        crate::widgets::render_spec_with_marker(spec, prev, prev_focus_key, panel_width)
-    } else {
-        crate::widgets::render_spec(spec, prev, prev_focus_key, panel_width)
-    }
-}
-
 /// Normalize a session path for the plugin API. Sessions reach `WindowInfo`
 /// from two sources — the canonicalized launch session and `create_window_at`'s
 /// raw `PathBuf` — so any byte-level path field (lex sort, equality, …) in a
@@ -4376,7 +4357,7 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
-        let out = render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
+        let out = super::widget_runtime::render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
@@ -4438,7 +4419,7 @@ impl Editor {
             .unwrap_or_default();
         let panel_width = self.floating_panel_inner_width(slot);
         let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
-        let out = render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
+        let out = super::widget_runtime::render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;

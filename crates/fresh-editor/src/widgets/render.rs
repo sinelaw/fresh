@@ -2578,10 +2578,18 @@ fn render_completion_item(
     // candidate text is, so we hand-pad rather than relying on
     // entry-level `pad_to_chars`.
     //
-    // Budget = total_cols - (2 leading chars) - (1 scrollbar col).
+    // When the panel reserves the focus-marker gutter, the input's
+    // bracketed value is itself shifted right by the two-column gutter
+    // (`▸ ` / two spaces, inserted before its `[`). Lead the candidate
+    // rows by the same two columns so the candidate text stays directly
+    // under the typed value instead of sitting two columns to its left.
+    // Zero when the panel didn't opt into the gutter (every other
+    // popup), so those render exactly as before.
+    let lead = if marker_gutter_enabled() { 2 } else { 0 };
+    // Budget = total_cols - (2 leading chars) - (gutter lead) - (1 scrollbar col).
     // The two leading chars align the item with the bracketed
     // input value (see the function docstring).
-    let text_budget = total_cols.saturating_sub(2).saturating_sub(1);
+    let text_budget = total_cols.saturating_sub(2 + lead).saturating_sub(1);
     let item_chars: Vec<char> = item.chars().collect();
     let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
         (item.to_string(), false)
@@ -2605,6 +2613,13 @@ fn render_completion_item(
     // item text starts in the same column on both kinds.
     let history_marker: char = '↶';
     let mut text = String::with_capacity(total_cols * 4 + 2);
+    // Gutter lead (see `lead` above): keeps the candidate aligned under
+    // the gutter-shifted input value. The history `↶` marker and the
+    // selection highlight are positioned by byte offsets captured *after*
+    // these spaces, so they ride along correctly.
+    for _ in 0..lead {
+        text.push(' ');
+    }
     text.push(' ');
     let marker_start_byte = text.len();
     if is_history {
@@ -2619,7 +2634,7 @@ fn render_completion_item(
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 2 + visible_item.chars().count();
+    let used_cols = 2 + lead + visible_item.chars().count();
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');

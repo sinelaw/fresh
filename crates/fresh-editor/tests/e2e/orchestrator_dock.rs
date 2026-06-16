@@ -1527,18 +1527,24 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     h.wait_until(|h| h.screen_to_string().contains("New Session"))
         .unwrap();
 
-    // The form opens focused on the first field (Project Path). It now leads
-    // with a "Run in:" type-tab row (Local / SSH / Kubernetes / Devcontainer),
-    // so the four tab buttons sit *before* the fields in the focus order.
-    // Stepping back past the four tabs reaches the first focusable, and one
-    // more Shift+Tab wraps to the last one — the "Create Session" button —
-    // regardless of how many fields lie between. Five Shift+Tabs therefore
-    // land on Create (and close any path-completion popup along the way).
-    // Enter submits.
-    for _ in 0..5 {
-        h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    // Tab forward until the "Create Session" button is the focused
+    // control — its line carries the `▸` focus marker right before it
+    // (the form reserves the marker gutter). Walking to the button by
+    // its marker keeps this robust to the focus-cycle length: each radio
+    // group ("Run in:", "Agent:") is a single Tab stop, so the number of
+    // stops depends on the active backend's field count. Tab also closes
+    // any open path-completion popup along the way. Enter then submits.
+    let mut guard = 0;
+    while !h.screen_to_string().contains("▸ [ Create Session ]") {
+        h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        h.render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 30,
+            "Tab never focused the Create Session button.\n{}",
+            h.screen_to_string(),
+        );
     }
-    h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // git's actual error is surfaced (a `fatal:` line from the failed
