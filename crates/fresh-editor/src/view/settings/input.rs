@@ -191,7 +191,7 @@ impl SettingsState {
                         }
                     } else {
                         dialog.stop_editing();
-                        dialog.focus_next();
+                        dialog.focus_next_field();
                     }
                 }
             }
@@ -284,7 +284,7 @@ impl SettingsState {
                     };
                     if escape {
                         dialog.stop_editing();
-                        dialog.focus_prev();
+                        dialog.focus_prev_field();
                     }
                 }
             }
@@ -319,7 +319,7 @@ impl SettingsState {
                     };
                     if escape {
                         dialog.stop_editing();
-                        dialog.focus_next();
+                        dialog.focus_next_field();
                     }
                 }
             }
@@ -364,7 +364,7 @@ impl SettingsState {
                     };
                     dialog.stop_editing();
                     if escape_forward {
-                        dialog.focus_next();
+                        dialog.focus_next_field();
                     }
                 }
             }

@@ -631,6 +631,47 @@ impl EntryDialogState {
         }
     }
 
+    /// Advance focus to the next *field* (control), skipping any per-field
+    /// action buttons. Used by the form-style "commit and move on" flow
+    /// (Enter/Tab/arrows while editing), where stopping on the field's own
+    /// `[Reset]`/`[Inherit]` button would be surprising. Those buttons remain
+    /// reachable via Tab in navigation mode.
+    pub fn focus_next_field(&mut self) {
+        if self.editing_text {
+            return;
+        }
+        self.field_button_focus = None;
+        if self.selected_item + 1 < self.items.len() {
+            self.selected_item += 1;
+            self.sub_focus = None;
+            self.init_composite_focus(true);
+        } else {
+            self.focus_on_buttons = true;
+            self.focused_button = 0;
+        }
+        self.update_focus_states();
+        self.ensure_selected_visible(self.viewport_height);
+    }
+
+    /// Retreat focus to the previous *field* (control), skipping per-field
+    /// action buttons. The arrow-key counterpart to [`focus_next_field`].
+    pub fn focus_prev_field(&mut self) {
+        if self.editing_text {
+            return;
+        }
+        self.field_button_focus = None;
+        if self.selected_item > self.first_editable_index {
+            self.selected_item -= 1;
+            self.sub_focus = None;
+            self.init_composite_focus(false);
+        } else {
+            self.focus_on_buttons = true;
+            self.focused_button = self.button_count().saturating_sub(1);
+        }
+        self.update_focus_states();
+        self.ensure_selected_visible(self.viewport_height);
+    }
+
     pub fn focus_next(&mut self) {
         if self.editing_text {
             return;
