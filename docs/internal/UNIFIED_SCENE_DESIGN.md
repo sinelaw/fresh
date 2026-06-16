@@ -188,3 +188,17 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     (the editor is keyboard-centric). Cells gated on `!suppress_chrome_cells`.
     Verified incl. the edit dialog (kbfull 10/10, drive 47/47).
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.
+
+## Future work / known limitations (web bridge)
+
+- **Ship only the visible-window cell diff.** The poll loop currently
+  re-serializes the whole scene to JSON every tick (incl. every visible buffer
+  cell) and diffs it as a string on the client. Fine for a local prototype, but
+  the right scaling fix is to send only the changed visible-window cells (the
+  xi-editor lesson) rather than the full frame. (Carried over from the original
+  `web-ui/README.md` TODO.)
+- **Single-threaded server, overlapping fetches.** The bridge handles one
+  request at a time and the frontend fires overlapping `fetch`es, so a `/state`
+  poll can interleave an extra `editor_tick` between two input POSTs. Harmless
+  today because every request renders unconditionally, but worth keeping in mind
+  if timing-sensitive behavior is added.
