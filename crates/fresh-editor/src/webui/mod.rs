@@ -372,7 +372,11 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // --- per-window geometry from the pipeline's layout cache ---
     let layout = editor.active_layout();
     let content = layout.editor_content_area.unwrap_or(Rect::new(0, 0, w, h));
-    let menubar_rect = (content.y > 0).then(|| Rect::new(0, 0, w, content.y));
+    // The menu bar spans the chrome column (right of a left dock), not the full
+    // width — mirror the TUI, where the dock carves the left and the menu/tabs/
+    // status all sit to its right. `content` (the editor area) already starts at
+    // the chrome's left edge, so reuse its x/width.
+    let menubar_rect = (content.y > 0).then(|| Rect::new(content.x, 0, content.width, content.y));
 
     let panes: Vec<Value> = layout
         .split_areas
