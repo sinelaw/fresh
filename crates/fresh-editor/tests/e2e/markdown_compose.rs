@@ -4977,11 +4977,15 @@ fn test_wide_table_renders_clean_frame() {
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
 
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
     harness.type_text("Toggle Compose").unwrap();
     harness.wait_for_screen_contains("Toggle Compose").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
     let mut prev = String::new();
@@ -5069,7 +5073,8 @@ fn test_tall_table_scroll_all_rows_composed() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    let mut md = String::from("# Tall table\n\n| # | Slice | Status | Notes |\n|---|---|---|---|\n");
+    let mut md =
+        String::from("# Tall table\n\n| # | Slice | Status | Notes |\n|---|---|---|---|\n");
     for i in 1..=22 {
         md.push_str(&format!(
             "| {:02} | Item number {} here | Implemented or not implemented | Notes column with enough prose to wrap across a couple of lines for row {} of the long table |\n",
@@ -5088,19 +5093,30 @@ fn test_tall_table_scroll_all_rows_composed() {
     std::fs::write(&md_path, &md).unwrap();
 
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), project_root).unwrap();
+        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), project_root)
+            .unwrap();
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
     harness.type_text("Toggle Compose").unwrap();
     harness.wait_for_screen_contains("Toggle Compose").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
     // Jump to end of file, let it settle.
-    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
-    for _ in 0..6 { harness.process_async_and_render().unwrap(); std::thread::sleep(std::time::Duration::from_millis(60)); harness.advance_time(std::time::Duration::from_millis(60)); }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..6 {
+        harness.process_async_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        harness.advance_time(std::time::Duration::from_millis(60));
+    }
 
     let screen = harness.screen_to_string();
     // The last row must be visible and framed (we scrolled to EOF).
@@ -5113,8 +5129,8 @@ fn test_tall_table_scroll_all_rows_composed() {
     // un-composed failure mode.
     for line in screen.lines() {
         let t = line.trim_start();
-        let raw_row = t.starts_with("| ")
-            && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
+        let raw_row =
+            t.starts_with("| ") && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
         assert!(
             !raw_row,
             "found a raw (un-composed) table row after scroll:\n  {:?}\n{}",
@@ -5123,7 +5139,6 @@ fn test_tall_table_scroll_all_rows_composed() {
         );
     }
 }
-
 
 /// A wrapping table row containing an astral-plane emoji (🟡) must not abort
 /// composition. Regression guard for the bug where `processLineConceals`'
@@ -5156,16 +5171,25 @@ fn test_emoji_row_does_not_abort_composition() {
 
     // Narrow width like the user's window with the File Explorer open.
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(82, 30, Default::default(), project_root).unwrap();
+        EditorTestHarness::with_config_and_working_dir(82, 30, Default::default(), project_root)
+            .unwrap();
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
-    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     harness.wait_for_prompt().unwrap();
     harness.type_text("Toggle Compose").unwrap();
     harness.wait_for_screen_contains("Toggle Compose").unwrap();
-    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    for _ in 0..6 { harness.process_async_and_render().unwrap(); std::thread::sleep(std::time::Duration::from_millis(60)); harness.advance_time(std::time::Duration::from_millis(60)); }
+    for _ in 0..6 {
+        harness.process_async_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        harness.advance_time(std::time::Duration::from_millis(60));
+    }
 
     let screen = harness.screen_to_string();
     // The emoji row (15) and the rows after it (16, 17) must be composed into
@@ -5173,8 +5197,8 @@ fn test_emoji_row_does_not_abort_composition() {
     // row 15's emoji threw and everything from 15 onward rendered raw.
     for line in screen.lines() {
         let t = line.trim_start();
-        let raw_row = t.starts_with("| ")
-            && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
+        let raw_row =
+            t.starts_with("| ") && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
         assert!(
             !raw_row,
             "row rendered as raw markdown (composition aborted): {:?}\n{}",
@@ -5184,7 +5208,9 @@ fn test_emoji_row_does_not_abort_composition() {
     }
     // Positively confirm the rows after the emoji row are framed.
     assert!(
-        screen.lines().any(|l| l.contains('│') && l.contains("Outbox pub/sub")),
+        screen
+            .lines()
+            .any(|l| l.contains('│') && l.contains("Outbox pub/sub")),
         "row 16 (after the emoji row) was not composed into the frame:\n{}",
         screen
     );
