@@ -1472,16 +1472,19 @@ impl Editor {
             }
         }
 
-        // Render calibration wizard if active
-        if let Some(ref wizard) = self.calibration_wizard {
-            // Dim the editor content behind the wizard modal
-            crate::view::dimming::apply_dimming(frame, chrome_area);
-            crate::view::calibration_wizard::render_calibration_wizard(
-                frame,
-                chrome_area,
-                wizard,
-                &*self.theme.read().unwrap(),
-            );
+        // Render calibration wizard if active. (Deprecated; the web has no native
+        // projection for it, so suppress its cells there rather than bleed.)
+        if !self.suppress_chrome_cells {
+            if let Some(ref wizard) = self.calibration_wizard {
+                // Dim the editor content behind the wizard modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::calibration_wizard::render_calibration_wizard(
+                    frame,
+                    chrome_area,
+                    wizard,
+                    &*self.theme.read().unwrap(),
+                );
+            }
         }
 
         // Event-debug: the web renders it natively from `aux_modals_view`; paint
