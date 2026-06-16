@@ -480,6 +480,18 @@ function maybeAutoActivate(): void {
 registerHandler("env_maybe_auto_activate", maybeAutoActivate);
 editor.on("plugins_loaded", "env_maybe_auto_activate");
 
+// A session activated *after* boot — most notably one spawned through the
+// Orchestrator ("New Session" / dock), which creates a window without
+// re-firing `plugins_loaded` — must get the same auto-activation a direct
+// `fresh <dir>` launch gets. Without this, such a session stays on the system
+// toolchain even once its workspace trust is decided (issue #2355 follow-up).
+// Guarded on `!envActive()` so merely switching back to an already-active
+// session is a no-op and never re-applies (which would needlessly reload LSP).
+registerHandler("env_auto_activate_on_session", () => {
+  if (!editor.envActive()) maybeAutoActivate();
+});
+editor.on("active_window_changed", "env_auto_activate_on_session");
+
 // === Status pill (opt-in to a user's status-bar layout) ===
 //
 // One pill: "env" — what environment is active (always relevant once

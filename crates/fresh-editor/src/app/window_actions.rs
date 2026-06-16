@@ -252,6 +252,26 @@ impl crate::app::Editor {
         let previous_id = self.active_window;
         self.active_window = id;
 
+        // Run the workspace-trust decision for the project this session opens,
+        // exactly as the CLI / session-server startup paths do — the
+        // orchestrator's "New Session" path bypasses those, so without this a
+        // never-decided project opened through the dock stays Restricted and
+        // its env manager (venv / direnv / mise) never activates, leaving the
+        // terminal below on the *system* toolchain even though a direct
+        // `fresh <dir>` would have auto-trusted and activated it. `authority()`
+        // already follows `active_window` (set just above), so this scopes to
+        // the new window's trust + root. Local only: remote (born-attached
+        // SSH/k8s) sessions manage trust through their own connect flow and
+        // their markers don't live on the host filesystem.
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_none()
+        {
+            self.maybe_prompt_workspace_trust();
+        }
+
         // The argv to re-run if this session is restored. `None` (plain
         // shell) is recorded as an empty vec: a present entry — even empty —
         // marks this as a restorable *session* terminal (re-spawn it on

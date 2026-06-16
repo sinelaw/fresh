@@ -60,6 +60,19 @@ fn make_cargo_toml(root: &Path) {
     .expect("write Cargo.toml");
 }
 
+/// PTY availability guard — `create_window_with_terminal` spawns a real shell,
+/// which the CI sandbox occasionally can't allocate.
+fn pty_available() -> bool {
+    portable_pty::native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok()
+}
+
 /// Boot the editor harness exactly like a real `fresh /path` launch does
 /// at startup. `EditorTestHarness::with_config_and_working_dir` skips two
 /// hooks `main.rs` runs immediately after editor construction:
@@ -201,6 +214,72 @@ fn test_venv_silently_auto_activates() {
         !status.contains("SECURITY WARNING"),
         "venv-only folder must not raise the core trust modal"
     );
+}
+
+/// A session opened through the Orchestrator — a window created via
+/// `create_window_with_terminal`, the path the "New Session (Local)" flow and
+/// the session dock drive — must run the same workspace-trust decision and env
+/// auto-activation a direct `fresh <dir>` launch gets.
+///
+/// Regression: before the fix the orchestrator window bypassed
+/// `maybe_prompt_workspace_trust` (so a path-only `.venv` stayed `Restricted`
+/// instead of auto-trusting) *and* env-manager only auto-activated on
+/// `plugins_loaded` (which does not re-fire for a new window), so the session
+/// came up on the system toolchain — `python` resolved to `/usr/bin/python`
+/// even though opening the same folder from the CLI activated its `.venv`.
+///
+/// Drives the create-window action and asserts only on the rendered status
+/// message env-manager surfaces on activation; without the fix that message
+/// never appears (the session never activates), so this hangs until the
+/// external test timeout — i.e. it fails without the change.
+#[test]
+fn test_orchestrator_session_auto_activates_venv() {
+    if !pty_available() {
+        eprintln!("Skipping orchestrator env activation test: PTY not available");
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    // Launch project: plain (no env marker) so booting it activates nothing —
+    // env-manager loads here and serves every window in the editor.
+    let launch = tmp.path().join("launch");
+    fs::create_dir_all(&launch).unwrap();
+    setup_env_manager(&launch);
+    // The project opened *through the orchestrator*: a path-only `.venv`.
+    let venv_proj = tmp.path().join("venvproj");
+    fs::create_dir_all(&venv_proj).unwrap();
+    make_venv(&venv_proj);
+
+    let mut harness = boot_harness_like_main(120, 40, launch);
+
+    // Orchestrator "New Session (Local)" for the venv project — the same call
+    // the plugin dispatcher makes for `createWindowWithTerminal`. The new
+    // window is born under its own per-session local authority.
+    let born = harness.editor().local_session_authority(&venv_proj);
+    harness
+        .editor_mut()
+        .create_window_with_terminal(
+            venv_proj.clone(),
+            "venvproj".into(),
+            Some(venv_proj.clone()),
+            // A harmless long-running child so the PTY doesn't exit immediately.
+            Some(vec!["sh".into(), "-c".into(), "sleep 60".into()]),
+            None,
+            born,
+            None,
+        )
+        .expect("create orchestrator session window");
+
+    // The new session auto-activates its `.venv` just like a direct launch:
+    // env-manager writes its activation message to the status bar. Without the
+    // fix the window stays Restricted / never re-activates, so this predicate
+    // is never satisfied and the test times out externally.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(".venv") && (s.contains("Activating") || s.contains("active"))
+        })
+        .unwrap();
 }
 
 /// `.envrc` surfaces env-manager's combined popup. Picking "Trust & activate"
