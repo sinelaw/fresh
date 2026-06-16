@@ -7,8 +7,9 @@
 //!    option style painted `menu_highlight_fg` on `menu_dropdown_bg`. In
 //!    themes where those two colors are equal (Dracula: both `[40,42,54]`)
 //!    the checked checkbox label rendered fg-on-same-bg and vanished. The
-//!    fix pairs `menu_highlight_fg` with `menu_highlight_bg` (the designed
-//!    pairing), which is guaranteed to contrast.
+//!    fix keeps the toolbar background (`menu_dropdown_bg`) and signals the
+//!    checked state with the accent foreground `help_key_fg`, which every
+//!    theme tunes to contrast with the panel/popup background.
 //!
 //! 2. **Theme inspector popup is empty + has a dead button on the toolbar.**
 //!    The search-options toolbar doesn't record per-cell theme keys, so
@@ -41,9 +42,13 @@ fn test_dracula_checked_option_is_visible() {
     };
     let mut harness = EditorTestHarness::with_config(120, 30, config).unwrap();
 
-    let (highlight_fg, highlight_bg) = {
+    let (accent_fg, toolbar_bg, unchecked_fg) = {
         let theme = harness.editor().theme();
-        (theme.menu_highlight_fg, theme.menu_highlight_bg)
+        (
+            theme.help_key_fg,
+            theme.menu_dropdown_bg,
+            theme.menu_dropdown_fg,
+        )
     };
 
     harness.type_text("hello").unwrap();
@@ -70,17 +75,23 @@ fn test_dracula_checked_option_is_visible() {
         style.fg, style.bg
     );
 
-    // And it should use the designed highlight pair so it is legible on
-    // every theme.
-    assert_eq!(
-        style.fg,
-        Some(highlight_fg),
-        "checked option fg should be theme.menu_highlight_fg"
-    );
+    // The checked state keeps the toolbar background and differs only in the
+    // foreground, which uses the accent `help_key_fg` (legible on every theme,
+    // and distinct from the unchecked foreground).
     assert_eq!(
         style.bg,
-        Some(highlight_bg),
-        "checked option bg should be theme.menu_highlight_bg"
+        Some(toolbar_bg),
+        "checked option should keep the toolbar bg (theme.menu_dropdown_bg)"
+    );
+    assert_eq!(
+        style.fg,
+        Some(accent_fg),
+        "checked option fg should be the accent theme.help_key_fg"
+    );
+    assert_ne!(
+        style.fg,
+        Some(unchecked_fg),
+        "checked option fg should be visually distinct from the unchecked fg"
     );
 }
 

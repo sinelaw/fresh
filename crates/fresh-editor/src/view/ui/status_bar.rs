@@ -1876,16 +1876,20 @@ impl StatusBarRenderer {
         let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
         let regex_checkbox = if use_regex { "[x]" } else { "[ ]" };
 
-        // Style for active (checked) options - highlighted with menu highlight
-        // colors. `menu_highlight_fg` is the foreground designed to pair with
-        // `menu_highlight_bg` (the same pairing the menu and settings UIs use),
-        // so it must be drawn on `menu_highlight_bg`, not the dropdown bg. The
-        // previous code kept `menu_dropdown_bg` here, which on themes where
-        // `menu_highlight_fg == menu_dropdown_bg` (e.g. Dracula, where both are
-        // [40,42,54]) rendered the checked checkbox as invisible fg-on-same-bg.
+        // Style for active (checked) options. Keeps the same `menu_dropdown_bg`
+        // as the rest of the toolbar (so a checked option doesn't sprout a
+        // jarring color block) and signals the checked state purely through an
+        // accent foreground. `help_key_fg` is the right key for this: it's the
+        // theme's "accent text on a panel/popup body" color — every theme tunes
+        // it to contrast with the dropdown/popup background, and it's the same
+        // key the plugin search panel's toggle uses for its checked glyph, so
+        // the two search UIs read consistently. The previous code used
+        // `menu_highlight_fg`, which is designed to pair with `menu_highlight_bg`
+        // and on Dracula equals `menu_dropdown_bg` ([40,42,54]) — so the checked
+        // checkbox rendered invisible fg-on-same-bg.
         let active_style = Style::default()
-            .fg(theme.menu_highlight_fg)
-            .bg(theme.menu_highlight_bg);
+            .fg(theme.help_key_fg)
+            .bg(theme.menu_dropdown_bg);
 
         // Style for keyboard shortcuts - use theme color for consistency
         let shortcut_style = Style::default()
