@@ -314,6 +314,11 @@ pub struct StatusSegmentInfo {
     pub text: String,
     pub x: u16,
     pub w: u16,
+    /// Which side of the bar the renderer tiled this segment on: "left" or
+    /// "right". Carried from the actual left/right render passes so the web
+    /// orders/justifies segments exactly as the TUI does (rather than
+    /// re-deriving from a midpoint of `x`).
+    pub side: &'static str,
 }
 
 /// Map an [`ElementKind`] to the stable semantic name `status_view` uses.
@@ -1754,6 +1759,7 @@ impl StatusBarRenderer {
                         text,
                         x: area.x + start_col as u16,
                         w: width as u16,
+                        side: "left",
                     });
                 }
             } else {
@@ -1801,6 +1807,7 @@ impl StatusBarRenderer {
                         text,
                         x: area.x + start_col as u16,
                         w: truncated_width as u16,
+                        side: "left",
                     });
                 }
                 break;
@@ -1874,6 +1881,7 @@ impl StatusBarRenderer {
                     text: seg_text,
                     x: current_col,
                     w: width as u16,
+                    side: "right",
                 });
             }
             spans.extend(item_spans);

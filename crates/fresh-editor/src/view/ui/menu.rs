@@ -138,6 +138,16 @@ pub(crate) fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuConte
     }
 }
 
+/// Whether a top-level menu is visible given its `when` condition. Shared by the
+/// TUI `MenuRenderer` and the web `menu_view` projection so menu visibility is
+/// computed in one place rather than independently per frontend.
+pub(crate) fn is_menu_visible(menu: &Menu, context: &MenuContext) -> bool {
+    match &menu.when {
+        Some(condition) => context.get(condition),
+        None => true, // No condition = always visible
+    }
+}
+
 /// Menu bar state (tracks which menu is open and which item is highlighted)
 ///
 /// TODO: The menu system design could be improved to handle dynamic items better.
@@ -246,12 +256,10 @@ impl MenuState {
         // No visible menu found, stay on current
     }
 
-    /// Check if a menu is visible based on its `when` condition
+    /// Check if a menu is visible based on its `when` condition. Delegates to
+    /// the shared `is_menu_visible` so the TUI and the web projection agree.
     fn is_menu_visible(&self, menu: &Menu) -> bool {
-        match &menu.when {
-            Some(condition) => self.context.get(condition),
-            None => true, // No condition = always visible
-        }
+        is_menu_visible(menu, &self.context)
     }
 
     /// Check if we're currently in a submenu

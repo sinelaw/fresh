@@ -489,6 +489,9 @@ function menuBarEl(reg){
   const bar=div("region menubar"); place(bar,{x:rect.x,y:rect.y,w:rect.w,h:1});
   const barRow=rect.y;
   reg.menus.forEach((m,i)=>{
+    // Visibility is decided once in the core (MenuEntry.visible, from the shared
+    // is_menu_visible); skip hidden menus instead of re-deriving here.
+    if(m.visible===false) return;
     const el=div("menu"+(reg.menuOpen===i?" open":""));
     el.textContent=m.label;
     // Position each title at its EDITOR cell x (not CSS flow), so the title sits

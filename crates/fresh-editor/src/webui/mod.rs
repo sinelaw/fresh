@@ -40,6 +40,10 @@ use crate::config;
 use crate::config_io::DirectoryContext;
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 
+/// Default terminal size the bridge boots / resets to (cols, rows). One source
+/// so `run()` and the `/reset` route can't drift apart.
+const DEFAULT_SIZE: (u16, u16) = (140, 44);
+
 /// Construct a fresh editor exactly as the web bridge does: real plugin runtime
 /// enabled, init.ts loaded, chrome drawn as a semantic model (not cells). Shared
 /// by `run()`, the `/reset` route (scenario isolation) and the parity test
@@ -137,7 +141,7 @@ pub fn render_tui_cells(editor: &mut Editor, cols: u16, rows: u16) -> String {
 }
 
 pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
-    let (mut cols, mut rows) = (140u16, 44u16);
+    let (mut cols, mut rows) = DEFAULT_SIZE;
     let mut editor = build_editor(cols, rows, files)?;
 
     let listener = TcpListener::bind(addr)?;
@@ -357,8 +361,7 @@ fn handle_conn(
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/reset") => {
-            *cols = 140;
-            *rows = 44;
+            (*cols, *rows) = DEFAULT_SIZE;
             match build_editor(*cols, *rows, files) {
                 Ok(e) => *editor = e,
                 Err(err) => eprintln!("reset failed: {err}"),
@@ -738,54 +741,66 @@ fn apply_mouse(editor: &mut Editor, v: &Value) {
     }
 }
 
-/// ratatui Color → CSS hex (or None for the terminal default).
+/// The 16 ANSI colors (indices 0-15), shared by `color_css` (named-color arm)
+/// and `indexed_css` so the same logical color resolves to one hex no matter
+/// whether it arrives as a named `Color` or a `Color::Indexed`.
+const ANSI16: [(u8, u8, u8); 16] = [
+    (0, 0, 0),          // 0 black
+    (0xcd, 0x31, 0x31), // 1 red
+    (0x0d, 0xbc, 0x79), // 2 green
+    (0xe5, 0xe5, 0x10), // 3 yellow
+    (0x24, 0x72, 0xc8), // 4 blue
+    (0xbc, 0x3f, 0xbc), // 5 magenta
+    (0x11, 0xa8, 0xcd), // 6 cyan
+    (0xe5, 0xe5, 0xe5), // 7 white / gray
+    (0x66, 0x66, 0x66), // 8 bright black / dark gray
+    (0xf1, 0x4c, 0x4c), // 9 bright red
+    (0x23, 0xd1, 0x8b), // 10 bright green
+    (0xf5, 0xf5, 0x43), // 11 bright yellow
+    (0x3b, 0x8e, 0xea), // 12 bright blue
+    (0xd6, 0x70, 0xd6), // 13 bright magenta
+    (0x29, 0xb8, 0xdb), // 14 bright cyan
+    (0xff, 0xff, 0xff), // 15 bright white
+];
+
+fn hex(r: u8, g: u8, b: u8) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// ratatui Color → CSS hex (or None for the terminal default). Named colors map
+/// to their ANSI index in `ANSI16` so they agree with `Color::Indexed`.
 fn color_css(c: Color) -> Option<String> {
-    let hex = |r: u8, g: u8, b: u8| format!("#{r:02x}{g:02x}{b:02x}");
+    let ansi = |i: usize| {
+        let (r, g, b) = ANSI16[i];
+        hex(r, g, b)
+    };
     Some(match c {
         Color::Reset => return None,
         Color::Rgb(r, g, b) => hex(r, g, b),
-        Color::Black => hex(0, 0, 0),
-        Color::Red => hex(0xcd, 0x31, 0x31),
-        Color::Green => hex(0x0d, 0xbc, 0x79),
-        Color::Yellow => hex(0xe5, 0xe5, 0x10),
-        Color::Blue => hex(0x24, 0x72, 0xc8),
-        Color::Magenta => hex(0xbc, 0x3f, 0xbc),
-        Color::Cyan => hex(0x11, 0xa8, 0xcd),
-        Color::Gray => hex(0xcc, 0xcc, 0xcc),
-        Color::DarkGray => hex(0x66, 0x66, 0x66),
-        Color::LightRed => hex(0xf1, 0x4c, 0x4c),
-        Color::LightGreen => hex(0x23, 0xd1, 0x8b),
-        Color::LightYellow => hex(0xf5, 0xf5, 0x43),
-        Color::LightBlue => hex(0x3b, 0x8e, 0xea),
-        Color::LightMagenta => hex(0xd6, 0x70, 0xd6),
-        Color::LightCyan => hex(0x29, 0xb8, 0xdb),
-        Color::White => hex(0xe5, 0xe5, 0xe5),
+        Color::Black => ansi(0),
+        Color::Red => ansi(1),
+        Color::Green => ansi(2),
+        Color::Yellow => ansi(3),
+        Color::Blue => ansi(4),
+        Color::Magenta => ansi(5),
+        Color::Cyan => ansi(6),
+        Color::Gray => ansi(7),
+        Color::DarkGray => ansi(8),
+        Color::LightRed => ansi(9),
+        Color::LightGreen => ansi(10),
+        Color::LightYellow => ansi(11),
+        Color::LightBlue => ansi(12),
+        Color::LightMagenta => ansi(13),
+        Color::LightCyan => ansi(14),
+        Color::White => ansi(15),
         Color::Indexed(i) => return Some(indexed_css(i)),
     })
 }
 
 /// xterm-256 palette → hex.
 fn indexed_css(i: u8) -> String {
-    let basic = [
-        (0, 0, 0),
-        (0xcd, 0x31, 0x31),
-        (0x0d, 0xbc, 0x79),
-        (0xe5, 0xe5, 0x10),
-        (0x24, 0x72, 0xc8),
-        (0xbc, 0x3f, 0xbc),
-        (0x11, 0xa8, 0xcd),
-        (0xe5, 0xe5, 0xe5),
-        (0x66, 0x66, 0x66),
-        (0xf1, 0x4c, 0x4c),
-        (0x23, 0xd1, 0x8b),
-        (0xf5, 0xf5, 0x43),
-        (0x3b, 0x8e, 0xea),
-        (0xd6, 0x70, 0xd6),
-        (0x29, 0xb8, 0xdb),
-        (0xff, 0xff, 0xff),
-    ];
     let (r, g, b) = if i < 16 {
-        basic[i as usize]
+        ANSI16[i as usize]
     } else if i < 232 {
         let n = i - 16;
         let levels = [0u8, 95, 135, 175, 215, 255];
@@ -798,5 +813,5 @@ fn indexed_css(i: u8) -> String {
         let v = 8 + (i - 232) * 10;
         (v, v, v)
     };
-    format!("#{r:02x}{g:02x}{b:02x}")
+    hex(r, g, b)
 }

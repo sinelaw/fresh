@@ -68,6 +68,10 @@ pub enum MenuItemView {
 #[derive(Debug, Clone, Serialize)]
 pub struct MenuEntry {
     pub label: String,
+    /// Whether this menu's `when` condition is satisfied. Derived once here via
+    /// the shared `is_menu_visible` (the same the TUI uses), so the frontend
+    /// doesn't re-decide visibility on its own.
+    pub visible: bool,
     pub x: Option<u16>,
     pub w: Option<u16>,
     pub items: Vec<MenuItemView>,
@@ -187,6 +191,7 @@ impl Editor {
             .enumerate()
             .map(|(i, m)| MenuEntry {
                 label: m.label.clone(),
+                visible: crate::view::ui::menu::is_menu_visible(m, &self.menu_state().context),
                 x: menu_areas.get(&i).map(|r| r.x),
                 w: menu_areas.get(&i).map(|r| r.width),
                 items: m.items.iter().map(|it| item_view(self, it)).collect(),
@@ -364,11 +369,11 @@ impl Editor {
     pub fn status_view(&self) -> Option<StatusView> {
         let chrome = self.active_chrome();
         let (sy, sx, sw) = chrome.status_bar_area?;
-        let mid = sx.saturating_add(sw / 2);
-        let side = |x: u16| if x < mid { "left" } else { "right" };
 
         // Read the status bar's semantic model captured by the renderer — no
-        // cell scraping. Each rendered element (indicators + text) is a segment.
+        // cell scraping. Each rendered element (indicators + text) is a segment,
+        // and `side` is the renderer's actual left/right tiling (carried on the
+        // segment), not a midpoint guess from `x`.
         let segments: Vec<StatusSegment> = chrome
             .status_bar_segments
             .iter()
@@ -379,7 +384,7 @@ impl Editor {
                 text: s.text.trim().to_string(),
                 x: s.x,
                 w: s.w,
-                side: side(s.x),
+                side: s.side,
             })
             .collect();
 
