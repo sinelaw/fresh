@@ -84,6 +84,76 @@ pub(super) fn translate_plugin_animation_kind(
 }
 
 impl Editor {
+    /// Process a resolved widget hit (from a TUI cell click or a native-frontend
+    /// click): move focus to the clicked widget, apply host-owned state changes
+    /// (tree expand / list selection) and fire the plugin's `widget_event`. This
+    /// is the single dispatch path shared by the buffer-cell click handler and
+    /// the web `/widget` route, so a click delivers identical behaviour in both.
+    pub(crate) fn deliver_widget_hit(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        hit: &crate::widgets::HitArea,
+    ) {
+        // Click-to-focus: if the clicked widget has a stable, tabbable key, move
+        // focus there before firing the event so the next render reflects it.
+        if !hit.widget_key.is_empty() {
+            let is_tabbable = self
+                .widget_registry
+                .get(panel_key)
+                .map(|p| p.tabbable.iter().any(|k| k == &hit.widget_key))
+                .unwrap_or(false);
+            if is_tabbable {
+                self.set_panel_focus_and_notify(panel_key, hit.widget_key.clone());
+            }
+            self.rerender_widget_panel(panel_key);
+        }
+        // Tree disclosure click: the host owns expansion state, so toggle it
+        // (the toggle handler fires its own `expand` event with the post-toggle
+        // state). Tree row-body (`select`) and other kinds fall through.
+        let mut handled_specially = false;
+        if hit.widget_kind == "tree" && hit.event_type == "expand" {
+            if let Some(item_key) = hit.payload.get("key").and_then(|v| v.as_str()) {
+                self.handle_widget_tree_expand_toggle(panel_key, &hit.widget_key, item_key);
+                handled_specially = true;
+            }
+        }
+        // List row click: the host owns the List's selected index; a click only
+        // yields a `select` hit, so sync the selection (and repaint) then fall
+        // through to fire `select` with the List's *spec* key (per-item key stays
+        // in payload) — identical to keyboard nav.
+        let mut event_widget_key = hit.widget_key.clone();
+        if hit.widget_kind == "list" && hit.event_type == "select" {
+            if let Some(list_key) = hit.payload.get("list_key").and_then(|v| v.as_str()) {
+                event_widget_key = list_key.to_string();
+                if let Some(idx) = hit.payload.get("index").and_then(|v| v.as_i64()) {
+                    self.set_widget_list_selected_index(panel_key, list_key, idx as i32);
+                }
+            }
+        }
+        if !handled_specially {
+            self.fire_widget_event(
+                panel_key,
+                event_widget_key,
+                hit.event_type.to_string(),
+                hit.payload.clone(),
+            );
+        }
+    }
+
+    /// Native-frontend entry point: deliver the hit at `hit_index` in panel
+    /// `(plugin, panel_id)`'s recorded hit list — the same hits `widgets_view`
+    /// shipped to the frontend. Runs the shared `deliver_widget_hit` path.
+    pub fn deliver_widget_hit_by_index(&mut self, plugin: &str, panel_id: u64, hit_index: usize) {
+        let panel_key = crate::widgets::PanelKey::new(plugin, panel_id);
+        let hit = self
+            .widget_registry
+            .get(&panel_key)
+            .and_then(|p| p.hits.get(hit_index).cloned());
+        if let Some(hit) = hit {
+            self.deliver_widget_hit(&panel_key, &hit);
+        }
+    }
+
     /// Deliver a `widget_event` hook to the plugin owning `panel_key` —
     /// and to that plugin only. Panel ids are plugin-local, so the event
     /// carries the bare id; no other plugin ever sees it.

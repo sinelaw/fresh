@@ -222,75 +222,7 @@ impl Editor {
         // and the duplicate dispatch becomes a no-op.
         if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
             if let Some((panel_key, hit)) = self.widget_registry.hit_test(buffer_id, brow, bcol) {
-                // Click-to-focus: if the clicked widget has a stable
-                // key that's tabbable, move focus there before
-                // firing the event. The next render shows the focus
-                // moved; subsequent Tab cycling starts from the
-                // clicked widget.
-                if !hit.widget_key.is_empty() {
-                    let is_tabbable = self
-                        .widget_registry
-                        .get(&panel_key)
-                        .map(|p| p.tabbable.iter().any(|k| k == &hit.widget_key))
-                        .unwrap_or(false);
-                    if is_tabbable {
-                        self.set_panel_focus_and_notify(&panel_key, hit.widget_key.clone());
-                    }
-                    // Re-render so the focus styling updates without
-                    // waiting for the plugin to re-emit the spec.
-                    self.rerender_widget_panel(&panel_key);
-                }
-                // Tree disclosure click: the host owns expansion
-                // state, so toggle it before firing the plugin
-                // event (the toggle handler fires its own `expand`
-                // event with the post-toggle state). For tree
-                // row-body clicks (`event_type == "select"`) and
-                // all other widget kinds, fall through to the
-                // generic event dispatch. `hit.widget_key` is the
-                // tree's spec key (set by the renderer); the
-                // per-item key lives in `payload.key`.
-                let mut handled_specially = false;
-                if hit.widget_kind == "tree" && hit.event_type == "expand" {
-                    if let Some(item_key) = hit.payload.get("key").and_then(|v| v.as_str()) {
-                        self.handle_widget_tree_expand_toggle(
-                            &panel_key,
-                            &hit.widget_key,
-                            item_key,
-                        );
-                        handled_specially = true;
-                    }
-                }
-                // List row click: the host owns the List's selected
-                // index, but a click only yields a `select` hit and —
-                // unlike keyboard nav — doesn't move that selection.
-                // Sync it (and repaint) so the highlight follows the
-                // click and a later Up/Down resumes from the clicked
-                // row. We still fall through to fire the `select` event
-                // so plugins can refresh dependent panes.
-                //
-                // The fired event reports the List's *spec* key (the
-                // per-item key stays in `payload.key`), so click and
-                // keyboard nav deliver an identical `widget_key` — a
-                // plugin gating its handler on the list key works for
-                // both. (Keyboard nav fires the list key via
-                // `handle_widget_select_move_for_key`.)
-                let mut event_widget_key = hit.widget_key.clone();
-                if hit.widget_kind == "list" && hit.event_type == "select" {
-                    if let Some(list_key) = hit.payload.get("list_key").and_then(|v| v.as_str()) {
-                        event_widget_key = list_key.to_string();
-                        if let Some(idx) = hit.payload.get("index").and_then(|v| v.as_i64()) {
-                            self.set_widget_list_selected_index(&panel_key, list_key, idx as i32);
-                        }
-                    }
-                }
-                if !handled_specially {
-                    self.fire_widget_event(
-                        &panel_key,
-                        event_widget_key,
-                        hit.event_type.to_string(),
-                        hit.payload.clone(),
-                    );
-                }
+                self.deliver_widget_hit(&panel_key, &hit);
             }
         }
 

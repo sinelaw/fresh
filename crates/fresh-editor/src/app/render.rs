@@ -4199,12 +4199,18 @@ impl Editor {
             }
         };
 
+        // Web renders this panel natively from `widgets_view`; compute geometry
+        // (incl. `last_inner_rect` for click routing) but paint no cells. TUI
+        // passes draw=true so its rendering is unchanged.
+        let draw = !self.suppress_chrome_cells;
         // Only the centered modal dims the background; the dock and the
         // anchored context-menu popup paint over the editor without it.
-        if matches!(placement, super::PanelPlacement::Centered) {
+        if draw && matches!(placement, super::PanelPlacement::Centered) {
             crate::view::dimming::apply_dimming_excluding(frame, area, Some(overlay_rect));
         }
-        frame.render_widget(Clear, overlay_rect);
+        if draw {
+            frame.render_widget(Clear, overlay_rect);
+        }
         // The dock draws ONLY a right border (a thin draggable divider) —
         // no top/left/bottom — so it reclaims those rows/cols for content
         // and reads as a panel attached to the left edge. The centered
@@ -4229,9 +4235,20 @@ impl Editor {
             .border_style(ratatui::style::Style::default().fg(dock_border_fg))
             .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);
-        frame.render_widget(block, overlay_rect);
+        if draw {
+            frame.render_widget(block, overlay_rect);
+        }
 
         if inner.width == 0 || inner.height == 0 {
+            if let Some(fwp) = self.panel_mut(slot) {
+                fwp.last_inner_rect = Some(inner);
+            }
+            return;
+        }
+
+        // Web path: record the rect for native rendering / click routing, then
+        // stop before painting any content cells.
+        if !draw {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
             }

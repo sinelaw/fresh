@@ -663,3 +663,116 @@ impl Editor {
         })
     }
 }
+
+// ─────────────────────────── plugin widget surfaces (floating / dock) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WidgetHitView {
+    /// Index into this surface's `hits` — sent back on click so the editor runs
+    /// the exact same hit it would for a TUI cell click.
+    pub index: usize,
+    pub widget_key: String,
+    pub widget_kind: String,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+}
+
+/// Host-owned instance state a frontend needs to render a widget correctly
+/// (List/Tree selection + scroll). Keyed by widget `key`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WidgetInstanceView {
+    pub selected_index: Option<i32>,
+    pub scroll_offset: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub expanded_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WidgetSurfaceView {
+    /// "dock" (left dock) or "floatingModal" (centered).
+    pub kind: &'static str,
+    pub plugin: String,
+    pub panel_id: u64,
+    pub rect: RectView,
+    pub focus_key: String,
+    /// The raw, already-serializable `WidgetSpec` tree — rendered natively.
+    pub spec: fresh_core::api::WidgetSpec,
+    pub instances: HashMap<String, WidgetInstanceView>,
+    pub hits: Vec<WidgetHitView>,
+}
+
+impl Editor {
+    /// Semantic model for plugin-mounted floating / dock widget panels (e.g. the
+    /// orchestrator session dock). Each surface ships its `WidgetSpec` tree +
+    /// instance state + on-screen rect + hit list; the frontend renders the spec
+    /// natively and forwards a clicked hit's index back through `/widget`, which
+    /// runs the same `deliver_widget_hit` path as a TUI cell click. `None`
+    /// surfaces (unmounted panels) are simply omitted.
+    pub fn widgets_view(&self) -> Vec<WidgetSurfaceView> {
+        let mut out = Vec::new();
+        for (kind, slot) in [
+            ("dock", self.dock.as_ref()),
+            ("floatingModal", self.floating_widget_panel.as_ref()),
+        ] {
+            let Some(fwp) = slot else { continue };
+            let Some(rect) = fwp.last_inner_rect else {
+                continue;
+            };
+            let Some(panel) = self.widget_registry.get(&fwp.panel_key) else {
+                continue;
+            };
+            let mut instances = HashMap::new();
+            for (key, st) in &panel.instance_states {
+                use crate::widgets::WidgetInstanceState as W;
+                let view = match st {
+                    W::List {
+                        scroll_offset,
+                        selected_index,
+                        ..
+                    } => WidgetInstanceView {
+                        selected_index: Some(*selected_index),
+                        scroll_offset: Some(*scroll_offset),
+                        expanded_keys: Vec::new(),
+                    },
+                    W::Tree {
+                        scroll_offset,
+                        selected_index,
+                        expanded_keys,
+                    } => WidgetInstanceView {
+                        selected_index: Some(*selected_index),
+                        scroll_offset: Some(*scroll_offset),
+                        expanded_keys: expanded_keys.iter().cloned().collect(),
+                    },
+                    _ => continue,
+                };
+                instances.insert(key.clone(), view);
+            }
+            let hits = panel
+                .hits
+                .iter()
+                .enumerate()
+                .map(|(index, h)| WidgetHitView {
+                    index,
+                    widget_key: h.widget_key.clone(),
+                    widget_kind: h.widget_kind.to_string(),
+                    event_type: h.event_type.to_string(),
+                    payload: h.payload.clone(),
+                })
+                .collect();
+            out.push(WidgetSurfaceView {
+                kind,
+                plugin: fwp.panel_key.plugin.clone(),
+                panel_id: fwp.panel_key.id,
+                rect: RectView::from(rect),
+                focus_key: panel.focus_key.clone(),
+                spec: panel.spec.clone(),
+                instances,
+                hits,
+            });
+        }
+        out
+    }
+}

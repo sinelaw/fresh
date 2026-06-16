@@ -134,6 +134,15 @@ check('clicking a toggle flips it via the real plugin path',
 await page.screenshot({ path: `${SHOTS}/27-native-widgets.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+console.log('\n[plugin floating/dock widget = native WidgetSpec, NOT cells]');
+await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+await page.waitForFunction(() => { const w = window.fresh.scene.regions.widgets; return w && w.length > 0; }, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+check('editor reports a widget surface', !!((await scene(page)).regions.widgets || []).length);
+check('dock rendered as a native widget panel', (await page.locator('.widget-surface .w-button').count()) >= 3);
+check('NO svg/cells inside the widget panel', (await page.locator('.widget-surface svg').count()) === 0);
+await page.screenshot({ path: `${SHOTS}/28-native-dock.png` });
+
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;
 await page.waitForTimeout(1600);   // no input at all

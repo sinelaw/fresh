@@ -143,6 +143,18 @@
   .w-section-label{color:var(--muted);font-size:11px;margin-bottom:4px}
   .w-raw{white-space:pre;font-family:ui-monospace,monospace}
   .w-unsupported{color:var(--muted);font-style:italic;font-size:11px}
+  .w-text{display:flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:4px;padding:1px 6px;background:var(--bg)}
+  .w-text.focus{outline:1px solid var(--accent)}
+  .w-text-label{color:var(--muted)}
+  .w-list{display:flex;flex-direction:column;overflow:auto}
+  .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
+  .w-list-row.sel{background:var(--menuhi);color:#fff}
+  .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  /* floating / dock widget panel surfaces (native plugin UI) */
+  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;font-size:12px;padding:4px 6px}
+  .widget-surface.w-dock{border-right:1px solid var(--border)}
+  .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
+  .widget-surface .w-col{gap:3px}
 
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
@@ -255,6 +267,9 @@ function render(){
 
   // native command palette / picker (semantic; routes back to the real editor)
   if(reg.palette) app.appendChild(paletteEl(reg.palette));
+
+  // native plugin widget panels (floating / dock)
+  if(reg.widgets) for(const s of reg.widgets) app.appendChild(widgetSurfaceEl(s));
 
   // native workspace-trust modal
   if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
@@ -397,7 +412,7 @@ function paletteEl(p){
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
   // plugin-built toolbar (real WidgetSpec widgets, e.g. live-grep scope toggles)
-  if(p.toolbar){ const tb=div("ptoolbar"); tb.appendChild(widgetEl(p.toolbar, "toolbar", p.toolbarFocus)); el.appendChild(tb); }
+  if(p.toolbar){ const tb=div("ptoolbar"); tb.appendChild(widgetEl(p.toolbar, {kind:"toolbar", focusKey:p.toolbarFocus})); el.appendChild(tb); }
   // input bar (query + status + count)
   const bar=div("pinput");
   const q=document.createElement("span"); q.className="q";
@@ -480,26 +495,40 @@ function popupEl(p){
 // Renders the serialized WidgetSpec natively (Row/Col→flex, Toggle/Button→
 // native controls, …). Toggle/Button clicks route back to the owning plugin
 // via the same event the TUI fires; `surface` selects the routing path.
-function widgetEl(spec, surface, focusKey){
+// Concatenate a TextPropertyEntry's display text (segments preferred).
+function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
+
+// Route a widget interaction. `ctx.kind` is "toolbar" (prompt toolbar, routed by
+// key) or "panel" (floating/dock, routed by matching a recorded hit → its index).
+function routeWidget(ctx, node, listIndex){
+  if(ctx.kind==="toolbar"){ if(node.key) sendWidget({surface:"toolbar",key:node.key}); return; }
+  // panel: find the matching hit and send its index
+  let hit=null;
+  if(listIndex!=null){ hit=(ctx.hits||[]).find(h=>h.widgetKind==="list" && h.payload && h.payload.index===listIndex); }
+  else if(node.key){ hit=(ctx.hits||[]).find(h=>h.widgetKey===node.key); }
+  if(hit) sendWidget({surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId,hitIndex:hit.index});
+}
+
+function widgetEl(spec, ctx){
   if(!spec) return document.createTextNode("");
-  const kind=spec.kind;
-  const focused = spec.key && spec.key===focusKey;
+  const kind=spec.kind, fk=ctx.focusKey;
+  const focused = spec.key && spec.key===fk;
   if(kind==="row"||kind==="col"){
     const el=div("w-"+kind+(spec.wrap?" wrap":""));
-    for(const c of (spec.children||[])) el.appendChild(widgetEl(c, surface, focusKey));
+    for(const c of (spec.children||[])) el.appendChild(widgetEl(c, ctx));
     return el;
   }
   if(kind==="toggle"){
     const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":""));
     const box=document.createElement("span"); box.className="w-box"; box.textContent=spec.checked?"☑":"☐"; el.appendChild(box);
     const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
-    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendWidget({surface,key:spec.key}); };
+    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
   if(kind==="button"){
     const el=div("w-button "+(spec.intent||"normal")+(spec.disabled?" disabled":"")+(focused?" focus":""));
     el.textContent=spec.label||"";
-    if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendWidget({surface,key:spec.key}); };
+    if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
   if(kind==="spacer"){ const el=div("w-spacer"); if(spec.flex) el.style.flex="1"; else el.style.width=((spec.cols||1)*CW)+"px"; return el; }
@@ -512,12 +541,38 @@ function widgetEl(spec, surface, focusKey){
   }
   if(kind==="labeledSection"){
     const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
-    if(spec.child) el.appendChild(widgetEl(spec.child, surface, focusKey)); return el;
+    if(spec.child) el.appendChild(widgetEl(spec.child, ctx)); return el;
   }
-  // raw / list / tree / text / windowEmbed / overlay: minimal fallback for now
-  if(kind==="raw"&&spec.entries){ const el=div("w-raw");
-    el.textContent=spec.entries.map(e=>(e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||"")).join(""); return el; }
+  if(kind==="text"){
+    const el=div("w-text"+(focused?" focus":""));
+    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    const v=document.createElement("span"); v.className="w-text-val"; v.textContent=spec.value||spec.placeholder||""; el.appendChild(v);
+    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
+    return el;
+  }
+  if(kind==="list"){
+    const el=div("w-list");
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const sel=inst?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
+    (spec.items||[]).forEach((it,i)=>{
+      const row=div("w-list-row"+(i===sel?" sel":""));
+      row.textContent=entryText(it);
+      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
+      el.appendChild(row);
+    });
+    if(!(spec.items||[]).length){ const empty=div("w-list-empty"); empty.textContent="(empty)"; el.appendChild(empty); }
+    return el;
+  }
+  if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
+}
+
+// A floating / dock plugin widget panel, rendered natively at its cell rect.
+function widgetSurfaceEl(s){
+  const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
+  const ctx={ kind:"panel", plugin:s.plugin, panelId:s.panelId, hits:s.hits, instances:s.instances, focusKey:s.focusKey };
+  el.appendChild(widgetEl(s.spec, ctx));
+  return el;
 }
 
 // ---- native workspace-trust dialog --------------------------------------
@@ -624,7 +679,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

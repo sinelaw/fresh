@@ -213,10 +213,22 @@ fn handle_conn(
             // the toggle in-spec and fires the plugin's `widget_event` — the
             // exact path a TUI toolbar click takes.
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            if v.get("surface").and_then(|s| s.as_str()) == Some("toolbar") {
-                if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
-                    editor.toggle_overlay_toolbar_widget(key);
+            match v.get("surface").and_then(|s| s.as_str()) {
+                Some("toolbar") => {
+                    if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+                        editor.toggle_overlay_toolbar_widget(key);
+                    }
                 }
+                Some("panel") => {
+                    // Floating/dock widget: deliver the clicked hit by index,
+                    // running the same path as a TUI cell click.
+                    let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
+                    let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
+                    if let Some(idx) = v.get("hitIndex").and_then(|i| i.as_u64()) {
+                        editor.deliver_widget_hit_by_index(plugin, panel_id, idx as usize);
+                    }
+                }
+                _ => {}
             }
             let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
@@ -403,6 +415,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let statusbar = serde_json::to_value(editor.status_view()).unwrap_or(Value::Null);
     let palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
     let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
+    // Plugin-mounted floating / dock widget panels (e.g. the orchestrator dock),
+    // rendered natively from their WidgetSpec.
+    let widgets = serde_json::to_value(editor.widgets_view()).unwrap_or(Value::Null);
 
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
@@ -418,6 +433,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "popups": popups,
         "palette": palette,
         "trustDialog": trust_dialog,
+        "widgets": widgets,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
         // Pacing hint for the frontend's poll loop: when something is animating /
         // an LSP spinner is live / a timer is pending, poll fast; otherwise idle

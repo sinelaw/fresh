@@ -136,18 +136,24 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     3 radio options + selection, OK/Quit) from `TrustDialogLayout`; native modal
     with a scrim; options/OK/Quit route to `handle_workspace_trust_mouse` at the
     cached rects, keyboard via `handle_key`. (e2e: trust suite + drive.)
-  - [~] **Plugin widgets API** — vertical slice landed: the overlay **prompt
-    toolbar** (`WidgetSpec`) is projected on `PaletteView.toolbar` (raw serde
-    spec), rendered natively by a recursive `widgetEl` (Row/Col/Toggle/Button/
-    Spacer/Divider/HintBar/LabeledSection/Raw; List/Tree/Text fall back), and
-    Toggle/Button clicks route via `/widget` → `toggle_overlay_toolbar_widget`
-    (the exact event the TUI fires). Verified: live-grep scope toggles flip
-    through the real plugin path (widgets suite 7/7, drive 41/41). TODO: registry
-    panels + floating/dock surfaces (`widgets_view()` via `widget_registry` +
-    `floating_widget_panel`/`dock`, routing through `fire_widget_event` /
-    a shared `process_widget_hit`), List selection / Text editing, and suppress
-    the prompt **overlay** cells (layout-only seam in `render_overlay_prompt`) so
-    the toolbar/frame don't bleed behind the native card.
+  - [x] **Plugin widgets API** — done. `WidgetSpec` is serde-serializable, so:
+    (a) the overlay **prompt toolbar** is projected on `PaletteView.toolbar` and
+    rendered by a recursive `widgetEl` (Row/Col/Toggle/Button/Spacer/Divider/
+    HintBar/LabeledSection/Text/List/Raw); Toggle/Button clicks route via
+    `/widget` → `toggle_overlay_toolbar_widget`. (b) **Floating + dock panels**
+    (e.g. the orchestrator session dock) project via `Editor::widgets_view()`
+    (raw spec + instance state + on-screen rect + the panel's `HitArea` list);
+    the frontend renders them natively and forwards a clicked hit's *index* to
+    `/widget` → `deliver_widget_hit_by_index`, which runs the **same**
+    `deliver_widget_hit` path (focus / tree-expand / list-select / fire
+    `widget_event`) as a TUI cell click — extracted from `click_handlers` so both
+    share it. `render_floating_widget_panel` obeys the layout-vs-draw seam
+    (computes `last_inner_rect`, paints nothing when suppressed). **Mounted
+    virtual-buffer panels** need no work: they render as ordinary buffer (pane)
+    cells and clicks already route through the buffer widget hit-test. Verified:
+    live-grep toolbar 7/7, dock 8/8 (button + toggle flip through the real
+    plugin), drive 41/41; TUI dock/widget e2e (orchestrator_dock 40,
+    dock_panel_routing 2, widget_panel_ownership 1) unchanged.
   - [ ] **Settings UI** — independent of widgets (overlap check: they share only
     `view/controls/*`; Settings has 5 bespoke controls — DualList/Map/TextList/
     Json/Complex — plus nullable/layer/category-tree/search/entry-dialogs that
