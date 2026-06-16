@@ -7,9 +7,9 @@
 //!    option style painted `menu_highlight_fg` on `menu_dropdown_bg`. In
 //!    themes where those two colors are equal (Dracula: both `[40,42,54]`)
 //!    the checked checkbox label rendered fg-on-same-bg and vanished. The
-//!    fix keeps the toolbar background (`menu_dropdown_bg`) and signals the
-//!    checked state with the accent foreground `help_key_fg`, which every
-//!    theme tunes to contrast with the panel/popup background.
+//!    fix uses the `menu_active_fg`/`menu_active_bg` designed pair (the same
+//!    `menu_*` family the toolbar already uses for its base and hover states),
+//!    which contrasts on every theme.
 //!
 //! 2. **Theme inspector popup is empty + has a dead button on the toolbar.**
 //!    The search-options toolbar doesn't record per-cell theme keys, so
@@ -42,13 +42,9 @@ fn test_dracula_checked_option_is_visible() {
     };
     let mut harness = EditorTestHarness::with_config(120, 30, config).unwrap();
 
-    let (accent_fg, toolbar_bg, unchecked_fg) = {
+    let (active_fg, active_bg) = {
         let theme = harness.editor().theme();
-        (
-            theme.help_key_fg,
-            theme.menu_dropdown_bg,
-            theme.menu_dropdown_fg,
-        )
+        (theme.menu_active_fg, theme.menu_active_bg)
     };
 
     harness.type_text("hello").unwrap();
@@ -75,23 +71,16 @@ fn test_dracula_checked_option_is_visible() {
         style.fg, style.bg
     );
 
-    // The checked state keeps the toolbar background and differs only in the
-    // foreground, which uses the accent `help_key_fg` (legible on every theme,
-    // and distinct from the unchecked foreground).
+    // The checked state uses the theme-designed `menu_active_*` pair.
+    assert_eq!(
+        style.fg,
+        Some(active_fg),
+        "checked option fg should be theme.menu_active_fg"
+    );
     assert_eq!(
         style.bg,
-        Some(toolbar_bg),
-        "checked option should keep the toolbar bg (theme.menu_dropdown_bg)"
-    );
-    assert_eq!(
-        style.fg,
-        Some(accent_fg),
-        "checked option fg should be the accent theme.help_key_fg"
-    );
-    assert_ne!(
-        style.fg,
-        Some(unchecked_fg),
-        "checked option fg should be visually distinct from the unchecked fg"
+        Some(active_bg),
+        "checked option bg should be theme.menu_active_bg"
     );
 }
 

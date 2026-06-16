@@ -1876,20 +1876,19 @@ impl StatusBarRenderer {
         let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
         let regex_checkbox = if use_regex { "[x]" } else { "[ ]" };
 
-        // Style for active (checked) options. Keeps the same `menu_dropdown_bg`
-        // as the rest of the toolbar (so a checked option doesn't sprout a
-        // jarring color block) and signals the checked state purely through an
-        // accent foreground. `help_key_fg` is the right key for this: it's the
-        // theme's "accent text on a panel/popup body" color — every theme tunes
-        // it to contrast with the dropdown/popup background, and it's the same
-        // key the plugin search panel's toggle uses for its checked glyph, so
-        // the two search UIs read consistently. The previous code used
-        // `menu_highlight_fg`, which is designed to pair with `menu_highlight_bg`
-        // and on Dracula equals `menu_dropdown_bg` ([40,42,54]) — so the checked
-        // checkbox rendered invisible fg-on-same-bg.
+        // Style for active (checked) options. The toolbar already draws its
+        // base on `menu_dropdown_*` and its hover on `menu_hover_*`, so the
+        // checked state uses the matching `menu_active_*` pair from the same
+        // family — a proper, theme-designed fg/bg pair rather than a mix of
+        // keys meant for different surfaces. Its background is only a subtle
+        // elevation over the toolbar in normal themes (Dracula: cyan on a
+        // slate [68,71,90], not a heavy block), while high-contrast still gets
+        // its bold accessibility highlight. The earlier `menu_highlight_fg` on
+        // `menu_dropdown_bg` collided on Dracula (both [40,42,54]), rendering
+        // the checked checkbox invisible.
         let active_style = Style::default()
-            .fg(theme.help_key_fg)
-            .bg(theme.menu_dropdown_bg);
+            .fg(theme.menu_active_fg)
+            .bg(theme.menu_active_bg);
 
         // Style for keyboard shortcuts - use theme color for consistency
         let shortcut_style = Style::default()
