@@ -114,6 +114,26 @@ pub fn scene_value(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     scene_json(editor, cols, rows)
 }
 
+/// Render the SAME editor the way the TUI would — chrome drawn into cells — and
+/// return the joined cell text. Used by the parity test to assert the web's
+/// semantic scene and the terminal's cell rendering agree for one editor state
+/// (single source of truth). Temporarily clears `suppress_chrome_cells`, then
+/// restores it so the caller's web mode is unaffected.
+pub fn render_tui_cells(editor: &mut Editor, cols: u16, rows: u16) -> String {
+    let prev = editor.suppress_chrome_cells;
+    editor.suppress_chrome_cells = false;
+    let (buf, _) = render_to_buffer(editor, cols, rows);
+    editor.suppress_chrome_cells = prev;
+    let mut out = String::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            out.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let (mut cols, mut rows) = (140u16, 44u16);
     let mut editor = build_editor(cols, rows, files)?;
