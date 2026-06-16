@@ -1986,6 +1986,90 @@ fn test_git_blame_close() {
     harness.assert_screen_not_contains("──");
 }
 
+/// Regression: after the blame buffer is closed by some path *other* than the
+/// plugin's own `q`/`git_blame_close` handler — e.g. the built-in "Close
+/// Buffer" command, or the split being torn down — `show_git_blame` must be
+/// able to reopen blame. The bug left `blameState.isOpen` stuck at `true`
+/// (and `bufferId` pointing at a dead buffer), so the next invocation
+/// early-returned with "Git blame already open" and the view could never be
+/// shown again. The fix resets the state from a `buffer_closed` hook.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_reopen_after_external_close() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("src/main.rs");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    // Open blame.
+    trigger_git_blame(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("──"))
+        .unwrap();
+
+    // Close the blame buffer *externally* via the "Close Buffer" command.
+    // This does not go through `git_blame_close`, so it is the path that
+    // previously stranded `isOpen = true`.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Close Buffer").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Close the current buffer"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Blame headers are gone.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("──"))
+        .unwrap();
+
+    // Make sure a real file buffer is focused again before reopening.
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    // Reopen blame. With the bug, `show_git_blame` would early-return with
+    // "already open" and the "──" headers would never reappear, so this
+    // wait (inside `trigger_git_blame`) would time out.
+    trigger_git_blame(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("──"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("──"),
+        "Blame should reopen after an external close.\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("already open"),
+        "Reopening blame must not report 'already open'.\nScreen:\n{screen}"
+    );
+}
+
 /// Test git blame go back in history with 'b' key
 // TODO: Fix git blame tests on Windows - they fail due to git command output differences
 #[test]

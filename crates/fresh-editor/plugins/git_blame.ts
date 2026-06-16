@@ -544,6 +544,25 @@ function git_blame_close() : void {
 registerHandler("git_blame_close", git_blame_close);
 
 /**
+ * Reset state when the blame buffer is closed by any path other than
+ * `git_blame_close` — e.g. the user runs "Close Buffer"/"Close Tab" on the
+ * blame tab, or the split it lives in is torn down. Without this, `isOpen`
+ * stays `true` and `bufferId` points at a now-dead buffer, so the next
+ * `show_git_blame` bails out with "already open" and blame can never be
+ * reopened (the reported bug).
+ */
+function on_git_blame_buffer_closed(data: { buffer_id: number }): void {
+  if (!blameState.isOpen) return;
+  if (blameState.bufferId !== null && data.buffer_id === blameState.bufferId) {
+    blameState.isOpen = false;
+    blameState.bufferId = null;
+    resetState();
+  }
+}
+registerHandler("on_git_blame_buffer_closed", on_git_blame_buffer_closed);
+editor.on("buffer_closed", on_git_blame_buffer_closed);
+
+/**
  * Get the commit hash at the current cursor position
  */
 function getCommitAtCursor(): string | null {
