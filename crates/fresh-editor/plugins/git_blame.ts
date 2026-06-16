@@ -127,7 +127,10 @@ async function fetchGitBlame(filePath: string, commit: string | null): Promise<B
 
   args.push("--", filePath);
 
-  const result = await editor.spawnProcess("git", args);
+  // Use the file's directory as cwd so git blame works in monorepo
+  // sub-projects where the editor's cwd is not itself a git repo.
+  const cwd = editor.pathDirname(filePath);
+  const result = await editor.spawnProcess("git", args, cwd);
 
   if (result.exit_code !== 0) {
     editor.setStatus(editor.t("status.git_error", { error: result.stderr }));
@@ -247,8 +250,10 @@ function formatRelativeDate(timestamp: number): string {
  */
 async function fetchFileContent(filePath: string, commit: string | null): Promise<string> {
   if (commit) {
-    // Get historical file content
-    const result = await editor.spawnProcess("git", ["show", `${commit}:${filePath}`]);
+    // Get historical file content — use file's directory as cwd for
+    // monorepo sub-projects where editor cwd isn't a git repo.
+    const cwd = editor.pathDirname(filePath);
+    const result = await editor.spawnProcess("git", ["show", `${commit}:${filePath}`], cwd);
     if (result.exit_code === 0) {
       return result.stdout;
     }

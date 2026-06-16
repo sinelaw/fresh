@@ -935,32 +935,80 @@ impl Editor {
         let spawner = &self.authority().process_spawner;
         let cwd = self.working_dir().to_string_lossy().to_string();
 
-        // ProcessSpawner is async — run it on the tokio runtime if available,
-        // otherwise fall back to blocking (should only happen in tests without
-        // a runtime).
-        let result = if let Some(ref rt) = self.tokio_runtime {
-            rt.block_on(spawner.spawn(
-                "git".to_string(),
-                vec!["rev-parse".to_string(), "--git-dir".to_string()],
-                Some(cwd),
-            ))
-        } else {
-            // No runtime — can't run async spawner. This shouldn't happen
-            // in production but can in minimal test setups.
-            return None;
-        };
+        let rt = self.tokio_runtime.as_ref()?;
 
-        let output = result.ok()?;
-        if output.exit_code != 0 {
-            return None;
+        let result = rt.block_on(spawner.spawn(
+            "git".to_string(),
+            vec!["rev-parse".to_string(), "--git-dir".to_string()],
+            Some(cwd.clone()),
+        ));
+
+        if let Ok(ref output) = result {
+            if output.exit_code == 0 {
+                let git_dir = output.stdout.trim();
+                let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
+                    PathBuf::from(git_dir)
+                } else {
+                    self.working_dir().join(git_dir)
+                };
+                return Some(git_dir_path.join("index"));
+            }
         }
-        let git_dir = output.stdout.trim();
-        let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-            PathBuf::from(git_dir)
-        } else {
-            self.working_dir().join(git_dir)
-        };
-        Some(git_dir_path.join("index"))
+
+        // Working dir is not a git repo — recursively scan subdirectories
+        // (up to 3 levels) to find a sub-repo's .git/index (monorepo support).
+        let working_dir = self.working_dir().to_path_buf();
+
+        use std::collections::VecDeque;
+        let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
+        queue.push_back((working_dir, 0));
+        const MAX_DEPTH: u32 = 3;
+
+        while let Some((dir, depth)) = queue.pop_front() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                if path.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with('.'))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                let dot_git = path.join(".git");
+                if dot_git.exists() {
+                    let sub_cwd = path.to_string_lossy().to_string();
+                    let sub_result = rt.block_on(spawner.spawn(
+                        "git".to_string(),
+                        vec!["rev-parse".to_string(), "--git-dir".to_string()],
+                        Some(sub_cwd.clone()),
+                    ));
+                    if let Ok(ref output) = sub_result {
+                        if output.exit_code == 0 {
+                            let git_dir = output.stdout.trim();
+                            let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
+                                PathBuf::from(git_dir)
+                            } else {
+                                path.join(git_dir)
+                            };
+                            return Some(git_dir_path.join("index"));
+                        }
+                    }
+                } else if depth < MAX_DEPTH {
+                    queue.push_back((path, depth + 1));
+                }
+            }
+        }
+
+        None
     }
 
     /// Notify LSP server about a newly opened file

@@ -24,7 +24,17 @@ const finder = new Finder<string>(editor, {
 
 // Load git-tracked files
 async function loadGitFiles(): Promise<string[]> {
-  const result = await editor.spawnProcess("git", ["ls-files"]);
+  // Use active buffer's directory to find the right git repo in monorepo setups
+  let cwd = editor.getCwd();
+  const bufferId = editor.getActiveBufferId();
+  if (bufferId) {
+    const bufPath = editor.getBufferPath(bufferId);
+    if (bufPath) {
+      const dir = editor.pathDirname(bufPath);
+      if (dir) cwd = dir;
+    }
+  }
+  const result = await editor.spawnProcess("git", ["ls-files"], cwd);
 
   if (result.exit_code === 0) {
     // Split by newline and trim each line to handle \r\n on Windows

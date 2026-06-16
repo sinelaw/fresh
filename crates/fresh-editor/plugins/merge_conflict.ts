@@ -1260,7 +1260,7 @@ async function start_merge_conflict() : Promise<void> {
   }
 
   // Get file content from git's working tree (has conflict markers)
-  const catFileResult = await editor.spawnProcess("git", ["show", `:0:${info.path}`]);
+  const catFileResult = await editor.spawnProcess("git", ["show", `:0:${info.path}`], fileDir);
 
   // If :0: doesn't exist, read the working tree file directly
   let content: string;

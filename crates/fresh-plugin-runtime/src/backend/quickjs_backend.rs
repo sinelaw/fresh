@@ -2341,10 +2341,26 @@ impl JsEditorApi {
                 .filter_map(|e| e.ok())
                 .map(|entry| {
                     let file_type = entry.file_type().ok();
+                    let is_symlink = file_type
+                        .as_ref()
+                        .map(|ft| ft.is_symlink())
+                        .unwrap_or(false);
+                    let (is_file, is_dir) = if is_symlink {
+                        let meta = std::fs::metadata(entry.path());
+                        (
+                            meta.as_ref().map(|m| m.is_file()).unwrap_or(false),
+                            meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                        )
+                    } else {
+                        (
+                            file_type.as_ref().map(|ft| ft.is_file()).unwrap_or(false),
+                            file_type.as_ref().map(|ft| ft.is_dir()).unwrap_or(false),
+                        )
+                    };
                     DirEntry {
                         name: entry.file_name().to_string_lossy().to_string(),
-                        is_file: file_type.map(|ft| ft.is_file()).unwrap_or(false),
-                        is_dir: file_type.map(|ft| ft.is_dir()).unwrap_or(false),
+                        is_file,
+                        is_dir,
                     }
                 })
                 .collect(),

@@ -147,6 +147,26 @@ function buildNameColorSlots(
   }));
 }
 
+/**
+ * Recursively discover directories containing `.git` entries, up to maxDepth
+ * levels. Stops descending into a directory once `.git` is found (git repo
+ * internals like submodules are managed by git itself).
+ */
+function discoverSubRepos(dir: string, maxDepth: number = 3): string[] {
+  if (maxDepth <= 0) return [];
+  const repos: string[] = [];
+  const entries = editor.readDir(dir);
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || !entry.is_dir) continue;
+    const subDir = editor.pathJoin(dir, entry.name);
+    if (editor.fileExists(editor.pathJoin(subDir, ".git"))) {
+      repos.push(subDir);
+    } else {
+      repos.push(...discoverSubRepos(subDir, maxDepth - 1));
+    }
+  }
+  return repos;
+}
 async function refreshGitExplorerDecorations() {
   if (refreshInFlight) {
     refreshPending = true;
@@ -156,42 +176,48 @@ async function refreshGitExplorerDecorations() {
   try {
     const cwd = editor.getCwd();
     const rootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
-    if (rootResult.exit_code !== 0) {
-      editor.clearFileExplorerDecorations(NAMESPACE);
-      editor.clearFileExplorerSlots(NAMESPACE);
-      return;
-    }
-    const repoRoot = rootResult.stdout.trim();
-    if (!repoRoot) {
-      editor.clearFileExplorerDecorations(NAMESPACE);
-      editor.clearFileExplorerSlots(NAMESPACE);
-      return;
+
+    let allDecorations: Array<{ path: string; symbol: string; color: string; priority: number }> = [];
+    let allRepoRoots: string[] = [];
+
+    if (rootResult.exit_code === 0 && rootResult.stdout.trim()) {
+      // cwd is inside a git repo — single-repo mode
+      const repoRoot = rootResult.stdout.trim();
+      allRepoRoots = [repoRoot];
+      const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
+      if (statusResult.exit_code === 0) {
+        allDecorations = parseStatusOutput(statusResult.stdout, repoRoot);
+      }
+    } else {
+      // cwd is not a git repo — discover sub-repos (monorepo/multi-repo)
+      const subRepos = discoverSubRepos(cwd);
+      for (const subDir of subRepos) {
+        const subRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], subDir);
+        if (subRootResult.exit_code !== 0) continue;
+        const repoRoot = subRootResult.stdout.trim();
+        if (!repoRoot) continue;
+        allRepoRoots.push(repoRoot);
+        const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
+        if (statusResult.exit_code === 0) {
+          allDecorations = allDecorations.concat(parseStatusOutput(statusResult.stdout, repoRoot));
+        }
+      }
     }
 
-    const statusResult = await editor.spawnProcess(
-      "git",
-      ["status", "--porcelain", "-z"],
-      repoRoot
-    );
-    if (statusResult.exit_code !== 0) {
-      editor.clearFileExplorerDecorations(NAMESPACE);
-      editor.clearFileExplorerSlots(NAMESPACE);
-      return;
-    }
-
-    const decorations = parseStatusOutput(statusResult.stdout, repoRoot);
-    if (decorations.length === 0) {
+    if (allDecorations.length === 0) {
       editor.clearFileExplorerDecorations(NAMESPACE);
       editor.clearFileExplorerSlots(NAMESPACE);
     } else {
-      editor.setFileExplorerDecorations(NAMESPACE, decorations);
+      editor.setFileExplorerDecorations(NAMESPACE, allDecorations);
 
       const cfg = (editor.getPluginConfig() ?? {}) as { colorNames?: boolean };
       if (cfg.colorNames) {
-        editor.setFileExplorerSlots(
-          NAMESPACE,
-          buildNameColorSlots(decorations, repoRoot)
-        );
+        let allSlots: Array<{ path: string; nameColor: string; priority: number }> = [];
+        for (const repoRoot of allRepoRoots) {
+          const repoDecorations = allDecorations.filter(d => d.path.startsWith(repoRoot));
+          allSlots = allSlots.concat(buildNameColorSlots(repoDecorations, repoRoot));
+        }
+        editor.setFileExplorerSlots(NAMESPACE, allSlots);
       } else {
         editor.clearFileExplorerSlots(NAMESPACE);
       }

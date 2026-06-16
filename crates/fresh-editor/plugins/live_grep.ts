@@ -524,7 +524,22 @@ registerProvider({
         ["rev-parse", "--is-inside-work-tree"],
         cwd
       );
-      return inRepo.exit_code === 0;
+      if (inRepo.exit_code === 0) return true;
+      // cwd may not be a repo (monorepo root); check active buffer's dir
+      const bufferId = editor.getActiveBufferId();
+      if (bufferId) {
+        const bufPath = editor.getBufferPath(bufferId);
+        if (bufPath) {
+          const bufDir = editor.pathDirname(bufPath);
+          if (bufDir) {
+            const bufInRepo = await editor.spawnProcess(
+              "git", ["rev-parse", "--is-inside-work-tree"], bufDir
+            );
+            return bufInRepo.exit_code === 0;
+          }
+        }
+      }
+      return false;
     } catch {
       return false;
     }

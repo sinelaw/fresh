@@ -472,12 +472,23 @@ function reviewStoragePathFor(repoRoot: string, reviewKey: string): string | nul
 }
 
 /**
- * Resolve the git top-level for `editor.getCwd()`. Returns `''` when the
- * cwd isn't inside a repo — callers then skip persistence.
+ * Resolve the git top-level for the current context. Tries active buffer's
+ * directory first (supports monorepo sub-projects), then falls back to
+ * editor.getCwd(). Returns `''` when not inside a repo.
  */
 async function detectRepoRoot(): Promise<string> {
     try {
-        const result = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+        // Try active buffer's directory first for monorepo support
+        let cwd = editor.getCwd();
+        const bufferId = editor.getActiveBufferId();
+        if (bufferId) {
+            const bufPath = editor.getBufferPath(bufferId);
+            if (bufPath) {
+                const dir = editor.pathDirname(bufPath);
+                if (dir) cwd = dir;
+            }
+        }
+        const result = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
         if (result.exit_code === 0) {
             return result.stdout.trim();
         }
@@ -721,7 +732,8 @@ interface GitStatusResult {
 }
 
 async function getGitStatus(): Promise<GitStatusResult> {
-    const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z", "-uall"]);
+    const cwd = state.repoRoot || editor.getCwd();
+    const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z", "-uall"], cwd);
     if (result.exit_code !== 0) {
         return { files: [], emptyReason: 'not_git' };
     }
@@ -738,6 +750,7 @@ async function getGitStatus(): Promise<GitStatusResult> {
  */
 async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     const allHunks: Hunk[] = [];
+    const cwd = state.repoRoot || editor.getCwd();
 
     const hasStaged = files.some(f => f.category === 'staged');
     const hasUnstaged = files.some(f => f.category === 'unstaged');
@@ -745,7 +758,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Staged diffs
     if (hasStaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"]);
+        const result = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"], cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
         }
@@ -753,7 +766,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
 
     // Unstaged diffs
     if (hasUnstaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--unified=3"]);
+        const result = await editor.spawnProcess("git", ["diff", "--unified=3"], cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
         }
@@ -763,7 +776,7 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     for (const f of untrackedFiles) {
         const result = await editor.spawnProcess("git", [
             "diff", "--no-index", "--unified=3", "/dev/null", f.path
-        ]);
+        ], cwd);
         if (result.stdout.trim()) {
             const hunks = parseDiffOutput(result.stdout, 'untracked');
             for (const h of hunks) {
@@ -2988,13 +3001,14 @@ async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> 
     const tmpDir = editor.getTempDir();
     const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
     editor.writeFile(patchPath, patch);
+    const cwd = state.repoRoot || editor.getCwd();
     // Validate first
-    const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath]);
+    const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
     if (check.exit_code !== 0) {
         editor.setStatus("Patch failed: " + (check.stderr || "").trim());
         return false;
     }
-    const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath]);
+    const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
     return result.exit_code === 0;
 }
 
@@ -3129,13 +3143,15 @@ registerHandler("review_unstage_file", review_unstage_file);
 
 async function stageFileEntry(f: FileEntry) {
     rememberPendingHunkAnchor(null);
-    await editor.spawnProcess("git", ["add", "--", f.path]);
+    const cwd = state.repoRoot || editor.getCwd();
+    await editor.spawnProcess("git", ["add", "--", f.path], cwd);
     await refreshMagitData();
 }
 
 async function unstageFileEntry(f: FileEntry) {
     rememberPendingHunkAnchor(null);
-    await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path]);
+    const cwd = state.repoRoot || editor.getCwd();
+    await editor.spawnProcess("git", ["reset", "HEAD", "--", f.path], cwd);
     await refreshMagitData();
 }
 
@@ -3143,7 +3159,8 @@ async function stageHunk(hunk: Hunk | null) {
     if (!hunk || !hunk.file) return;
     rememberPendingHunkAnchor(hunk.id);
     if (hunk.gitStatus === 'untracked') {
-        await editor.spawnProcess("git", ["add", "--", hunk.file]);
+        const cwd = state.repoRoot || editor.getCwd();
+        await editor.spawnProcess("git", ["add", "--", hunk.file], cwd);
     } else {
         const patch = buildHunkPatch(hunk.file, hunk);
         const ok = await applyHunkPatch(patch, ["--cached"]);
@@ -3789,17 +3806,18 @@ function teardownCenterComposite(): void {
 async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string; newContent: string; absPath: string }> {
     const root = state.repoRoot || editor.getCwd() || "";
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
+    const cwd = root || editor.getCwd();
     let oldContent = "";
     let newContent = "";
     if (state.mode === 'range' && state.range) {
-        const showOld = await editor.spawnProcess("git", ["show", `${state.range.from}:${file.path}`]);
+        const showOld = await editor.spawnProcess("git", ["show", `${state.range.from}:${file.path}`], cwd);
         if (showOld.exit_code === 0) oldContent = showOld.stdout;
-        const showNew = await editor.spawnProcess("git", ["show", `${state.range.to}:${file.path}`]);
+        const showNew = await editor.spawnProcess("git", ["show", `${state.range.to}:${file.path}`], cwd);
         if (showNew.exit_code === 0) newContent = showNew.stdout;
         return { oldContent, newContent, absPath };
     }
     if (file.category !== 'untracked' && file.status !== 'A') {
-        const show = await editor.spawnProcess("git", ["show", `HEAD:${file.path}`]);
+        const show = await editor.spawnProcess("git", ["show", `HEAD:${file.path}`], cwd);
         if (show.exit_code === 0) oldContent = show.stdout;
     }
     if (file.status !== 'D') {
@@ -3991,7 +4009,8 @@ async function review_drill_down() {
     if (fileHunks.length === 0) return;
 
     // Get git root to construct absolute path
-    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"]);
+    const cwd = state.repoRoot || editor.getCwd();
+    const gitRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
     if (gitRootResult.exit_code !== 0) {
         editor.setStatus(editor.t("status.not_git_repo"));
         return;
@@ -4001,7 +4020,7 @@ async function review_drill_down() {
 
     // Get old (HEAD) and new (working) file content
     let oldContent: string;
-    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`]);
+    const gitShow = await editor.spawnProcess("git", ["show", `HEAD:${h.file}`], cwd);
     if (gitShow.exit_code !== 0) {
         oldContent = "";
     } else {
@@ -5101,10 +5120,11 @@ editor.on("prompt_confirmed", async (args) => {
     if (response === "discard" || args.selected_index === 0) {
         const f = pendingDiscardFile;
         if (f) {
+            const cwd = state.repoRoot || editor.getCwd();
             if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path]);
+                await editor.spawnProcess("rm", ["--", f.path], cwd);
             } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path]);
+                await editor.spawnProcess("git", ["checkout", "--", f.path], cwd);
             }
             await refreshMagitData();
             editor.setStatus(`Discarded: ${f.path}`);
@@ -5498,7 +5518,8 @@ function parseRangeInput(input: string): ReviewRange | null {
  */
 async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
     const args = range.command || ["diff", "--unified=3", `${range.from}..${range.to}`];
-    const result = await editor.spawnProcess("git", args);
+    const cwd = state.repoRoot || editor.getCwd();
+    const result = await editor.spawnProcess("git", args, cwd);
     if (result.exit_code !== 0) {
         return { hunks: [], files: [] };
     }
@@ -5531,7 +5552,8 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     suggestions.push({ text: "HEAD", description: "Review last commit", value: "HEAD" });
     // Current-branch-vs-main style ranges.
     const tryRange = async (base: string) => {
-        const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base]);
+        const cwd = state.repoRoot || editor.getCwd();
+        const exists = await editor.spawnProcess("git", ["rev-parse", "--verify", base], cwd);
         if (exists.exit_code === 0) {
             suggestions.push({
                 text: `${base}..HEAD`,
@@ -5544,9 +5566,10 @@ async function buildRangeSuggestions(): Promise<PromptSuggestion[]> {
     await tryRange("master");
     // Recent commits for one-off review.
     try {
+        const cwd = state.repoRoot || editor.getCwd();
         const log = await editor.spawnProcess("git", [
             "log", "-n", "5", "--pretty=format:%h %s",
-        ]);
+        ], cwd);
         if (log.exit_code === 0) {
             for (const line of log.stdout.split('\n')) {
                 const m = line.match(/^([0-9a-f]+)\s+(.*)$/);
@@ -6071,10 +6094,11 @@ const branchState: ReviewBranchState = {
  * default in an empty / unusual repo.
  */
 async function detectDefaultBranch(): Promise<string> {
+    const cwd = state.repoRoot || editor.getCwd();
     try {
         const r = await editor.spawnProcess("git", [
             "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
-        ]);
+        ], cwd);
         if (r.exit_code === 0) {
             const name = r.stdout.trim();
             // Output looks like "origin/main"; strip the remote prefix.
@@ -6087,7 +6111,7 @@ async function detectDefaultBranch(): Promise<string> {
         try {
             const r = await editor.spawnProcess("git", [
                 "show-ref", "--verify", "--quiet", `refs/heads/${candidate}`,
-            ]);
+            ], cwd);
             if (r.exit_code === 0) return candidate;
         } catch { /* fall through */ }
     }
@@ -6184,7 +6208,7 @@ async function branchRefreshDetail(): Promise<void> {
             editor.t("status.loading_commit", { hash: commit.shortHash }) || `Loading ${commit.shortHash}…`,
         ),
     );
-    const output = await fetchCommitShow(editor, commit.hash);
+    const output = await fetchCommitShow(editor, commit.hash, state.repoRoot || editor.getCwd());
     if (myId !== branchState.pendingDetailId) return;
     if (branchState.groupId === null) return;
     branchState.detailCache = { hash: commit.hash, output };
@@ -6218,7 +6242,8 @@ async function start_review_branch(): Promise<void> {
     branchState.baseRef = base;
 
     editor.setStatus(editor.t("status.loading") || "Loading commits…");
-    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500 });
+    const gitCwd = state.repoRoot || editor.getCwd();
+    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: gitCwd });
     if (branchState.commits.length === 0) {
         editor.setStatus(
             editor.t("status.review_branch_empty", { base }) ||
@@ -6293,7 +6318,7 @@ registerHandler("stop_review_branch", stop_review_branch);
 async function review_branch_refresh(): Promise<void> {
     if (!branchState.isOpen) return;
     const base = branchState.baseRef;
-    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500 });
+    branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: state.repoRoot || editor.getCwd() });
     branchState.detailCache = null;
     if (branchState.selectedIndex >= branchState.commits.length) {
         branchState.selectedIndex = Math.max(0, branchState.commits.length - 1);
@@ -6364,7 +6389,7 @@ async function review_branch_detail_open_file(): Promise<void> {
     const result = await editor.spawnProcess("git", [
         "show",
         `${commit.hash}:${file}`,
-    ]);
+    ], state.repoRoot || editor.getCwd());
     if (result.exit_code !== 0) {
         editor.setStatus(
             editor.t("status.file_not_found", { file, hash: commit.shortHash }),
