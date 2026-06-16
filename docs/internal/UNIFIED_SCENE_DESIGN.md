@@ -121,17 +121,18 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     3 radio options + selection, OK/Quit) from `TrustDialogLayout`; native modal
     with a scrim; options/OK/Quit route to `handle_workspace_trust_mouse` at the
     cached rects, keyboard via `handle_key`. (e2e: trust suite + drive.)
-  - [ ] **Plugin widgets API** (do FIRST — cleaner + higher leverage). `WidgetSpec`
-    is already serde-serializable, so `Editor::widgets_view() -> Vec<WidgetSurfaceView>`
-    emits, per surface, the raw spec tree + instance state (list/tree/text) + hit
-    areas (converted from buffer-row/byte to absolute cell rects) + on-screen rect.
-    Surfaces: prompt toolbar (`active_window().prompt.toolbar_widget`), mounted
-    panels (`Editor::widget_registry.panels` → add `all_panels()`/`get_panel()`),
-    floating/dock (`floating_widget_panel`/`dock`, rect = `last_inner_rect`).
-    Interaction reuses `fire_widget_event` (click) and `handle_widget_action`
-    (keys) — no per-plugin code. MVP renders Row/Col/Button/Toggle/Label/HintBar/
-    Divider/Spacer + List(read+select); Tree/Text-edit/Overlay fall back. Trigger
-    a surface in tests via the live-grep toolbar or a bundled-plugin dock.
+  - [~] **Plugin widgets API** — vertical slice landed: the overlay **prompt
+    toolbar** (`WidgetSpec`) is projected on `PaletteView.toolbar` (raw serde
+    spec), rendered natively by a recursive `widgetEl` (Row/Col/Toggle/Button/
+    Spacer/Divider/HintBar/LabeledSection/Raw; List/Tree/Text fall back), and
+    Toggle/Button clicks route via `/widget` → `toggle_overlay_toolbar_widget`
+    (the exact event the TUI fires). Verified: live-grep scope toggles flip
+    through the real plugin path (widgets suite 7/7, drive 41/41). TODO: registry
+    panels + floating/dock surfaces (`widgets_view()` via `widget_registry` +
+    `floating_widget_panel`/`dock`, routing through `fire_widget_event` /
+    a shared `process_widget_hit`), List selection / Text editing, and suppress
+    the prompt **overlay** cells (layout-only seam in `render_overlay_prompt`) so
+    the toolbar/frame don't bleed behind the native card.
   - [ ] **Settings UI** — independent of widgets (overlap check: they share only
     `view/controls/*`; Settings has 5 bespoke controls — DualList/Map/TextList/
     Json/Complex — plus nullable/layer/category-tree/search/entry-dialogs that

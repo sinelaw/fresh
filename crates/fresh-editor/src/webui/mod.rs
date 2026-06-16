@@ -207,6 +207,20 @@ fn handle_conn(
             let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
+        ("POST", "/widget") => {
+            // Native plugin-widget interaction. For the overlay prompt toolbar,
+            // a Toggle/Button click forwards the widget `key`; the editor flips
+            // the toggle in-spec and fires the plugin's `widget_event` — the
+            // exact path a TUI toolbar click takes.
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            if v.get("surface").and_then(|s| s.as_str()) == Some("toolbar") {
+                if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+                    editor.toggle_overlay_toolbar_widget(key);
+                }
+            }
+            let s = tick_scene(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
         ("POST", "/resize") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {

@@ -123,6 +123,27 @@
   .trustdialog .td-btn{padding:3px 14px;border:1px solid #5a5a5a;border-radius:5px;cursor:default;color:var(--fg)}
   .trustdialog .td-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 
+  /* ---- plugin widgets (WidgetSpec) ---- */
+  .ptoolbar{padding:4px 8px;border-bottom:1px solid var(--border)}
+  .w-row{display:flex;flex-direction:row;align-items:center;gap:8px;flex-wrap:nowrap}
+  .w-row.wrap{flex-wrap:wrap}
+  .w-col{display:flex;flex-direction:column;gap:4px}
+  .w-toggle{display:inline-flex;align-items:center;gap:4px;cursor:default;padding:1px 4px;border-radius:4px}
+  .w-toggle.on{color:var(--accent)}
+  .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
+  .w-toggle .w-box{font-size:13px}
+  .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
+  .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .w-button.danger{border-color:#c0392b;color:#e57373}
+  .w-button.disabled{opacity:.5}
+  .w-divider{border-top:1px solid var(--border);margin:4px 0;align-self:stretch}
+  .w-hintbar{display:flex;gap:12px;color:var(--muted);font-size:11px}
+  .w-hint b{color:var(--accent);font-weight:600}
+  .w-section{border:1px solid var(--border);border-radius:6px;padding:6px}
+  .w-section-label{color:var(--muted);font-size:11px;margin-bottom:4px}
+  .w-raw{white-space:pre;font-family:ui-monospace,monospace}
+  .w-unsupported{color:var(--muted);font-style:italic;font-size:11px}
+
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;font-size:12px;display:flex;flex-direction:column}
@@ -375,6 +396,8 @@ function paletteEl(p){
   el.style.left=left+"px"; el.style.top=top+"px"; el.style.width=w+"px";
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
+  // plugin-built toolbar (real WidgetSpec widgets, e.g. live-grep scope toggles)
+  if(p.toolbar){ const tb=div("ptoolbar"); tb.appendChild(widgetEl(p.toolbar, "toolbar", p.toolbarFocus)); el.appendChild(tb); }
   // input bar (query + status + count)
   const bar=div("pinput");
   const q=document.createElement("span"); q.className="q";
@@ -451,6 +474,50 @@ function popupEl(p){
   el.appendChild(body);
   el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:cr.x+1,row:cr.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
   return el;
+}
+
+// ---- native plugin widgets (WidgetSpec tree) ----------------------------
+// Renders the serialized WidgetSpec natively (Row/Col→flex, Toggle/Button→
+// native controls, …). Toggle/Button clicks route back to the owning plugin
+// via the same event the TUI fires; `surface` selects the routing path.
+function widgetEl(spec, surface, focusKey){
+  if(!spec) return document.createTextNode("");
+  const kind=spec.kind;
+  const focused = spec.key && spec.key===focusKey;
+  if(kind==="row"||kind==="col"){
+    const el=div("w-"+kind+(spec.wrap?" wrap":""));
+    for(const c of (spec.children||[])) el.appendChild(widgetEl(c, surface, focusKey));
+    return el;
+  }
+  if(kind==="toggle"){
+    const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":""));
+    const box=document.createElement("span"); box.className="w-box"; box.textContent=spec.checked?"☑":"☐"; el.appendChild(box);
+    const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
+    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendWidget({surface,key:spec.key}); };
+    return el;
+  }
+  if(kind==="button"){
+    const el=div("w-button "+(spec.intent||"normal")+(spec.disabled?" disabled":"")+(focused?" focus":""));
+    el.textContent=spec.label||"";
+    if(spec.key && !spec.disabled) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendWidget({surface,key:spec.key}); };
+    return el;
+  }
+  if(kind==="spacer"){ const el=div("w-spacer"); if(spec.flex) el.style.flex="1"; else el.style.width=((spec.cols||1)*CW)+"px"; return el; }
+  if(kind==="divider"){ return div("w-divider"); }
+  if(kind==="hintBar"){
+    const el=div("w-hintbar");
+    for(const h of (spec.entries||[])){ const e2=document.createElement("span"); e2.className="w-hint";
+      e2.innerHTML='<b>'+esc(h.keys||"")+'</b> '+esc(h.label||""); el.appendChild(e2); }
+    return el;
+  }
+  if(kind==="labeledSection"){
+    const el=div("w-section"); if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
+    if(spec.child) el.appendChild(widgetEl(spec.child, surface, focusKey)); return el;
+  }
+  // raw / list / tree / text / windowEmbed / overlay: minimal fallback for now
+  if(kind==="raw"&&spec.entries){ const el=div("w-raw");
+    el.textContent=spec.entries.map(e=>(e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||"")).join(""); return el; }
+  const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
 // ---- native workspace-trust dialog --------------------------------------
@@ -544,6 +611,7 @@ document.addEventListener("keydown",e=>{
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
+async function sendWidget(o){ try{ applyScene(await (await fetch("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("widget failed: "+err); } }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
 // pixel under the pointer — native chrome is laid out by CSS, so pixels don't map
 // to the editor's cell columns). Called from `onmousemove` (which, unlike

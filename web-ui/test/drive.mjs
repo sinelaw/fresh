@@ -119,6 +119,21 @@ await page.screenshot({ path: `${SHOTS}/26-native-trust.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 check('Escape closed the trust dialog', !(await scene(page)).regions.trustDialog);
 
+console.log('\n[plugin widgets = native WidgetSpec (live-grep toolbar), NOT cells]');
+await page.request.post(URL + '/action', { data: { action: 'start_live_grep' } });
+await page.waitForFunction(() => { const p = window.fresh.scene.regions.palette; return p && p.toolbar; }, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+check('palette carries a plugin toolbar WidgetSpec', !!(await scene(page)).regions.palette?.toolbar);
+check('toolbar rendered as native toggles', (await page.locator('.ptoolbar .w-toggle').count()) >= 5);
+check('NO svg/cells in the toolbar', (await page.locator('.ptoolbar svg').count()) === 0);
+const tgl = page.locator('.ptoolbar .w-toggle').filter({ hasText: 'Ignored' }).first();
+const tBefore = await tgl.evaluate(el => el.classList.contains('on'));
+await tgl.click(); await page.waitForTimeout(400);
+check('clicking a toggle flips it via the real plugin path',
+  (await page.locator('.ptoolbar .w-toggle').filter({ hasText: 'Ignored' }).first().evaluate(el => el.classList.contains('on'))) !== tBefore);
+await page.screenshot({ path: `${SHOTS}/27-native-widgets.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;
 await page.waitForTimeout(1600);   // no input at all

@@ -309,6 +309,13 @@ pub struct PaletteView {
     pub outer_rect: Option<RectView>,
     pub list_rect: Option<RectView>,
     pub suggestions: Vec<SuggestionView>,
+    /// Optional plugin-built toolbar for the overlay header (real `WidgetSpec`
+    /// widgets — e.g. live-grep's scope toggles). Rendered natively; toggle/
+    /// button clicks route back through `toggle_overlay_toolbar_widget`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toolbar: Option<fresh_core::api::WidgetSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toolbar_focus: Option<String>,
 }
 
 /// Stable tag for a prompt type so the frontend can label the palette/picker.
@@ -466,6 +473,8 @@ impl Editor {
                     disabled: s.disabled,
                 })
                 .collect(),
+            toolbar: p.toolbar_widget.clone(),
+            toolbar_focus: p.toolbar_focus.clone(),
         })
     }
 }
