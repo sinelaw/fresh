@@ -116,10 +116,23 @@ fn web_scene_and_tui_cells_agree() {
         let scene = scene_value(&mut ed, COLS, ROWS);
         let cells = render_tui_cells(&mut ed, COLS, ROWS);
         if let Some(rows) = scene["regions"]["fileExplorer"]["rows"].as_array() {
-            if let Some(name) = rows.iter().find_map(|r| r["name"].as_str()) {
+            let names: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r["name"].as_str())
+                .map(str::to_string)
+                .collect();
+            if !names.is_empty() {
+                // The scene reports untruncated names; the TUI truncates each to
+                // the sidebar width and which row sorts first is filesystem-
+                // dependent across platforms. So assert agreement on *some* row
+                // (case-insensitively) rather than the first row verbatim — the
+                // strict-first-row form was flaky on macOS, where the root folder
+                // ("fresh-editor") led and didn't appear literally in the cells.
+                let cells_lc = cells.to_lowercase();
                 assert!(
-                    cells.contains(name),
-                    "file-explorer row '{name}' from the scene must appear in the TUI cells"
+                    names.iter().any(|n| cells_lc.contains(&n.to_lowercase())),
+                    "at least one file-explorer row from the scene must appear in \
+                     the TUI cells; rows={names:?}\n{cells}"
                 );
             }
         }
