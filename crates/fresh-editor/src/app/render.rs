@@ -2847,18 +2847,29 @@ impl Editor {
         };
         let prompt = prompt.clone();
 
+        // Layout-vs-draw seam: when a frontend renders this overlay itself
+        // (the web renders it natively from `PaletteView`), we still compute all
+        // geometry/caches below but paint NO cells — so there's nothing to bleed
+        // behind the native card. For the TUI `draw` is always true, so its path
+        // is unchanged (every guard below is a no-op).
+        let draw = !self.suppress_chrome_cells;
+
         // Dim everything outside the overlay rect so the user's
         // focus visibly belongs to the popup. Reuses the same RGB-
         // darkening pass the Settings modal uses (`view::dimming`)
         // — Modifier::DIM alone is barely visible on most terminals.
-        crate::view::dimming::apply_dimming_excluding(frame, frame.area(), Some(overlay_rect));
+        if draw {
+            crate::view::dimming::apply_dimming_excluding(frame, frame.area(), Some(overlay_rect));
+        }
 
         // Clear and frame. Plugin-owned prompts can publish their
         // own title via `editor.setPromptTitle(...)`; falls back to
         // " Live Grep " plus shortcut hints when unset (so a
         // Resume-replay prompt and freshly-opened plugin prompt look
         // similar even though they take different code paths).
-        frame.render_widget(Clear, overlay_rect);
+        if draw {
+            frame.render_widget(Clear, overlay_rect);
+        }
         let default_title: Vec<fresh_core::api::StyledText> = {
             // Mirrors `updateOverlayTitle` in live_grep.ts (kept in
             // sync deliberately so a Resume-replay overlay and a
@@ -2936,7 +2947,9 @@ impl Editor {
             .border_style(Style::default().fg(theme.popup_border_fg))
             .style(Style::default().bg(theme.suggestion_bg));
         let inner = block.inner(overlay_rect);
-        frame.render_widget(block, overlay_rect);
+        if draw {
+            frame.render_widget(block, overlay_rect);
+        }
 
         if inner.height == 0 || inner.width == 0 {
             return;
@@ -3073,7 +3086,9 @@ impl Editor {
             Span::styled(" ".repeat(status_gap), input_style),
             Span::styled(count_str, dim),
         ]);
-        frame.render_widget(Paragraph::new(line).style(input_style), input_row);
+        if draw {
+            frame.render_widget(Paragraph::new(line).style(input_style), input_row);
+        }
 
         // Cursor position on the input row — only when the input is focused.
         // When a toolbar control owns focus, the highlighted toggle is the
@@ -3082,7 +3097,7 @@ impl Editor {
         let cursor_x = (str_width(&prompt.message)
             + str_width(&prompt.input[..prompt.cursor_pos.min(prompt.input.len())]))
             as u16;
-        if input_focused && cursor_x < input_row.width {
+        if draw && input_focused && cursor_x < input_row.width {
             frame.set_cursor_position((input_row.x + cursor_x, input_row.y));
         }
 
@@ -3100,12 +3115,14 @@ impl Editor {
             // convert to display columns so the rect lines up with the glyphs.
             use crate::primitives::display_width::str_width;
             let band_y = inner.y + 1;
-            for (i, entry) in out.entries.iter().enumerate() {
-                let y = band_y + i as u16;
-                if y >= inner.y + inner.height {
-                    break;
+            if draw {
+                for (i, entry) in out.entries.iter().enumerate() {
+                    let y = band_y + i as u16;
+                    if y >= inner.y + inner.height {
+                        break;
+                    }
+                    paint_text_property_entry(frame, entry, inner.x, y, inner.width, &theme, None);
                 }
-                paint_text_property_entry(frame, entry, inner.x, y, inner.width, &theme, None);
             }
             for hit in &out.hits {
                 if hit.widget_key.is_empty() {
@@ -3128,7 +3145,7 @@ impl Editor {
                     .prompt_toolbar_hits
                     .push((hit.widget_key.clone(), rect));
             }
-        } else if !prompt.title.is_empty() && inner.height >= 2 {
+        } else if draw && !prompt.title.is_empty() && inner.height >= 2 {
             let toolbar = Rect {
                 x: inner.x,
                 y: inner.y + 1,
@@ -3143,7 +3160,7 @@ impl Editor {
         }
 
         // Separator row (full width), closing the header band.
-        if inner.height >= 2 + toolbar_h {
+        if draw && inner.height >= 2 + toolbar_h {
             let sep = Rect {
                 x: inner.x,
                 y: inner.y + 1 + toolbar_h,
@@ -3213,12 +3230,14 @@ impl Editor {
                     inner_rows.max(1),
                     prompt.scroll_offset,
                 );
-                render_scrollbar(
-                    frame,
-                    scrollbar_rect,
-                    &state,
-                    &ScrollbarColors::from_theme(&theme),
-                );
+                if draw {
+                    render_scrollbar(
+                        frame,
+                        scrollbar_rect,
+                        &state,
+                        &ScrollbarColors::from_theme(&theme),
+                    );
+                }
                 // Cache the rect for mouse hit testing in
                 // `mouse_input.rs::handle_click_prompt_scrollbar`.
                 self.active_chrome_mut().suggestions_scrollbar_rect = Some(scrollbar_rect);
@@ -3234,7 +3253,7 @@ impl Editor {
         // primitive used by `setPromptTitle` and inline overlays,
         // so plugins can theme hotkey hints with `ui.help_key_fg`,
         // separators with `ui.popup_border_fg`, etc.
-        if footer_h == 1 && inner.height >= 1 {
+        if draw && footer_h == 1 && inner.height >= 1 {
             let footer_row = Rect {
                 x: inner.x,
                 y: inner.y + inner.height - 1,
@@ -3268,7 +3287,7 @@ impl Editor {
         // earlier in the render flow). Borrows are split here so we
         // can hand out independent `&mut` references to the
         // renderer's internals without going back through `&mut self`.
-        if let Some(preview_rect) = preview_area {
+        if let Some(preview_rect) = preview_area.filter(|_| draw) {
             // Frame the preview area first (vertical separator) so
             // the renderer fills the inner rect.
             use ratatui::widgets::{Block, Borders, Clear};
