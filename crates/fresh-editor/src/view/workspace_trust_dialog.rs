@@ -76,6 +76,10 @@ pub fn render_workspace_trust_dialog(
     secondary_label: &str,
     scroll: u16,
     theme: &Theme,
+    // When false, compute + return the click layout (rects) but paint no cells —
+    // the frontend renders this modal natively from `trust_dialog_view`. The TUI
+    // always passes `true`.
+    draw: bool,
 ) -> TrustDialogLayout {
     let width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
     let inner_w = width.saturating_sub(2);
@@ -139,13 +143,15 @@ pub fn render_workspace_trust_dialog(
         height,
     };
 
-    frame.render_widget(Clear, dialog);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.popup_border_fg).bg(bg))
         .style(Style::default().bg(bg).fg(fg));
     let inner = block.inner(dialog);
-    frame.render_widget(block, dialog);
+    if draw {
+        frame.render_widget(Clear, dialog);
+        frame.render_widget(block, dialog);
+    }
 
     let mut layout = TrustDialogLayout {
         dialog,
@@ -162,7 +168,7 @@ pub fn render_workspace_trust_dialog(
         height: 1,
     };
     let put = |frame: &mut Frame, r: u16, line: Line| {
-        if r < inner.height {
+        if draw && r < inner.height {
             frame.render_widget(
                 Paragraph::new(line).style(Style::default().bg(bg)),
                 row_rect(r),
@@ -264,7 +270,7 @@ pub fn render_workspace_trust_dialog(
             Seg::Blank => {}
             Seg::Buttons => {
                 let (ok_rect, sec_rect) =
-                    render_buttons(frame, row_rect(r), secondary_label, bg, fg);
+                    render_buttons(frame, row_rect(r), secondary_label, bg, fg, draw);
                 layout.ok = ok_rect;
                 layout.quit = sec_rect;
             }
@@ -285,7 +291,9 @@ pub fn render_workspace_trust_dialog(
             scroll as usize,
         );
         let colors = crate::view::ui::scrollbar::ScrollbarColors::from_theme(theme);
-        crate::view::ui::scrollbar::render_scrollbar(frame, track, &state, &colors);
+        if draw {
+            crate::view::ui::scrollbar::render_scrollbar(frame, track, &state, &colors);
+        }
     }
 
     layout
@@ -297,6 +305,7 @@ fn render_buttons(
     secondary_label: &str,
     bg: ratatui::style::Color,
     fg: ratatui::style::Color,
+    draw: bool,
 ) -> (Rect, Rect) {
     let ok_label = format!("[ {} ]", t!("trust.dialog.btn_ok"));
     let quit_label = format!("[ {secondary_label} ]");
@@ -317,20 +326,22 @@ fn render_buttons(
         width: quit_w,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            ok_label,
-            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-        ))),
-        ok_rect,
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            quit_label,
-            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-        ))),
-        quit_rect,
-    );
+    if draw {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                ok_label,
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            ))),
+            ok_rect,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                quit_label,
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            ))),
+            quit_rect,
+        );
+    }
     (ok_rect, quit_rect)
 }
 

@@ -53,7 +53,18 @@ impl FileExplorerRenderer {
         tree_indicator_collapsed: &str,
         tree_indicator_expanded: &str,
         mut rec: Option<&mut CellThemeRecorder>,
+        // When false, compute layout (viewport height for scrolling) but draw no
+        // cells — the frontend renders the sidebar natively from
+        // `Editor::file_explorer_view`. The TUI always passes `true`.
+        draw: bool,
     ) {
+        // Viewport height drives scrolling math AND the web projection's visible
+        // window, so it must be set on every render regardless of `draw`.
+        let viewport_height_pre = area.height.saturating_sub(2) as usize;
+        view.set_viewport_height(viewport_height_pre);
+        if !draw {
+            return;
+        }
         let search_active = view.is_search_active();
 
         // Seed the whole explorer rect with its surface keys so border/content
@@ -71,10 +82,8 @@ impl FileExplorerRenderer {
             }
         }
 
-        // Update viewport height for scrolling calculations
-        // Account for borders (top + bottom = 2)
-        let viewport_height = area.height.saturating_sub(2) as usize;
-        view.set_viewport_height(viewport_height);
+        // Viewport height already applied above (before the `draw` early-out).
+        let viewport_height = viewport_height_pre;
 
         let display_nodes = view.get_display_nodes();
         let scroll_offset = view.get_scroll_offset();

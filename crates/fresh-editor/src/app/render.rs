@@ -13,6 +13,9 @@ impl Editor {
         size: ratatui::layout::Rect,
         theme: &crate::view::theme::Theme,
         hover_target: Option<&crate::app::HoverTarget>,
+        // When false, compute + cache the popup area but draw no cells (the web
+        // renders popups natively from `popups_view`). TUI passes `true`.
+        draw: bool,
     ) {
         let Some(popup) = self.global_popups.top() else {
             return;
@@ -40,7 +43,9 @@ impl Editor {
             _ => 0,
         };
         let scroll_offset = popup.scroll_offset;
-        popup.render_with_hover(frame, popup_area, theme, hover_target);
+        if draw {
+            popup.render_with_hover(frame, popup_area, theme, hover_target);
+        }
         self.active_chrome_mut().global_popup_areas.push((
             top_idx,
             popup_area,
@@ -254,6 +259,9 @@ impl Editor {
             // Theme-key runs the explorer records as it paints; applied to the
             // chrome cell map after the window borrow is released.
             let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            // Web renders the sidebar natively from `file_explorer_view`; skip
+            // its cell drawing (layout/viewport still applied).
+            let fe_draw = !self.suppress_chrome_cells;
             // Take one &mut on the active window; the explorer + buffers
             // come from disjoint sub-fields so they can coexist.
             let __win = self
@@ -300,6 +308,7 @@ impl Editor {
                     &self.config.file_explorer.tree_indicator_collapsed,
                     &self.config.file_explorer.tree_indicator_expanded,
                     Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
+                    fe_draw,
                 );
             }
             // Note: if file_explorer is None but sync_in_progress is true,
@@ -1365,9 +1374,12 @@ impl Editor {
         // Store popup areas for mouse hit testing
         self.active_chrome_mut().popup_areas = popup_info.clone();
 
-        // Now render popups
+        // Now render popups (cells only when this frontend draws chrome itself;
+        // the web renders them natively from `popups_view`, but the area cache
+        // above is always populated for hit-routing).
+        let draw_popups = !self.suppress_chrome_cells;
         let state = self.active_state_mut();
-        if state.popups.is_visible() {
+        if draw_popups && state.popups.is_visible() {
             for (popup_idx, popup) in state.popups.all().iter().enumerate() {
                 if let Some((_, popup_area, _, _, _, _, _)) = popup_info.get(popup_idx) {
                     popup.render_with_hover(
@@ -1404,7 +1416,14 @@ impl Editor {
         if !top_is_trust_modal {
             // Global popups render within the chrome area (right of a
             // left dock) so corner/centred popups don't overrun it.
-            self.render_top_global_popup(frame, chrome_area, &theme_clone, hover_target.as_ref());
+            let draw_global_popup = !self.suppress_chrome_cells;
+            self.render_top_global_popup(
+                frame,
+                chrome_area,
+                &theme_clone,
+                hover_target.as_ref(),
+                draw_global_popup,
+            );
         }
 
         // Render menu bar last so dropdown appears on top of all other content
@@ -1690,7 +1709,10 @@ impl Editor {
         // *entire* frame, centres in the full window (dock area included), and
         // renders on top of the dock rather than being overpainted by it.
         let trust_layout = if top_is_trust_modal {
-            crate::view::dimming::apply_dimming(frame, size);
+            let draw_trust = !self.suppress_chrome_cells;
+            if draw_trust {
+                crate::view::dimming::apply_dimming(frame, size);
+            }
             let selected = self
                 .global_popups
                 .top()
@@ -1725,6 +1747,7 @@ impl Editor {
                     &secondary_label,
                     self.workspace_trust_scroll,
                     &theme_clone,
+                    draw_trust,
                 ),
             )
         } else {
