@@ -296,6 +296,12 @@ pub struct PaletteView {
     pub total: usize,
     pub outer_rect: Option<RectView>,
     pub list_rect: Option<RectView>,
+    /// Content rect of the live-grep / quick-open preview pane (the buffer
+    /// interior, inside the left border). The preview is real rendered cells,
+    /// so the bridge slices them from this rect and the frontend draws them
+    /// like a pane interior. `None` when no preview is showing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_rect: Option<RectView>,
     pub suggestions: Vec<SuggestionView>,
     /// Optional plugin-built toolbar for the overlay header (real `WidgetSpec`
     /// widgets — e.g. live-grep's scope toggles). Rendered natively; toggle/
@@ -421,6 +427,19 @@ impl Editor {
                 .map(|(r, _, _, _)| r)
                 .or(prompt_results)
                 .map(RectView::from),
+            // Inner content of the preview pane: the stored area minus its
+            // single left border column (matches `Block::borders(LEFT)` in
+            // render_overlay_prompt). Only meaningful for overlay prompts.
+            preview_rect: chrome.prompt_preview_area.and_then(|r| {
+                (r.width > 1 && r.height > 0).then(|| {
+                    RectView::from(Rect::new(
+                        r.x.saturating_add(1),
+                        r.y,
+                        r.width.saturating_sub(1),
+                        r.height,
+                    ))
+                })
+            }),
             suggestions: p
                 .suggestions
                 .iter()

@@ -3347,17 +3347,22 @@ impl Editor {
         // earlier in the render flow). Borrows are split here so we
         // can hand out independent `&mut` references to the
         // renderer's internals without going back through `&mut self`.
-        if let Some(preview_rect) = preview_area.filter(|_| draw) {
-            // Frame the preview area first (vertical separator) so
-            // the renderer fills the inner rect.
+        if let Some(preview_rect) = preview_area {
+            // Frame the preview area (vertical separator) so the renderer fills
+            // the inner rect. The frame is *chrome* — drawn only for the TUI;
+            // the web draws its own border in HTML. The buffer *content* below,
+            // however, is real rendered cells (like a pane interior), so it is
+            // drawn for both frontends and the web slices it from the buffer.
             use ratatui::widgets::{Block, Borders, Clear};
-            frame.render_widget(Clear, preview_rect);
             let block = Block::default()
                 .borders(Borders::LEFT)
                 .border_style(Style::default().fg(theme.popup_border_fg))
                 .style(Style::default().bg(theme.suggestion_bg));
             let inner = block.inner(preview_rect);
-            frame.render_widget(block, preview_rect);
+            if draw {
+                frame.render_widget(Clear, preview_rect);
+                frame.render_widget(block, preview_rect);
+            }
 
             // Primitive #1: if the active plugin asked us to
             // preview a specific (inactive) session in this

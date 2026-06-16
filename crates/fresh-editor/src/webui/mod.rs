@@ -527,7 +527,21 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // (`Editor::status_view` / `Editor::palette_view`); the bridge only
     // serializes them. See crates/fresh-editor/src/view/scene.rs.
     let statusbar = serde_json::to_value(editor.status_view()).unwrap_or(Value::Null);
-    let palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
+    let mut palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
+    // The overlay preview pane is real rendered buffer cells (a phantom-leaf
+    // pipeline render into its content rect), not chrome — so slice them from
+    // the buffer just like a pane interior and attach them to the palette. The
+    // frontend draws these cells inside its native preview frame.
+    if let Some(pv) = palette.get("previewRect").cloned() {
+        let u = |k: &str| pv.get(k).and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+        let pr = Rect::new(u("x"), u("y"), u("w"), u("h"));
+        if pr.width > 0 && pr.height > 0 {
+            let cells = cells_json(&buf, pr);
+            if let Some(obj) = palette.as_object_mut() {
+                obj.insert("previewCells".to_string(), cells);
+            }
+        }
+    }
     let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
     // Plugin-mounted floating / dock widget panels (e.g. the orchestrator dock),
     // rendered natively from their WidgetSpec.
