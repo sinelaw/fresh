@@ -32,6 +32,36 @@ impl Editor {
         menus
     }
 
+    /// The exact menu list the TUI `MenuRenderer` renders: the configured menus
+    /// (`self.menus`, dynamic submenus expanded — reusing the renderer's
+    /// `expanded_menus_cache` when populated) followed by the plugin-contributed
+    /// menus (also expanded). This is the single expansion path shared by the
+    /// TUI renderer and the web `menu_view()` projection, so the two frontends
+    /// never diverge on which menus/items exist.
+    pub fn all_menus_expanded(&self) -> Vec<fresh_core::menu::Menu> {
+        use crate::config::MenuExt;
+
+        let themes_dir = self.menu_state.themes_dir.clone();
+        // Config menus: reuse the renderer's cached expansion (avoids rescanning
+        // theme JSON every frame); fall back to expanding `self.menus` directly.
+        let mut all: Vec<fresh_core::menu::Menu> = match self.expanded_menus_cache.get() {
+            Some(cached) => cached.menus.clone(),
+            None => {
+                let mut m = self.menus.clone();
+                for menu in &mut m.menus {
+                    menu.expand_dynamic_items(&themes_dir);
+                }
+                m.menus
+            }
+        };
+        for plugin_menu in &self.menu_state.plugin_menus {
+            let mut menu = plugin_menu.clone();
+            menu.expand_dynamic_items(&themes_dir);
+            all.push(menu);
+        }
+        all
+    }
+
     /// Update all menu context values based on current editor state.
     /// This should be called before rendering the menu bar.
     pub fn update_menu_context(&mut self) {

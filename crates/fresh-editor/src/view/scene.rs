@@ -177,8 +177,10 @@ impl Editor {
             .map(|m| m.menu_areas.iter().cloned().collect())
             .unwrap_or_default();
 
+        // Same expanded menu list the TUI renderer uses (config + plugin menus),
+        // so the two frontends never diverge on which menus/items exist.
         let menus: Vec<MenuEntry> = self
-            .expanded_menu_definitions()
+            .all_menus_expanded()
             .iter()
             .enumerate()
             .map(|(i, m)| MenuEntry {
