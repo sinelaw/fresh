@@ -171,8 +171,12 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   - [x] **Event-debug log / theme-info popup** — `aux_modals_view()` projects
     each as a titled line list (event descriptions / theme key info incl. color
     values + category), rendered as a native modal; keyboard drives them.
-  - [ ] **Keybinding editor** — Settings-grade (search, context/source filters,
-    add/edit sub-dialog, help overlay), NOT a line list. Renders as cells
-    (functional) on every frontend for now; grouped with the Settings UI for a
-    proper native projection later.
+  - [x] **Keybinding editor** — full native projection `keybinding_editor_view()`:
+    header (config path + search bar [text / record-key] + context/source filter
+    chips + count + modified flag), the columned section/binding table (selection
+    + scroll), footer, help flag, the **add/edit sub-dialog** (key/action/context
+    fields + autocomplete + conflicts + Save/Cancel with focus), and the confirm
+    dialog. Rendered as a native modal; fully keyboard-driven via `handle_key`
+    (the editor is keyboard-centric). Cells gated on `!suppress_chrome_cells`.
+    Verified incl. the edit dialog (kbfull 10/10, drive 47/47).
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.

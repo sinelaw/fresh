@@ -150,6 +150,39 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  /* native keybinding editor (full modal) */
+  .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+  .kbedit .kb-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
+  .kbedit .kb-header{padding:4px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px}
+  .kbedit .kb-cfg{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-search{font-family:ui-monospace,monospace}
+  .kbedit .kb-search.focus{outline:1px solid var(--accent);border-radius:3px;padding:0 4px}
+  .kbedit .kb-search b{color:var(--accent);margin-right:4px}
+  .kbedit .kb-filters{display:flex;gap:12px;align-items:center;font-size:11px}
+  .kbedit .kb-chip{color:var(--muted)} .kbedit .kb-chip.on{color:#fff;font-weight:600}
+  .kbedit .kb-count{margin-left:auto;color:var(--muted)}
+  .kbedit .kb-table{overflow:auto;flex:1;font-family:ui-monospace,monospace}
+  .kbedit .kb-row{display:flex;padding:0 12px;white-space:nowrap;line-height:1.5}
+  .kbedit .kb-row.kb-head{color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:#2b2b2b}
+  .kbedit .kb-row.sel{background:var(--menuhi);color:#fff}
+  .kbedit .kb-row.kb-section{font-weight:600;color:var(--accent)}
+  .kbedit .kb-col{overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-key{width:16ch;flex:0 0 auto} .kbedit .kb-action{width:26ch;flex:0 0 auto}
+  .kbedit .kb-description{flex:1;min-width:0} .kbedit .kb-context{width:16ch;flex:0 0 auto} .kbedit .kb-source{width:8ch;flex:0 0 auto;color:var(--muted)}
+  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:420px;z-index:2}
+  .kbedit .kb-dlg-title,.kbedit .kb-confirm-msg{font-weight:600;margin-bottom:8px}
+  .kbedit .kb-field{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:4px}
+  .kbedit .kb-field.focus{background:var(--menuhi);color:#fff}
+  .kbedit .kb-field-l{width:80px;color:var(--muted)} .kbedit .kb-field.focus .kb-field-l{color:#dfe8ff}
+  .kbedit .kb-field-v{font-family:ui-monospace,monospace} .kbedit .kb-field-x{margin-left:auto;color:var(--muted);font-size:11px}
+  .kbedit .kb-err{color:#e57373;margin-left:8px}
+  .kbedit .kb-autocomplete{margin:2px 0 2px 88px;border:1px solid var(--border);border-radius:4px;max-height:140px;overflow:auto}
+  .kbedit .kb-ac-row{padding:1px 8px;font-family:ui-monospace,monospace} .kbedit .kb-ac-row.sel{background:var(--accent);color:#fff}
+  .kbedit .kb-conflicts{margin:6px 0;color:#e5c07b;font-size:11px}
+  .kbedit .kb-dlg-btns{display:flex;gap:12px;justify-content:flex-end;margin-top:10px}
+  .kbedit .kb-btn{padding:2px 12px;border:1px solid #5a5a5a;border-radius:5px} .kbedit .kb-btn.focus{background:var(--accent);border-color:var(--accent);color:#fff}
   /* native auxiliary modals (keybindings / event-debug / theme-info) */
   .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px;max-height:80vh}
   .auxmodal.centered{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:520px;max-width:80vw}
@@ -287,8 +320,11 @@ function render(){
   // native right-click / new-tab context menu
   if(reg.contextMenu) app.appendChild(contextMenuEl(reg.contextMenu));
 
-  // native auxiliary modals (keybinding editor / event-debug / theme-info)
+  // native auxiliary modals (event-debug / theme-info)
   if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) app.appendChild(el);
+
+  // native keybinding editor (full modal)
+  if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) app.appendChild(el);
 
   // native workspace-trust modal
   if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
@@ -586,6 +622,90 @@ function widgetEl(spec, ctx){
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
+// Native keybinding editor — full modal (header/search/filters, table, footer,
+// help, add/edit dialog, confirm). Keyboard-driven: keystrokes are forwarded
+// globally to handle_key, which the editor's own dispatch handles. The scrim
+// swallows stray clicks so nothing mis-routes.
+function keybindingEditorEls(kb){
+  const out=[];
+  const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
+  const el=div("region kbedit");
+  const title=div("kb-title"); title.textContent=kb.title; el.appendChild(title);
+
+  // header: config path + search + filters
+  const hdr=div("kb-header");
+  const cfg=div("kb-cfg"); cfg.textContent="Config: "+kb.configPath+(kb.keymaps&&kb.keymaps.length?("   Maps: "+kb.keymaps.join(", ")):""); hdr.appendChild(cfg);
+  if(kb.search.active){
+    const sb=div("kb-search"+(kb.search.focused?" focus":""));
+    const lbl=document.createElement("b"); lbl.textContent=kb.search.mode==="recordKey"?"REC KEY ":"SEARCH "; sb.appendChild(lbl);
+    const val=document.createElement("span");
+    val.textContent=kb.search.mode==="recordKey"?(kb.search.keyDisplay||"Press a key…"):(kb.search.query+(kb.search.focused?"▌":""));
+    sb.appendChild(val); hdr.appendChild(sb);
+  }
+  const flt=div("kb-filters");
+  const cf=document.createElement("span"); cf.className="kb-chip"+(kb.contextFiltered?" on":""); cf.textContent="Context: "+kb.contextFilter; flt.appendChild(cf);
+  const sf=document.createElement("span"); sf.className="kb-chip"+(kb.sourceFiltered?" on":""); sf.textContent="Source: "+kb.sourceFilter; flt.appendChild(sf);
+  const cnt=document.createElement("span"); cnt.className="kb-count"; cnt.textContent=kb.count+" bindings"+(kb.hasChanges?"  • modified":""); flt.appendChild(cnt);
+  hdr.appendChild(flt);
+  el.appendChild(hdr);
+
+  // table
+  const tbl=div("kb-table");
+  const head=div("kb-row kb-head"); for(const c of ["Key","Action","Description","Context","Source"]){ const s=document.createElement("span"); s.className="kb-col kb-"+c.toLowerCase(); s.textContent=c; head.appendChild(s); } tbl.appendChild(head);
+  const start=kb.scrollOffset||0, n=kb.viewport||kb.rows.length;
+  for(let j=0;j<n;j++){ const idx=start+j, r=kb.rows[idx]; if(!r) break;
+    if(r.type==="section"){ const row=div("kb-row kb-section"+(r.selected?" sel":"")); row.textContent=(r.collapsed?"▶ ":"▼ ")+r.name+" ("+r.count+")"; tbl.appendChild(row); continue; }
+    const row=div("kb-row"+(r.selected?" sel":""));
+    const cols=[["key",r.key],["action",r.action],["description",r.description],["context",r.context],["source",r.source]];
+    for(const [cls,txt] of cols){ const s=document.createElement("span"); s.className="kb-col kb-"+cls; s.textContent=txt||""; row.appendChild(s); }
+    tbl.appendChild(row);
+  }
+  el.appendChild(tbl);
+
+  // footer (static hints)
+  const ft=div("kb-footer");
+  ft.textContent="Enter Edit · a Add · d Delete · / Search · r Record · c Context · s Source · ? Help · Ctrl+S Save · Esc Close";
+  el.appendChild(ft);
+
+  // help overlay
+  if(kb.showingHelp){
+    const h=div("kb-overlay kb-help");
+    h.innerHTML="<b>Keybinding editor</b><br>↑↓ navigate · Enter edit · a add · d delete<br>/ search · r record-key · Tab toggle mode<br>c context filter · s source filter<br>Ctrl+S save · Esc close · ? toggle help";
+    el.appendChild(h);
+  }
+
+  // edit / add dialog
+  if(kb.editDialog){
+    const d=kb.editDialog; const dlg=div("kb-overlay kb-dialog");
+    const dt=div("kb-dlg-title"); dt.textContent=d.title; dlg.appendChild(dt);
+    const fld=(label,val,focused,extra)=>{ const f=div("kb-field"+(focused?" focus":"")); const l=document.createElement("span"); l.className="kb-field-l"; l.textContent=label; f.appendChild(l);
+      const v=document.createElement("span"); v.className="kb-field-v"; v.textContent=val; f.appendChild(v); if(extra){ const e2=document.createElement("span"); e2.className="kb-field-x"; e2.textContent=extra; f.appendChild(e2);} return f; };
+    dlg.appendChild(fld("Key:", d.keyDisplay||(d.keyCapturing?"Press a key…":"(none)"), d.focusArea===0, d.keyCapturing?"(capturing)":""));
+    const af=fld("Action:", d.actionText+(d.focusArea===1?"▌":""), d.focusArea===1, "");
+    if(d.actionError){ const e2=document.createElement("span"); e2.className="kb-err"; e2.textContent="✗ "+d.actionError; af.appendChild(e2); }
+    dlg.appendChild(af);
+    if(d.autocomplete && d.autocomplete.length){ const ac=div("kb-autocomplete");
+      d.autocomplete.forEach((s,i)=>{ const r=div("kb-ac-row"+(i===d.autocompleteSelected?" sel":"")); r.textContent=s; ac.appendChild(r); }); dlg.appendChild(ac); }
+    dlg.appendChild(fld("Context:", "["+d.context+"]", d.focusArea===2, d.focusArea===2?"(← → cycle)":""));
+    if(d.conflicts && d.conflicts.length){ const cf2=div("kb-conflicts"); cf2.innerHTML="<b>Conflicts:</b>"; for(const c of d.conflicts){ const r=document.createElement("div"); r.textContent="  "+c; cf2.appendChild(r);} dlg.appendChild(cf2); }
+    const btns=div("kb-dlg-btns");
+    const sb=div("kb-btn"+(d.saveFocused?" focus":"")); sb.textContent="[ Save ]"; btns.appendChild(sb);
+    const cb=div("kb-btn"+(d.cancelFocused?" focus":"")); cb.textContent="[ Cancel ]"; btns.appendChild(cb);
+    dlg.appendChild(btns);
+    el.appendChild(dlg);
+  }
+
+  // confirm dialog
+  if(kb.confirm){ const c=div("kb-overlay kb-confirm");
+    const m=div("kb-confirm-msg"); m.textContent="Save changes before closing?"; c.appendChild(m);
+    const b=div("kb-dlg-btns"); kb.confirm.buttons.forEach((label,i)=>{ const bb=div("kb-btn"+(i===kb.confirm.selected?" focus":"")); bb.textContent="[ "+label+" ]"; b.appendChild(bb); }); c.appendChild(b);
+    el.appendChild(c);
+  }
+
+  out.push(el);
+  return out;
+}
+
 // Native auxiliary modals (keybinding editor / event-debug / theme-info). A
 // titled list of lines; anchored (theme-info) or centered. Interaction (nav /
 // Esc / rebind) already flows through handle_key, so this is render-only.
@@ -734,7 +854,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

@@ -135,13 +135,36 @@ await page.screenshot({ path: `${SHOTS}/27-native-widgets.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
 console.log('\n[plugin floating/dock widget = native WidgetSpec, NOT cells]');
-await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+if (!((await scene(page)).regions.widgets || []).length) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+}
 await page.waitForFunction(() => { const w = window.fresh.scene.regions.widgets; return w && w.length > 0; }, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
 check('editor reports a widget surface', !!((await scene(page)).regions.widgets || []).length);
 check('dock rendered as a native widget panel', (await page.locator('.widget-surface .w-button').count()) >= 3);
 check('NO svg/cells inside the widget panel', (await page.locator('.widget-surface svg').count()) === 0);
 await page.screenshot({ path: `${SHOTS}/28-native-dock.png` });
+
+console.log('\n[keybinding editor = full native modal incl. edit dialog]');
+// Start clean: dismiss any focused dock/floating panel so keys reach the editor.
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+if (((await scene(page)).regions.widgets || []).length) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+  await page.waitForTimeout(200);
+}
+await page.request.post(URL + '/action', { data: { action: 'open_keybinding_editor' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.keybindingEditor, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+check('keybinding editor is a native modal', (await page.locator('.kbedit .kb-table .kb-row').count()) >= 5);
+check('NO svg/cells in the keybinding editor', (await page.locator('.kbedit svg').count()) === 0);
+await page.waitForFunction(() => { const k = window.fresh.scene.regions.keybindingEditor; return k && k.rows.length > 0; }, { timeout: 8000 }).catch(() => {});
+// Open the add dialog ('a'); retry in case the first keypress races a cold-start poll.
+for (let i = 0; i < 3 && !((await scene(page)).regions.keybindingEditor || {}).editDialog; i++) {
+  await page.keyboard.press('a'); await page.waitForTimeout(400);
+}
+check('Add-binding dialog renders natively (fields)', (await page.locator('.kbedit .kb-dialog .kb-field').count()) >= 3);
+await page.screenshot({ path: `${SHOTS}/29-native-keybindings.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;

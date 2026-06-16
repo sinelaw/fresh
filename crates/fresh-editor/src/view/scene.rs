@@ -958,3 +958,200 @@ impl Editor {
         None
     }
 }
+
+// ─────────────────────────── keybinding editor (full native modal) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbSearchView {
+    pub active: bool,
+    pub focused: bool,
+    pub mode: &'static str, // "text" | "recordKey"
+    pub query: String,
+    pub key_display: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum KbRow {
+    Section {
+        name: String,
+        collapsed: bool,
+        count: usize,
+        selected: bool,
+    },
+    Binding {
+        key: String,
+        action: String,
+        description: String,
+        context: String,
+        source: &'static str, // "keymap" | "custom" | "plugin" | ""
+        selected: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbEditDialog {
+    pub title: String,
+    pub focus_area: usize, // 0=key 1=action 2=context 3=buttons
+    pub key_display: String,
+    pub key_capturing: bool,
+    pub action_text: String,
+    pub action_error: Option<String>,
+    pub autocomplete: Vec<String>,
+    pub autocomplete_selected: Option<usize>,
+    pub context: String,
+    pub context_options: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub save_focused: bool,
+    pub cancel_focused: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbConfirm {
+    pub buttons: Vec<String>,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeybindingEditorView {
+    pub title: String,
+    pub config_path: String,
+    pub keymaps: Vec<String>,
+    pub search: KbSearchView,
+    pub context_filter: String,
+    pub context_filtered: bool,
+    pub source_filter: String,
+    pub source_filtered: bool,
+    pub count: String,
+    pub has_changes: bool,
+    pub rows: Vec<KbRow>,
+    pub selected: usize,
+    pub scroll_offset: u16,
+    pub viewport: u16,
+    pub showing_help: bool,
+    pub edit_dialog: Option<KbEditDialog>,
+    pub confirm: Option<KbConfirm>,
+}
+
+impl Editor {
+    /// Full semantic model of the keybinding editor modal (header + search +
+    /// filters, the binding/section table, the add/edit sub-dialog, the confirm
+    /// dialog and the help flag). Rendered natively; all interaction already
+    /// flows through `handle_key` (the editor is keyboard-driven).
+    pub fn keybinding_editor_view(&self) -> Option<KeybindingEditorView> {
+        use crate::app::keybinding_editor::{
+            BindingSource, ContextFilter, DisplayRow, SearchMode, SourceFilter,
+        };
+        let kb = self.keybinding_editor.as_ref()?;
+
+        let rows = kb
+            .display_rows
+            .iter()
+            .enumerate()
+            .map(|(i, dr)| {
+                let selected = i == kb.selected;
+                match dr {
+                    DisplayRow::SectionHeader {
+                        plugin_name,
+                        collapsed,
+                        binding_count,
+                    } => KbRow::Section {
+                        name: plugin_name.clone().unwrap_or_else(|| "Builtin".to_string()),
+                        collapsed: *collapsed,
+                        count: *binding_count,
+                        selected,
+                    },
+                    DisplayRow::Binding(bi) => {
+                        let b = &kb.bindings[*bi];
+                        KbRow::Binding {
+                            key: b.key_display.clone(),
+                            action: b.action.clone(),
+                            description: b.action_display.clone(),
+                            context: b.context.clone(),
+                            source: match b.source {
+                                BindingSource::Keymap => "keymap",
+                                BindingSource::Custom => "custom",
+                                BindingSource::Plugin => "plugin",
+                                BindingSource::Unbound => "",
+                            },
+                            selected,
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        let (context_filter, context_filtered) = match &kb.context_filter {
+            ContextFilter::All => ("All".to_string(), false),
+            ContextFilter::Specific(s) => (s.clone(), true),
+        };
+        let (source_filter, source_filtered) = match kb.source_filter {
+            SourceFilter::All => ("All", false),
+            SourceFilter::KeymapOnly => ("Keymap", true),
+            SourceFilter::CustomOnly => ("Custom", true),
+            SourceFilter::PluginOnly => ("Plugin", true),
+        };
+
+        let edit_dialog = kb.edit_dialog.as_ref().map(|d| KbEditDialog {
+            title: if d.editing_index.is_some() {
+                "Edit Binding".to_string()
+            } else {
+                "Add Binding".to_string()
+            },
+            focus_area: d.focus_area,
+            key_display: d.key_display.clone(),
+            key_capturing: d.capturing_special,
+            action_text: d.action_text.clone(),
+            action_error: d.action_error.clone(),
+            autocomplete: if d.autocomplete_visible {
+                d.autocomplete_suggestions.clone()
+            } else {
+                Vec::new()
+            },
+            autocomplete_selected: d.autocomplete_selected,
+            context: d.context.clone(),
+            context_options: d.context_options.clone(),
+            conflicts: d.conflicts.clone(),
+            save_focused: d.focus_area == 3 && d.selected_button == 0,
+            cancel_focused: d.focus_area == 3 && d.selected_button == 1,
+        });
+
+        let confirm = kb.showing_confirm_dialog.then(|| KbConfirm {
+            buttons: vec!["Save".into(), "Discard".into(), "Cancel".into()],
+            selected: kb.confirm_selection,
+        });
+
+        Some(KeybindingEditorView {
+            title: format!("Keybindings — {}", kb.active_keymap),
+            config_path: kb.config_file_path.clone(),
+            keymaps: kb.keymap_names.clone(),
+            search: KbSearchView {
+                active: kb.search_active,
+                focused: kb.search_focused,
+                mode: match kb.search_mode {
+                    SearchMode::Text => "text",
+                    SearchMode::RecordKey => "recordKey",
+                },
+                query: kb.search_query.clone(),
+                key_display: kb.search_key_display.clone(),
+            },
+            context_filter,
+            context_filtered,
+            source_filter: source_filter.to_string(),
+            source_filtered,
+            count: format!("{} / {}", kb.filtered_indices.len(), kb.bindings.len()),
+            has_changes: kb.has_changes,
+            rows,
+            selected: kb.selected,
+            scroll_offset: kb.scroll.offset,
+            viewport: kb.scroll.viewport,
+            showing_help: kb.showing_help,
+            edit_dialog,
+            confirm,
+        })
+    }
+}

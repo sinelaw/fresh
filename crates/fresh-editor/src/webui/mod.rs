@@ -447,6 +447,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let context_menu = serde_json::to_value(editor.context_menu_view()).unwrap_or(Value::Null);
     // Auxiliary modals (keybinding editor / event-debug / theme-info popup).
     let aux_modal = serde_json::to_value(editor.aux_modals_view()).unwrap_or(Value::Null);
+    // Full keybinding editor modal (header/search/filters, table, edit dialog…).
+    let keybinding_editor =
+        serde_json::to_value(editor.keybinding_editor_view()).unwrap_or(Value::Null);
 
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
@@ -465,6 +468,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "widgets": widgets,
         "contextMenu": context_menu,
         "auxModal": aux_modal,
+        "keybindingEditor": keybinding_editor,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
         // Pacing hint for the frontend's poll loop: when something is animating /
         // an LSP spinner is live / a timer is pending, poll fast; otherwise idle
