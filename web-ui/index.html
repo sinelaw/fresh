@@ -338,7 +338,14 @@ function cellsSvg(cells, wCells){
       const weight=r.b?` font-weight="bold"`:"";
       const style=r.i?` font-style="italic"`:"";
       const deco=r.u?` text-decoration="underline"`:"";
-      s+=`<tspan x="${x.toFixed(1)}" fill="${fill}"${weight}${style}${deco}>${esc(r.t)}</tspan>`;
+      // Lock the run to exactly its cell width. The font's glyph advance isn't
+      // exactly CW, so without this a run's text drifts off the grid as it gets
+      // longer and snaps back at the next run boundary — which made the current
+      // line (whose highlight splits runs differently) appear shifted vs the
+      // others. lengthAdjust="spacing" keeps glyph shapes, adjusting only the
+      // inter-character spacing so every cell lands on the CW grid.
+      const tl=px(r.t.length,CW);
+      s+=`<tspan x="${x.toFixed(1)}" textLength="${tl.toFixed(1)}" lengthAdjust="spacing" fill="${fill}"${weight}${style}${deco}>${esc(r.t)}</tspan>`;
       col+=r.t.length;
     }
     s+=`</text>`;
