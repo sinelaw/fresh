@@ -107,7 +107,10 @@ impl Window {
     /// already get (issue #2355). Returns the wrapper unchanged when no env is
     /// active or the wrapper isn't an SSH re-parent. (Container backends apply
     /// their captured env through their own wrapper flags; see the design doc.)
-    pub(crate) fn apply_remote_terminal_env(&self, mut wrapper: TerminalWrapper) -> TerminalWrapper {
+    pub(crate) fn apply_remote_terminal_env(
+        &self,
+        mut wrapper: TerminalWrapper,
+    ) -> TerminalWrapper {
         use crate::services::remote::{ssh_remote_env_launcher, SSH_EXEC_LOGIN_SHELL};
 
         if wrapper.command == "ssh" && self.authority().env_provider.is_active() {

@@ -535,9 +535,12 @@ impl Authority {
             Arc::clone(&env),
             Arc::clone(&trust),
         ));
-        let long_running_spawner: Arc<dyn LongRunningSpawner> = Arc::new(
-            KubectlLongRunningSpawner::with_env(target.clone(), base_env.clone(), Arc::clone(&trust)),
-        );
+        let long_running_spawner: Arc<dyn LongRunningSpawner> =
+            Arc::new(KubectlLongRunningSpawner::with_env(
+                target.clone(),
+                base_env.clone(),
+                Arc::clone(&trust),
+            ));
         Self::kube(
             filesystem,
             process_spawner,

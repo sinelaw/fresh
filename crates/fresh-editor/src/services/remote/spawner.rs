@@ -1513,7 +1513,10 @@ mod tests {
         let inner = launcher
             .trim_start_matches("exec python3 -c '")
             .trim_end_matches('\'');
-        assert!(!inner.contains('\''), "inner literal must not contain a single quote");
+        assert!(
+            !inner.contains('\''),
+            "inner literal must not contain a single quote"
+        );
 
         // The base64 blob decodes to python that embeds the recipe and splits on
         // the same sentinel the local delta capture uses.
@@ -1521,7 +1524,10 @@ mod tests {
             .trim_start_matches("import base64;exec(base64.b64decode(\"")
             .trim_end_matches("\").decode())");
         let src = String::from_utf8(BASE64.decode(b64).unwrap()).unwrap();
-        assert!(src.contains("direnv export bash"), "recipe must be embedded");
+        assert!(
+            src.contains("direnv export bash"),
+            "recipe must be embedded"
+        );
         assert!(src.contains(crate::services::env_provider::DELTA_SENTINEL));
         assert!(src.contains("os.execvp"));
     }
