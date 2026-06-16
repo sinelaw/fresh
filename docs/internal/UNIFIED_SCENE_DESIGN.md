@@ -202,3 +202,13 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   poll can interleave an extra `editor_tick` between two input POSTs. Harmless
   today because every request renders unconditionally, but worth keeping in mind
   if timing-sensitive behavior is added.
+- **Prompt title styling.** `palette_view` flattens the prompt title to a plain
+  `String`, dropping the per-span styling `StyledText` carries (plugin-set
+  colors/emphasis the TUI renders). Project the styled spans instead of
+  collapsing to text if title styling matters for parity. (Minor — titles are
+  plain text in almost all cases.)
+- **Gutter width from the layout cache.** `Editor::leaf_gutter_width` recomputes
+  the gutter width via `viewport.gutter_width(&buffer)` — the same call the
+  renderer uses, so there's no desync today. To remove the future coupling risk,
+  have the render pass record the gutter width it used into the per-leaf layout
+  cache and read that here instead of recomputing.
