@@ -1,7 +1,7 @@
 //! Menu bar rendering
 
 use crate::app::types::CellThemeRecorder;
-use crate::config::{generate_dynamic_items, Menu, MenuConfig, MenuExt, MenuItem, MenuItemExt};
+use crate::config::{generate_dynamic_items, Menu, MenuItem, MenuItemExt};
 use crate::primitives::display_width::str_width;
 use crate::view::theme::Theme;
 use crate::view::ui::layout::point_in_rect;
@@ -501,7 +501,10 @@ impl MenuRenderer {
     pub fn render(
         frame: &mut Frame,
         area: Rect,
-        menu_config: &MenuConfig,
+        // The already-expanded menu list (config + plugin menus, dynamic
+        // submenus resolved) — produced by `Editor::all_menus_expanded()`, the
+        // single content source shared with the web `menu_view()` projection.
+        all_menus: &[Menu],
         menu_state: &MenuState,
         keybindings: &crate::input::keybindings::KeybindingResolver,
         theme: &Theme,
@@ -525,17 +528,7 @@ impl MenuRenderer {
                 "Menu Bar",
             );
         }
-        // Combine config menus with plugin menus, expanding any DynamicSubmenus
-        let all_menus: Vec<Menu> = menu_config
-            .menus
-            .iter()
-            .chain(menu_state.plugin_menus.iter())
-            .cloned()
-            .map(|mut menu| {
-                menu.expand_dynamic_items(&menu_state.themes_dir);
-                menu
-            })
-            .collect();
+        // `all_menus` is already expanded (config + plugin menus) by the caller.
 
         // Track which menus are visible (based on their `when` condition)
         let menu_visible: Vec<bool> = all_menus
@@ -651,7 +644,7 @@ impl MenuRenderer {
                     menu,
                     menu_state,
                     active_idx,
-                    &all_menus,
+                    all_menus,
                     keybindings,
                     theme,
                     hover_target,
@@ -1053,6 +1046,7 @@ impl MenuRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::MenuConfig;
     use std::collections::HashMap;
 
     fn create_test_menus() -> Vec<Menu> {

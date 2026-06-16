@@ -1491,13 +1491,15 @@ impl Editor {
             let hover_target = self.active_window().mouse_state.hover_target.clone();
             let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
             let draw_chrome = !self.suppress_chrome_cells;
-            let expanded = self.expanded_menus_cache.get().expect("just updated");
+            // The single content source shared with the web `menu_view()`
+            // projection (uses the cache populated just above).
+            let all_menus = self.all_menus_expanded();
             let keybindings = self.keybindings.read().unwrap();
             let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
             let new_menu_layout = crate::view::ui::MenuRenderer::render(
                 frame,
                 menu_bar_area,
-                expanded,
+                &all_menus,
                 &self.menu_state,
                 &keybindings,
                 &*self.theme.read().unwrap(),

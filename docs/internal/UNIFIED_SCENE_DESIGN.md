@@ -99,8 +99,15 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   frontend has ZERO cell-drawn chrome (buffer interiors only). Geometry comes
   from the pipeline's layout caches so clicks/scroll route back through the
   existing `handle_mouse` hit-testers.
-- [ ] Phase 3: TUI renderers consume the same projections. MenuRenderer takes the
-  menu *content* from `menu_view()` (geometry/`MenuLayout` stays the renderer's
-  output) so the menu tree / enabled / checked / accel logic exists in exactly
-  one place. Then tabs/status/suggestions likewise.
+- [~] Phase 3: TUI renderers consume the same shared content as the projections,
+  so the content logic lives in exactly one place (geometry/`MenuLayout` stays the
+  renderer's output). Done for the **menu**: `MenuRenderer::render` now takes the
+  expanded menu list from `Editor::all_menus_expanded()` — the single source
+  shared with `menu_view()` — and item state goes through the shared
+  `is_menu_item_enabled`/`is_checkbox_checked` helpers + the same
+  `find_keybinding_for_action`. Verified byte-identical via the
+  `menu_render_golden` TUI snapshot (e2e). The cell vs HTML rendering itself
+  legitimately differs per frontend (the intended boundary). Tabs/status/palette/
+  popups already read their content from a single source (buffer metadata /
+  prompt state / popup structs / render output), so no second derivation remains.
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.
