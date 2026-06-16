@@ -104,7 +104,8 @@ impl SettingsState {
             return InputResult::Consumed;
         }
 
-        // Ctrl+R resets the focused field to its schema default. Only
+        // Ctrl+R resets/inherits the focused field (built-in default for plain
+        // fields, inherit for nullable ones). Only
         // fires in navigation mode (not while typing into a control), so
         // it doesn't conflict with editor inputs.
         if event.modifiers.contains(KeyModifiers::CONTROL)
@@ -482,8 +483,8 @@ impl SettingsState {
                 }
             }
             KeyCode::Enter => {
-                // Per-field [Inherit] button focused → inherit this field.
-                if self.entry_dialog_inherit_focused_field() {
+                // A focused per-field action button ([Reset]/[Inherit]) handles activation.
+                if self.entry_dialog_activate_focused_field_button() {
                     return InputResult::Consumed;
                 }
 
@@ -559,8 +560,8 @@ impl SettingsState {
                 }
             }
             KeyCode::Char(' ') => {
-                // Per-field [Inherit] button focused → inherit this field.
-                if self.entry_dialog_inherit_focused_field() {
+                // A focused per-field action button ([Reset]/[Inherit]) handles activation.
+                if self.entry_dialog_activate_focused_field_button() {
                     return InputResult::Consumed;
                 }
 

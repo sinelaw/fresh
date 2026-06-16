@@ -325,3 +325,94 @@ fn issue_2345_inherit_button_reachable_by_back_tab() {
         row
     );
 }
+
+/// Issue #2345: a field with a built-in default (no inheritance chain) gets a
+/// `[Reset]` button — distinct from `[Inherit]` — that appears only once the
+/// value differs from that default, and restores it. `Auto Indent` is a plain
+/// (non-nullable) boolean whose built-in default is `true`.
+#[test]
+fn issue_2345_reset_button_restores_builtin_default() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    harness.render().unwrap();
+
+    open_html_language_dialog(&mut harness);
+
+    // At its built-in default, the field offers no Reset (nothing to undo) and
+    // — being non-nullable — never offers Inherit.
+    let row = row_with(&harness, "Auto Indent");
+    assert!(
+        row.contains("[v]") && !row.contains("[Reset]") && !row.contains("[Inherit]"),
+        "Auto Indent at default should show no action buttons; row: {:?}",
+        row
+    );
+
+    // Change it (Auto Close -> Auto Indent), and [Reset] appears.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap(); // toggle Auto Indent off
+    harness.render().unwrap();
+    let row = row_with(&harness, "Auto Indent");
+    assert!(
+        row.contains("[ ]") && row.contains("[Reset]") && !row.contains("[Inherit]"),
+        "changed non-nullable field should offer [Reset] only; row: {:?}",
+        row
+    );
+
+    // Tab onto [Reset] and activate it; the field returns to its default.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let row = row_with(&harness, "Auto Indent");
+    assert!(
+        row.contains("[v]") && !row.contains("[Reset]"),
+        "[Reset] should restore the built-in default and then disappear; row: {:?}",
+        row
+    );
+}
+
+/// Issue #2345: the `[Reset]` button is reachable both ways too. Tab forward
+/// past it to the next field, then Shift+Tab back onto it, and Enter resets the
+/// right field — exercising the action-button focus stops in both directions.
+#[test]
+fn issue_2345_reset_button_reachable_by_back_tab() {
+    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    harness.render().unwrap();
+
+    open_html_language_dialog(&mut harness);
+
+    // Change Auto Indent so it offers [Reset] (Auto Close -> Auto Indent).
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap(); // toggle off
+    harness.render().unwrap();
+    assert!(
+        row_with(&harness, "Auto Indent").contains("[Reset]"),
+        "precondition: Auto Indent should offer [Reset]; row: {:?}",
+        row_with(&harness, "Auto Indent")
+    );
+
+    // Forward: control -> [Reset] -> next field (Auto Surround).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Shift+Tab lands back on Auto Indent's [Reset]; Enter resets it.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let row = row_with(&harness, "Auto Indent");
+    assert!(
+        row.contains("[v]") && !row.contains("[Reset]"),
+        "Shift+Tab to [Reset] then Enter should restore the default; row: {:?}",
+        row
+    );
+}

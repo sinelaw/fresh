@@ -851,20 +851,32 @@ impl Editor {
                 }
                 let sub_row = click_y - content_y;
 
-                // Per-field [Inherit] button: rendered on the control's first
-                // row at the right edge for overriding nullable fields (mirror
-                // of the renderer in `render_entry_items`). A click there
-                // reverts just this field to inherited. Decide using `item`
-                // first, then mutate `dialog` — keeps the borrows disjoint.
-                let inherit_clicked = item.nullable && !item.is_null && sub_row == 0 && {
-                    let btn_w = format!("[{}]", t!("settings.btn_inherit")).len() as u16 + 1;
+                // Per-field action buttons ([Reset]/[Inherit]) rendered on the
+                // control's first row at the right edge (mirror of the renderer
+                // in `render_entry_items`). Resolve which one was clicked using
+                // `item`/`dialog` immutably first, then mutate — keeps the
+                // borrows disjoint.
+                let clicked_action = if sub_row == 0 {
+                    let buttons = dialog.field_action_buttons(idx);
                     let right = layout.inner_x + layout.inner_width;
-                    col + btn_w >= right && col < right
+                    super::entry_dialog::layout_field_action_buttons(&buttons, right)
+                        .into_iter()
+                        .find(|(_, x, w)| col >= *x && col < x.saturating_add(*w))
+                        .map(|(action, _, _)| action)
+                } else {
+                    None
                 };
-                if inherit_clicked {
-                    dialog.inherit_field(idx);
+                if let Some(action) = clicked_action {
+                    match action {
+                        super::entry_dialog::FieldAction::Reset => {
+                            dialog.reset_field(idx);
+                        }
+                        super::entry_dialog::FieldAction::Inherit => {
+                            dialog.inherit_field(idx);
+                        }
+                    }
                     dialog.focus_on_buttons = false;
-                    dialog.inherit_focused = false;
+                    dialog.field_button_focus = None;
                     dialog.selected_item = idx;
                     dialog.update_focus_states();
                     return Ok(true);
@@ -881,7 +893,7 @@ impl Editor {
                     return self.handle_text_list_click(idx, sub_row, col, layout);
                 }
                 dialog.focus_on_buttons = false;
-                dialog.inherit_focused = false;
+                dialog.field_button_focus = None;
                 dialog.selected_item = idx;
                 dialog.update_focus_states();
                 if !dialog.editing_text {

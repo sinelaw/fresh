@@ -3663,45 +3663,56 @@ fn render_entry_items(
             item.is_null,
         );
 
-        // Per-field inherit affordance, on the control's first row at the right
-        // edge: a dim `(Inherited)` badge when the value is inherited, or a
-        // clickable `[Inherit]` button when it's overriding. Lets the user
-        // revert a single optional field without hunting for the keyboard
-        // shortcut (issue #2345). Hit-testing mirrors this geometry in
-        // `handle_entry_dialog_item_click`.
-        if item.nullable && !item.read_only && skip_rows == 0 && control_area.width > 0 {
-            let btn_focused = dialog.inherit_focused && dialog.selected_item == idx;
-            let (text, style) = if item.is_null {
-                (
-                    t!("settings.inherited_badge").to_string(),
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .add_modifier(Modifier::ITALIC),
-                )
-            } else if btn_focused {
-                (
-                    format!("[{}]", t!("settings.btn_inherit")),
-                    Style::default()
-                        .fg(theme.menu_hover_fg)
-                        .bg(theme.menu_hover_bg)
-                        .add_modifier(Modifier::BOLD),
-                )
+        // Per-field affordances on the control's first row at the right edge:
+        // a dim `(Inherited)` badge when the value is inherited, otherwise the
+        // applicable action buttons (`[Reset]` to the built-in default and/or
+        // `[Inherit]` to the global/parent value). A field only offers the
+        // action(s) that lead to a different result (issue #2345). Hit-testing
+        // mirrors this geometry in `handle_entry_dialog_item_click`.
+        if !item.read_only && skip_rows == 0 && control_area.width > 0 {
+            let right_edge = control_area.x.saturating_add(control_area.width);
+            if item.nullable && item.is_null {
+                let badge = t!("settings.inherited_badge").to_string();
+                let w = badge.chars().count() as u16 + 1;
+                let x = right_edge.saturating_sub(w);
+                if x > control_area.x {
+                    frame.render_widget(
+                        Paragraph::new(badge).style(
+                            Style::default()
+                                .fg(theme.line_number_fg)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
+                        Rect::new(x, screen_y, w, 1),
+                    );
+                }
             } else {
-                (
-                    format!("[{}]", t!("settings.btn_inherit")),
-                    Style::default().fg(theme.line_number_fg),
-                )
-            };
-            let w = text.len() as u16 + 1;
-            let x = control_area
-                .x
-                .saturating_add(control_area.width)
-                .saturating_sub(w);
-            if x > control_area.x {
-                frame.render_widget(
-                    Paragraph::new(text).style(style),
-                    Rect::new(x, screen_y, w, 1),
-                );
+                let buttons = dialog.field_action_buttons(idx);
+                let positions =
+                    super::entry_dialog::layout_field_action_buttons(&buttons, right_edge);
+                let focused = if dialog.selected_item == idx {
+                    dialog.field_button_focus
+                } else {
+                    None
+                };
+                for (bi, ((_, label), (_, x, w))) in
+                    buttons.iter().zip(positions.iter()).enumerate()
+                {
+                    if *x <= control_area.x {
+                        continue;
+                    }
+                    let style = if Some(bi) == focused {
+                        Style::default()
+                            .fg(theme.menu_hover_fg)
+                            .bg(theme.menu_hover_bg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.line_number_fg)
+                    };
+                    frame.render_widget(
+                        Paragraph::new(label.clone()).style(style),
+                        Rect::new(*x, screen_y, *w, 1),
+                    );
+                }
             }
         }
 

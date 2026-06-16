@@ -1095,21 +1095,15 @@ impl SettingsState {
     /// read-only / non-modified / no-default fields. The dialog itself
     /// becomes dirty (user_edited = true) so the title flips to
     /// `• modified`, signalling that the parent still owes a save.
-    /// If keyboard focus is on a field's per-field `[Inherit]` button, inherit
-    /// that field and return true (so Enter/Space consume the key). This is the
-    /// discoverable, Tab-reachable counterpart to `Ctrl+R`.
-    pub fn entry_dialog_inherit_focused_field(&mut self) -> bool {
-        let Some(dialog) = self.entry_dialog_mut() else {
-            return false;
-        };
-        if dialog.focus_on_buttons || !dialog.inherit_focused {
-            return false;
+    /// If keyboard focus is on a field's per-field action button
+    /// (`[Reset]`/`[Inherit]`), perform it and return true (so Enter/Space
+    /// consume the key). The discoverable, Tab-reachable counterpart to
+    /// `Ctrl+R`.
+    pub fn entry_dialog_activate_focused_field_button(&mut self) -> bool {
+        match self.entry_dialog_mut() {
+            Some(dialog) => dialog.activate_focused_field_button(),
+            None => false,
         }
-        let idx = dialog.selected_item;
-        dialog.inherit_field(idx);
-        dialog.inherit_focused = false;
-        dialog.update_focus_states();
-        true
     }
 
     pub fn reset_focused_entry_field(&mut self) {
@@ -1572,16 +1566,25 @@ impl SettingsState {
         // If the map doesn't allow adding, it also doesn't allow deleting (auto-managed entries)
         let no_delete = map_state.no_add;
 
+        // Per-field [Reset] targets must be this entry's *built-in* values
+        // (e.g. `languages.html.grammar = "HTML"`), not the generic schema
+        // default for the field type (`""`). Look the entry up in the bundled
+        // default config so Reset restores the right value.
+        let entry_pointer = format!("{}/{}", path, key);
+        let key = key.clone();
+        let value = value.clone();
+
         // Create dialog from schema
-        let dialog = EntryDialogState::from_schema(
-            key.clone(),
-            value,
+        let mut dialog = EntryDialogState::from_schema(
+            key,
+            &value,
             schema,
             path,
             false,
             no_delete,
             &self.available_status_bar_tokens,
         );
+        apply_builtin_defaults(&mut dialog, &entry_pointer);
         self.entry_dialog_stack.push(dialog);
     }
 
@@ -2916,7 +2919,30 @@ impl SettingsState {
 }
 
 /// Update a control's state from a JSON value
-fn update_control_from_value(control: &mut SettingControl, value: &serde_json::Value) {
+/// Override each dialog field's `default` with the bundled config's value for
+/// this map entry (e.g. `languages.html.grammar = "HTML"`), so `[Reset]`
+/// restores the built-in per-entry value rather than the generic schema default
+/// for the field type. Falls back to the schema defaults when the entry isn't
+/// in the bundled config (e.g. a brand-new map key).
+fn apply_builtin_defaults(dialog: &mut EntryDialogState, entry_pointer: &str) {
+    let Ok(default_cfg) = serde_json::to_value(Config::default()) else {
+        return;
+    };
+    let Some(entry) = default_cfg.pointer(entry_pointer) else {
+        return;
+    };
+    for item in &mut dialog.items {
+        if item.path == "__key__" {
+            continue;
+        }
+        let field = item.path.trim_start_matches('/');
+        if let Some(v) = entry.get(field) {
+            item.default = Some(v.clone());
+        }
+    }
+}
+
+pub(crate) fn update_control_from_value(control: &mut SettingControl, value: &serde_json::Value) {
     match control {
         SettingControl::Toggle(state) => {
             if let Some(b) = value.as_bool() {
