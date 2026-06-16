@@ -55,6 +55,12 @@ interface GitLogState {
   commits: GitCommit[];
   selectedIndex: number;
   /**
+   * When set, the log is scoped to a single file's history
+   * (`git log -- <pathFilter>`). `null` means the full repository log.
+   * Drives both the initial fetch and `git_log_refresh`.
+   */
+  pathFilter: string | null;
+  /**
    * Per-commit cache: sha → file-backed buffer id. Each visited
    * commit gets its own buffer pointing at `<dataDir>/git-show/<sha>.diff`,
    * which a background `git show --patch` writes into. Returning to a
@@ -84,6 +90,7 @@ const state: GitLogState = {
   logPanel: null,
   commits: [],
   selectedIndex: 0,
+  pathFilter: null,
   commitBuffers: new Map(),
   inFlightSpawns: new Map(),
   pendingSelectId: 0,
@@ -552,28 +559,49 @@ function selectedCommit(): GitCommit | null {
 // Commands
 // =============================================================================
 
-async function show_git_log(): Promise<void> {
+/**
+ * Open the magit-style log view. `pathFilter` of `null` shows the full
+ * repository history; a path scopes it to that file's commits. Shared by
+ * the "Git Log" and "Git Log (Current File)" commands.
+ */
+async function openGitLog(pathFilter: string | null): Promise<void> {
   if (state.isOpen) {
-    // Already open — pull the existing tab to the front instead of
-    // bailing out with a status message.
-    if (state.groupId !== null) {
-      editor.focusBufferGroupPanel(state.groupId, "log");
+    // Already open. If the requested scope differs (e.g. switching from
+    // the full-repo log to a single file, or vice versa), the group's
+    // tab title and contents need rebuilding — close it first so we
+    // re-create with the right title. Otherwise just refocus.
+    if (pathFilter !== state.pathFilter) {
+      git_log_close();
+    } else {
+      if (state.groupId !== null) {
+        editor.focusBufferGroupPanel(state.groupId, "log");
+      }
+      return;
     }
-    return;
   }
+  state.pathFilter = pathFilter;
   editor.setStatus(editor.t("status.loading"));
 
-  state.commits = await fetchGitLog(editor);
+  state.commits = await fetchGitLog(editor, {
+    pathFilter: pathFilter ?? undefined,
+  });
   if (state.commits.length === 0) {
     editor.setStatus(editor.t("status.no_commits"));
     return;
   }
 
+  // The tab title carries the file's basename when scoped so the user
+  // can tell a file-history tab apart from the full-repo one.
+  const title =
+    pathFilter !== null
+      ? `*Git Log: ${editor.pathBasename(pathFilter)}*`
+      : "*Git Log*";
+
   // `createBufferGroup` is not currently included in the generated
   // `EditorAPI` type (it's a runtime-only binding, same as in audit_mode),
   // so we cast to `any` to keep the type checker happy.
   const group = await (editor as any).createBufferGroup(
-    "*Git Log*",
+    title,
     "git-log",
     GROUP_LAYOUT
   );
@@ -627,7 +655,30 @@ async function show_git_log(): Promise<void> {
     editor.t("status.log_ready", { count: String(state.commits.length) })
   );
 }
+
+/** Command: show the full-repository log. */
+async function show_git_log(): Promise<void> {
+  await openGitLog(null);
+}
 registerHandler("show_git_log", show_git_log);
+
+/**
+ * Command: show the log scoped to the focused buffer's file. Available
+ * whenever a buffer is focused (see the `git-log-buffer-focused` context
+ * wired up at the bottom of the file). Falls back to a status message
+ * when the active buffer has no on-disk path (e.g. an unsaved scratch
+ * buffer).
+ */
+async function show_git_log_current_file(): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const filePath = bufferId ? editor.getBufferPath(bufferId) : "";
+  if (!filePath || filePath === "") {
+    editor.setStatus(editor.t("status.no_file"));
+    return;
+  }
+  await openGitLog(filePath);
+}
+registerHandler("show_git_log_current_file", show_git_log_current_file);
 
 /** Reset all state + unsubscribe. Idempotent; safe to call from either
  * path (user-initiated close or externally-closed group via the tab's
@@ -667,6 +718,7 @@ function git_log_cleanup(): void {
   state.toolbarBufferId = null;
   state.commits = [];
   state.selectedIndex = 0;
+  state.pathFilter = null;
 }
 
 function git_log_close(): void {
@@ -709,7 +761,9 @@ registerHandler("on_git_log_buffer_closed", on_git_log_buffer_closed);
 async function git_log_refresh(): Promise<void> {
   if (!state.isOpen) return;
   editor.setStatus(editor.t("status.refreshing"));
-  state.commits = await fetchGitLog(editor);
+  state.commits = await fetchGitLog(editor, {
+    pathFilter: state.pathFilter ?? undefined,
+  });
   // The on-disk cache files are keyed by SHA and commits are
   // immutable, so they remain valid — but our in-memory buffer ids
   // for commits no longer in the visible list are stale; clear them.
@@ -1138,6 +1192,28 @@ editor.registerCommand(
   "%cmd.git_log_desc",
   "show_git_log",
   null
+);
+
+// The "current file" command is gated on a plugin-defined context that is
+// active whenever a buffer is focused, so it only surfaces in the command
+// palette when there's a file to scope the log to. The context is kept in
+// sync with focus changes via the buffer_activated / buffer_deactivated
+// hooks below.
+const BUFFER_FOCUSED_CTX = "git-log-buffer-focused";
+
+function updateBufferFocusedContext(): void {
+  editor.setContext(BUFFER_FOCUSED_CTX, editor.getActiveBufferId() !== 0);
+}
+editor.on("buffer_activated", updateBufferFocusedContext);
+editor.on("buffer_deactivated", updateBufferFocusedContext);
+// Seed the context from the buffer that's already focused at load time.
+updateBufferFocusedContext();
+
+editor.registerCommand(
+  "%cmd.git_log_current_file",
+  "%cmd.git_log_current_file_desc",
+  "show_git_log_current_file",
+  BUFFER_FOCUSED_CTX
 );
 editor.registerCommand(
   "%cmd.git_log_close",

@@ -33,6 +33,12 @@ export interface FetchGitLogOptions {
   range?: string;
   /** Working directory. Defaults to `editor.getCwd()`. */
   cwd?: string;
+  /**
+   * Restrict the log to commits that touch this single path (passed as
+   * `git log ... -- <pathFilter>`). Used by the "current file" command to
+   * show only the history of the focused buffer's file.
+   */
+  pathFilter?: string;
 }
 
 export interface BuildCommitLogEntriesOptions {
@@ -106,6 +112,9 @@ export async function fetchGitLog(
   const format = "%H%x00%h%x00%an%x00%ae%x00%ai%x00%ar%x00%D%x00%s%x00%b%x1e";
   const args = ["log", `--format=${format}`, `-n${maxCommits}`];
   if (opts.range) args.push(opts.range);
+  // `-- <path>` must come last so git treats it as a pathspec, not a
+  // revision. Restricts the log to commits touching that file.
+  if (opts.pathFilter) args.push("--", opts.pathFilter);
 
   const result = await editor.spawnProcess("git", args, cwd);
   if (result.exit_code !== 0) return [];

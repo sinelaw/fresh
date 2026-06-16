@@ -34,6 +34,7 @@ pub mod env_manager;
 pub mod file_explorer_slots;
 pub mod find_file;
 pub mod git;
+pub mod git_log_current_file;
 pub mod git_log_split_tab_focus;
 pub mod git_statusbar;
 pub mod goto_with_selection;
