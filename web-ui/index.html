@@ -679,48 +679,53 @@ function widgetEl(spec, ctx){
 // Native Settings — a control's value rendered semantically (read from the
 // shared model; keyboard drives edits via handle_key).
 const SET_LIST_KINDS = new Set(["textList","map","objectArray","dualList"]);
-// Inline control (toggle/number/dropdown/text/json/complex) for the right column.
-function settingControlEl(c){
+// Inline control (toggle/number/dropdown/text/json/complex). `idx` = item index;
+// `live` enables click routing (false inside the entry dialog, which is keyboard).
+function settingControlEl(c, idx, live){
   const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
-  if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); el.appendChild(sw); }
+  if(k==="toggle"){ const sw=document.createElement("span"); sw.className="set-switch"+(c.checked?" on":""); el.appendChild(sw); if(live) sw.onmousedown=setHit("controlToggle",idx); }
   else if(k==="number"){
-    const mk=(t,cls)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;return b;};
-    el.appendChild(mk("−","set-step")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=c.value; el.appendChild(v); el.appendChild(mk("+","set-step"));
+    const mk=(t,cls,hit)=>{const b=document.createElement("span");b.className=cls;b.textContent=t;if(live&&hit)b.onmousedown=setHit(hit,idx);return b;};
+    el.appendChild(mk("−","set-step","controlDecrement")); const v=document.createElement("span"); v.className="set-num-v"; v.textContent=c.value; el.appendChild(v); el.appendChild(mk("+","set-step","controlIncrement"));
   }
-  else if(k==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; el.appendChild(p);
-    if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===c.selected?" sel":""));r.textContent=o;d.appendChild(r);}); el.appendChild(d);} }
-  else if(k==="text"){ const f=document.createElement("span"); f.className="set-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); el.appendChild(f); }
-  else if(k==="json"){ const f=document.createElement("span"); f.className="set-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; el.appendChild(f); }
+  else if(k==="dropdown"){ const p=document.createElement("span"); p.className="set-pill"; p.textContent=(c.options[c.selected]||"—")+" ▾"; if(live) p.onmousedown=setHit("controlDropdown",idx); el.appendChild(p);
+    if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===c.selected?" sel":""));r.textContent=o;if(live)r.onmousedown=setHit("controlDropdownOption",idx,i);d.appendChild(r);}); el.appendChild(d);} }
+  else if(k==="text"){ const f=document.createElement("span"); f.className="set-field"; f.textContent=(c.value||c.placeholder||"")+(c.editing?"▌":""); if(live) f.onmousedown=setHit("controlText",idx); el.appendChild(f); }
+  else if(k==="json"){ const f=document.createElement("span"); f.className="set-field mono"; f.textContent=(c.value||"").slice(0,80)||"{}"; if(live) f.onmousedown=setHit("controlText",idx); el.appendChild(f); }
   else if(k==="complex"){ el.textContent="‹"+c.typeName+"›"; el.classList.add("set-dim"); }
   return el;
 }
 // Full-width list block for composite controls (rows + an Add affordance).
-function settingListEl(c){
-  const el=div("set-list"); let rows=[];
-  if(c.kind==="textList") rows=c.items.map(t=>({label:t}));
-  else if(c.kind==="map") rows=c.entries.map(e=>({label:e.key, sub:e.display}));
-  else if(c.kind==="objectArray") rows=c.entries.map(t=>({label:t}));
-  else if(c.kind==="dualList"){ rows=c.included.map(t=>({label:t, badge:"✓"})); }
+function settingListEl(c, idx, live){
+  const el=div("set-list"); let rows=[]; const k=c.kind;
+  // rowHit: (rowIndex) -> SettingsHit for clicking that row; addHit for "＋ Add".
+  let rowHit=null, addHit=null;
+  if(k==="textList"){ rows=c.items.map(t=>({label:t})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
+  else if(k==="map"){ rows=c.entries.map(e=>({label:e.key, sub:e.display})); rowHit=i=>["controlMapRow",idx,i]; addHit=["controlMapAddNew",idx]; }
+  else if(k==="objectArray"){ rows=c.entries.map(t=>({label:t})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
+  else if(k==="dualList"){ rows=c.included.map(t=>({label:t, badge:"✓"})); }
   if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
-  for(const r of rows){ const row=div("set-list-row");
+  rows.forEach((r,i)=>{ const row=div("set-list-row");
     if(r.badge){ const b=document.createElement("span"); b.className="set-list-badge"; b.textContent=r.badge; row.appendChild(b); }
     const l=document.createElement("span"); l.className="set-list-label"; l.textContent=r.label; row.appendChild(l);
     if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
-    el.appendChild(row); }
-  if(c.kind!=="dualList"){ const add=div("set-list-add"); add.textContent="＋ Add…"; el.appendChild(add); }
+    if(live&&rowHit){ const h=rowHit(i); row.onmousedown=setHit(h[0],h[1],h[2]); }
+    el.appendChild(row); });
+  if(k!=="dualList"){ const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
   return el;
 }
-function settingItemRows(items, container){
+function settingItemRows(items, container, live){
   for(const it of items){
     if(it.sectionStart && it.section){ const h=div("set-section"); h.textContent=it.section; container.appendChild(h); }
     const isList=SET_LIST_KINDS.has(it.control.kind);
     const row=div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":""));
     const head=div("set-item-head");
     const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
-    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control)); head.appendChild(ctl); }
+    if(live) nm.onmousedown=setHit("item",it.index);   // click the row label = select item
+    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live)); head.appendChild(ctl); }
     row.appendChild(head);
     if(it.description){ const d=div("set-desc"); d.textContent=it.description; row.appendChild(d); }
-    if(isList) row.appendChild(settingListEl(it.control));
+    if(isList) row.appendChild(settingListEl(it.control,it.index,live));
     container.appendChild(row);
   }
 }
@@ -731,25 +736,29 @@ function settingsEls(s){
   const body=div("set-body");
   // left: category tree
   const cats=div("set-cats"+(s.focus==="categories"?" focus":""));
-  for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":"")); r.textContent=(c.expandable?(c.expanded?"▼ ":"▶ "):"  ")+c.name; cats.appendChild(r);
-    if(c.expanded){ for(const sec of c.sections){ const sr=div("set-cat-sec"); sr.textContent="   "+sec; cats.appendChild(sr); } } }
+  for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":""));
+    if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
+    const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
+    r.onmousedown=setHit("category",c.index); cats.appendChild(r);
+    if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=div("set-cat-sec"); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
   body.appendChild(cats);
   // right: items, or search results
   const right=div("set-items"+(s.focus==="settings"?" focus":""));
   if(s.searchActive){ const sb=div("set-search"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
-    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;right.appendChild(rr);}); }
-  else { settingItemRows(s.items, right); }
+    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;rr.onmousedown=setHit("searchResult",i);right.appendChild(rr);}); }
+  else { settingItemRows(s.items, right, true); }
   body.appendChild(right);
   el.appendChild(body);
   // footer
-  const ft=div("set-footer"); s.footerButtons.forEach((b,i)=>{
+  const ft=div("set-footer"); const fkinds=["layer","reset","save","cancel"];
+  s.footerButtons.forEach((b,i)=>{
     const sel=i===s.footerSelected&&s.focus==="footer";
-    const bb=div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")); bb.textContent=b; ft.appendChild(bb);
+    const bb=div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel"); ft.appendChild(bb);
   }); el.appendChild(ft);
-  // entry dialog (Map/ObjectArray add/edit)
+  // entry dialog (Map/ObjectArray add/edit) — keyboard-driven (live=false)
   if(s.entryDialog){ const d=s.entryDialog; const dlg=div("set-overlay set-entry");
     const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
-    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di); dlg.appendChild(di);
+    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, false); dlg.appendChild(di);
     const db=div("set-dlg-btns"); const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
     btns.forEach((b,i)=>{const f=d.focusOnButtons&&i===d.focusedButton; const bb=div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")); bb.textContent=b; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
@@ -978,6 +987,9 @@ const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 async function sendMouse(o){ try{ scene=await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json(); render(); }catch(err){ showErr("mouse failed: "+err); } }
 async function sendWidget(o){ try{ applyScene(await (await fetch("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("widget failed: "+err); } }
+async function sendSettings(o){ try{ applyScene(await (await fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("settings failed: "+err); } }
+// click handler that forwards a SettingsHit (kind + indices) to the editor
+function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b}); }; }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
 // pixel under the pointer — native chrome is laid out by CSS, so pixels don't map
 // to the editor's cell columns). Called from `onmousemove` (which, unlike

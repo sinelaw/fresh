@@ -234,7 +234,22 @@ impl Editor {
             return Ok(false);
         };
 
-        // Check if a dropdown is open and click is outside of it
+        self.dispatch_settings_hit(hit, row, is_double_click);
+        Ok(true)
+    }
+
+    /// Perform the action for a resolved `SettingsHit` — shared by the TUI mouse
+    /// hit-test above and the web `/settings` route, which sends the hit it
+    /// rendered natively. So a click does the same thing in both frontends.
+    /// `row` is used only by the scrollbar hits (TUI-only; the web never sends
+    /// them).
+    pub(crate) fn dispatch_settings_hit(
+        &mut self,
+        hit: SettingsHit,
+        row: u16,
+        is_double_click: bool,
+    ) {
+        // If a dropdown is open and the click is outside it, cancel and stop.
         if let Some(ref mut state) = self.settings_state {
             if state.is_dropdown_open() {
                 let is_click_on_open_dropdown = matches!(
@@ -244,7 +259,7 @@ impl Editor {
                 );
                 if !is_click_on_open_dropdown {
                     state.dropdown_cancel();
-                    return Ok(true);
+                    return;
                 }
             }
         }
@@ -492,8 +507,6 @@ impl Editor {
                 // Clicking on search results panel background - no action needed
             }
         }
-
-        Ok(true)
     }
 
     /// Whether the given screen coords sit inside the categories panel —

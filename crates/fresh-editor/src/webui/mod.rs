@@ -262,6 +262,45 @@ fn handle_conn(
             let s = tick_scene(editor, *cols, *rows).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
+        ("POST", "/settings") => {
+            // Native Settings interaction: the frontend sends the `SettingsHit`
+            // it rendered (kind + indices); we run the SAME dispatch a TUI cell
+            // click would (`dispatch_settings_hit`).
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            let a = v.get("a").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            let bb = v.get("b").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            let dbl = v.get("double").and_then(|x| x.as_bool()).unwrap_or(false);
+            use crate::view::settings::SettingsHit as H;
+            let hit = match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+                "category" => Some(H::Category(a)),
+                "categoryDisclosure" => Some(H::CategoryDisclosure(a)),
+                "categorySection" => Some(H::CategorySection(a, bb)),
+                "item" => Some(H::Item(a)),
+                "controlToggle" => Some(H::ControlToggle(a)),
+                "controlDropdown" => Some(H::ControlDropdown(a)),
+                "controlDropdownOption" => Some(H::ControlDropdownOption(a, bb)),
+                "controlDecrement" => Some(H::ControlDecrement(a)),
+                "controlIncrement" => Some(H::ControlIncrement(a)),
+                "controlText" => Some(H::ControlText(a)),
+                "controlMapRow" => Some(H::ControlMapRow(a, bb)),
+                "controlMapAddNew" => Some(H::ControlMapAddNew(a)),
+                "controlTextListRow" => Some(H::ControlTextListRow(a, bb)),
+                "controlInherit" => Some(H::ControlInherit(a)),
+                "searchResult" => Some(H::SearchResult(a)),
+                "save" => Some(H::SaveButton),
+                "cancel" => Some(H::CancelButton),
+                "reset" => Some(H::ResetButton),
+                "layer" => Some(H::LayerButton),
+                "edit" => Some(H::EditButton),
+                "clearCategory" => Some(H::ClearCategoryButton),
+                _ => None,
+            };
+            if let Some(hit) = hit {
+                editor.dispatch_settings_hit(hit, 0, dbl);
+            }
+            let s = tick_scene(editor, *cols, *rows).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
         ("POST", "/resize") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {
