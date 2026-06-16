@@ -118,20 +118,18 @@ fn item_view(editor: &Editor, item: &fresh_core::menu::MenuItem) -> MenuItemView
             label,
             action,
             args,
-            when,
+            when: _,
             checkbox,
         } => MenuItemView::Action {
             label: label.clone(),
             action: action.clone(),
             args: args.clone(),
             accel: editor.accelerator_for(action),
-            enabled: when
-                .as_ref()
-                .map(|w| editor.menu_state().context.get(w))
-                .unwrap_or(true),
-            checked: checkbox
-                .as_ref()
-                .map(|c| editor.menu_state().context.get(c)),
+            // Same enabled/checked logic the TUI MenuRenderer uses — one source.
+            enabled: crate::view::ui::menu::is_menu_item_enabled(item, &editor.menu_state().context),
+            checked: checkbox.as_ref().map(|_| {
+                crate::view::ui::menu::is_checkbox_checked(checkbox, &editor.menu_state().context)
+            }),
         },
         Submenu { label, items } => MenuItemView::Submenu {
             label: label.clone(),

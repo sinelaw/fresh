@@ -114,7 +114,10 @@ impl MenuLayout {
 // Re-export MenuContext from fresh-core so existing editor code keeps compiling.
 pub use fresh_core::menu::MenuContext;
 
-fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
+/// Whether a menu item is enabled given the current menu context. Shared by the
+/// TUI renderer and the web `menu_view` projection so both frontends agree on
+/// item state from one definition (see view/scene.rs).
+pub(crate) fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
     match item {
         MenuItem::Action { when, .. } => {
             match when.as_deref() {
@@ -126,7 +129,9 @@ fn is_menu_item_enabled(item: &MenuItem, context: &MenuContext) -> bool {
     }
 }
 
-fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool {
+/// Whether a checkbox menu item is checked given the current context. Shared by
+/// the TUI renderer and the web `menu_view` projection.
+pub(crate) fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuContext) -> bool {
     match checkbox.as_deref() {
         Some(name) => context.get(name),
         None => false,
