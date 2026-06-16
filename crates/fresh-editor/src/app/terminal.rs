@@ -1163,11 +1163,30 @@ impl Window {
             .map(|s| s.uses_sgr_mouse())
             .unwrap_or(true);
 
-        // For alternate scroll mode, convert scroll to arrow keys.
-        let uses_alt_scroll = self
+        // Alternate-scroll mode converts the wheel into arrow keys so the
+        // wheel scrolls pagers like `less`/`man` that don't track the mouse.
+        // It must be suppressed whenever the program is itself tracking the
+        // mouse: such a program (e.g. Claude Code in its full-screen
+        // "no-flicker" mode) requested mouse reporting precisely so it can
+        // scroll its own viewport from wheel events. Forwarding synthesized
+        // Up/Down arrows instead leaks them into the program's input — for
+        // Claude Code that cycles prompt/message history rather than
+        // scrolling. This mirrors xterm/alacritty, where alternate scroll is
+        // inactive while any mouse-tracking mode is on.
+        //
+        // Note `ALTERNATE_SCROLL` is on by default in alacritty_terminal, so
+        // this branch would otherwise fire for every wheel event forwarded to
+        // an alternate-screen program — the `wants_mouse` guard is what keeps
+        // mouse-aware programs receiving real wheel reports.
+        let wants_mouse = self
             .get_active_terminal_state()
-            .map(|s| s.uses_alternate_scroll())
+            .map(|s| s.wants_mouse_events())
             .unwrap_or(false);
+        let uses_alt_scroll = !wants_mouse
+            && self
+                .get_active_terminal_state()
+                .map(|s| s.uses_alternate_scroll())
+                .unwrap_or(false);
 
         if uses_alt_scroll {
             match kind {

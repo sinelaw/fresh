@@ -3201,6 +3201,97 @@ fn test_bracket_paste_in_terminal_mode() {
         .send_terminal_input(b"\x04");
 }
 
+/// Regression test: when an alternate-screen program is *tracking the mouse*
+/// (mouse reporting enabled), wheel events must be forwarded to it as real
+/// mouse reports — never converted into arrow keys by alternate-scroll mode.
+///
+/// `alacritty_terminal` enables `ALTERNATE_SCROLL` by default, so without a
+/// `wants_mouse` guard in `send_terminal_mouse` every forwarded wheel event in
+/// the alternate screen would be rewritten as Up/Down arrows. For a full-screen
+/// program that scrolls its own viewport from wheel reports — e.g. Claude Code's
+/// "no-flicker" mode — that arrow translation instead leaks into its input and
+/// cycles prompt/message history rather than scrolling the viewport.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Unix shell commands (printf/stty/cat)
+fn test_wheel_forwarded_as_mouse_report_when_mouse_tracked() {
+    let mut harness = harness_or_return!(80, 24);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Wait for the shell prompt to be ready.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo SHELL_READY\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SHELL_READY"))
+        .unwrap();
+
+    // Enter the alternate screen, enable SGR (1006) + click (1000) mouse
+    // reporting, print a readiness marker, then run `cat -v` on a raw, no-echo
+    // tty so any bytes we forward are echoed back verbatim (ESC shown as `^[`).
+    //
+    // The marker is assembled from two `printf` args (`CAT` + `_READY`) so the
+    // echoed *command line* contains "CAT _READY" (with a space) while the
+    // program's *output* is "CAT_READY" — the wait below then matches only the
+    // real output, never the command echo.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(
+            b"printf '\\033[?1049h\\033[?1006h\\033[?1000h%s%s\\n' CAT _READY; stty raw -echo; cat -v\n",
+        );
+
+    // Entering the alternate screen hides the main-screen command echo, so the
+    // only way "CAT_READY" appears on screen is as the program's output —
+    // printed right after the alt-screen + mouse-mode set sequences. Seeing it
+    // is an observable signal that the program is now on the alternate screen
+    // and tracking the mouse (no model accessors needed).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("CAT_READY"))
+        .unwrap();
+
+    // Scroll the wheel up over the terminal content area.
+    harness.mouse_scroll_up(10, 10).unwrap();
+
+    // Send a plain sentinel after the wheel event. The PTY preserves order, so
+    // once `cat -v` has echoed the sentinel we know the wheel bytes were already
+    // echoed too — letting us assert deterministically (and fail fast rather
+    // than hang) regardless of whether they were a mouse report or arrow keys.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"ZZ_END");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZ_END"))
+        .unwrap();
+
+    // The program should have received an SGR wheel report (button 64), echoed
+    // by `cat -v` as `^[[<64;...M`. It must NOT have received Up-arrow keys
+    // (`^[[A`).
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("[<64;"),
+        "wheel should be forwarded as an SGR mouse report when the program \
+         tracks the mouse. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("[A"),
+        "wheel must not be converted to Up-arrow keys while the program tracks \
+         the mouse — alternate-scroll must be suppressed. Screen:\n{}",
+        screen
+    );
+
+    // Clean up: Ctrl+D exits cat.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"\x04");
+}
+
 /// Test that arrow keys work in programs that enable application cursor keys (DECCKM).
 /// Programs like `less` and `git log` set DECCKM mode, which means arrow keys
 /// must be sent as SS3 sequences (\x1bOA) instead of CSI (\x1b[A).
