@@ -95,6 +95,9 @@ impl SplitRenderer {
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
         pending_hardware_cursor: &mut Option<(u16, u16)>,
+        // Forwarded to the tab-bar renderer: when false the tab bar lays out but
+        // paints no cells (web renders tabs natively); panes always draw.
+        draw_tab_bar: bool,
     ) -> (
         Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
         HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
@@ -149,6 +152,7 @@ impl SplitRenderer {
             cell_theme_map,
             screen_width,
             pending_hardware_cursor,
+            draw_tab_bar,
         )
     }
 

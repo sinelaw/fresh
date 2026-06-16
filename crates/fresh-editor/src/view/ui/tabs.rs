@@ -435,6 +435,10 @@ impl TabsRenderer {
         group_names: &HashMap<LeafId, String>,
         preview_buffer: Option<BufferId>,
         mut rec: Option<&mut CellThemeRecorder>,
+        // When false, compute + return the TabLayout (tab rects) but paint no
+        // cells — the web renders the tab bar natively from `tab_bar_view`. The
+        // TUI always passes `true`.
+        draw: bool,
     ) -> TabLayout {
         let mut layout = TabLayout::new(area);
         // Seed the whole bar with the separator surface (the block bg); each
@@ -753,7 +757,9 @@ impl TabsRenderer {
         let line = Line::from(current_spans);
         let block = Block::default().style(Style::default().bg(theme.tab_separator_bg));
         let paragraph = Paragraph::new(line).block(block);
-        frame.render_widget(paragraph, area);
+        if draw {
+            frame.render_widget(paragraph, area);
+        }
 
         // Pinned "+" button: when the tabs overflow, draw the button on top of
         // the bar at the right edge. The main paragraph above filled the
@@ -769,7 +775,9 @@ impl TabsRenderer {
                     .fg(theme.tab_inactive_fg)
                     .bg(theme.tab_inactive_bg),
             )]));
-            frame.render_widget(plus_para, plus_rect);
+            if draw {
+                frame.render_widget(plus_para, plus_rect);
+            }
             layout.new_tab_area = Some(plus_rect);
         }
 
@@ -949,6 +957,7 @@ impl TabsRenderer {
             &group_names,
             preview_buffer,
             None, // No theme recording for legacy render
+            true, // Legacy render always draws
         );
     }
 }

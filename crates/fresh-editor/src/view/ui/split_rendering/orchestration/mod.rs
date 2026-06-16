@@ -97,6 +97,9 @@ pub(crate) fn render_content(
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
+    // When false, the tab bar computes its layout but paints no cells (web
+    // renders tabs natively). Panes always draw. TUI passes `true`.
+    draw_tab_bar: bool,
 ) -> (
     Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
@@ -350,6 +353,7 @@ pub(crate) fn render_content(
                     &group_names,
                     preview_buffer,
                     Some(&mut rec),
+                    draw_tab_bar,
                 )
             };
             crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &tab_runs);

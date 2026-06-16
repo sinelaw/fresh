@@ -650,6 +650,9 @@ impl Editor {
         let mut pending_hardware_cursor: Option<(u16, u16)> = None;
 
         let _content_span = tracing::info_span!("render_content").entered();
+        // Web renders the tab bar natively from `tab_bar_view`; skip painting it
+        // to cells (its TabLayout is still computed). Panes always draw.
+        let split_draw_tab_bar = !self.suppress_chrome_cells;
         // Take a single mutable borrow on the active window's splits and
         // split it into (&SplitManager, &mut HashMap<...>) — Rust can
         // destructure the tuple, but we can't make two separate
@@ -723,6 +726,7 @@ impl Editor {
                     __cell_theme_map_mut,
                     size.width,
                     &mut pending_hardware_cursor,
+                    split_draw_tab_bar,
                 )
             })
             .expect("active window must have a populated split layout");
@@ -2261,6 +2265,7 @@ impl Editor {
         // a window the host already removed. Early-return rather
         // than panic; the next plugin refresh re-emits the spec
         // without the dead embed.
+        let preview_draw_tab_bar = !self.suppress_chrome_cells;
         let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
             return;
         };
@@ -2338,6 +2343,7 @@ impl Editor {
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,
+                    preview_draw_tab_bar,
                 );
                 preview_split_areas = result.0;
             });
