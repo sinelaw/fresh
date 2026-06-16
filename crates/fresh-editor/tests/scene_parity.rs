@@ -108,4 +108,38 @@ fn web_scene_and_tui_cells_agree() {
 
         apply_step(&mut ed, &json!({"key": "Escape"}));
     }
+
+    // ── file-explorer parity: the sidebar tree's rows agree ──
+    {
+        apply_step(&mut ed, &json!({"action": "toggle_file_explorer"}));
+        settle(&mut ed); // async directory scan
+        let scene = scene_value(&mut ed, COLS, ROWS);
+        let cells = render_tui_cells(&mut ed, COLS, ROWS);
+        if let Some(rows) = scene["regions"]["fileExplorer"]["rows"].as_array() {
+            if let Some(name) = rows.iter().find_map(|r| r["name"].as_str()) {
+                assert!(
+                    cells.contains(name),
+                    "file-explorer row '{name}' from the scene must appear in the TUI cells"
+                );
+            }
+        }
+        apply_step(&mut ed, &json!({"action": "toggle_file_explorer"}));
+    }
+
+    // ── settings parity: the category tree agrees ──
+    {
+        apply_step(&mut ed, &json!({"action": "open_settings"}));
+        let scene = scene_value(&mut ed, COLS, ROWS);
+        let cells = render_tui_cells(&mut ed, COLS, ROWS);
+        let cats = scene["regions"]["settings"]["categories"]
+            .as_array()
+            .expect("settings categories in scene");
+        assert!(!cats.is_empty(), "settings should report categories");
+        let cat = cats[0]["name"].as_str().expect("category name");
+        assert!(
+            cells.contains(cat),
+            "settings category '{cat}' from the scene must appear in the TUI cells\n{cells}"
+        );
+        apply_step(&mut ed, &json!({"key": "Escape"}));
+    }
 }
