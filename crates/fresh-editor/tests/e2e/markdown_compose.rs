@@ -4932,3 +4932,260 @@ fn test_compose_mode_table_width_clamped_when_sidebar_opens() {
         screen,
     );
 }
+
+/// A wide, prose-heavy table renders as a clean README-style frame: every
+/// border and cell row is the SAME width, the frame fits inside the viewport
+/// (no border glyph wraps onto its own screen row), and the long prose column
+/// wraps across virtual continuation lines instead of overflowing. Regression
+/// guard for the table rewrite (virtual continuation lines + width cap +
+/// right-margin) — the failure mode was lone `┐`/`┤`/`┘` glyphs on their own
+/// row and Notes text bleeding past the frame.
+#[test]
+fn test_wide_table_renders_clean_frame() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let md = "\
+# Slice-by-slice status
+
+| # | Slice | Status | Notes / what needs to change |
+|---|-------|--------|------------------------------|
+| 01 | Author workflow | Implemented (exceeds) | workflows, _definition.ts, saveDraft+lintDraft; plus createFromStock, editor, rename, update, setPublished |
+| 04 | Evaluate & materialize criteria | Partial / divergent | Predicate engine (criteria/predicates.ts, closed set), gated CaseContext. Missing the materialized table + evaluation/source/lifecycle + compare-then-patch. Gated by the divergence above |
+| 08 | Criterion status history | Not implemented | No workflowCriterionStatus; depends on materialized criteria |
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("wide_table.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    // Wide viewport, like the user's window — the case that used to overflow.
+    let viewport_width = 160usize;
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        viewport_width as u16,
+        40,
+        Default::default(),
+        project_root,
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let frame_rows: Vec<&str> = screen
+        .lines()
+        .map(|l| l.trim_end())
+        .filter(|l| {
+            let t = l.trim_start();
+            t.starts_with('┌') || t.starts_with('├') || t.starts_with('└') || t.starts_with('│')
+        })
+        .collect();
+
+    // Sanity: we got a framed table (top, header sep, ≥3 row separators, bottom)
+    // plus many cell rows.
+    assert!(
+        frame_rows.len() >= 10,
+        "expected a multi-row framed table, got {} frame rows:\n{}",
+        frame_rows.len(),
+        screen
+    );
+
+    // No border glyph wrapped onto its own screen row — the old overflow bug
+    // left lone closing glyphs like `┐`/`┤`/`┘` (or a stray `│`) on a row.
+    for (i, line) in screen.lines().enumerate() {
+        let t = line.trim();
+        assert!(
+            !matches!(t, "┐" | "┤" | "┘" | "┌" | "├" | "└" | "│"),
+            "row {} is a lone border glyph {:?} — the frame wrapped past the viewport:\n{}",
+            i,
+            t,
+            screen
+        );
+    }
+
+    // Every framed row has the SAME display width (uniform columns) and fits
+    // inside the viewport.
+    let width_of = |s: &str| s.chars().count();
+    let frame_w = width_of(frame_rows[0]);
+    assert!(
+        frame_w <= viewport_width,
+        "frame width {} exceeds viewport {}:\n{}",
+        frame_w,
+        viewport_width,
+        screen
+    );
+    for row in &frame_rows {
+        assert_eq!(
+            width_of(row),
+            frame_w,
+            "ragged frame: row {:?} is width {}, expected {}:\n{}",
+            row,
+            width_of(row),
+            frame_w,
+            screen
+        );
+    }
+
+    // The long Notes prose wrapped into the frame rather than escaping it: the
+    // tail of row 01's Notes appears INSIDE a bordered cell row.
+    assert!(
+        screen.lines().any(|l| {
+            let t = l.trim();
+            t.starts_with('│') && t.contains("setPublished")
+        }),
+        "expected wrapped Notes continuation inside the frame:\n{}",
+        screen
+    );
+}
+
+/// A table taller than the viewport stays fully composed after scrolling to
+/// the end: every visible table row is framed (`│ … │`), none are left as raw
+/// `| .. |` source. Guards `markdown_compose`'s own scroll/line-delivery path.
+#[test]
+fn test_tall_table_scroll_all_rows_composed() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut md = String::from("# Tall table\n\n| # | Slice | Status | Notes |\n|---|---|---|---|\n");
+    for i in 1..=22 {
+        md.push_str(&format!(
+            "| {:02} | Item number {} here | Implemented or not implemented | Notes column with enough prose to wrap across a couple of lines for row {} of the long table |\n",
+            i, i, i
+        ));
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("tall.md");
+    std::fs::write(&md_path, &md).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), project_root).unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Jump to end of file, let it settle.
+    harness.send_key(KeyCode::End, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..6 { harness.process_async_and_render().unwrap(); std::thread::sleep(std::time::Duration::from_millis(60)); harness.advance_time(std::time::Duration::from_millis(60)); }
+
+    let screen = harness.screen_to_string();
+    // The last row must be visible and framed (we scrolled to EOF).
+    assert!(
+        screen.lines().any(|l| l.trim_start().starts_with("│ 22 ")),
+        "row 22 not composed after scroll to EOF:\n{}",
+        screen
+    );
+    // No visible line is a raw markdown table row (`| 07 | …`) — that's the
+    // un-composed failure mode.
+    for line in screen.lines() {
+        let t = line.trim_start();
+        let raw_row = t.starts_with("| ")
+            && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
+        assert!(
+            !raw_row,
+            "found a raw (un-composed) table row after scroll:\n  {:?}\n{}",
+            line.trim_end(),
+            screen
+        );
+    }
+}
+
+
+/// A wrapping table row containing an astral-plane emoji (🟡) must not abort
+/// composition. Regression guard for the bug where `processLineConceals`'
+/// debug line sliced an emoji mid-surrogate and threw, aborting the per-line
+/// loop so that row AND every row after it rendered as raw `| .. |` markdown.
+/// Fixed by a code-point-safe slice plus a per-line try/catch in the loop.
+#[test]
+fn test_emoji_row_does_not_abort_composition() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let md = "# Slice-by-slice status\n\n\
+| # | Slice | Status | Notes / what needs to change |\n\
+|---|---|---|---|\n\
+| 13 | Claim / release | \u{274c} **Not implemented** | No `workflowClaims` |\n\
+| 14 | Deadlines | \u{274c} **Not implemented** | Nothing |\n\
+| 15 | Outcomes, early exit & cancel | \u{1f7e1} **Partial** | Terminal `completed` + `returnToFirm` exist. Missing: discriminated `outcome`, early-exit-with-reason (declined/canceled), `ended` status |\n\
+| 16 | Outbox pub/sub | \u{274c} **Not implemented** | No `workflowEventLog`/`Subscriptions`/`Deliveries`, no `@convex-dev/workpool`, empty `convex.config.ts` |\n\
+| 17 | trigger.dev OCR round-trip | \u{274c} **Not implemented** | No `waiting` round-trip (doc extraction exists elsewhere) |\n";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("c.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    // Narrow width like the user's window with the File Explorer open.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(82, 30, Default::default(), project_root).unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    for _ in 0..6 { harness.process_async_and_render().unwrap(); std::thread::sleep(std::time::Duration::from_millis(60)); harness.advance_time(std::time::Duration::from_millis(60)); }
+
+    let screen = harness.screen_to_string();
+    // The emoji row (15) and the rows after it (16, 17) must be composed into
+    // the framed table, not left as raw `| 16 | … |` source. Before the fix,
+    // row 15's emoji threw and everything from 15 onward rendered raw.
+    for line in screen.lines() {
+        let t = line.trim_start();
+        let raw_row = t.starts_with("| ")
+            && t.as_bytes().get(2).is_some_and(|c| c.is_ascii_digit());
+        assert!(
+            !raw_row,
+            "row rendered as raw markdown (composition aborted): {:?}\n{}",
+            line.trim_end(),
+            screen
+        );
+    }
+    // Positively confirm the rows after the emoji row are framed.
+    assert!(
+        screen.lines().any(|l| l.contains('│') && l.contains("Outbox pub/sub")),
+        "row 16 (after the emoji row) was not composed into the frame:\n{}",
+        screen
+    );
+}

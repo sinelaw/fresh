@@ -217,6 +217,63 @@ function isTableSeparatorContent(lineContent: string): boolean {
   return /^\|[-:\s|]+\|$/.test(lineContent.trim());
 }
 
+/**
+ * Wrap a markdown table data row into per-column visual-line fragments.
+ *
+ * `colWidths[i]` is the *total* allocated cell width (including the two
+ * inside-padding spaces), matching `buildTableBorderLine`. Each column's text
+ * is word-wrapped to `colWidths[i] - 2` cells. Returns the per-column fragment
+ * arrays plus `maxVisualLines` — the number of stacked visual rows this row
+ * occupies (the tallest column). Cells are read through `concealedText` (so
+ * emphasis/link markers are hidden) unless `raw` is set.
+ *
+ * This is the single source of truth shared by the first-visual-line conceal
+ * (`processLineConceals`) and the continuation virtual lines
+ * (`processTableBorders`), so the two never disagree about row height.
+ */
+function wrapTableRow(
+  lineContent: string,
+  colWidths: number[],
+  raw: boolean,
+): { cellWrapped: string[][]; numCols: number; maxVisualLines: number } {
+  let inner = lineContent.trim();
+  if (inner.startsWith('|')) inner = inner.slice(1);
+  if (inner.endsWith('|')) inner = inner.slice(0, -1);
+  const cells = inner.split('|');
+  const numCols = Math.min(cells.length, colWidths.length);
+  const cellWrapped: string[][] = [];
+  let maxVisualLines = 1;
+  for (let ci = 0; ci < numCols; ci++) {
+    const cellText = (raw ? cells[ci] : concealedText(cells[ci])).trim();
+    const wrapW = Math.max(1, colWidths[ci] - 2);
+    const wrapped = wrapText(cellText, wrapW);
+    cellWrapped.push(wrapped);
+    maxVisualLines = Math.max(maxVisualLines, wrapped.length);
+  }
+  return { cellWrapped, numCols, maxVisualLines };
+}
+
+/**
+ * Render visual row `vl` of a wrapped table row as `│ c0 │ c1 │ … │`, each
+ * column padded to its allocated width. Columns with no fragment at `vl`
+ * render as blank padding, so a short column sits empty while a tall prose
+ * column keeps wrapping — exactly how a rendered README table lays out.
+ */
+function buildTableRowVisualLine(
+  cellWrapped: string[][],
+  colWidths: number[],
+  numCols: number,
+  vl: number,
+): string {
+  let line = '│';
+  for (let ci = 0; ci < numCols; ci++) {
+    const wrapW = Math.max(1, colWidths[ci] - 2);
+    const frag = (cellWrapped[ci] && cellWrapped[ci][vl]) || '';
+    line += ' ' + frag + ' '.repeat(Math.max(0, wrapW - displayWidth(frag))) + ' │';
+  }
+  return line;
+}
+
 /** Re-emit the table border virtual lines for the given table-row group.
  *
  * Detects the group's first/last visible rows by consulting `widthMap`
@@ -233,6 +290,7 @@ function processTableBorders(
     content: string;
   }>,
   widthMap: Map<number, TableWidthInfo>,
+  cursors: number[],
 ): void {
   // Use theme keys (resolved at render time so the borders follow theme
   // changes — same pattern as addOverlay's fg/bg options).
@@ -308,9 +366,36 @@ function processTableBorders(
       );
     }
 
+    // Wrapped-cell continuation lines: the row's first visual line is rendered
+    // in place (conceals in processLineConceals); visual lines 2..N stack below
+    // the row as virtual lines. Suppressed on the source-separator row and
+    // while the cursor is on the row (it shows raw source for editing). The
+    // ascending priority `vl` keeps them ordered, below the row but above the
+    // high-priority bottom border emitted next.
+    const cursorOnRow = cursors.some(c => c >= line.byte_start && c < line.byte_end);
+    if (!isSourceSep && !cursorOnRow) {
+      const { cellWrapped, numCols, maxVisualLines } =
+        wrapTableRow(line.content, allocated, false);
+      if (maxVisualLines > 1) {
+        const anchor = Math.max(line.byte_start, line.byte_end - 1);
+        for (let vl = 1; vl < maxVisualLines; vl++) {
+          editor.addVirtualLine(
+            bufferId,
+            anchor,
+            buildTableRowVisualLine(cellWrapped, allocated, numCols, vl),
+            borderOptions,
+            false, // below
+            ns,
+            vl,
+          );
+        }
+      }
+    }
+
     // Bottom border: only below the last known row of the table.
     // └─┴─┘ — closes the frame.  Anchor at the END of the row's bytes
-    // (one before the trailing newline) and place "below".
+    // (one before the trailing newline) and place "below". Priority is high
+    // so it renders after any wrapped-cell continuation lines above it.
     if (!nextIsTable) {
       // byte_end points just past the newline; anchor at last byte of
       // the row content so the virtual line renders directly under it.
@@ -322,7 +407,7 @@ function processTableBorders(
         borderOptions,
         false, // below
         ns,
-        0,
+        1000,
       );
     }
   }
@@ -1097,23 +1182,82 @@ function effectiveComposeWidth(viewportWidth: number): number {
   return Math.min(cw, viewportWidth);
 }
 
+// A table's right edge must never land in the final terminal column — most
+// terminals auto-wrap the cursor there, which pushes the closing border glyph
+// onto its own screen row. One cell of slack keeps the frame intact.
+const TABLE_RIGHT_MARGIN = 1;
+
 /**
- * W3C-inspired column width distribution.
- * Constrains columns to fit within `available` width, distributing space
- * proportionally to each column's natural (max) width.
+ * Cells available to a table's *columns* (i.e. excluding the `numCols + 1`
+ * vertical border glyphs), for a given viewport width.
+ *
+ * Tables are laid out like a rendered README table, not stretched edge-to-edge:
+ * the total frame is capped at the configured compose width (or `maxWidth` when
+ * none is set) and clamped to the viewport, minus a one-cell right margin. On a
+ * wide terminal this keeps a 4-column status table readable instead of fanning
+ * the prose column across 150+ cells; on a narrow one it shrinks to fit.
+ */
+function tableAvailableWidth(viewportWidth: number, numCols: number): number {
+  const cap = config.composeWidth != null ? config.composeWidth : config.maxWidth;
+  const frame = Math.min(cap, viewportWidth) - TABLE_RIGHT_MARGIN;
+  return frame - (numCols + 1);
+}
+
+/**
+ * Column width distribution via water-filling ("max-content with fair
+ * shrinking"), the model browsers and pandoc use for `table-layout: auto`.
+ *
+ * The old approach distributed the available width *proportionally to each
+ * column's natural width*, which over-rewards a column that is already wide
+ * (a prose "Notes" column) and squeezes short label columns far below their
+ * natural width — so a single word like `workflowTransitions` gets chopped
+ * mid-word into `workflowTr`/`ansitions` even though a much wider neighbour
+ * could have absorbed all the shrinking.
+ *
+ * Water-filling instead finds the largest cap C such that
+ *   sum(clamp(maxW[i], MIN_COL_W, C)) <= available.
+ * Columns narrower than C keep their natural width untouched (so short label
+ * columns never wrap), and only columns wider than C are clipped to C — the
+ * deficit comes entirely out of the table's widest prose columns, which wrap
+ * cleanly at word boundaries.
  */
 function distributeColumnWidths(maxW: number[], available: number): number[] {
   const numCols = maxW.length;
+  if (numCols === 0) return [];
   const total = maxW.reduce((s, w) => s + w, 0);
-  if (total <= available) return maxW;
+  if (total <= available) return maxW.slice();
+  // Not even room for every column's minimum: give everyone the floor.
   if (numCols * MIN_COL_W >= available) return maxW.map(() => MIN_COL_W);
 
-  const remaining = available - numCols * MIN_COL_W;
-  const excess = maxW.reduce((s, w) => s + Math.max(0, w - MIN_COL_W), 0);
-  return maxW.map(w => {
-    const extra = excess > 0 ? Math.floor(remaining * Math.max(0, w - MIN_COL_W) / excess) : 0;
-    return MIN_COL_W + extra;
-  });
+  // Width consumed if no column is allowed past `cap` (and none below the
+  // floor). Monotonic non-decreasing in `cap`, so binary-searchable.
+  const widthAt = (cap: number) =>
+    maxW.reduce((s, w) => s + Math.min(Math.max(w, MIN_COL_W), cap), 0);
+
+  // Largest cap whose total still fits. widthAt(MIN_COL_W) = numCols*MIN_COL_W,
+  // already known to be < available, so `lo` starts valid.
+  let lo = MIN_COL_W;
+  let hi = Math.max(...maxW);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (widthAt(mid) <= available) lo = mid;
+    else hi = mid - 1;
+  }
+  const cap = lo;
+  const widths = maxW.map(w => Math.min(Math.max(w, MIN_COL_W), cap));
+
+  // Integer flooring at the cap can leave a few cells unspent; hand them to
+  // the capped (widest) columns, widest-natural first, so the prose column
+  // reclaims every available cell instead of leaving a ragged right edge.
+  let leftover = available - widths.reduce((s, w) => s + w, 0);
+  const capped = maxW
+    .map((w, i) => ({ i, w }))
+    .filter(c => c.w > cap)
+    .sort((a, b) => b.w - a.w);
+  for (let k = 0; leftover > 0 && capped.length > 0; k++, leftover--) {
+    widths[capped[k % capped.length].i]++;
+  }
+  return widths;
 }
 
 /**
@@ -1153,8 +1297,15 @@ function charDisplayWidth(cp: number): number {
     (cp >= 0xfe30 && cp <= 0xfe4f) ||
     (cp >= 0xff00 && cp <= 0xff60) ||
     (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f1e6 && cp <= 0x1f1ff) ||   // regional indicators (flags)
     (cp >= 0x1f300 && cp <= 0x1f64f) ||
     (cp >= 0x1f680 && cp <= 0x1f6ff) ||
+    // Colored circles & squares (🔴🟠🟡🟢🔵🟣🟤🟥🟧🟨🟩🟦🟪🟫): a gap between
+    // the ranges above and below. 🟡 (U+1F7E1) is a common "Partial" status
+    // marker; without this it counts as 1 cell but renders as 2, shifting every
+    // border to its right by one. (The surrounding U+1F700–U+1F77F alchemical
+    // symbols are NOT emoji-presentation, so the range is deliberately tight.)
+    (cp >= 0x1f7e0 && cp <= 0x1f7eb) ||
     (cp >= 0x1f900 && cp <= 0x1faff) ||
     (cp >= 0x20000 && cp <= 0x3fffd)
   ) return 2;
@@ -1238,7 +1389,11 @@ function processLineConceals(
   // This ensures clear+add commands are sent together from the plugin thread
   // and processed atomically in the same process_commands() batch, avoiding
   // the one-frame glitch where conceals are cleared but not yet rebuilt.
-  editor.debug(`[mc] processLine clear+rebuild bytes=${byteStart}..${byteEnd} content="${lineContent.slice(0,40)}"`);
+  // Slice by code POINTS, not UTF-16 units: `.slice(0, 40)` can cut an astral
+  // char (e.g. an emoji like 🟡) between its surrogate halves, leaving a lone
+  // surrogate the host's string→UTF-8 conversion rejects — that would throw out
+  // of this debug line and abort composition for this line and every line after.
+  editor.debug(`[mc] processLine clear+rebuild bytes=${byteStart}..${byteEnd} content="${[...lineContent].slice(0, 40).join("")}"`);
   // Namespace-scoped for the same reason as the overlay clear below: an
   // unscoped clear also wiped other plugins' conceals on these lines (e.g.
   // fresh-markdown-preview collapsing rendered mermaid blocks).
@@ -1247,7 +1402,15 @@ function processLineConceals(
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
 
-  const cursorOnLine = cursors.some(c => c >= byteStart && c <= byteEnd);
+  // `byteEnd` points just past this line's trailing newline — i.e. it is the
+  // first byte of the *next* line. A cursor there belongs to the next line, so
+  // it must not reveal this line's concealed markers (the bug where a heading's
+  // `##` stays visible while the cursor sits on the blank line just below it).
+  // Exclude that boundary — UNLESS the line has no trailing newline (the last
+  // line of the buffer), where `byteEnd` is the true content end and a cursor
+  // at it is still editing this line.
+  const lineEndForCursor = lineContent.endsWith('\n') ? byteEnd - 1 : byteEnd;
+  const cursorOnLine = cursors.some(c => c >= byteStart && c <= lineEndForCursor);
   // Strict version: excludes the boundary at byteEnd so that the cursor
   // sitting at the start of the *next* line doesn't count as being on
   // *this* line.  Used for table row auto-expose to avoid exposing the
@@ -1454,82 +1617,46 @@ function processLineConceals(
     if (inner.endsWith('|')) inner = inner.slice(0, -1);
     const cells = inner.split('|');
 
-    // Check if any data cell needs multi-line wrapping
+    // Pipe positions in the (untrimmed) source line — shared by the wrapped
+    // first-line path and the single-line path below.
+    const pipePositions: number[] = [];
+    for (let i = 0; i < lineContent.length; i++) {
+      if (lineContent[i] === '|') pipePositions.push(i);
+    }
+
+    // Multi-line cell wrapping. When a column's text is wider than its
+    // allocated width the row spans several visual lines. The FIRST visual
+    // line is rendered in place here — each cell is concealed to its first
+    // wrapped fragment (padded to the column width) and each pipe → │ — while
+    // the continuation lines are emitted as virtual lines below the row by
+    // processTableBorders. Keeping every source row exactly one source line
+    // means alignment and borders are computed from generated text, like a
+    // rendered README table, instead of splitting the source with soft breaks
+    // (which can't align independent columns and corrupted neighbouring lines).
     let handledByWrapping = false;
     if (colWidths && !isSeparator && !cursorStrictlyOnLine) {
-      const numCols = Math.min(cells.length, colWidths.length);
-      const cellWrapped: string[][] = [];
-      let maxVisualLines = 1;
-      for (let ci = 0; ci < numCols; ci++) {
-        // When cursor is on the row, use raw text (emphasis markers revealed).
-        const cellText = cursorStrictlyOnLine ? cells[ci].trim() : concealedText(cells[ci]).trim();
-        const wrapW = Math.max(1, colWidths[ci] - 2); // 1 leading + 1 trailing space margin
-        const wrapped = wrapText(cellText, wrapW);
-        cellWrapped.push(wrapped);
-        maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-      }
-      // Cap to available source bytes (excluding trailing newline)
-      let effLen = lineContent.length;
-      if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
-      if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
-      maxVisualLines = Math.min(maxVisualLines, effLen);
-
-      if (maxVisualLines > 1) {
-        // Build formatted visual line for each wrapped row
-        const visualLines: string[] = [];
-        for (let vl = 0; vl < maxVisualLines; vl++) {
-          let vline = '│';
-          for (let ci = 0; ci < numCols; ci++) {
-            const wrapW = Math.max(1, colWidths[ci] - 2);
-            const wrapped = cellWrapped[ci] || [];
-            const text = vl < wrapped.length ? wrapped[vl] : '';
-            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
-          }
-          visualLines.push(vline);
+      const { cellWrapped, numCols, maxVisualLines } =
+        wrapTableRow(lineContent, colWidths, false);
+      if (maxVisualLines > 1 && pipePositions.length >= numCols + 1) {
+        for (let ci = 0; ci < numCols; ci++) {
+          const wrapW = Math.max(1, colWidths[ci] - 2);
+          const frag = cellWrapped[ci][0] || '';
+          const cellRender =
+            ' ' + frag + ' '.repeat(Math.max(0, wrapW - displayWidth(frag))) + ' ';
+          const cStart = charToByte(lineContent, pipePositions[ci] + 1, byteStart);
+          const cEnd = charToByte(lineContent, pipePositions[ci + 1], byteStart);
+          editor.addConceal(bufferId, "md-syntax", cStart, cEnd, cellRender);
         }
-
-        // Divide source bytes into segments, one per visual line.
-        // Soft breaks at segment boundaries (added by processLineSoftBreaks)
-        // create the visual line breaks; conceals replace each segment.
-        //
-        // IMPORTANT: break positions MUST land on Space characters.
-        // Space tokens have individual source_offset values matching their
-        // byte positions, so soft breaks will reliably trigger. Non-space
-        // characters inside Text tokens share the token's START offset,
-        // so breaks at mid-token positions silently fail.
-        // The consumed space (replaced by Newline) must NOT be covered by
-        // any segment's conceal range, so segment N+1 starts at spacePos+1.
-        // Exclude trailing newline from segment range so the Newline token
-        // at the end of the source line is NOT concealed (preserves the
-        // line break between adjacent source rows).
-        let lineCharLen = lineContent.length;
-        if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\n') lineCharLen--;
-        if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\r') lineCharLen--;
-        const spacePositions: number[] = [];
-        for (let i = 1; i < lineCharLen; i++) {
-          if (lineContent[i] === ' ') spacePositions.push(i);
-        }
-        const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-        // Trim visual lines if we couldn't find enough break positions
-        const actualVisualLines = breakChars.length + 1;
-        // Segments: first starts at 0, subsequent start AFTER the consumed space
-        const segStarts = [0, ...breakChars.map(c => c + 1)];
-        const segEnds = [...breakChars, lineCharLen];
-        for (let vl = 0; vl < actualVisualLines; vl++) {
-          const sByteS = charToByte(lineContent, segStarts[vl], byteStart);
-          const sByteE = charToByte(lineContent, segEnds[vl], byteStart);
-          editor.addConceal(bufferId, "md-syntax", sByteS, sByteE, visualLines[vl] || '');
+        for (let pi = 0; pi < pipePositions.length; pi++) {
+          const pStart = charToByte(lineContent, pipePositions[pi], byteStart);
+          const pEnd = charToByte(lineContent, pipePositions[pi] + 1, byteStart);
+          editor.addConceal(bufferId, "md-syntax", pStart, pEnd, "│");
         }
         handledByWrapping = true;
       }
     }
 
     if (!handledByWrapping) {
-      // Find pipe positions for byte-range computation of truncated cells
-      const pipePositions: number[] = [];
-      for (let i = 0; i < lineContent.length; i++) {
-        if (lineContent[i] === '|') pipePositions.push(i);
-      }
 
       // Precompute which cells will be truncated. Per-character conceals
       // that land inside a truncated cell must be suppressed — the cell-
@@ -1743,50 +1870,9 @@ function processLineSoftBreaks(
     }
   }
 
-  // Table row wrapping: add soft breaks for multi-line cells
-  if (block.type === 'table-row' && lineNumber !== undefined) {
-    const trimmedLine = lineContent.trim();
-    const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
-    if (!isSep) {
-      const bufWidths = getTableWidths(bufferId);
-      const widthInfo = bufWidths ? bufWidths.get(lineNumber) : undefined;
-      const colWidths = widthInfo ? widthInfo.allocated : undefined;
-      if (colWidths) {
-        let innerLine = trimmedLine;
-        if (innerLine.startsWith('|')) innerLine = innerLine.slice(1);
-        if (innerLine.endsWith('|')) innerLine = innerLine.slice(0, -1);
-        const tableCells = innerLine.split('|');
-        let maxVisualLines = 1;
-        const numCols = Math.min(tableCells.length, colWidths.length);
-        const cursorOnTableLine = cursors.some(c => c >= byteStart && c < byteEnd);
-        for (let ci = 0; ci < numCols; ci++) {
-          const cellText = cursorOnTableLine ? tableCells[ci].trim() : concealedText(tableCells[ci]).trim();
-          const wrapW = Math.max(1, colWidths[ci] - 2);
-          const wrapped = wrapText(cellText, wrapW);
-          maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-        }
-        // Exclude trailing newline (same as processLineConceals)
-        let effLineLen = lineContent.length;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\n') effLineLen--;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\r') effLineLen--;
-        maxVisualLines = Math.min(maxVisualLines, effLineLen);
-
-        if (maxVisualLines > 1) {
-          // Must match the break positions from processLineConceals:
-          // pick Space chars (they have individual source_offsets that match).
-          const spacePositions: number[] = [];
-          for (let i = 1; i < effLineLen; i++) {
-            if (lineContent[i] === ' ') spacePositions.push(i);
-          }
-          const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-          for (const charPos of breakChars) {
-            const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
-            editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, 0);
-          }
-        }
-      }
-    }
-  }
+  // Table rows never use soft breaks: a wrapped cell's overflow is rendered as
+  // virtual continuation lines (processTableBorders), not by splitting the
+  // single source line. (table-row is in `noWrap`, so we'd return below anyway.)
 
   if (noWrap) return;
 
@@ -1966,9 +2052,8 @@ function processTableAlignment(
     // large configured width overflows when the editor area shrinks
     // (e.g. when the File Explorer sidebar opens).
     const viewport = editor.getViewport();
-    const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
     const numCols = merged.length;
-    const available = composeW - (numCols + 1); // subtract pipe/box-drawing characters
+    const available = tableAvailableWidth(viewport ? viewport.width : 80, numCols);
     const allocated = distributeColumnWidths(merged, available);
 
     // Check if adjacent cached lines had narrower allocated widths — if so,
@@ -2061,9 +2146,17 @@ editor.on("lines_changed", (data) => {
   // already converged) so this doesn't loop.
   const tableWidthsGrew = processTableAlignment(data.buffer_id, data.lines);
 
+  // Process each line independently. A throw on one line (e.g. an unexpected
+  // character sequence) must NOT abort the loop — otherwise that line AND every
+  // line after it in the batch would be left uncomposed, rendering as raw
+  // markdown from the failure point onward. Isolate per line and keep going.
   for (const line of data.lines) {
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
-    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
+    try {
+      processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
+      processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
+    } catch (e) {
+      editor.debug(`[mc] line ${line.line_number} failed to compose: ${e}`);
+    }
   }
 
   // Add/refresh table border virtual lines (top/bottom + inter-row separators).
@@ -2072,7 +2165,7 @@ editor.on("lines_changed", (data) => {
   // line up with the cell pipes the conceals produce.
   const widthMapForBorders = getTableWidths(data.buffer_id);
   if (widthMapForBorders) {
-    processTableBorders(data.buffer_id, data.lines, widthMapForBorders);
+    processTableBorders(data.buffer_id, data.lines, widthMapForBorders, cursors);
   }
 
   if (tableWidthsGrew) {
@@ -2116,14 +2209,13 @@ editor.on("viewport_changed", (data) => {
   // Recompute allocated table column widths for new viewport width
   const bufWidths = getTableWidths(data.buffer_id);
   if (bufWidths) {
-    const composeW = effectiveComposeWidth(data.width);
     const seen = new Set<string>(); // Track by JSON key to deduplicate shared TableWidthInfo
     for (const [lineNum, info] of bufWidths) {
       const key = info.maxW.join(",");
       if (seen.has(key)) continue;
       seen.add(key);
       const numCols = info.maxW.length;
-      const available = composeW - (numCols + 1);
+      const available = tableAvailableWidth(data.width, numCols);
       info.allocated = distributeColumnWidths(info.maxW, available);
     }
     setTableWidths(data.buffer_id, bufWidths);
