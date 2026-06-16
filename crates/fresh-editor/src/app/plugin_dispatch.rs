@@ -4357,7 +4357,13 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
-        let out = super::widget_runtime::render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
+        let out = super::widget_runtime::render_floating_spec(
+            focus_marker,
+            &spec,
+            &prev,
+            &prev_focus,
+            panel_width,
+        );
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
@@ -4419,7 +4425,13 @@ impl Editor {
             .unwrap_or_default();
         let panel_width = self.floating_panel_inner_width(slot);
         let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
-        let out = super::widget_runtime::render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
+        let out = super::widget_runtime::render_floating_spec(
+            focus_marker,
+            &spec,
+            &prev,
+            &prev_focus,
+            panel_width,
+        );
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;

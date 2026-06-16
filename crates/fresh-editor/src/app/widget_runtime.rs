@@ -263,13 +263,7 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.focus_marker)
                 .unwrap_or(false);
-            let out = render_floating_spec(
-                focus_marker,
-                spec,
-                &prev,
-                &prev_focus,
-                panel_width,
-            );
+            let out = render_floating_spec(focus_marker, spec, &prev, &prev_focus, panel_width);
             (buffer_id, is_floating, panel_width, out)
         };
         let _ = panel_width;
