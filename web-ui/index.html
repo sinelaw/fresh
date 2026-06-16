@@ -106,6 +106,23 @@
   .thumb:hover{background:#7a7a7a}
   .caret{position:absolute;background:#aeafad;width:2px;z-index:40;animation:blink 1.05s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
+  /* ---- workspace-trust dialog (native modal) ---- */
+  .modal-scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:95}
+  .trustdialog{position:absolute;z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;
+    border-radius:8px;box-shadow:0 20px 70px rgba(0,0,0,.6);overflow:auto;display:flex;flex-direction:column;padding:10px 14px;font-size:13px;min-width:420px}
+  .trustdialog .td-title{color:#e5c07b;font-weight:700;margin-bottom:6px}
+  .trustdialog .td-path{color:var(--fg);font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trustdialog .td-triggers{color:var(--muted);font-size:11px;margin:2px 0 8px}
+  .trustdialog .td-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:5px;cursor:default}
+  .trustdialog .td-opt.sel{background:var(--menuhi);color:#fff}
+  .trustdialog .td-opt .td-radio{flex:0 0 auto}
+  .trustdialog .td-opt .td-otext .td-olabel{font-weight:600}
+  .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted);font-size:11px}
+  .trustdialog .td-opt.sel .td-odesc{color:#dfe8ff}
+  .trustdialog .td-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+  .trustdialog .td-btn{padding:3px 14px;border:1px solid #5a5a5a;border-radius:5px;cursor:default;color:var(--fg)}
+  .trustdialog .td-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;font-size:12px;display:flex;flex-direction:column}
@@ -217,6 +234,9 @@ function render(){
 
   // native command palette / picker (semantic; routes back to the real editor)
   if(reg.palette) app.appendChild(paletteEl(reg.palette));
+
+  // native workspace-trust modal
+  if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
 
   // live caret from the pipeline's real cursor cell (if inside a pane)
   if(reg.cursor){
@@ -433,6 +453,37 @@ function popupEl(p){
   return el;
 }
 
+// ---- native workspace-trust dialog --------------------------------------
+// Blocking modal. Options / OK / Quit forward to handle_mouse at the pipeline's
+// recorded cell rects (the existing handle_workspace_trust_mouse resolves them);
+// keyboard already works through handle_key.
+function trustDialogEls(t){
+  const out=[];
+  const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
+  const el=div("trustdialog"); place(el,t.dialog);
+  const title=div("td-title"); title.textContent="⚠  "+t.title; el.appendChild(title);
+  if(t.path){ const p=div("td-path"); p.textContent=t.path; el.appendChild(p); }
+  if(t.triggers){ const g=div("td-triggers"); g.textContent="Detected: "+t.triggers; el.appendChild(g); }
+  for(const o of t.options){
+    const row=div("td-opt"+(o.selected?" sel":""));
+    const rad=document.createElement("span"); rad.className="td-radio"; rad.textContent=o.selected?"◉":"○"; row.appendChild(rad);
+    const tx=document.createElement("div"); tx.className="td-otext";
+    tx.innerHTML='<div class="td-olabel">'+esc(o.label)+'</div><div class="td-odesc">'+esc(o.description)+'</div>';
+    row.appendChild(tx);
+    const c=rectCell(o.rect);
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); };
+    el.appendChild(row);
+  }
+  const btns=div("td-buttons");
+  const mk=(label,rect,primary)=>{ const b=div("td-btn"+(primary?" primary":"")); b.textContent=label; const c=rectCell(rect);
+    b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); }; return b; };
+  btns.appendChild(mk(t.okLabel, t.ok, true));
+  btns.appendChild(mk(t.quitLabel, t.quit, false));
+  el.appendChild(btns);
+  out.push(el);
+  return out;
+}
+
 // ---- native file explorer (sidebar tree) --------------------------------
 // The editor owns the tree (expand/collapse/selection/scroll); we render the
 // visible window natively and forward row clicks / wheel to handle_mouse at the
@@ -505,7 +556,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

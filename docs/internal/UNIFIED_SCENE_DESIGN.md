@@ -117,9 +117,10 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   - [x] **File explorer** sidebar — `file_explorer_view()` (tree rows: name,
     depth, is_dir, expanded + selection/scroll); native tree, click/scroll route
     to the existing file-explorer hit-test. (e2e: explorer suite + drive.)
-  - [ ] **Workspace-trust dialog** — popup-stack `PopupResolver::WorkspaceTrust`
-    rendered as a dedicated modal (`TrustDialogLayout`: title/path/triggers,
-    3 radio options, OK/Quit). Small.
+  - [x] **Workspace-trust dialog** — `trust_dialog_view()` (title/path/triggers,
+    3 radio options + selection, OK/Quit) from `TrustDialogLayout`; native modal
+    with a scrim; options/OK/Quit route to `handle_workspace_trust_mouse` at the
+    cached rects, keyboard via `handle_key`. (e2e: trust suite + drive.)
   - [ ] **Settings UI** — large: `SettingsState`/`SettingsLayout` with 9 control
     kinds (toggle/number/dropdown/text/lists/map/json/…), category tree, search,
     nested entry dialogs. Big port; layout already cached for hit-testing.

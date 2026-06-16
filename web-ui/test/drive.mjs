@@ -109,6 +109,16 @@ check('explorer rendered as native .fx-row', (await page.locator('.fileexplorer 
 check('NO svg/cells inside the explorer', (await page.locator('.fileexplorer svg').count()) === 0);
 await page.screenshot({ path: `${SHOTS}/25-native-explorer.png` });
 
+console.log('\n[workspace-trust dialog = native modal, NOT cells]');
+await page.request.post(URL + '/action', { data: { action: 'workspace_trust_prompt' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.trustDialog, { timeout: 6000 }).catch(() => {});
+check('editor reports the trust dialog', !!(await scene(page)).regions.trustDialog);
+check('trust dialog rendered as native modal (3 options)', (await page.locator('.trustdialog .td-opt').count()) === 3);
+check('NO svg/cells inside the trust dialog', (await page.locator('.trustdialog svg').count()) === 0);
+await page.screenshot({ path: `${SHOTS}/26-native-trust.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+check('Escape closed the trust dialog', !(await scene(page)).regions.trustDialog);
+
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;
 await page.waitForTimeout(1600);   // no input at all

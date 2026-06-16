@@ -745,6 +745,18 @@ impl Editor {
         &self.active_window().root
     }
 
+    /// Marker files/dirs that triggered the workspace-trust prompt (for the
+    /// semantic trust-dialog projection). See view/scene.rs.
+    pub(crate) fn workspace_trust_markers(&self) -> &[String] {
+        &self.workspace_trust_markers
+    }
+
+    /// Whether the workspace-trust prompt is cancellable (palette-invoked) vs a
+    /// mandatory startup gate.
+    pub(crate) fn workspace_trust_cancellable(&self) -> bool {
+        self.workspace_trust_prompt_cancellable
+    }
+
     /// The directory context this editor was constructed against (config_dir,
     /// data_dir, …). Exposed so e2e tests can wire trust stores and other
     /// per-project state to the same locations the editor reads from.

@@ -388,6 +388,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // serializes them. See crates/fresh-editor/src/view/scene.rs.
     let statusbar = serde_json::to_value(editor.status_view(&buf)).unwrap_or(Value::Null);
     let palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
+    let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
 
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
@@ -402,6 +403,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "separators": separators,
         "popups": popups,
         "palette": palette,
+        "trustDialog": trust_dialog,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
         // Pacing hint for the frontend's poll loop: when something is animating /
         // an LSP spinner is live / a timer is pending, poll fast; otherwise idle

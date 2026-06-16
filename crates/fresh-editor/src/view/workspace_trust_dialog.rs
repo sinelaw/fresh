@@ -22,12 +22,12 @@ use rust_i18n::t;
 /// shown beneath it. The mnemonic letter is appended in parentheses (e.g.
 /// "(T)") so the keypress works the same in every locale while the surrounding
 /// text is translatable.
-struct TrustOption {
-    label: String,
-    description: String,
+pub struct TrustOption {
+    pub label: String,
+    pub description: String,
 }
 
-fn options() -> [TrustOption; 3] {
+pub fn options() -> [TrustOption; 3] {
     [
         TrustOption {
             label: t!("trust.dialog.opt_trust_label").into_owned(),

@@ -638,3 +638,69 @@ impl Editor {
         })
     }
 }
+
+// ─────────────────────────── workspace-trust dialog ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrustOptionView {
+    pub label: String,
+    pub description: String,
+    pub selected: bool,
+    pub data: &'static str,
+    pub rect: RectView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustDialogView {
+    pub dialog: RectView,
+    pub title: String,
+    pub path: String,
+    pub triggers: String,
+    pub cancellable: bool,
+    pub options: Vec<TrustOptionView>,
+    pub ok: RectView,
+    pub ok_label: String,
+    pub quit: RectView,
+    pub quit_label: String,
+}
+
+impl Editor {
+    /// Semantic workspace-trust dialog (the blocking "trust this folder?" modal).
+    /// `None` unless it's showing. Geometry comes from the pipeline's
+    /// `TrustDialogLayout`; clicks on the options / OK / Quit route back through
+    /// `handle_mouse` at those rects (the existing `handle_workspace_trust_mouse`).
+    pub fn trust_dialog_view(&self) -> Option<TrustDialogView> {
+        let layout = self.active_chrome().workspace_trust_dialog.clone()?;
+        let selected = self.current_workspace_trust_selection();
+        let data = ["trusted", "restricted", "blocked"];
+        let options = crate::view::workspace_trust_dialog::options()
+            .into_iter()
+            .enumerate()
+            .map(|(i, o)| TrustOptionView {
+                label: o.label,
+                description: o.description,
+                selected: i == selected,
+                data: data.get(i).copied().unwrap_or("restricted"),
+                rect: RectView::from(layout.radios[i]),
+            })
+            .collect();
+        let quit_label = if self.workspace_trust_cancellable() {
+            rust_i18n::t!("trust.dialog.btn_cancel").into_owned()
+        } else {
+            rust_i18n::t!("trust.dialog.btn_quit").into_owned()
+        };
+        Some(TrustDialogView {
+            dialog: RectView::from(layout.dialog),
+            title: rust_i18n::t!("trust.dialog.security_warning").into_owned(),
+            path: self.working_dir().display().to_string(),
+            triggers: self.workspace_trust_markers().join(", "),
+            cancellable: self.workspace_trust_cancellable(),
+            options,
+            ok: RectView::from(layout.ok),
+            ok_label: rust_i18n::t!("trust.dialog.btn_ok").into_owned(),
+            quit: RectView::from(layout.quit),
+            quit_label,
+        })
+    }
+}
