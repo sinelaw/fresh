@@ -428,6 +428,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    CommandDef {
+        name_key: "cmd.cancel_mark",
+        desc_key: "cmd.cancel_mark_desc",
+        action: || Action::CancelMark,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.clear_mark",
+        desc_key: "cmd.clear_mark_desc",
+        action: || Action::ClearMark,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
     // Selection
     CommandDef {
         name_key: "cmd.select_all",

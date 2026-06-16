@@ -128,6 +128,8 @@ pub enum Action {
 
     // Selection
     SetMark,
+    CancelMark,
+    ClearMark,
 
     // Clipboard
     Copy,

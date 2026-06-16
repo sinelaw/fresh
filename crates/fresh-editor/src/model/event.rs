@@ -67,6 +67,11 @@ pub enum Event {
         position: usize,
     },
 
+    /// Cancel the anchor (reset the selection on cursor move)
+    CancelAnchor {
+        cursor_id: CursorId,
+    },
+
     /// Clear the anchor and reset deselect_on_move for a cursor
     /// Used to cancel Emacs mark mode
     ClearAnchor {

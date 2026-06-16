@@ -425,6 +425,8 @@ pub enum Action {
 
     // Selection
     SetMark,
+    CancelMark,
+    ClearMark,
 
     // Clipboard
     Copy,
@@ -960,6 +962,8 @@ impl Action {
             "duplicate_line" => DuplicateLine,
             "recenter" => Recenter,
             "set_mark" => SetMark,
+            "cancel_mark" => CancelMark,
+            "clear_mark" => ClearMark,
 
             "copy" => Copy,
             "cut" => Cut,
@@ -2393,6 +2397,8 @@ impl KeybindingResolver {
             Action::DuplicateLine => t!("action.duplicate_line"),
             Action::Recenter => t!("action.recenter"),
             Action::SetMark => t!("action.set_mark"),
+            Action::CancelMark => t!("action.cancel_mark"),
+            Action::ClearMark => t!("action.clear_mark"),
             Action::Copy => t!("action.copy"),
             Action::CopyWithTheme(theme) if theme.is_empty() => t!("action.copy_with_formatting"),
             Action::CopyWithTheme(theme) => t!("action.copy_with_theme", theme = theme),

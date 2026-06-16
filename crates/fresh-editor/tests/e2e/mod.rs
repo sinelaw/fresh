@@ -124,6 +124,7 @@ pub mod lsp_toggle_desync;
 pub mod lsp_unified_code_actions;
 pub mod lsp_unresponsive_capability_does_not_block;
 pub mod macros;
+pub mod mark_mode_actions;
 pub mod markdown_compose;
 pub mod markdown_compose_diagnostics;
 pub mod markdown_compose_scroll_reach;

@@ -20,7 +20,7 @@ fn test_command_palette_trigger() {
     // Check that suggestions are visible (commands sorted alphabetically, so Add Cursor commands appear first)
     harness.assert_screen_contains("Add Cursor Above");
     harness.assert_screen_contains("Add Cursor Below");
-    harness.assert_screen_contains("Close Buffer");
+    harness.assert_screen_contains("Clear Mark");
 }
 
 /// Test command palette autocomplete filtering

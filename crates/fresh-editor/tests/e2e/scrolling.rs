@@ -838,7 +838,7 @@ fn test_viewport_31_rows() {
 
     // Suggestions popup should be visible with commands (alphabetically sorted, starting with A/C)
     harness.assert_screen_contains("Add Cursor");
-    harness.assert_screen_contains("Close");
+    harness.assert_screen_contains("Clear");
 
     // Note: With our viewport sync architecture, the viewport height may change
     // when overlays like command palette are shown, as they can affect the

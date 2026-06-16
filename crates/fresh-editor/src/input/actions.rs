@@ -2543,6 +2543,21 @@ pub fn action_to_events(
             }
         }
 
+        Action::CancelMark => {
+            // Cancel the selection anchor at the current cursor position
+            // This removes the ability to extend a selection on move
+            for (cursor_id, _) in cursors.iter() {
+                events.push(Event::CancelAnchor { cursor_id });
+            }
+        }
+
+        Action::ClearMark => {
+            // Clear the anchor and remove any existing selection
+            for (cursor_id, _) in cursors.iter() {
+                events.push(Event::ClearAnchor { cursor_id });
+            }
+        }
+
         Action::RemoveSecondaryCursors => {
             // Generate RemoveCursor events for all cursors except the first (original) one
             // Also clear anchor and reset deselect_on_move on all cursors (cancels Emacs mark mode)
