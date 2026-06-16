@@ -1183,9 +1183,19 @@ pub enum SettingControlView {
         items: Vec<String>,
         focused: Option<usize>,
     },
+    // Variant-level camelCase: the enum's `rename_all` renames variants but
+    // not struct-variant *fields*, so the multi-word fields below need this to
+    // match the camelCase JSON contract the frontend consumes.
+    #[serde(rename_all = "camelCase")]
     DualList {
         included: Vec<String>,
         available: Vec<String>,
+        /// Cursor row in each column and which column is active, so the web
+        /// can mirror the TUI's selection highlight. Row indices line up with
+        /// `included` / `available` (same order the dispatch hits use).
+        included_cursor: usize,
+        available_cursor: usize,
+        active_column: &'static str, // "included" | "available"
     },
     Map {
         entries: Vec<MapEntryView>,
@@ -1299,13 +1309,21 @@ fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> Set
             focused: s.focused_item,
         },
         C::DualList(s) => SettingControlView::DualList {
-            included: s.included.clone(),
-            available: s
-                .all_options
+            // Use the control's own item enumerations so the row indices the
+            // web sends back (ControlDualListIncluded/Available(idx,row)) match
+            // exactly what `add_selected`/`remove_selected` index into.
+            included: s
+                .included_items()
                 .iter()
-                .filter(|(v, _)| !s.included.contains(v))
-                .map(|(_, n)| n.clone())
+                .map(|(_, n)| n.to_string())
                 .collect(),
+            available: s.available_items().iter().map(|(_, n)| n.clone()).collect(),
+            included_cursor: s.included_cursor,
+            available_cursor: s.available_cursor,
+            active_column: match s.active_column {
+                crate::view::controls::DualListColumn::Included => "included",
+                crate::view::controls::DualListColumn::Available => "available",
+            },
         },
         C::Map(s) => SettingControlView::Map {
             entries: s

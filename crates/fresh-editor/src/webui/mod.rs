@@ -271,7 +271,21 @@ fn handle_conn(
             let bb = v.get("b").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
             let dbl = v.get("double").and_then(|x| x.as_bool()).unwrap_or(false);
             use crate::view::settings::SettingsHit as H;
-            let hit = match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+            let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            // Entry (add/edit) sub-dialog interactions take a separate semantic
+            // path — the dialog is its own stacked state, not a main-panel item.
+            if kind == "entryItem" {
+                editor.entry_dialog_select_item(a);
+                let s = tick_scene(editor, *cols, *rows).to_string();
+                return respond(stream, "200 OK", "application/json", s.as_bytes());
+            }
+            if kind == "entryButton" {
+                let btn = v.get("button").and_then(|x| x.as_str()).unwrap_or("cancel");
+                editor.entry_dialog_activate_button(btn);
+                let s = tick_scene(editor, *cols, *rows).to_string();
+                return respond(stream, "200 OK", "application/json", s.as_bytes());
+            }
+            let hit = match kind {
                 "category" => Some(H::Category(a)),
                 "categoryDisclosure" => Some(H::CategoryDisclosure(a)),
                 "categorySection" => Some(H::CategorySection(a, bb)),
@@ -285,6 +299,12 @@ fn handle_conn(
                 "controlMapRow" => Some(H::ControlMapRow(a, bb)),
                 "controlMapAddNew" => Some(H::ControlMapAddNew(a)),
                 "controlTextListRow" => Some(H::ControlTextListRow(a, bb)),
+                "controlDualListAvailable" => Some(H::ControlDualListAvailable(a, bb)),
+                "controlDualListIncluded" => Some(H::ControlDualListIncluded(a, bb)),
+                "controlDualListAdd" => Some(H::ControlDualListAdd(a)),
+                "controlDualListRemove" => Some(H::ControlDualListRemove(a)),
+                "controlDualListMoveUp" => Some(H::ControlDualListMoveUp(a)),
+                "controlDualListMoveDown" => Some(H::ControlDualListMoveDown(a)),
                 "controlInherit" => Some(H::ControlInherit(a)),
                 "searchResult" => Some(H::SearchResult(a)),
                 "save" => Some(H::SaveButton),

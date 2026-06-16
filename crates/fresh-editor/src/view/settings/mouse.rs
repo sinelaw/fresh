@@ -509,6 +509,45 @@ impl Editor {
         }
     }
 
+    /// Select an entry-dialog item by index and begin editing it — the
+    /// semantic equivalent of a TUI click on that row inside the add/edit
+    /// dialog (`handle_entry_dialog_item_click`, non-TextList path). Used by
+    /// the web `/settings` route so the entry dialog is clickable instead of
+    /// keyboard-only.
+    pub(crate) fn entry_dialog_select_item(&mut self, idx: usize) {
+        if let Some(state) = self.settings_state.as_mut() {
+            if let Some(dialog) = state.entry_dialog_mut() {
+                if idx >= dialog.items.len() || dialog.items[idx].read_only {
+                    return;
+                }
+                dialog.focus_on_buttons = false;
+                dialog.selected_item = idx;
+                dialog.update_focus_states();
+                if !dialog.editing_text {
+                    dialog.start_editing();
+                }
+            }
+        }
+    }
+
+    /// Activate an entry-dialog button by semantic name ("save" | "cancel" |
+    /// "delete"). Routing by name rather than index keeps the web and TUI in
+    /// agreement even though they lay the buttons out in a different order.
+    pub(crate) fn entry_dialog_activate_button(&mut self, kind: &str) {
+        let Some(state) = self.settings_state.as_mut() else {
+            return;
+        };
+        let has_delete = state
+            .entry_dialog()
+            .map(|d| !d.is_new && !d.no_delete)
+            .unwrap_or(false);
+        match kind {
+            "save" => state.save_entry_dialog(),
+            "delete" if has_delete => state.request_entry_delete_confirm(),
+            _ => state.close_entry_dialog(),
+        }
+    }
+
     /// Whether the given screen coords sit inside the categories panel —
     /// used to route mouse-wheel events to the correct scroll target.
     fn over_categories_panel(&self, col: u16, row: u16) -> bool {

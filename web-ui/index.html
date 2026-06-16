@@ -195,6 +195,17 @@
   .settings-modal .set-list-sub{color:var(--muted);margin-left:auto;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
   .settings-modal .set-list-add{padding:2px 10px;color:var(--accent);cursor:default;border-top:1px solid rgba(255,255,255,.06)}
+  .settings-modal .set-dual{display:flex;align-items:stretch;gap:6px;margin:4px 0 2px 8px}
+  .settings-modal .set-dual-col{flex:1;border:1px solid var(--border);border-radius:6px;overflow:hidden;min-width:0}
+  .settings-modal .set-dual-col.active{border-color:var(--accent)}
+  .settings-modal .set-dual-coltitle{padding:2px 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(255,255,255,.06)}
+  .settings-modal .set-dual-list{max-height:160px;overflow:auto}
+  .settings-modal .set-dual-row{padding:2px 8px;font-family:ui-monospace,monospace;cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .settings-modal .set-dual-row:hover{background:rgba(255,255,255,.05)}
+  .settings-modal .set-dual-row.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-dual-mid{display:flex;flex-direction:column;justify-content:center;gap:4px}
+  .settings-modal .set-dual-btn{padding:1px 7px;border:1px solid #6a6a6a;border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;text-align:center}
+  .settings-modal .set-dual-btn:hover{border-color:var(--accent)}
   .settings-modal .set-search{padding:4px 14px;color:var(--accent)}
   .settings-modal .set-sresult{padding:2px 14px} .settings-modal .set-sresult.sel{background:var(--menuhi);color:#fff}
   .settings-modal .set-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg3)}
@@ -730,13 +741,17 @@ function settingControlEl(c, idx, live){
 }
 // Full-width list block for composite controls (rows + an Add affordance).
 function settingListEl(c, idx, live){
-  const el=div("set-list"); let rows=[]; const k=c.kind;
+  const k=c.kind;
+  // DualList has its own two-column layout (Available | Included) plus the
+  // add/remove/move buttons; render it natively and route each click to the
+  // matching SettingsHit (same dispatch the TUI uses).
+  if(k==="dualList") return dualListEl(c, idx, live);
+  const el=div("set-list"); let rows=[];
   // rowHit: (rowIndex) -> SettingsHit for clicking that row; addHit for "＋ Add".
   let rowHit=null, addHit=null;
   if(k==="textList"){ rows=c.items.map(t=>({label:t})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
   else if(k==="map"){ rows=c.entries.map(e=>({label:e.key, sub:e.display})); rowHit=i=>["controlMapRow",idx,i]; addHit=["controlMapAddNew",idx]; }
   else if(k==="objectArray"){ rows=c.entries.map(t=>({label:t})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
-  else if(k==="dualList"){ rows=c.included.map(t=>({label:t, badge:"✓"})); }
   if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
   rows.forEach((r,i)=>{ const row=div("set-list-row");
     if(r.badge){ const b=document.createElement("span"); b.className="set-list-badge"; b.textContent=r.badge; row.appendChild(b); }
@@ -744,21 +759,55 @@ function settingListEl(c, idx, live){
     if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
     if(live&&rowHit){ const h=rowHit(i); row.onmousedown=setHit(h[0],h[1],h[2]); }
     el.appendChild(row); });
-  if(k!=="dualList"){ const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
+  const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add);
   return el;
 }
-function settingItemRows(items, container, live){
+// Two-column dual list (Available ⇄ Included) with native add/remove/move
+// buttons. `idx` is the settings item index; row indices line up with the
+// scene's `available`/`included` arrays (which mirror the control's own
+// enumerations), so the dispatch hits select the right entry.
+function dualListEl(c, idx, live){
+  const el=div("set-dual");
+  const col=(title, items, activeWhen, cursor, hitKind)=>{
+    const cl=div("set-dual-col"+(c.activeColumn===activeWhen?" active":""));
+    const h=div("set-dual-coltitle"); h.textContent=title; cl.appendChild(h);
+    const list=div("set-dual-list");
+    if(!items.length){ const e=div("set-list-empty"); e.textContent="—"; list.appendChild(e); }
+    items.forEach((t,i)=>{ const r=div("set-dual-row"+(c.activeColumn===activeWhen&&i===cursor?" sel":""));
+      r.textContent=t; if(live) r.onmousedown=setHit(hitKind,idx,i); list.appendChild(r); });
+    cl.appendChild(list); return cl;
+  };
+  el.appendChild(col("Available", c.available, "available", c.availableCursor, "controlDualListAvailable"));
+  // middle: add/remove + reorder buttons
+  const mid=div("set-dual-mid");
+  const mkb=(t,hit,title)=>{ const b=div("set-dual-btn"); b.textContent=t; b.title=title; if(live) b.onmousedown=setHit(hit,idx); return b; };
+  mid.appendChild(mkb("→","controlDualListAdd","Add to included"));
+  mid.appendChild(mkb("←","controlDualListRemove","Remove from included"));
+  mid.appendChild(mkb("↑","controlDualListMoveUp","Move up"));
+  mid.appendChild(mkb("↓","controlDualListMoveDown","Move down"));
+  el.appendChild(mid);
+  el.appendChild(col("Included", c.included, "included", c.includedCursor, "controlDualListIncluded"));
+  return el;
+}
+// `entry` flag: rows belong to the add/edit sub-dialog, whose interaction is
+// "select the item then keyboard-edit it". A row click routes to the entry
+// dialog's own dispatch (kind "entryItem") and inner controls are display-only
+// (live=false), matching the TUI's entry-dialog click behavior.
+function settingItemRows(items, container, live, entry){
   for(const it of items){
     if(it.sectionStart && it.section){ const h=div("set-section"); h.textContent=it.section; container.appendChild(h); }
     const isList=SET_LIST_KINDS.has(it.control.kind);
     const row=div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":"")+(isList?" set-item-block":""));
     const head=div("set-item-head");
     const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); head.appendChild(nm);
-    if(live) nm.onmousedown=setHit("item",it.index);   // click the row label = select item
-    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live)); head.appendChild(ctl); }
+    const selectHit = entry
+      ? (it.readOnly ? null : e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryItem", a:it.index}); })
+      : (live ? setHit("item",it.index) : null);  // click the row label = select item
+    if(selectHit){ nm.onmousedown=selectHit; }
+    if(!isList){ const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control,it.index,live&&!entry)); head.appendChild(ctl); if(entry&&selectHit) ctl.onmousedown=selectHit; }
     row.appendChild(head);
     if(it.description){ const d=div("set-desc"); d.textContent=it.description; row.appendChild(d); }
-    if(isList) row.appendChild(settingListEl(it.control,it.index,live));
+    if(isList) row.appendChild(settingListEl(it.control,it.index,live&&!entry));
     container.appendChild(row);
   }
 }
@@ -788,12 +837,18 @@ function settingsEls(s){
     const sel=i===s.footerSelected&&s.focus==="footer";
     const bb=div("btn"+(b==="Save"?" primary":"")+(sel?" sel":"")); bb.textContent=b; bb.onmousedown=setHit(fkinds[i]||"cancel"); ft.appendChild(bb);
   }); el.appendChild(ft);
-  // entry dialog (Map/ObjectArray add/edit) — keyboard-driven (live=false)
+  // entry dialog (Map/ObjectArray add/edit): rows are clickable (select+edit),
+  // controls keyboard-driven, buttons routed by name to the entry dispatch.
   if(s.entryDialog){ const d=s.entryDialog; const dlg=div("set-overlay set-entry");
     const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
-    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, false); dlg.appendChild(di);
-    const db=div("set-dlg-btns"); const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
-    btns.forEach((b,i)=>{const f=d.focusOnButtons&&i===d.focusedButton; const bb=div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")); bb.textContent=b; db.appendChild(bb);}); dlg.appendChild(db);
+    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di, true, true); dlg.appendChild(di);
+    const db=div("set-dlg-btns");
+    // Button focus index follows the TUI order [Save, Cancel, Delete]; the
+    // visual order here puts Delete in the middle but each routes by name.
+    const tuiIdx={Save:0,Cancel:1,Delete:2};
+    const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
+    btns.forEach(b=>{const f=d.focusOnButtons&&tuiIdx[b]===d.focusedButton; const bb=div("btn"+(b==="Save"?" primary":b==="Delete"?" danger":"")+(f?" sel":"")); bb.textContent=b;
+      bb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind:"entryButton", button:b.toLowerCase()}); }; db.appendChild(bb);}); dlg.appendChild(db);
     el.appendChild(dlg); }
   if(s.showingHelp){ const h=div("set-overlay"); h.innerHTML="<b>Settings help</b><br>↑↓ navigate · Tab switch panel · Space/Enter activate · Ctrl+S save · Esc close"; el.appendChild(h); }
   out.push(el);
