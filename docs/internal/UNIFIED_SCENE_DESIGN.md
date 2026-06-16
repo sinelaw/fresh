@@ -154,7 +154,15 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     live-grep toolbar 7/7, dock 8/8 (button + toggle flip through the real
     plugin), drive 41/41; TUI dock/widget e2e (orchestrator_dock 40,
     dock_panel_routing 2, widget_panel_ownership 1) unchanged.
-  - [ ] **Settings UI** — independent of widgets (overlap check: they share only
+  - [x] **Settings UI** — full native projection `settings_view()`: category
+    tree (expand + sections), the item list for the selected category with every
+    `SettingControl` kind (toggle/number/dropdown/text/textList/dualList/map/
+    objectArray/json/complex), search, footer (layer/reset/save/cancel), and the
+    add/edit **entry sub-dialog** (Map/ObjectArray — its nested fields incl.
+    text/json/objectArray/textList). Native modal, keyboard-driven via
+    `handle_key`; cells gated on `!suppress_chrome_cells`. Verified incl. the
+    entry dialog (settings suite 10/10, drive 50/50, TUI settings 74/74).
+  - (legacy note) Settings is independent of widgets (overlap check: they share only
     `view/controls/*`; Settings has 5 bespoke controls — DualList/Map/TextList/
     Json/Complex — plus nullable/layer/category-tree/search/entry-dialogs that
     widgets lack, so it can't ride on widgets). `Editor::settings_view()` from

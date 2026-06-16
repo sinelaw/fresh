@@ -166,6 +166,21 @@ check('Add-binding dialog renders natively (fields)', (await page.locator('.kbed
 await page.screenshot({ path: `${SHOTS}/29-native-keybindings.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+console.log('\n[Settings = full native modal incl. entry dialog]');
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+check('Settings is a native modal (categories+items)', (await page.locator('.settings-modal .set-cat').count()) >= 5 && (await page.locator('.settings-modal .set-item').count()) >= 3);
+check('NO svg/cells in the settings modal', (await page.locator('.settings-modal svg').count()) === 0);
+await page.keyboard.press('Tab'); await page.waitForTimeout(120);
+for (let i = 0; i < 4; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80); }
+await page.keyboard.press('Enter');
+await page.waitForFunction(() => { const s = window.fresh.scene.regions.settings; return s && s.entryDialog; }, { timeout: 5000 }).catch(() => {});
+check('Settings entry (add/edit) dialog renders natively', (await page.locator('.settings-modal .set-entry .set-item').count()) >= 3);
+await page.screenshot({ path: `${SHOTS}/30-native-settings.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(120); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;
 await page.waitForTimeout(1600);   // no input at all

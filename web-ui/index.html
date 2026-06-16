@@ -150,6 +150,31 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  /* native Settings (full modal) */
+  .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(960px,90vw);height:min(640px,86vh);
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+  .settings-modal .set-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
+  .settings-modal .set-body{flex:1;display:flex;overflow:hidden}
+  .settings-modal .set-cats{width:210px;flex:0 0 auto;overflow:auto;border-right:1px solid var(--border);padding:4px 0}
+  .settings-modal .set-cats.focus,.settings-modal .set-items.focus{box-shadow:inset 0 0 0 1px var(--accent)}
+  .settings-modal .set-cat{padding:2px 10px;white-space:nowrap;cursor:default} .settings-modal .set-cat.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-cat-sec{padding:1px 10px;color:var(--muted);font-size:11px}
+  .settings-modal .set-items{flex:1;overflow:auto;padding:4px 0}
+  .settings-modal .set-section{padding:6px 14px 2px;color:var(--accent);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+  .settings-modal .set-item{display:flex;align-items:flex-start;gap:12px;padding:3px 14px} .settings-modal .set-item.sel{background:var(--menuhi)}
+  .settings-modal .set-item.ro{opacity:.6}
+  .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);font-size:11px;white-space:normal}
+  .settings-modal .set-ctl-wrap{flex:0 0 auto;max-width:46%;text-align:right}
+  .settings-modal .set-ctl{font-family:ui-monospace,monospace} .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
+  .settings-modal .set-dd{position:absolute;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
+  .settings-modal .set-dd-row{padding:1px 10px} .settings-modal .set-dd-row.sel{background:var(--accent);color:#fff}
+  .settings-modal .set-search{padding:4px 14px;color:var(--accent)}
+  .settings-modal .set-sresult{padding:2px 14px} .settings-modal .set-sresult.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-footer{display:flex;gap:10px;justify-content:flex-end;padding:5px 12px;border-top:1px solid var(--border)}
+  .settings-modal .set-fbtn{padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px} .settings-modal .set-fbtn.sel{background:var(--accent);border-color:var(--accent);color:#fff}
+  .settings-modal .set-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:460px;max-height:70%;overflow:auto;z-index:2}
+  .settings-modal .set-entry-title{font-weight:600;margin-bottom:8px}
+  .settings-modal .set-dlg-btns{display:flex;gap:12px;justify-content:flex-end;margin-top:10px}
   /* native keybinding editor (full modal) */
   .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
     background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
@@ -325,6 +350,9 @@ function render(){
 
   // native keybinding editor (full modal)
   if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) app.appendChild(el);
+
+  // native Settings (full modal)
+  if(reg.settings) for(const el of settingsEls(reg.settings)) app.appendChild(el);
 
   // native workspace-trust modal
   if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
@@ -622,6 +650,63 @@ function widgetEl(spec, ctx){
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
+// Native Settings — a control's value rendered semantically (read from the
+// shared model; keyboard drives edits via handle_key).
+function settingControlEl(c){
+  const k=c.kind, el=document.createElement("span"); el.className="set-ctl set-"+k;
+  if(k==="toggle"){ el.textContent=c.checked?"☑":"☐"; }
+  else if(k==="number"){ el.textContent="[ − "+c.value+" + ]"; }
+  else if(k==="dropdown"){ el.textContent=(c.options[c.selected]||"")+" ▾"; if(c.open){ const d=div("set-dd"); c.options.forEach((o,i)=>{const r=div("set-dd-row"+(i===c.selected?" sel":""));r.textContent=o;d.appendChild(r);}); el.appendChild(d);} }
+  else if(k==="text"){ el.textContent=c.value||c.placeholder||""; if(c.editing) el.textContent+="▌"; el.classList.add("set-text-v"); }
+  else if(k==="textList"){ el.textContent=c.items.length?c.items.join(", "):"(empty)"; }
+  else if(k==="dualList"){ el.textContent=c.included.length?c.included.join(", "):"(none)"; }
+  else if(k==="map"){ el.textContent=c.entries.length?c.entries.map(e=>e.key).join(", "):"(empty) +"; }
+  else if(k==="objectArray"){ el.textContent="("+c.entries.length+" items) +"; }
+  else if(k==="json"){ el.textContent=(c.value||"").slice(0,60); el.classList.add("set-text-v"); }
+  else if(k==="complex"){ el.textContent="<"+c.typeName+">"; el.classList.add("set-dim"); }
+  return el;
+}
+function settingItemRows(items, container){
+  for(const it of items){
+    if(it.sectionStart && it.section){ const h=div("set-section"); h.textContent=it.section; container.appendChild(h); }
+    const row=div("set-item"+(it.selected?" sel":"")+(it.readOnly?" ro":""));
+    const nm=div("set-name"); nm.textContent=it.name+(it.modified?" •":""); row.appendChild(nm);
+    if(it.description){ const d=div("set-desc"); d.textContent=it.description; nm.appendChild(d); }
+    const ctl=div("set-ctl-wrap"); ctl.appendChild(settingControlEl(it.control)); row.appendChild(ctl);
+    container.appendChild(row);
+  }
+}
+function settingsEls(s){
+  const out=[]; const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
+  const el=div("region settings-modal");
+  const title=div("set-title"); title.textContent=s.title+"  —  layer: "+s.targetLayer; el.appendChild(title);
+  const body=div("set-body");
+  // left: category tree
+  const cats=div("set-cats"+(s.focus==="categories"?" focus":""));
+  for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":"")); r.textContent=(c.expandable?(c.expanded?"▼ ":"▶ "):"  ")+c.name; cats.appendChild(r);
+    if(c.expanded){ for(const sec of c.sections){ const sr=div("set-cat-sec"); sr.textContent="   "+sec; cats.appendChild(sr); } } }
+  body.appendChild(cats);
+  // right: items, or search results
+  const right=div("set-items"+(s.focus==="settings"?" focus":""));
+  if(s.searchActive){ const sb=div("set-search"); sb.textContent="Search: "+s.searchQuery+"▌"; right.appendChild(sb);
+    s.searchResults.forEach((r,i)=>{const rr=div("set-sresult"+(i===s.searchSelected?" sel":""));rr.textContent=r.name+"   — "+r.category;right.appendChild(rr);}); }
+  else { settingItemRows(s.items, right); }
+  body.appendChild(right);
+  el.appendChild(body);
+  // footer
+  const ft=div("set-footer"); s.footerButtons.forEach((b,i)=>{const bb=div("set-fbtn"+(i===s.footerSelected&&s.focus==="footer"?" sel":""));bb.textContent="[ "+b+" ]";ft.appendChild(bb);}); el.appendChild(ft);
+  // entry dialog (Map/ObjectArray add/edit)
+  if(s.entryDialog){ const d=s.entryDialog; const dlg=div("set-overlay set-entry");
+    const dt=div("set-entry-title"); dt.textContent=d.title; dlg.appendChild(dt);
+    const di=div("set-entry-items"); settingItemRows(d.items.map((it,i)=>({...it,selected:i===d.selectedItem&&!d.focusOnButtons})), di); dlg.appendChild(di);
+    const db=div("set-dlg-btns"); const btns=d.noDelete?["Save","Cancel"]:["Save","Delete","Cancel"];
+    btns.forEach((b,i)=>{const bb=div("kb-btn"+(d.focusOnButtons&&i===d.focusedButton?" focus":""));bb.textContent="[ "+b+" ]";db.appendChild(bb);}); dlg.appendChild(db);
+    el.appendChild(dlg); }
+  if(s.showingHelp){ const h=div("set-overlay"); h.innerHTML="<b>Settings help</b><br>↑↓ navigate · Tab switch panel · Space/Enter activate · Ctrl+S save · Esc close"; el.appendChild(h); }
+  out.push(el);
+  return out;
+}
+
 // Native keybinding editor — full modal (header/search/filters, table, footer,
 // help, add/edit dialog, confirm). Keyboard-driven: keystrokes are forwarded
 // globally to handle_key, which the editor's own dispatch handles. The scrim
@@ -854,7 +939,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

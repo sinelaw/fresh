@@ -1441,11 +1441,15 @@ impl Editor {
 
         // Render settings modal (before menu bar so menus can overlay)
         // Check visibility first to avoid borrow conflict with dimming
-        let settings_visible = self
-            .settings_state
-            .as_ref()
-            .map(|s| s.visible)
-            .unwrap_or(false);
+        // The web renders Settings natively from `settings_view`; paint cells
+        // only for the TUI.
+        let draw_settings = !self.suppress_chrome_cells;
+        let settings_visible = draw_settings
+            && self
+                .settings_state
+                .as_ref()
+                .map(|s| s.visible)
+                .unwrap_or(false);
         if settings_visible {
             // Dim the editor content behind the settings modal. Use the
             // chrome area (right of a left dock) so the modal sits beside
@@ -1453,7 +1457,10 @@ impl Editor {
             crate::view::dimming::apply_dimming(frame, chrome_area);
         }
         if let Some(ref mut settings_state) = self.settings_state {
-            if settings_state.visible {
+            if !draw_settings {
+                // keyboard-driven native render; skip cells (and the focus-state
+                // update tied to the cell layout pass).
+            } else if settings_state.visible {
                 settings_state.update_focus_states();
                 let settings_layout = crate::view::settings::render_settings(
                     frame,

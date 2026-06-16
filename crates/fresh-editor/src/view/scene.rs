@@ -1155,3 +1155,298 @@ impl Editor {
         })
     }
 }
+
+// ─────────────────────────── settings UI (full native modal) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SettingControlView {
+    Toggle {
+        checked: bool,
+    },
+    Number {
+        value: i64,
+        min: Option<i64>,
+        max: Option<i64>,
+    },
+    Dropdown {
+        selected: usize,
+        options: Vec<String>,
+        open: bool,
+    },
+    Text {
+        value: String,
+        editing: bool,
+        placeholder: String,
+    },
+    TextList {
+        items: Vec<String>,
+        focused: Option<usize>,
+    },
+    DualList {
+        included: Vec<String>,
+        available: Vec<String>,
+    },
+    Map {
+        entries: Vec<MapEntryView>,
+    },
+    ObjectArray {
+        entries: Vec<String>,
+    },
+    Json {
+        value: String,
+    },
+    Complex {
+        type_name: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MapEntryView {
+    pub key: String,
+    pub display: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingItemView {
+    pub index: usize,
+    pub path: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub section: Option<String>,
+    pub section_start: bool,
+    pub modified: bool,
+    pub read_only: bool,
+    pub nullable: bool,
+    pub is_null: bool,
+    pub selected: bool,
+    pub control: SettingControlView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsCategoryView {
+    pub index: usize,
+    pub name: String,
+    pub selected: bool,
+    pub expandable: bool,
+    pub expanded: bool,
+    pub sections: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsSearchResultView {
+    pub name: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryDialogView {
+    pub title: String,
+    pub is_new: bool,
+    pub items: Vec<SettingItemView>,
+    pub selected_item: usize,
+    pub focus_on_buttons: bool,
+    pub focused_button: usize,
+    pub no_delete: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    pub title: String,
+    pub focus: &'static str, // "categories" | "settings" | "footer"
+    pub target_layer: String,
+    pub categories: Vec<SettingsCategoryView>,
+    pub items: Vec<SettingItemView>,
+    pub footer_buttons: Vec<String>,
+    pub footer_selected: usize,
+    pub search_active: bool,
+    pub search_query: String,
+    pub search_results: Vec<SettingsSearchResultView>,
+    pub search_selected: usize,
+    pub entry_dialog: Option<EntryDialogView>,
+    pub showing_help: bool,
+    pub showing_confirm: bool,
+    pub showing_reset: bool,
+}
+
+fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> SettingControlView {
+    use crate::view::settings::items::SettingControl as C;
+    match c {
+        C::Toggle(s) => SettingControlView::Toggle { checked: s.checked },
+        C::Number(s) => SettingControlView::Number {
+            value: s.value,
+            min: s.min,
+            max: s.max,
+        },
+        C::Dropdown(s) => SettingControlView::Dropdown {
+            selected: s.selected,
+            options: s.options.clone(),
+            open: s.open,
+        },
+        C::Text(s) => SettingControlView::Text {
+            value: s.value.clone(),
+            editing: s.editing,
+            placeholder: s.placeholder.clone(),
+        },
+        C::TextList(s) => SettingControlView::TextList {
+            items: s.items.clone(),
+            focused: s.focused_item,
+        },
+        C::DualList(s) => SettingControlView::DualList {
+            included: s.included.clone(),
+            available: s
+                .all_options
+                .iter()
+                .filter(|(v, _)| !s.included.contains(v))
+                .map(|(_, n)| n.clone())
+                .collect(),
+        },
+        C::Map(s) => SettingControlView::Map {
+            entries: s
+                .entries
+                .iter()
+                .map(|(k, v)| MapEntryView {
+                    key: k.clone(),
+                    display: v
+                        .as_str()
+                        .map(|x| x.to_string())
+                        .unwrap_or_else(|| v.to_string()),
+                })
+                .collect(),
+        },
+        C::ObjectArray(s) => SettingControlView::ObjectArray {
+            entries: s
+                .bindings
+                .iter()
+                .map(|v| {
+                    s.display_field
+                        .as_ref()
+                        .and_then(|f| v.pointer(f))
+                        .and_then(|x| x.as_str())
+                        .map(|x| x.to_string())
+                        .unwrap_or_else(|| v.to_string())
+                })
+                .collect(),
+        },
+        C::Json(s) => SettingControlView::Json { value: s.value() },
+        C::Complex { type_name } => SettingControlView::Complex {
+            type_name: type_name.clone(),
+        },
+    }
+}
+
+fn setting_item_view(
+    item: &crate::view::settings::items::SettingItem,
+    i: usize,
+    selected: bool,
+) -> SettingItemView {
+    SettingItemView {
+        index: i,
+        path: item.path.clone(),
+        name: item.name.clone(),
+        description: item.description.clone(),
+        section: item.section.clone(),
+        section_start: item.is_section_start,
+        modified: item.modified,
+        read_only: item.read_only,
+        nullable: item.nullable,
+        is_null: item.is_null,
+        selected,
+        control: setting_control_view(&item.control),
+    }
+}
+
+impl Editor {
+    /// Full semantic model of the Settings modal: the category tree, the item
+    /// list for the selected category (every control kind), search, the footer,
+    /// and the add/edit entry sub-dialog (Map/ObjectArray). Keyboard-driven via
+    /// `handle_key`; rendered natively. `None` unless settings is showing.
+    pub fn settings_view(&self) -> Option<SettingsView> {
+        use crate::view::settings::state::FocusPanel;
+        let st = self.settings_state.as_ref()?;
+        if !st.visible {
+            return None;
+        }
+
+        let categories = st
+            .pages
+            .iter()
+            .enumerate()
+            .map(|(i, p)| SettingsCategoryView {
+                index: i,
+                name: p.name.clone(),
+                selected: i == st.selected_category,
+                expandable: !p.subpages.is_empty() || p.sections.len() > 1,
+                expanded: st.expanded_categories.contains(&i),
+                sections: p.sections.iter().map(|s| s.name.clone()).collect(),
+            })
+            .collect();
+
+        let items = st
+            .pages
+            .get(st.selected_category)
+            .map(|p| {
+                p.items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, it)| setting_item_view(it, i, i == st.selected_item))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let entry_dialog = st.entry_dialog_stack.last().map(|d| EntryDialogView {
+            title: d.title.clone(),
+            is_new: d.is_new,
+            items: d
+                .items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| setting_item_view(it, i, i == d.selected_item))
+                .collect(),
+            selected_item: d.selected_item,
+            focus_on_buttons: d.focus_on_buttons,
+            focused_button: d.focused_button,
+            no_delete: d.no_delete,
+        });
+
+        Some(SettingsView {
+            title: "Settings".to_string(),
+            focus: match st.focus.current() {
+                Some(FocusPanel::Settings) => "settings",
+                Some(FocusPanel::Footer) => "footer",
+                _ => "categories",
+            },
+            target_layer: format!("{:?}", st.target_layer),
+            categories,
+            items,
+            footer_buttons: vec![
+                format!("{:?}", st.target_layer),
+                "Reset".into(),
+                "Save".into(),
+                "Cancel".into(),
+            ],
+            footer_selected: st.footer_button_index,
+            search_active: st.search_active,
+            search_query: st.search_query.clone(),
+            search_results: st
+                .search_results
+                .iter()
+                .map(|r| SettingsSearchResultView {
+                    name: r.item.name.clone(),
+                    category: r.breadcrumb.clone(),
+                })
+                .collect(),
+            search_selected: st.selected_search_result,
+            entry_dialog,
+            showing_help: st.showing_help,
+            showing_confirm: st.showing_confirm_dialog,
+            showing_reset: st.showing_reset_dialog,
+        })
+    }
+}
