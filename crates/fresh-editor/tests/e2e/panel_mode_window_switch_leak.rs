@@ -69,6 +69,7 @@ fn panel_mode_does_not_leak_onto_window_switched_away_from() {
             width_pct: 50,
             height_pct: 50,
             as_dock: false,
+            focus_marker: false,
         })
         .unwrap();
     harness

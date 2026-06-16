@@ -4113,9 +4113,13 @@ function rebuildFormFocusCycle(): void {
     formFocusIndex = 0;
     return;
   }
-  // Tab cycle starts with the "Run in:" type tabs, then the active backend's
-  // fields, then the shared Session Name / Agent Command, then the buttons.
-  const cycle: string[] = SESSION_BACKENDS.map((b) => b.key);
+  // Tab cycle (mirrors the host's tabbable, which now skips non-active
+  // radio options): the *active* "Run in:" tab, then the active
+  // backend's fields, then the shared Session Name / Agent Command,
+  // then the buttons. ←/→ moves within the radio groups, never Tab —
+  // so each group is a single Tab stop.
+  const activeBackend = SESSION_BACKENDS.find((b) => b.id === form.backend);
+  const cycle: string[] = activeBackend ? [activeBackend.key] : [];
   if (form.backend === "local") {
     const worktreeEnabled = form.projectPathIsGit !== false;
     const branchInert = !(worktreeEnabled && form.createWorktree);
@@ -4134,12 +4138,13 @@ function rebuildFormFocusCycle(): void {
     }
     cycle.push("name", "cmd");
   }
-  // Make the agent presets keyboard-reachable: drop them just before the
-  // Agent Command field so Tab lands on the dropdown before the free-text
-  // input (mirrors how the "Run in:" tabs precede their fields).
+  // Make the agent presets keyboard-reachable: the *active* preset is a
+  // single Tab stop just before the Agent Command field (←/→ chooses
+  // within the group), mirroring how the "Run in:" tab precedes its
+  // fields.
   const cmdIdx = cycle.indexOf("cmd");
   if (cmdIdx >= 0) {
-    cycle.splice(cmdIdx, 0, ...agentPresets().map((p) => p.key));
+    cycle.splice(cmdIdx, 0, activeAgentPresetKey());
   }
   cycle.push("cancel", "create");
   formFocusCycle = cycle;
@@ -4822,7 +4827,14 @@ function backendTabsRow(): WidgetSpec {
   ];
   for (const b of SESSION_BACKENDS) {
     parts.push(spacer(1));
-    parts.push(button(b.label, { key: b.key, intent: b.id === sel ? "primary" : undefined }));
+    // Only the active tab is a Tab stop; ←/→ moves within the group.
+    // So Tab advances one stop per group, not one per option (and the
+    // `▸` focus marker only ever lands on the active tab).
+    parts.push(button(b.label, {
+      key: b.key,
+      intent: b.id === sel ? "primary" : undefined,
+      focusable: b.id === sel,
+    }));
   }
   parts.push(flexSpacer());
   parts.push({
@@ -4850,7 +4862,13 @@ function agentPresetRow(): WidgetSpec {
   for (const p of agentPresets()) {
     parts.push(spacer(1));
     const label = p.resumes && showsResume ? `${p.label} ↻` : p.label;
-    parts.push(button(label, { key: p.key, intent: p.key === activeKey ? "primary" : undefined }));
+    // Only the active preset is a Tab stop; ←/→ chooses within the
+    // group (matches the "Run in:" tabs).
+    parts.push(button(label, {
+      key: p.key,
+      intent: p.key === activeKey ? "primary" : undefined,
+      focusable: p.key === activeKey,
+    }));
   }
   parts.push(flexSpacer());
   const hint = showsResume ? "←/→ choose · ↻ resumes on restart" : "←/→ choose";
@@ -4872,7 +4890,13 @@ function localBodyFields(): WidgetSpec[] {
       child: text({
         value: form.projectPath.value,
         cursorByte: form.projectPath.cursor,
-        placeholder: form.defaultProjectPath || "detecting project root…",
+        // Label the placeholder explicitly as the default-if-blank so
+        // it can't be mistaken for a real prefilled value (it's also
+        // rendered dim-italic, but that's invisible in a plain
+        // capture). Submitting with the field empty uses this path.
+        placeholder: form.defaultProjectPath
+          ? `default (leave blank to use): ${form.defaultProjectPath}`
+          : "detecting project root…",
         fullWidth: true,
         key: "project_path",
       }),
@@ -4957,7 +4981,9 @@ function devcontainerBodyFields(): WidgetSpec[] {
       child: text({
         value: form.projectPath.value,
         cursorByte: form.projectPath.cursor,
-        placeholder: form.defaultProjectPath || "path containing .devcontainer/…",
+        placeholder: form.defaultProjectPath
+          ? `default (leave blank to use): ${form.defaultProjectPath}`
+          : "path containing .devcontainer/…",
         fullWidth: true,
         key: "project_path",
       }),
@@ -5292,12 +5318,14 @@ function buildFormSpec(): WidgetSpec {
     row(
       flexSpacer(),
       hintBar([
-        { keys: "Tab", label: "next / accept" },
+        { keys: "Tab", label: "next field" },
         { keys: "S-Tab", label: "prev" },
+        { keys: "←→", label: "change option" },
         { keys: "↑↓", label: "suggest / history" },
         { keys: "Space", label: "toggle" },
         { keys: "Enter", label: "advance / act" },
-        { keys: "Esc", label: "cancel" },
+        { keys: "^Enter", label: "create" },
+        { keys: "Esc", label: "close / cancel" },
       ]),
       flexSpacer(),
     ),
@@ -5379,7 +5407,14 @@ function openForm(options?: { fromPicker?: boolean }): void {
   // 50% cap was a fixed canvas in disguise — on a 24-row terminal
   // it left the dialog 12 rows tall, clipping the Branch input,
   // the Cancel / Create Session buttons, and the hint bar.
-  formPanel.mount(buildFormSpec(), { widthPct: 60, heightPct: 90 });
+  formPanel.mount(buildFormSpec(), {
+    widthPct: 60,
+    heightPct: 90,
+    // Reserve the `▸ ` focus-marker gutter: focus is then legible from
+    // a plain terminal capture (driveable by automation) and the
+    // layout stays constant as Tab moves focus between controls.
+    focusMarker: true,
+  });
   // The New-Session form is a global orchestrator feature too: center it
   // over the full screen (covering its own dimmed dock) rather than in the
   // chrome area beside the dock. A no-op when no dock is up.
@@ -6275,6 +6310,9 @@ const FORM_MODE_BINDINGS: [string, string][] = [
   ["Tab", "orchestrator_form_key_tab"],
   ["S-Tab", "orchestrator_form_key_shift_tab"],
   ["Enter", "orchestrator_form_key_enter"],
+  // Ctrl+Enter submits from anywhere in the form, regardless of which
+  // field is focused or whether a completion popup is open.
+  ["C-Enter", "orchestrator_form_submit"],
   ["Escape", "orchestrator_form_key_escape"],
   ["Backspace", "orchestrator_form_key_backspace"],
   ["Delete", "orchestrator_form_key_delete"],
@@ -6303,14 +6341,19 @@ function dispatchFormKey(name: string): void {
 // host emits — `completion_accept` and `completion_dismiss`,
 // handled in the `widget_event` dispatch below.
 registerHandler("orchestrator_form_key_tab", () => {
-  if (completionVisibleForFocused()) {
-    // Host fires completion_accept; plugin's widget_event
-    // handler applies the value. No focus advance.
-    dispatchFormKey("Tab");
-    return;
-  }
+  // Tab always advances to the next field — it never accepts a
+  // completion. When a popup is open the host closes it and advances
+  // (firing `completion_dismiss`, which clears our mirror). The
+  // optimistic mirror advance here is re-synced from the host's
+  // authoritative `focus` event either way.
   advanceFormFocus(1);
   dispatchFormKey("Tab");
+});
+// Ctrl+Enter: submit from anywhere, no matter which field is focused
+// or whether a completion popup is open.
+registerHandler("orchestrator_form_submit", () => {
+  if (!form) return;
+  void submitForm();
 });
 registerHandler("orchestrator_form_key_enter", () => {
   // When the popup is open, the host's smart-key fires

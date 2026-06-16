@@ -182,12 +182,13 @@ fn completion_popup_renders_with_dim_separator() {
     );
 }
 
-/// Tab accepts the highlighted completion: the Project Path field
-/// must contain the first suggestion (`<workspace>/alpha_dir/`)
-/// after Tab is pressed with the dropdown open. Pins the
-/// already-working behaviour as a regression guard.
+/// Tab does NOT accept the highlighted completion — it moves focus to
+/// the next field (closing the popup) and leaves the typed text
+/// intact. (Accepting a completion is `↓`-then-Enter, or a click.)
+/// Before the focus-model fix, Tab fired the completion's accept, so
+/// the number of Tabs to reach a button was unpredictable.
 #[test]
-fn tab_accepts_highlighted_completion() {
+fn tab_advances_focus_without_accepting_completion() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
     harness.tick_and_render().unwrap();
@@ -196,14 +197,60 @@ fn tab_accepts_highlighted_completion() {
     open_new_session_form(&mut harness);
     let typed = type_alpha_prefix_and_wait(&mut harness, &workspace);
 
-    // Precondition: typed text intact before Tab.
-    assert_eq!(project_path_field_value(&harness.screen_to_string()), typed,);
-
-    // First item (`alpha_dir/`, sorted before `alpha_two/`) is
-    // highlighted by default — setCompletionItems resets
-    // selectedIndex to 0.
-    let expected = format!("{}/alpha_dir/", workspace.display());
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Popup closes (Tab moved focus); the typed text is untouched —
+    // Tab never accepts `alpha_dir/`.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("alpha_two/"))
+        .unwrap();
+    assert_eq!(
+        project_path_field_value(&harness.screen_to_string()),
+        typed,
+        "Tab must leave the typed text intact (it advances focus, it does not accept). \
+         Screen:\n{}",
+        harness.screen_to_string(),
+    );
+    // Focus left the Project Path field: exactly one `▸` marker is on
+    // screen, and it's no longer on the path line.
+    let screen = harness.screen_to_string();
+    assert_eq!(
+        screen.matches('▸').count(),
+        1,
+        "exactly one control is focused at a time. Screen:\n{}",
+        screen,
+    );
+    let path_line = screen
+        .lines()
+        .find(|l| l.contains(&typed))
+        .expect("project path line present");
+    assert!(
+        !path_line.contains('▸'),
+        "Tab moved focus off Project Path, so its `▸` marker is gone. Line: {:?}",
+        path_line,
+    );
+}
+
+/// `↓` steps into the open dropdown (highlighting a row) and then
+/// Enter accepts the highlighted candidate into the field. This is the
+/// *only* keyboard accept path now that Tab and a bare Enter act on
+/// the form instead.
+#[test]
+fn down_then_enter_accepts_completion() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_alpha_prefix_and_wait(&mut harness, &workspace);
+
+    // Step into the dropdown, then accept.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let expected = format!("{}/alpha_dir/", workspace.display());
     harness
         .wait_until(|h| project_path_field_value(&h.screen_to_string()) == expected)
         .unwrap();
@@ -744,4 +791,215 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
         "an ignored paste must not leak into the buffer behind the dialog. Screen:\n{}",
         harness.screen_to_string(),
     );
+}
+
+// ===========================================================================
+// Focus model: visible `▸` marker, linear Tab, ←/→ within selectors,
+// scoped Esc, and the Ctrl+Enter submit shortcut.
+// ===========================================================================
+
+/// The single screen line carrying the `▸` focus marker (the focused
+/// control). Panics if zero or more than one marker is present — the
+/// invariant the focus model guarantees is "exactly one control
+/// focused at a time".
+fn focused_line(screen: &str) -> String {
+    let lines: Vec<&str> = screen.lines().filter(|l| l.contains('▸')).collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "exactly one `▸` focus marker must be on screen, found {}. Screen:\n{}",
+        lines.len(),
+        screen,
+    );
+    lines[0].to_string()
+}
+
+/// Open the form on a non-git workspace (so the worktree toggle and
+/// Branch field are absent — a predictable, minimal field set).
+fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+    open_new_session_form(&mut harness);
+    harness
+}
+
+/// Tab moves linearly between *fields* — one stop per radio group, not
+/// one per option. Walking a full cycle lands the marker on the active
+/// "Run in:" tab exactly once and the active "Agent:" preset exactly
+/// once (never on an inactive option), and reaches `[ Create Session ]`.
+#[test]
+fn tab_is_linear_one_stop_per_radio_group() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    let mut run_in_stops = 0;
+    let mut agent_stops = 0;
+    let mut saw_create = false;
+    let mut saw_inactive_option = false;
+
+    // A generous cap on the cycle length; the form has well under 12
+    // tab stops on a non-git workspace.
+    for _ in 0..12 {
+        let line = focused_line(&harness.screen_to_string());
+        if line.contains("Run in:") {
+            run_in_stops += 1;
+            // The marker must precede the *active* backend (Local), not
+            // an inactive option.
+            if line.contains("▸ [ SSH ]")
+                || line.contains("▸ [ Kubernetes ]")
+                || line.contains("▸ [ Devcontainer ]")
+            {
+                saw_inactive_option = true;
+            }
+        }
+        if line.contains("Agent:") {
+            agent_stops += 1;
+            if line.contains("▸ [ claude")
+                || line.contains("▸ [ aider")
+                || line.contains("▸ [ custom")
+            {
+                saw_inactive_option = true;
+            }
+        }
+        if line.contains("Create Session") {
+            saw_create = true;
+        }
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+    }
+
+    assert!(
+        !saw_inactive_option,
+        "Tab must never land on an inactive radio option (←/→ changes the option). \
+         Screen:\n{}",
+        harness.screen_to_string(),
+    );
+    assert_eq!(
+        run_in_stops, 1,
+        "the 'Run in:' group is a single Tab stop per cycle (got {run_in_stops})",
+    );
+    assert_eq!(
+        agent_stops, 1,
+        "the 'Agent:' group is a single Tab stop per cycle (got {agent_stops})",
+    );
+    assert!(saw_create, "Tab must reach the [ Create Session ] button");
+}
+
+/// ←/→ changes the option *within* the "Run in:" selector (and swaps
+/// the body), while Tab leaves the option alone. This is the split the
+/// help line documents: Tab between fields, ←/→ within a group.
+#[test]
+fn arrows_switch_run_in_selector_option() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Shift+Tab from the initial Project Path focus wraps to the active
+    // "Run in:" tab (the first stop in the cycle).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("Run in:"),
+        "Shift+Tab should land focus on the Run in selector. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // → moves to the next option (SSH) and the body swaps to SSH fields.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Host  ("))
+        .unwrap();
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("▸ [ SSH ]"),
+        "→ should move the focus marker onto the SSH option. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // ← moves back to Local and restores the local body (Project Path).
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Project Path"))
+        .unwrap();
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("▸ [ Local ]"),
+        "← should move the focus marker back onto the Local option. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// Esc is scoped: the first Esc closes an open completion dropdown
+/// (the form stays open with its input intact), and a second Esc
+/// cancels the dialog.
+#[test]
+fn esc_closes_dropdown_first_then_cancels_dialog() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+    let typed = type_alpha_prefix_and_wait(&mut harness, &workspace);
+
+    // First Esc: dropdown closes, form stays open, input preserved.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("alpha_two/"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("ORCHESTRATOR :: New Session"),
+        "first Esc must NOT cancel the dialog. Screen:\n{}",
+        screen,
+    );
+    assert_eq!(
+        project_path_field_value(&screen),
+        typed,
+        "first Esc must preserve the typed input. Screen:\n{}",
+        screen,
+    );
+
+    // Second Esc: dialog cancels.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .unwrap();
+}
+
+/// Ctrl+Enter submits the form from anywhere — here from a text field,
+/// where a bare Enter would only advance focus. The form leaves its
+/// editable state (the "Run in:" selector row disappears as the dialog
+/// switches to the connecting/creating view or closes outright).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn ctrl_enter_submits_from_a_text_field() {
+    use portable_pty::{native_pty_system, PtySize};
+    let pty_ok = native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok();
+    if !pty_ok {
+        eprintln!("Skipping ctrl_enter_submits test: PTY not available");
+        return;
+    }
+
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Focus is on the Project Path text field. A bare Enter here would
+    // advance focus (and keep the editable "Run in:" row). Ctrl+Enter
+    // must instead submit — the editable selector row goes away.
+    assert!(
+        harness.screen_to_string().contains("←/→ switch type"),
+        "precondition: the editable Run-in selector is showing",
+    );
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("←/→ switch type"))
+        .unwrap();
 }

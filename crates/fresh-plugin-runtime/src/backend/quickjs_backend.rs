@@ -5646,6 +5646,7 @@ impl JsEditorApi {
         width_pct: f64,
         height_pct: f64,
         as_dock: rquickjs::function::Opt<bool>,
+        focus_marker: rquickjs::function::Opt<bool>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -5666,6 +5667,7 @@ impl JsEditorApi {
                 width_pct,
                 height_pct,
                 as_dock: as_dock.0.unwrap_or(false),
+                focus_marker: focus_marker.0.unwrap_or(false),
             })
             .is_ok())
     }

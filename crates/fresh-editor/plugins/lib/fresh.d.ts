@@ -1044,6 +1044,16 @@ type WidgetSpec = {
 	* row doesn't reshuffle when the disabled flag flips.
 	*/
 	disabled: boolean;
+	/**
+	* When false, the button is dropped from the Tab cycle (but
+	* still renders and stays clickable). Used for radio-style
+	* groups — a row of buttons where only the *active* option
+	* should be a Tab stop and ←/→ moves the selection within
+	* the group, so Tab advances one stop per group rather than
+	* one stop per option. Defaults to true (ordinary buttons
+	* are tabbable).
+	*/
+	focusable: boolean;
 } | {
 	"kind": "spacer";
 	cols: number;
@@ -3075,7 +3085,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean): boolean;
 	/**
 	* Replace the spec of the currently-mounted floating widget panel.
 	*/

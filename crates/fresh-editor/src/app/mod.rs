@@ -1188,6 +1188,13 @@ pub(crate) struct FloatingWidgetState {
     /// dock, while other plugins' floating panels keep the default
     /// coexist-beside-the-dock layout. Ignored for `LeftDock`.
     pub fullscreen: bool,
+    /// When true, this panel renders through `render_spec_with_marker`:
+    /// every focusable control reserves a two-column gutter for the
+    /// `▸ ` focus marker so focus is legible from a plain capture and
+    /// the layout stays constant as focus moves. Opt-in at mount
+    /// (`MountFloatingWidget.focus_marker`); the Orchestrator New
+    /// Session form uses it.
+    pub focus_marker: bool,
 }
 
 /// A list scrollbar's screen rect + scroll state, captured at draw
@@ -1706,6 +1713,7 @@ mod tests {
             scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
             fullscreen: false,
+            focus_marker: false,
         }
     }
 

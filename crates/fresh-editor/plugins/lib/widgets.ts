@@ -164,6 +164,11 @@ export function button(
     intent?: ButtonKind;
     key?: string;
     disabled?: boolean;
+    /** When false, the button renders and stays clickable but is
+     * dropped from the Tab cycle. Use for radio-style groups so Tab
+     * advances one stop per group (the active option) and ←/→ moves
+     * the selection within the group. Defaults to true. */
+    focusable?: boolean;
   },
 ): WidgetSpec {
   return {
@@ -173,6 +178,7 @@ export function button(
     intent: options?.intent ?? "normal",
     key: options?.key,
     disabled: options?.disabled ?? false,
+    focusable: options?.focusable ?? true,
   };
 }
 
@@ -783,7 +789,16 @@ export class FloatingWidgetPanel {
    * existing panel. */
   mount(
     spec: WidgetSpec,
-    options: { widthPct?: number; heightPct?: number; asDock?: boolean } = {},
+    options: {
+      widthPct?: number;
+      heightPct?: number;
+      asDock?: boolean;
+      /** When true, the host reserves a two-column gutter on every
+       * focusable control for the `▸ ` focus marker, so the focused
+       * control is legible from a plain terminal capture and the
+       * layout stays constant as focus moves. Default false. */
+      focusMarker?: boolean;
+    } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
     const editor = (globalThis as any).editor;
@@ -796,6 +811,7 @@ export class FloatingWidgetPanel {
       wp,
       hp,
       options.asDock ?? false,
+      options.focusMarker ?? false,
     );
   }
 

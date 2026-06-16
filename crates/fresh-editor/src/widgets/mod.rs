@@ -27,6 +27,6 @@ pub use registry::{
     HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };
 pub use render::{
-    render_spec, render_spec_no_autofocus, EmbedRect, FocusCursor, OverlayRow, RenderOutput,
-    ScrollRegion,
+    render_spec, render_spec_no_autofocus, render_spec_with_marker, EmbedRect, FocusCursor,
+    OverlayRow, RenderOutput, ScrollRegion,
 };

@@ -113,6 +113,7 @@ fn born_attached_session_does_not_wedge_source_window_typing() {
             width_pct: 60,
             height_pct: 90,
             as_dock: false,
+            focus_marker: false,
         })
         .unwrap();
     harness

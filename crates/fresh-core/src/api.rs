@@ -1503,6 +1503,15 @@ pub enum WidgetSpec {
         /// row doesn't reshuffle when the disabled flag flips.
         #[serde(default)]
         disabled: bool,
+        /// When false, the button is dropped from the Tab cycle (but
+        /// still renders and stays clickable). Used for radio-style
+        /// groups — a row of buttons where only the *active* option
+        /// should be a Tab stop and ←/→ moves the selection within
+        /// the group, so Tab advances one stop per group rather than
+        /// one stop per option. Defaults to true (ordinary buttons
+        /// are tabbable).
+        #[serde(default = "default_true")]
+        focusable: bool,
     },
     /// Horizontal whitespace eater. In a `Row`, produces `cols`
     /// spaces (or fills remaining width if `flex: true`); in a
@@ -3870,6 +3879,13 @@ pub enum PluginCommand {
         /// (persists alongside a centered modal) rather than as a
         /// centered overlay.
         as_dock: bool,
+        /// When true, the panel reserves a two-column leading gutter on
+        /// every focusable control for the `▸ ` focus marker, so the
+        /// focused control is legible from a plain terminal capture and
+        /// the layout never shifts as focus moves. Opt-in (default
+        /// false) so existing panels render unchanged.
+        #[serde(default)]
+        focus_marker: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget

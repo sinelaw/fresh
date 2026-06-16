@@ -24,6 +24,25 @@ use crate::view::split::SplitViewState;
 use super::window::Window;
 use super::{Editor, FloatingWidgetState};
 
+/// Render a floating panel's spec, choosing the marker-gutter
+/// renderer when the panel opted into the `▸ ` focus marker (the
+/// Orchestrator New Session form) and the plain renderer otherwise.
+/// Centralised so the mount / update / rerender paths can't drift on
+/// which renderer a given panel uses.
+pub(super) fn render_floating_spec(
+    focus_marker: bool,
+    spec: &fresh_core::api::WidgetSpec,
+    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
+    prev_focus_key: &str,
+    panel_width: u32,
+) -> crate::widgets::RenderOutput {
+    if focus_marker {
+        crate::widgets::render_spec_with_marker(spec, prev, prev_focus_key, panel_width)
+    } else {
+        crate::widgets::render_spec(spec, prev, prev_focus_key, panel_width)
+    }
+}
+
 /// Normalize a session path for the plugin API. Sessions reach `WindowInfo`
 /// from two sources — the canonicalized launch session and `create_window_at`'s
 /// raw `PathBuf` — so any byte-level path field (lex sort, equality, …) in a
@@ -1442,9 +1461,17 @@ impl Editor {
                 width_pct,
                 height_pct,
                 as_dock,
+                focus_marker,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
-                self.handle_mount_floating_widget(key, spec, width_pct, height_pct, as_dock);
+                self.handle_mount_floating_widget(
+                    key,
+                    spec,
+                    width_pct,
+                    height_pct,
+                    as_dock,
+                    focus_marker,
+                );
             }
 
             PluginCommand::UpdateFloatingWidget {
@@ -4049,7 +4076,7 @@ impl Editor {
                     // (if open) doesn't disappear on a value
                     // mutation that happens to land while the
                     // user is mid-keystroke.
-                    let (scroll, multiline, completions, sel_idx, scroll_off) =
+                    let (scroll, multiline, completions, sel_idx, scroll_off, navigated) =
                         match panel.instance_states.get(&widget_key) {
                             Some(crate::widgets::WidgetInstanceState::Text {
                                 editor,
@@ -4057,14 +4084,16 @@ impl Editor {
                                 completions,
                                 completion_selected_index,
                                 completion_scroll_offset,
+                                completion_navigated,
                             }) => (
                                 *scroll,
                                 editor.multiline,
                                 completions.clone(),
                                 *completion_selected_index,
                                 *completion_scroll_offset,
+                                *completion_navigated,
                             ),
-                            _ => (0u32, true, Vec::new(), 0usize, 0u32),
+                            _ => (0u32, true, Vec::new(), 0usize, 0u32, false),
                         };
                     let mut editor = if multiline {
                         crate::primitives::text_edit::TextEdit::with_text(&value)
@@ -4084,6 +4113,7 @@ impl Editor {
                             completions,
                             completion_selected_index: sel_idx,
                             completion_scroll_offset: scroll_off,
+                            completion_navigated: navigated,
                         },
                     );
                 }
@@ -4152,12 +4182,18 @@ impl Editor {
                         completions,
                         completion_selected_index,
                         completion_scroll_offset,
+                        completion_navigated,
                         ..
                     }) = panel.instance_states.get_mut(&widget_key)
                     {
                         *completions = items;
                         *completion_selected_index = 0;
                         *completion_scroll_offset = 0;
+                        // A (re)opened popup is not yet "entered": Tab /
+                        // Enter act on the form until the user steps in
+                        // with ↑/↓. (Closing — empty `items` — also
+                        // resets it, harmlessly.)
+                        *completion_navigated = false;
                     }
                 }
             }
@@ -4282,6 +4318,7 @@ impl Editor {
         width_pct: u8,
         height_pct: u8,
         as_dock: bool,
+        focus_marker: bool,
     ) {
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
@@ -4334,11 +4371,12 @@ impl Editor {
             scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
             fullscreen: false,
+            focus_marker,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
-        let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
+        let out = render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
@@ -4399,7 +4437,8 @@ impl Editor {
             .map(|s| s.to_string())
             .unwrap_or_default();
         let panel_width = self.floating_panel_inner_width(slot);
-        let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
+        let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
+        let out = render_floating_spec(focus_marker, &spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;

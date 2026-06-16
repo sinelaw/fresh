@@ -54,6 +54,37 @@ const KEY_TOGGLE_ON_FG: &str = "ui.help_key_fg";
 // so the cue reads consistently across selection UIs.
 const KEY_FOCUSED_FG: &str = "ui.popup_selection_fg";
 const KEY_FOCUSED_BG: &str = "ui.popup_selection_bg";
+// Leading marker prepended to the *focused* control (button /
+// toggle / text input) so "which control is focused" is legible
+// from a plain terminal capture — not just from the (theme-
+// dependent, capture-invisible) `popup_selection` background or
+// the hardware cursor. One glyph + a trailing space = two display
+// columns. Only ever applied to the single focused widget, so at
+// most one `▸` is on screen at a time; combined with the
+// `popup_selection` fg/bg flip it makes focus unmistakable, and
+// distinct from a `Primary` button's standing bold accent (which
+// carries no marker). See `render_button` / `render_toggle` /
+// `render_widget_text`.
+const FOCUS_MARKER: &str = "▸ ";
+// The unfocused counterpart to `FOCUS_MARKER`: two spaces, the same
+// two display columns the marker occupies, so reserving the gutter
+// keeps control widths identical whether or not they're focused.
+const FOCUS_GUTTER_BLANK: &str = "  ";
+
+/// The two-column gutter prefix a focusable control leads with when
+/// the current render reserves the focus-marker gutter
+/// ([`MARKER_GUTTER`]): `▸ ` for the focused control, two spaces for
+/// every other control. Returns `""` when the panel didn't opt into
+/// the gutter, so non-marker panels render byte-for-byte as before.
+fn focus_gutter_prefix(focused: bool) -> &'static str {
+    if !marker_gutter_enabled() {
+        ""
+    } else if focused {
+        FOCUS_MARKER
+    } else {
+        FOCUS_GUTTER_BLANK
+    }
+}
 // `ui.status_error_indicator_fg` defaults to white (designed as
 // the text-on-red status badge), so using it as a standalone fg
 // renders invisible against the panel bg. The diagnostic.error_fg
@@ -230,6 +261,61 @@ pub fn render_spec(
     prev_focus_key: &str,
     panel_width: u32,
 ) -> RenderOutput {
+    let _guard = MarkerGutterGuard::set(false);
+    render_spec_inner(spec, prev, prev_focus_key, panel_width, true)
+}
+
+// Whether the *current* render reserves a leading two-column gutter
+// on every focusable control for the `▸ ` focus marker. Opt-in per
+// panel (see `render_spec_with_marker`): when on, the focused
+// control leads with `▸ ` and every other focusable control leads
+// with two spaces, so focus is legible from a plain capture AND the
+// layout never shifts as focus moves (the gutter is always present,
+// only its glyph changes). When off — the default for every existing
+// panel — controls render exactly as before (no gutter, no marker),
+// so other dialogs are byte-for-byte unchanged. A thread-local keeps
+// the flag out of the ~dozen recursive `collect_*` signatures; it's
+// read only by the three leaf renderers (`render_button`,
+// `render_toggle`, `render_widget_text`). Rendering is synchronous
+// and non-re-entrant, so a thread-local with a restore guard is
+// sufficient.
+thread_local! {
+    static MARKER_GUTTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn marker_gutter_enabled() -> bool {
+    MARKER_GUTTER.with(|c| c.get())
+}
+
+/// RAII guard that sets the marker-gutter thread-local for the
+/// duration of one render and restores the previous value on drop —
+/// so a direct `render_button` call after a marker render doesn't
+/// observe a stale `true`.
+struct MarkerGutterGuard(bool);
+impl MarkerGutterGuard {
+    fn set(enabled: bool) -> Self {
+        let prev = MARKER_GUTTER.with(|c| c.replace(enabled));
+        MarkerGutterGuard(prev)
+    }
+}
+impl Drop for MarkerGutterGuard {
+    fn drop(&mut self) {
+        MARKER_GUTTER.with(|c| c.set(self.0));
+    }
+}
+
+/// Like [`render_spec`], but reserves the `▸ ` focus-marker gutter on
+/// every focusable control (see [`MARKER_GUTTER`]). Panels that want
+/// capture-legible, layout-stable focus (the Orchestrator New Session
+/// form) render through this entry point; everything else uses
+/// [`render_spec`] and is unaffected.
+pub fn render_spec_with_marker(
+    spec: &WidgetSpec,
+    prev: &HashMap<String, WidgetInstanceState>,
+    prev_focus_key: &str,
+    panel_width: u32,
+) -> RenderOutput {
+    let _guard = MarkerGutterGuard::set(true);
     render_spec_inner(spec, prev, prev_focus_key, panel_width, true)
 }
 
@@ -244,6 +330,7 @@ pub fn render_spec_no_autofocus(
     focus_key: &str,
     panel_width: u32,
 ) -> RenderOutput {
+    let _guard = MarkerGutterGuard::set(false);
     render_spec_inner(spec, prev, focus_key, panel_width, false)
 }
 
@@ -396,8 +483,9 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         WidgetSpec::Button {
             key: Some(k),
             disabled,
+            focusable,
             ..
-        } if !k.is_empty() && !*disabled => {
+        } if !k.is_empty() && !*disabled && *focusable => {
             out.push(k.clone());
         }
         WidgetSpec::Toggle { key: Some(k), .. }
@@ -459,6 +547,7 @@ fn render_collected(
             intent,
             key,
             disabled,
+            ..
         } => collect_button(
             label,
             *focused,
@@ -1612,6 +1701,7 @@ fn render_widget_text(
     let mut prev_completions: Vec<fresh_core::api::CompletionItem> = Vec::new();
     let mut prev_completion_idx: usize = 0;
     let mut prev_completion_scroll: u32 = 0;
+    let mut prev_completion_navigated = false;
     match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
         Some(WidgetInstanceState::Text {
             editor,
@@ -1619,12 +1709,14 @@ fn render_widget_text(
             completions,
             completion_selected_index,
             completion_scroll_offset,
+            completion_navigated,
         }) => {
             effective_editor = editor.clone();
             prev_scroll = *scroll;
             prev_completions = completions.clone();
             prev_completion_idx = *completion_selected_index;
             prev_completion_scroll = *completion_scroll_offset;
+            prev_completion_navigated = *completion_navigated;
         }
         _ => {
             effective_editor = if multiline {
@@ -1675,9 +1767,17 @@ fn render_widget_text(
         } else {
             label.chars().count() as u32 + 1
         };
+        // Reserve the two columns the focus-marker gutter occupies
+        // (when the panel opted in), so the bracketed region shrinks
+        // by the gutter width instead of overflowing the enclosing
+        // section's right border. Reserved unconditionally — focused
+        // and unfocused alike — so the closing bracket sits at the
+        // same column regardless of focus and the box never reflows.
+        let marker_reserve = if marker_gutter_enabled() { 2 } else { 0 };
         panel_width
             .saturating_sub(label_overhead)
             .saturating_sub(3)
+            .saturating_sub(marker_reserve)
             .max(1)
     } else {
         field_width
@@ -1743,13 +1843,35 @@ fn render_widget_text(
             full_width,
         );
         new_scroll = 0;
-        if let Some(byte_in_row) = rendered.cursor_byte_in_entry {
+        let mut entry = rendered.entry;
+        // Lead the single-line input with the focus-marker gutter
+        // (`▸ ` when focused, two spaces otherwise) so focus is
+        // legible from a plain capture — the hardware cursor lands
+        // inside the field too, but a cursor doesn't show up in
+        // `tmux capture-pane`. Shift the cursor offset and every
+        // inline overlay right by the gutter's byte length so the
+        // bracket bg / placeholder / selection spans still line up.
+        // The field width was already reduced by the gutter's two
+        // columns above, so the box doesn't overflow, and the gutter
+        // is present whether or not the field is focused so the
+        // layout never shifts.
+        let gutter = focus_gutter_prefix(is_focused);
+        let marker_bytes = gutter.len();
+        let mut cursor_in_row = rendered.cursor_byte_in_entry;
+        if marker_bytes > 0 {
+            entry.text.insert_str(0, gutter);
+            for ov in entry.inline_overlays.iter_mut() {
+                ov.start += marker_bytes;
+                ov.end += marker_bytes;
+            }
+            cursor_in_row = cursor_in_row.map(|c| c + marker_bytes);
+        }
+        if let Some(byte_in_row) = cursor_in_row {
             out.focus_cursor = Some(FocusCursor {
                 buffer_row: 0,
                 byte_in_row: byte_in_row as u32,
             });
         }
-        let mut entry = rendered.entry;
         // A click anywhere on the input line focuses the field so a mouse user
         // can type. Text widgets previously emitted no hit area, so clicks fell
         // through and the field stayed unfocused (#2234 item 1). Focusing is
@@ -1854,7 +1976,11 @@ fn render_widget_text(
                 entry: render_completion_item_overlay(
                     &item.value,
                     item.kind.as_deref(),
-                    i == prev_completion_idx,
+                    // Only paint a selected-row highlight once the user
+                    // has stepped into the dropdown (↓/↑). A freshly
+                    // surfaced popup shows plain suggestions so it's
+                    // clear Enter acts on the form, not the list.
+                    prev_completion_navigated && i == prev_completion_idx,
                     popup_total,
                     thumb,
                 ),
@@ -1877,6 +2003,7 @@ fn render_widget_text(
                 completions: prev_completions,
                 completion_selected_index: prev_completion_idx,
                 completion_scroll_offset: prev_completion_scroll,
+                completion_navigated: prev_completion_navigated,
             },
         );
     }
@@ -2750,7 +2877,15 @@ pub fn render_hint_bar(entries: &[HintEntry]) -> TextPropertyEntry {
 /// matching the prompt / palette's selected-row affordance.
 pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyEntry {
     let glyph = if checked { "[v]" } else { "[ ]" };
-    let mut text = String::with_capacity(glyph.len() + 1 + label.len());
+    // When the panel reserves the focus-marker gutter, every toggle
+    // leads with a two-column gutter — `▸ ` when focused, two spaces
+    // otherwise — so focus is capture-legible and the width never
+    // changes as focus moves. Panels without the gutter render
+    // exactly as before (no prefix).
+    let marker = focus_gutter_prefix(focused);
+    let mut text = String::with_capacity(marker.len() + glyph.len() + 1 + label.len());
+    text.push_str(marker);
+    let glyph_start = text.len();
     text.push_str(glyph);
     text.push(' ');
     text.push_str(label);
@@ -2761,8 +2896,8 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
     // when unchecked, which is what plugins do today).
     if checked {
         overlays.push(InlineOverlay {
-            start: 0,
-            end: glyph.len(),
+            start: glyph_start,
+            end: glyph_start + glyph.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_TOGGLE_ON_FG)),
                 bold: true,
@@ -2816,7 +2951,17 @@ pub fn render_button(
     kind: ButtonKind,
     disabled: bool,
 ) -> TextPropertyEntry {
-    let text = format!("[ {} ]", label);
+    // In a marker-gutter panel, focused buttons lead with `▸ ` and
+    // every other button with two spaces. This is the cue that
+    // distinguishes "focused" from "Primary": a Primary button keeps
+    // its standing bold accent whether or not it's focused, so
+    // without the marker (and the focused bg flip) `[ Create Session ]`
+    // looked permanently selected. The marker rides only on the one
+    // focused control, so exactly one button reads as focused — and
+    // because the gutter is always reserved, the row never reflows as
+    // focus moves between buttons.
+    let marker = focus_gutter_prefix(focused && !disabled);
+    let text = format!("{}[ {} ]", marker, label);
     let mut overlays = Vec::new();
 
     // Disabled overrides intent: a "Delete" button that isn't
@@ -4168,6 +4313,7 @@ mod tests {
                     intent: ButtonKind::Normal,
                     key: None,
                     disabled: false,
+                    focusable: true,
                 },
             ],
             key: None,
@@ -4238,6 +4384,7 @@ mod tests {
                     intent: ButtonKind::Normal,
                     key: None,
                     disabled: false,
+                    focusable: true,
                 },
             ],
             key: None,
@@ -4310,6 +4457,7 @@ mod tests {
             intent: ButtonKind::Primary,
             key: Some("replace".into()),
             disabled: false,
+            focusable: true,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
@@ -4332,6 +4480,7 @@ mod tests {
                     intent: ButtonKind::Normal,
                     key: Some("archive".into()),
                     disabled: true,
+                    focusable: true,
                 },
                 WidgetSpec::Button {
                     label: "Cancel".into(),
@@ -4339,6 +4488,7 @@ mod tests {
                     intent: ButtonKind::Normal,
                     key: Some("cancel".into()),
                     disabled: false,
+                    focusable: true,
                 },
             ],
             key: None,
@@ -4475,6 +4625,7 @@ mod tests {
                             intent: ButtonKind::Normal,
                             key: Some("b".into()),
                             disabled: false,
+                            focusable: true,
                         },
                     ],
                     key: None,
@@ -6038,6 +6189,7 @@ mod tests {
                 completions: Vec::new(),
                 completion_selected_index: 0,
                 completion_scroll_offset: 0,
+                completion_navigated: false,
             },
         );
         let out = render_spec(&spec, &prev, "ta", 80);

@@ -157,6 +157,15 @@ pub enum WidgetInstanceState {
         /// scrolls to keep selection in view); the mouse wheel
         /// scrolls it directly without moving the selection.
         completion_scroll_offset: u32,
+        /// Whether the user has *explicitly* moved into the open
+        /// completion popup (via ↑/↓ or the mouse wheel). Reset to
+        /// `false` every time the popup (re)opens from typing, so a
+        /// freshly-surfaced dropdown isn't "entered": Tab and Enter
+        /// then act on the *form* (advance / submit) instead of
+        /// accepting a candidate, and the popup paints no highlighted
+        /// row. The first ↓ flips it true — the dropdown is now
+        /// navigable, the selected row highlights, and Enter accepts.
+        completion_navigated: bool,
     },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become
