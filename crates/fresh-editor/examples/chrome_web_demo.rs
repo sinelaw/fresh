@@ -57,9 +57,10 @@ fn main() {
     let fg = "#d4d4d4";
     let lines = vec![
         WebLine {
-            runs: vec![
-                run("// chrome rendered as DOM/CSS, text as SVG <text>", comment),
-            ],
+            runs: vec![run(
+                "// chrome rendered as DOM/CSS, text as SVG <text>",
+                comment,
+            )],
         },
         WebLine { runs: vec![] },
         WebLine {
@@ -90,5 +91,8 @@ fn main() {
         },
     ];
 
-    print!("{}", render_document(&snapshot, &lines, WebOptions::default()));
+    print!(
+        "{}",
+        render_document(&snapshot, &lines, WebOptions::default())
+    );
 }

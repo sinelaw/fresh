@@ -125,7 +125,10 @@ fn item_view(editor: &Editor, item: &fresh_core::menu::MenuItem) -> MenuItemView
             args: args.clone(),
             accel: editor.accelerator_for(action),
             // Same enabled/checked logic the TUI MenuRenderer uses — one source.
-            enabled: crate::view::ui::menu::is_menu_item_enabled(item, &editor.menu_state().context),
+            enabled: crate::view::ui::menu::is_menu_item_enabled(
+                item,
+                &editor.menu_state().context,
+            ),
             checked: checkbox.as_ref().map(|_| {
                 crate::view::ui::menu::is_checkbox_checked(checkbox, &editor.menu_state().context)
             }),
@@ -397,9 +400,11 @@ impl Editor {
         if p.suggestions.is_empty() && !p.overlay {
             return None;
         }
-        let (scroll_start, visible, total) = sugg_area
-            .map(|(_, s, v, t)| (s, v, t))
-            .unwrap_or((p.scroll_offset, p.suggestions.len(), p.suggestions.len()));
+        let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
+            p.scroll_offset,
+            p.suggestions.len(),
+            p.suggestions.len(),
+        ));
         Some(PaletteView {
             query: p.input.clone(),
             message: p.message.clone(),
@@ -412,7 +417,10 @@ impl Editor {
             visible_count: visible,
             total,
             outer_rect: sugg_outer.map(RectView::from),
-            list_rect: sugg_area.map(|(r, _, _, _)| r).or(prompt_results).map(RectView::from),
+            list_rect: sugg_area
+                .map(|(r, _, _, _)| r)
+                .or(prompt_results)
+                .map(RectView::from),
             suggestions: p
                 .suggestions
                 .iter()

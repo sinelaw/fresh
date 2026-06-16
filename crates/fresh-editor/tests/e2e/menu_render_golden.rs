@@ -89,11 +89,18 @@ fn menu_render_golden_view_menu() {
     );
     // Checkbox items render ☑ (checked) / ☐ (unchecked); at least one View item
     // is checked by default (line numbers / wrap / vertical scrollbar).
-    assert!(joined.contains('☑'), "View menu should show a checked (☑) item");
-    assert!(joined.contains('☐'), "View menu should show an unchecked (☐) item");
+    assert!(
+        joined.contains('☑'),
+        "View menu should show a checked (☑) item"
+    );
+    assert!(
+        joined.contains('☐'),
+        "View menu should show an unchecked (☐) item"
+    );
     // Submenus render a trailing arrow.
     assert!(
-        rows.iter().any(|r| r.contains("Terminal") && r.contains('>')),
+        rows.iter()
+            .any(|r| r.contains("Terminal") && r.contains('>')),
         "Terminal submenu should render a '>' arrow"
     );
 }

@@ -157,27 +157,56 @@ pub struct ChromeLayout {
 /// What a point hit. Returned by [`ChromeLayout::hit`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChromeHit {
-    Menu { index: usize },
-    Tab { pane: usize, buffer_id: Option<usize> },
-    TabClose { pane: usize, buffer_id: Option<usize> },
-    Divider { index: usize, orientation: Orientation },
+    Menu {
+        index: usize,
+    },
+    Tab {
+        pane: usize,
+        buffer_id: Option<usize>,
+    },
+    TabClose {
+        pane: usize,
+        buffer_id: Option<usize>,
+    },
+    Divider {
+        index: usize,
+        orientation: Orientation,
+    },
     Status,
-    Popup { index: usize },
-    PaneContent { pane: usize, buffer_id: Option<usize> },
+    Popup {
+        index: usize,
+    },
+    PaneContent {
+        pane: usize,
+        buffer_id: Option<usize>,
+    },
 }
 
 /// The normalized back-channel event a backend sends to the core in response
 /// to a chrome interaction (the "backend owns pixels, core owns focus" seam).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChromeEvent {
-    OpenMenu { index: usize },
-    SelectTab { buffer_id: usize },
-    CloseTab { buffer_id: usize },
-    FocusPane { buffer_id: usize },
+    OpenMenu {
+        index: usize,
+    },
+    SelectTab {
+        buffer_id: usize,
+    },
+    CloseTab {
+        buffer_id: usize,
+    },
+    FocusPane {
+        buffer_id: usize,
+    },
     /// User pressed on a divider to begin a drag (resize handled by follow-up
     /// motion the backend reports as it drags).
-    BeginDividerDrag { index: usize, orientation: Orientation },
-    DismissPopup { index: usize },
+    BeginDividerDrag {
+        index: usize,
+        orientation: Orientation,
+    },
+    DismissPopup {
+        index: usize,
+    },
 }
 
 impl ChromeHit {
@@ -187,14 +216,18 @@ impl ChromeHit {
     pub fn on_click(&self) -> Option<ChromeEvent> {
         match *self {
             ChromeHit::Menu { index } => Some(ChromeEvent::OpenMenu { index }),
-            ChromeHit::Tab { buffer_id: Some(b), .. } => Some(ChromeEvent::SelectTab { buffer_id: b }),
-            ChromeHit::TabClose { buffer_id: Some(b), .. } => Some(ChromeEvent::CloseTab { buffer_id: b }),
+            ChromeHit::Tab {
+                buffer_id: Some(b), ..
+            } => Some(ChromeEvent::SelectTab { buffer_id: b }),
+            ChromeHit::TabClose {
+                buffer_id: Some(b), ..
+            } => Some(ChromeEvent::CloseTab { buffer_id: b }),
             ChromeHit::Divider { index, orientation } => {
                 Some(ChromeEvent::BeginDividerDrag { index, orientation })
             }
-            ChromeHit::PaneContent { buffer_id: Some(b), .. } => {
-                Some(ChromeEvent::FocusPane { buffer_id: b })
-            }
+            ChromeHit::PaneContent {
+                buffer_id: Some(b), ..
+            } => Some(ChromeEvent::FocusPane { buffer_id: b }),
             ChromeHit::Popup { index } => Some(ChromeEvent::DismissPopup { index }),
             _ => None,
         }
@@ -357,8 +390,12 @@ fn layout_node(
                     let first_h = (usable * *ratio).round();
                     let top = PxRect::new(rect.x, rect.y, rect.w, first_h);
                     let bar = PxRect::new(rect.x, rect.y + first_h, rect.w, d);
-                    let bottom =
-                        PxRect::new(rect.x, rect.y + first_h + d, rect.w, (usable - first_h).max(0.0));
+                    let bottom = PxRect::new(
+                        rect.x,
+                        rect.y + first_h + d,
+                        rect.w,
+                        (usable - first_h).max(0.0),
+                    );
                     dividers.push(DividerRect {
                         index: idx,
                         rect: bar,
@@ -373,8 +410,12 @@ fn layout_node(
                     let first_w = (usable * *ratio).round();
                     let left = PxRect::new(rect.x, rect.y, first_w, rect.h);
                     let bar = PxRect::new(rect.x + first_w, rect.y, d, rect.h);
-                    let right =
-                        PxRect::new(rect.x + first_w + d, rect.y, (usable - first_w).max(0.0), rect.h);
+                    let right = PxRect::new(
+                        rect.x + first_w + d,
+                        rect.y,
+                        (usable - first_w).max(0.0),
+                        rect.h,
+                    );
                     dividers.push(DividerRect {
                         index: idx,
                         rect: bar,
@@ -410,9 +451,10 @@ fn push_pane(
         Some(b) => format!("buffer#{b}"),
         None => "(group)".to_string(),
     };
-    let tab_w =
-        (label.chars().count() as f32 * metrics.cell_w + metrics.item_pad_x * 2.0 + metrics.close_w)
-            .min(tabbar.w);
+    let tab_w = (label.chars().count() as f32 * metrics.cell_w
+        + metrics.item_pad_x * 2.0
+        + metrics.close_w)
+        .min(tabbar.w);
     let tab_rect = PxRect::new(tabbar.x, tabbar.y, tab_w, tabbar.h);
     let close = PxRect::new(
         tab_rect.x + tab_rect.w - metrics.close_w,
@@ -468,7 +510,10 @@ mod tests {
         // Bands stack with no gaps/overlap: menubar | panes | status.
         assert_eq!(l.menubar_band.h, m.menubar_h);
         let pane = &l.panes[0];
-        assert!((pane.tabbar.y - m.menubar_h).abs() < 0.01, "tab bar sits under the menu bar");
+        assert!(
+            (pane.tabbar.y - m.menubar_h).abs() < 0.01,
+            "tab bar sits under the menu bar"
+        );
         assert!(
             (pane.content.y + pane.content.h - l.status.y).abs() < 0.01,
             "content meets the status bar exactly"
@@ -547,7 +592,10 @@ mod tests {
         // separately below).
         let div = l.dividers[0].rect;
         match l.hit(div.x + div.w * 0.5, l.menubar_band.h + 5.0) {
-            Some(ChromeHit::Divider { orientation: Orientation::Vertical, .. }) => {}
+            Some(ChromeHit::Divider {
+                orientation: Orientation::Vertical,
+                ..
+            }) => {}
             other => panic!("expected vertical divider hit, got {other:?}"),
         }
 
@@ -564,11 +612,17 @@ mod tests {
         // A tab and its close button in pane 0.
         let tab = l.panes[0].tabs[0].clone();
         match l.hit(tab.rect.x + 1.0, tab.rect.y + 1.0) {
-            Some(ChromeHit::Tab { pane: 0, buffer_id: Some(1) }) => {}
+            Some(ChromeHit::Tab {
+                pane: 0,
+                buffer_id: Some(1),
+            }) => {}
             other => panic!("expected tab hit, got {other:?}"),
         }
         match l.hit(tab.close.x + 1.0, tab.close.y + 1.0) {
-            Some(ChromeHit::TabClose { pane: 0, buffer_id: Some(1) }) => {}
+            Some(ChromeHit::TabClose {
+                pane: 0,
+                buffer_id: Some(1),
+            }) => {}
             other => panic!("expected tab-close hit, got {other:?}"),
         }
     }
@@ -580,16 +634,31 @@ mod tests {
             Some(ChromeEvent::OpenMenu { index: 2 })
         );
         assert_eq!(
-            ChromeHit::Tab { pane: 0, buffer_id: Some(7) }.on_click(),
+            ChromeHit::Tab {
+                pane: 0,
+                buffer_id: Some(7)
+            }
+            .on_click(),
             Some(ChromeEvent::SelectTab { buffer_id: 7 })
         );
         assert_eq!(
-            ChromeHit::TabClose { pane: 1, buffer_id: Some(3) }.on_click(),
+            ChromeHit::TabClose {
+                pane: 1,
+                buffer_id: Some(3)
+            }
+            .on_click(),
             Some(ChromeEvent::CloseTab { buffer_id: 3 })
         );
         assert_eq!(
-            ChromeHit::Divider { index: 0, orientation: Orientation::Vertical }.on_click(),
-            Some(ChromeEvent::BeginDividerDrag { index: 0, orientation: Orientation::Vertical })
+            ChromeHit::Divider {
+                index: 0,
+                orientation: Orientation::Vertical
+            }
+            .on_click(),
+            Some(ChromeEvent::BeginDividerDrag {
+                index: 0,
+                orientation: Orientation::Vertical
+            })
         );
         assert_eq!(ChromeHit::Status.on_click(), None);
     }

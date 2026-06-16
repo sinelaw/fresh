@@ -1018,12 +1018,9 @@ impl Editor {
 
     /// The keybinding accelerator for an action (e.g. "Ctrl+S"), if any.
     pub(crate) fn accelerator_for(&self, action: &str) -> Option<String> {
-        self.keybindings
-            .read()
-            .ok()
-            .and_then(|kb| {
-                kb.find_keybinding_for_action(action, crate::input::keybindings::KeyContext::Normal)
-            })
+        self.keybindings.read().ok().and_then(|kb| {
+            kb.find_keybinding_for_action(action, crate::input::keybindings::KeyContext::Normal)
+        })
     }
 
     /// Display name for a buffer (tab label), if known.

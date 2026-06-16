@@ -57,7 +57,7 @@ pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
         Some(working_dir),
         dir_context,
         true, // plugins_enabled: load the real plugin runtime (git, orchestrator,
-              // env manager, …) so the web UI is as full-featured as the TUI.
+        // env manager, …) so the web UI is as full-featured as the TUI.
         crate::view::color_support::ColorCapability::TrueColor,
         fs,
     )?;
@@ -94,14 +94,18 @@ pub fn apply_step(editor: &mut Editor, step: &Value) {
     } else if step.get("kind").is_some() {
         apply_mouse(editor, step);
     } else if let Some(name) = step.get("action").and_then(|a| a.as_str()) {
-        if let Some(act) = crate::input::keybindings::Action::from_str(
-            name,
-            &std::collections::HashMap::new(),
-        ) {
+        if let Some(act) =
+            crate::input::keybindings::Action::from_str(name, &std::collections::HashMap::new())
+        {
             editor.dispatch_action_for_tests(act);
         }
     }
-    let _ = crate::app::editor_tick(editor, || Ok(()));
+    // Drain async work / step animations. The `bool` (needs-render) is moot —
+    // the bridge re-renders the scene on every request — but surface a real
+    // tick error rather than swallowing it.
+    if let Err(e) = crate::app::editor_tick(editor, || Ok(())) {
+        eprintln!("[webui] editor_tick error: {e}");
+    }
 }
 
 /// Build the semantic scene (the same model the web frontend renders). Public so
@@ -173,7 +177,12 @@ fn handle_conn(
         ("GET", "/") => {
             let html = std::fs::read_to_string(html_path)
                 .unwrap_or_else(|_| "<h1>web-ui/index.html not found</h1>".into());
-            respond(stream, "200 OK", "text/html; charset=utf-8", html.as_bytes())
+            respond(
+                stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                html.as_bytes(),
+            )
         }
         ("GET", "/favicon.ico") => respond(stream, "204 No Content", "image/x-icon", b""),
         ("GET", "/state") => {
@@ -308,7 +317,11 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
         let mut cur_fg: Option<String> = None;
         let mut cur_bg: Option<String> = None;
         let mut cur_mods = Modifier::empty();
-        let mut flush = |runs: &mut Vec<Value>, text: &mut String, fg: &Option<String>, bg: &Option<String>, m: Modifier| {
+        let mut flush = |runs: &mut Vec<Value>,
+                         text: &mut String,
+                         fg: &Option<String>,
+                         bg: &Option<String>,
+                         m: Modifier| {
             if !text.is_empty() {
                 runs.push(json!({
                     "t": text,
@@ -322,7 +335,9 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
             }
         };
         for x in r.x..r.x.saturating_add(r.width) {
-            let Some(cell) = buf.cell(Position::new(x, y)) else { continue };
+            let Some(cell) = buf.cell(Position::new(x, y)) else {
+                continue;
+            };
             let fg = color_css(cell.fg);
             let bg = color_css(cell.bg);
             let m = cell.modifier;
@@ -345,7 +360,11 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
 /// scene. This is what lets the browser frontend get fresh frames by polling
 /// rather than only in response to its own input.
 fn tick_scene(editor: &mut Editor, cols: u16, rows: u16) -> Value {
-    let _ = crate::app::editor_tick(editor, || Ok(()));
+    // Needs-render bool is moot (we render unconditionally below); don't swallow
+    // a real tick error.
+    if let Err(e) = crate::app::editor_tick(editor, || Ok(())) {
+        eprintln!("[webui] editor_tick error: {e}");
+    }
     scene_json(editor, cols, rows)
 }
 
@@ -381,21 +400,23 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     let panes: Vec<Value> = layout
         .split_areas
         .iter()
-        .map(|(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
-            // Tabs are derived once in the core (`Editor::tab_bar_view`).
-            let tb = editor.tab_bar_view(*leaf);
-            json!({
-                "leaf": leaf.0 .0,
-                "buffer": bufid.0,
-                "content": rect_json(*content_rect),
-                "cells": cells_json(&buf, *content_rect),
-                "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
-                "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
-                "vscroll": rect_json(*scrollbar_rect),
-                "thumbStart": thumb_s,
-                "thumbEnd": thumb_e,
-            })
-        })
+        .map(
+            |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
+                // Tabs are derived once in the core (`Editor::tab_bar_view`).
+                let tb = editor.tab_bar_view(*leaf);
+                json!({
+                    "leaf": leaf.0 .0,
+                    "buffer": bufid.0,
+                    "content": rect_json(*content_rect),
+                    "cells": cells_json(&buf, *content_rect),
+                    "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
+                    "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
+                    "vscroll": rect_json(*scrollbar_rect),
+                    "thumbStart": thumb_s,
+                    "thumbEnd": thumb_e,
+                })
+            },
+        )
         .collect();
 
     let separators: Vec<Value> = layout
@@ -501,7 +522,11 @@ fn apply_key(editor: &mut Editor, v: &Value) {
 fn apply_mouse(editor: &mut Editor, v: &Value) {
     let col = v.get("col").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
     let row = v.get("row").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
-    let n = v.get("n").and_then(|x| x.as_u64()).unwrap_or(1).clamp(1, 10);
+    let n = v
+        .get("n")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(1)
+        .clamp(1, 10);
     let button = match v.get("button").and_then(|b| b.as_str()) {
         Some("right") => MouseButton::Right,
         Some("middle") => MouseButton::Middle,
@@ -571,17 +596,33 @@ fn color_css(c: Color) -> Option<String> {
 /// xterm-256 palette → hex.
 fn indexed_css(i: u8) -> String {
     let basic = [
-        (0, 0, 0), (0xcd, 0x31, 0x31), (0x0d, 0xbc, 0x79), (0xe5, 0xe5, 0x10),
-        (0x24, 0x72, 0xc8), (0xbc, 0x3f, 0xbc), (0x11, 0xa8, 0xcd), (0xe5, 0xe5, 0xe5),
-        (0x66, 0x66, 0x66), (0xf1, 0x4c, 0x4c), (0x23, 0xd1, 0x8b), (0xf5, 0xf5, 0x43),
-        (0x3b, 0x8e, 0xea), (0xd6, 0x70, 0xd6), (0x29, 0xb8, 0xdb), (0xff, 0xff, 0xff),
+        (0, 0, 0),
+        (0xcd, 0x31, 0x31),
+        (0x0d, 0xbc, 0x79),
+        (0xe5, 0xe5, 0x10),
+        (0x24, 0x72, 0xc8),
+        (0xbc, 0x3f, 0xbc),
+        (0x11, 0xa8, 0xcd),
+        (0xe5, 0xe5, 0xe5),
+        (0x66, 0x66, 0x66),
+        (0xf1, 0x4c, 0x4c),
+        (0x23, 0xd1, 0x8b),
+        (0xf5, 0xf5, 0x43),
+        (0x3b, 0x8e, 0xea),
+        (0xd6, 0x70, 0xd6),
+        (0x29, 0xb8, 0xdb),
+        (0xff, 0xff, 0xff),
     ];
     let (r, g, b) = if i < 16 {
         basic[i as usize]
     } else if i < 232 {
         let n = i - 16;
         let levels = [0u8, 95, 135, 175, 215, 255];
-        (levels[(n / 36) as usize], levels[((n / 6) % 6) as usize], levels[(n % 6) as usize])
+        (
+            levels[(n / 36) as usize],
+            levels[((n / 6) % 6) as usize],
+            levels[(n % 6) as usize],
+        )
     } else {
         let v = 8 + (i - 232) * 10;
         (v, v, v)

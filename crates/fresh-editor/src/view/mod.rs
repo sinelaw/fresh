@@ -56,6 +56,12 @@ pub mod bracket_highlight_overlay;
 #[cfg(feature = "runtime")]
 pub mod calibration_wizard;
 #[cfg(feature = "runtime")]
+pub mod chrome_html;
+#[cfg(feature = "runtime")]
+pub mod chrome_layout;
+#[cfg(feature = "runtime")]
+pub mod chrome_snapshot;
+#[cfg(feature = "runtime")]
 pub mod event_debug;
 #[cfg(feature = "runtime")]
 pub mod file_browser_input;
@@ -79,12 +85,6 @@ pub mod prompt_input;
 pub mod query_replace_input;
 #[cfg(feature = "runtime")]
 pub mod reference_highlight_overlay;
-#[cfg(feature = "runtime")]
-pub mod chrome_layout;
-#[cfg(feature = "runtime")]
-pub mod chrome_html;
-#[cfg(feature = "runtime")]
-pub mod chrome_snapshot;
 pub mod scene;
 #[cfg(feature = "runtime")]
 pub mod split;

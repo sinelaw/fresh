@@ -20,6 +20,11 @@
 //! **not** compute pixel rects here — contrast [`super::chrome_layout`], which
 //! is for the GPU/canvas path); only the SVG text lines are positioned.
 
+// Every `write!`/`writeln!` below targets the in-memory `String` builder, whose
+// `fmt::Write` impl is infallible — so discarding the returned `Result` is
+// always correct here (it can never be `Err`).
+#![allow(clippy::let_underscore_must_use)]
+
 use std::fmt::Write as _;
 
 use super::chrome_snapshot::ChromeSnapshot;
@@ -102,7 +107,13 @@ pub fn render_document(snapshot: &ChromeSnapshot, lines: &[WebLine], opts: WebOp
 
     // --- Workspace: the split tree as nested CSS-grid panes ---
     s.push_str("  <main class=\"workspace\">\n");
-    render_node(&mut s, &snapshot.split_layout, snapshot.active_buffer, lines, opts);
+    render_node(
+        &mut s,
+        &snapshot.split_layout,
+        snapshot.active_buffer,
+        lines,
+        opts,
+    );
     s.push_str("  </main>\n");
 
     // --- Status bar (DOM/CSS) ---
@@ -320,9 +331,18 @@ mod tests {
         vec![
             WebLine {
                 runs: vec![
-                    WebRun { text: "fn ".into(), color: "#569cd6".into() },
-                    WebRun { text: "main".into(), color: "#dcdcaa".into() },
-                    WebRun { text: "() {".into(), color: "#d4d4d4".into() },
+                    WebRun {
+                        text: "fn ".into(),
+                        color: "#569cd6".into(),
+                    },
+                    WebRun {
+                        text: "main".into(),
+                        color: "#dcdcaa".into(),
+                    },
+                    WebRun {
+                        text: "() {".into(),
+                        color: "#d4d4d4".into(),
+                    },
                 ],
             },
             WebLine {
