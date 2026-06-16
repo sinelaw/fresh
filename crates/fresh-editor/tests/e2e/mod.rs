@@ -130,6 +130,7 @@ pub mod markdown_compose_scroll_reach;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
+pub mod menu_render_golden;
 pub mod menu_tab_color_bleed;
 pub mod merge_conflict;
 pub mod mouse;
