@@ -53,35 +53,36 @@ interface BlameBlock {
   endByte: number;         // End byte offset in the buffer
 }
 
-interface BlameState {
-  isOpen: boolean;
-  bufferId: number | null;
-  splitId: number | null;
-  sourceBufferId: number | null;  // The buffer that was open before blame
-  sourceFilePath: string | null;  // Path to the file being blamed
-  currentCommit: string | null;   // Current commit being viewed (null = HEAD)
-  commitStack: string[];          // Stack of commits for navigation
-  blocks: BlameBlock[];           // Blame blocks with byte offsets
-  fileContent: string;            // Pure file content (for virtual buffer)
-  lineByteOffsets: number[];      // Byte offset of each line start
+/**
+ * One open blame view. Several can be open at once (e.g. blame on two
+ * different files side by side), so each is keyed by its own virtual
+ * buffer id in `blameInstances` rather than living in a single global.
+ */
+interface BlameInstance {
+  bufferId: number;                // Blame virtual buffer id (the map key)
+  splitId: number | null;          // Split the blame buffer lives in
+  sourceBufferId: number | null;   // The buffer that was open before blame
+  sourceFilePath: string | null;   // Path to the file being blamed
+  currentCommit: string | null;    // Current commit being viewed (null = HEAD)
+  commitStack: string[];           // Stack of commits for `b`-navigation
+  blocks: BlameBlock[];            // Blame blocks with byte offsets
+  fileContent: string;             // Pure file content (for virtual buffer)
+  lineByteOffsets: number[];       // Byte offset of each line start
 }
 
 // =============================================================================
 // State Management
 // =============================================================================
 
-const blameState: BlameState = {
-  isOpen: false,
-  bufferId: null,
-  splitId: null,
-  sourceBufferId: null,
-  sourceFilePath: null,
-  currentCommit: null,
-  commitStack: [],
-  blocks: [],
-  fileContent: "",
-  lineByteOffsets: [],
-};
+// Every open blame view, keyed by its virtual buffer id. An empty map means
+// no blame is open. Keying by buffer id is what lets several blame buffers
+// coexist; the mode handlers (`q`/`b`/`y`) act on whichever one is focused.
+const blameInstances: Map<number, BlameInstance> = new Map();
+
+/** The blame instance for the currently-focused buffer, or null. */
+function activeBlame(): BlameInstance | null {
+  return blameInstances.get(editor.getActiveBufferId()) ?? null;
+}
 
 // =============================================================================
 // Color Definitions for Header Styling
@@ -281,20 +282,30 @@ function buildLineByteOffsets(content: string): number[] {
 /**
  * Get byte offset for a given line number (1-indexed)
  */
-function getLineByteOffset(lineNum: number): number {
+function getLineByteOffset(
+  lineByteOffsets: number[],
+  fileContentLength: number,
+  lineNum: number,
+): number {
   if (lineNum <= 0) return 0;
   const idx = lineNum - 1;
-  if (idx < blameState.lineByteOffsets.length) {
-    return blameState.lineByteOffsets[idx];
+  if (idx < lineByteOffsets.length) {
+    return lineByteOffsets[idx];
   }
   // Return end of file if line number is out of range
-  return blameState.fileContent.length;
+  return fileContentLength;
 }
 
 /**
- * Group blame lines into blocks by commit, with byte offset information
+ * Group blame lines into blocks by commit, with byte offset information.
+ * Byte offsets are derived from the caller's line table / content length so
+ * this stays free of any single global blame state.
  */
-function groupIntoBlocks(lines: BlameLine[]): BlameBlock[] {
+function groupIntoBlocks(
+  lines: BlameLine[],
+  lineByteOffsets: number[],
+  fileContentLength: number,
+): BlameBlock[] {
   const blocks: BlameBlock[] = [];
   let currentBlock: BlameBlock | null = null;
 
@@ -303,7 +314,11 @@ function groupIntoBlocks(lines: BlameLine[]): BlameBlock[] {
     if (!currentBlock || currentBlock.hash !== line.hash) {
       // Save previous block
       if (currentBlock && currentBlock.lines.length > 0) {
-        currentBlock.endByte = getLineByteOffset(currentBlock.endLine + 1);
+        currentBlock.endByte = getLineByteOffset(
+          lineByteOffsets,
+          fileContentLength,
+          currentBlock.endLine + 1,
+        );
         blocks.push(currentBlock);
       }
 
@@ -317,7 +332,11 @@ function groupIntoBlocks(lines: BlameLine[]): BlameBlock[] {
         lines: [],
         startLine: line.finalLineNumber,
         endLine: line.finalLineNumber,
-        startByte: getLineByteOffset(line.finalLineNumber),
+        startByte: getLineByteOffset(
+          lineByteOffsets,
+          fileContentLength,
+          line.finalLineNumber,
+        ),
         endByte: 0, // Will be set when block is complete
       };
     }
@@ -328,7 +347,11 @@ function groupIntoBlocks(lines: BlameLine[]): BlameBlock[] {
 
   // Don't forget the last block
   if (currentBlock && currentBlock.lines.length > 0) {
-    currentBlock.endByte = getLineByteOffset(currentBlock.endLine + 1);
+    currentBlock.endByte = getLineByteOffset(
+      lineByteOffsets,
+      fileContentLength,
+      currentBlock.endLine + 1,
+    );
     blocks.push(currentBlock);
   }
 
@@ -355,10 +378,10 @@ function formatBlockHeader(block: BlameBlock): string {
 }
 
 /**
- * Find which block (if any) starts at or before the given byte offset
+ * Find which block (if any) contains the given byte offset
  */
-function findBlockForByteOffset(byteOffset: number): BlameBlock | null {
-  for (const block of blameState.blocks) {
+function findBlockForByteOffset(blocks: BlameBlock[], byteOffset: number): BlameBlock | null {
+  for (const block of blocks) {
     if (byteOffset >= block.startByte && byteOffset < block.endByte) {
       return block;
     }
@@ -367,99 +390,18 @@ function findBlockForByteOffset(byteOffset: number): BlameBlock | null {
 }
 
 /**
- * Add virtual lines for all blame block headers
- * Called when blame data is loaded or updated
+ * Build the virtual-buffer content entries (one per source line) for a blame
+ * instance, tagging each with the commit hash of its block for cursor
+ * lookups. Shared by the initial open and `b`-navigation.
  */
-function addBlameHeaders(): void {
-  if (blameState.bufferId === null) return;
-
-  // Clear existing headers first
-  editor.clearVirtualTextNamespace(blameState.bufferId, BLAME_NAMESPACE);
-
-  // Add a virtual line above each block. Pass theme keys so the headers
-  // restyle automatically when the user switches themes.
-  for (const block of blameState.blocks) {
-    const headerText = formatBlockHeader(block);
-
-    editor.addVirtualLine(
-      blameState.bufferId,
-      block.startByte,        // anchor position
-      headerText,             // text content
-      { fg: HEADER_FG_KEY, bg: HEADER_BG_KEY },
-      true,                   // above (LineAbove)
-      BLAME_NAMESPACE,        // namespace for bulk removal
-      0                       // priority
-    );
-  }
-
-  editor.debug(`Added ${blameState.blocks.length} blame header virtual lines`);
-}
-
-// =============================================================================
-// Public Commands
-// =============================================================================
-
-/**
- * Show git blame for the current file
- */
-async function show_git_blame() : Promise<void> {
-  if (blameState.isOpen) {
-    editor.setStatus(editor.t("status.already_open"));
-    return;
-  }
-
-  // Get current file path
-  const activeBufferId = editor.getActiveBufferId();
-  const filePath = editor.getBufferPath(activeBufferId);
-  if (!filePath || filePath === "") {
-    editor.setStatus(editor.t("status.no_file"));
-    return;
-  }
-
-  editor.setStatus(editor.t("status.loading"));
-
-  // Store state before opening blame
-  blameState.splitId = editor.getActiveSplitId();
-  blameState.sourceBufferId = activeBufferId;
-  blameState.sourceFilePath = filePath;
-  blameState.currentCommit = null;
-  blameState.commitStack = [];
-
-  // Fetch file content and blame data in parallel
-  const [fileContent, blameLines] = await Promise.all([
-    fetchFileContent(filePath, null),
-    fetchGitBlame(filePath, null),
-  ]);
-
-  if (blameLines.length === 0) {
-    editor.setStatus(editor.t("status.no_blame_info"));
-    resetState();
-    return;
-  }
-
-  // Store file content and build line offset table
-  blameState.fileContent = fileContent;
-  blameState.lineByteOffsets = buildLineByteOffsets(fileContent);
-
-  // Group into blocks with byte offsets
-  blameState.blocks = groupIntoBlocks(blameLines);
-
-  // Get file extension for language detection
-  const ext = filePath.includes('.') ? filePath.split('.').pop() : '';
-  const bufferName = `*blame:${editor.pathBasename(filePath)}*`;
-
-  // Create virtual buffer with PURE file content (for syntax highlighting)
-  // Virtual lines will be added after buffer creation
+function buildContentEntries(fileContent: string, blocks: BlameBlock[]): TextPropertyEntry[] {
   const entries: TextPropertyEntry[] = [];
-
-  // We need to track which line belongs to which block for text properties
   let lineNum = 1;
   const contentLines = fileContent.split('\n');
   let byteOffset = 0;
 
   for (const line of contentLines) {
-    // Find the block for this line
-    const block = findBlockForByteOffset(byteOffset);
+    const block = findBlockForByteOffset(blocks, byteOffset);
 
     entries.push({
       text: line + (lineNum < contentLines.length || fileContent.endsWith('\n') ? '\n' : ''),
@@ -475,100 +417,164 @@ async function show_git_blame() : Promise<void> {
     lineNum++;
   }
 
-  // Create virtual buffer with the file content
+  return entries;
+}
+
+/**
+ * Add virtual lines for all blame block headers of an instance.
+ * Called when blame data is loaded or updated.
+ */
+function addBlameHeaders(inst: BlameInstance): void {
+  // Clear existing headers first
+  editor.clearVirtualTextNamespace(inst.bufferId, BLAME_NAMESPACE);
+
+  // Add a virtual line above each block. Pass theme keys so the headers
+  // restyle automatically when the user switches themes.
+  for (const block of inst.blocks) {
+    const headerText = formatBlockHeader(block);
+
+    editor.addVirtualLine(
+      inst.bufferId,
+      block.startByte,        // anchor position
+      headerText,             // text content
+      { fg: HEADER_FG_KEY, bg: HEADER_BG_KEY },
+      true,                   // above (LineAbove)
+      BLAME_NAMESPACE,        // namespace for bulk removal
+      0                       // priority
+    );
+  }
+
+  editor.debug(`Added ${inst.blocks.length} blame header virtual lines`);
+}
+
+// =============================================================================
+// Public Commands
+// =============================================================================
+
+/**
+ * Show git blame for the current file
+ */
+async function show_git_blame() : Promise<void> {
+  const activeBufferId = editor.getActiveBufferId();
+
+  // Re-running blame while focused on a blame buffer would recurse on the
+  // virtual buffer; treat it as a no-op (use `b` to walk history instead).
+  if (blameInstances.has(activeBufferId)) {
+    editor.setStatus(editor.t("status.already_open"));
+    return;
+  }
+
+  // Get current file path
+  const filePath = editor.getBufferPath(activeBufferId);
+  if (!filePath || filePath === "") {
+    editor.setStatus(editor.t("status.no_file"));
+    return;
+  }
+
+  editor.setStatus(editor.t("status.loading"));
+
+  const splitId = editor.getActiveSplitId();
+
+  // Fetch file content and blame data in parallel
+  const [fileContent, blameLines] = await Promise.all([
+    fetchFileContent(filePath, null),
+    fetchGitBlame(filePath, null),
+  ]);
+
+  if (blameLines.length === 0) {
+    editor.setStatus(editor.t("status.no_blame_info"));
+    return;
+  }
+
+  // Build the line offset table and group into blocks with byte offsets.
+  const lineByteOffsets = buildLineByteOffsets(fileContent);
+  const blocks = groupIntoBlocks(blameLines, lineByteOffsets, fileContent.length);
+
+  const bufferName = `*blame:${editor.pathBasename(filePath)}*`;
+
+  // Create virtual buffer with PURE file content (for syntax highlighting);
+  // virtual-line headers are added after buffer creation.
+  const entries = buildContentEntries(fileContent, blocks);
+
   const result = await editor.createVirtualBufferInExistingSplit({
     name: bufferName,
     mode: "git-blame",
     readOnly: true,
     entries: entries,
-    splitId: blameState.splitId!,
+    splitId,
     showLineNumbers: true,  // We DO want line numbers (headers won't have them due to source_offset: null)
     showCursors: true,
     editingDisabled: true,
   });
 
-  if (result !== null) {
-    blameState.isOpen = true;
-    blameState.bufferId = result.bufferId;
-
-    // Add virtual lines for blame headers (persistent state model)
-    addBlameHeaders();
-
-    editor.setStatus(editor.t("status.blame_ready", { count: String(blameState.blocks.length) }));
-    editor.debug("Git blame panel opened with virtual lines architecture");
-  } else {
-    resetState();
+  if (result === null) {
     editor.setStatus(editor.t("status.failed_open"));
+    return;
   }
+
+  // Register the instance keyed by its own buffer id so it coexists with
+  // any other open blame buffers.
+  const inst: BlameInstance = {
+    bufferId: result.bufferId,
+    splitId,
+    sourceBufferId: activeBufferId,
+    sourceFilePath: filePath,
+    currentCommit: null,
+    commitStack: [],
+    blocks,
+    fileContent,
+    lineByteOffsets,
+  };
+  blameInstances.set(inst.bufferId, inst);
+
+  // Add virtual lines for blame headers (persistent state model)
+  addBlameHeaders(inst);
+
+  editor.setStatus(editor.t("status.blame_ready", { count: String(blocks.length) }));
+  editor.debug("Git blame panel opened with virtual lines architecture");
 }
 registerHandler("show_git_blame", show_git_blame);
 
 /**
- * Reset blame state
- */
-function resetState(): void {
-  blameState.splitId = null;
-  blameState.sourceBufferId = null;
-  blameState.sourceFilePath = null;
-  blameState.currentCommit = null;
-  blameState.commitStack = [];
-  blameState.blocks = [];
-  blameState.fileContent = "";
-  blameState.lineByteOffsets = [];
-}
-
-/**
- * Close the git blame view
+ * Close the focused git blame view (no-op if the focused buffer isn't one).
  */
 function git_blame_close() : void {
-  if (!blameState.isOpen) {
+  const inst = activeBlame();
+  if (!inst) {
     return;
   }
 
   // Restore the original buffer in the split
-  if (blameState.splitId !== null && blameState.sourceBufferId !== null) {
-    editor.setSplitBuffer(blameState.splitId, blameState.sourceBufferId);
+  if (inst.splitId !== null && inst.sourceBufferId !== null) {
+    editor.setSplitBuffer(inst.splitId, inst.sourceBufferId);
   }
 
-  // Close the blame buffer
-  if (blameState.bufferId !== null) {
-    editor.closeBuffer(blameState.bufferId);
-  }
-
-  blameState.isOpen = false;
-  blameState.bufferId = null;
-  resetState();
+  // Drop the instance before closing so the `buffer_closed` hook is a no-op.
+  blameInstances.delete(inst.bufferId);
+  editor.closeBuffer(inst.bufferId);
 
   editor.setStatus(editor.t("status.closed"));
 }
 registerHandler("git_blame_close", git_blame_close);
 
 /**
- * Reset state when the blame buffer is closed by any path other than
+ * Drop a blame instance when its buffer is closed by any path other than
  * `git_blame_close` — e.g. the user runs "Close Buffer"/"Close Tab" on the
- * blame tab, or the split it lives in is torn down. Without this, `isOpen`
- * stays `true` and `bufferId` points at a now-dead buffer, so the next
- * `show_git_blame` bails out with "already open" and blame can never be
- * reopened (the reported bug).
+ * blame tab, or the split it lives in is torn down. Without this, the dead
+ * buffer id would linger in `blameInstances` and a fresh blame on the same
+ * file could be mishandled (the reported "already open" bug).
  */
 function on_git_blame_buffer_closed(data: { buffer_id: number }): void {
-  if (!blameState.isOpen) return;
-  if (blameState.bufferId !== null && data.buffer_id === blameState.bufferId) {
-    blameState.isOpen = false;
-    blameState.bufferId = null;
-    resetState();
-  }
+  blameInstances.delete(data.buffer_id);
 }
 registerHandler("on_git_blame_buffer_closed", on_git_blame_buffer_closed);
 editor.on("buffer_closed", on_git_blame_buffer_closed);
 
 /**
- * Get the commit hash at the current cursor position
+ * Get the commit hash at the cursor position in the given blame buffer
  */
-function getCommitAtCursor(): string | null {
-  if (blameState.bufferId === null) return null;
-
-  const props = editor.getTextPropertiesAtCursor(blameState.bufferId);
+function getCommitAtCursor(bufferId: number): string | null {
+  const props = editor.getTextPropertiesAtCursor(bufferId);
 
   if (props.length > 0) {
     const hash = props[0].hash as string | undefined;
@@ -584,11 +590,14 @@ function getCommitAtCursor(): string | null {
  * Navigate to blame at the parent commit of the current line's commit
  */
 async function git_blame_go_back() : Promise<void> {
-  if (!blameState.isOpen || !blameState.sourceFilePath) {
+  // Capture the focused instance up front so async work stays bound to it
+  // even if focus moves to another blame buffer mid-await.
+  const inst = activeBlame();
+  if (!inst || !inst.sourceFilePath) {
     return;
   }
 
-  const currentHash = getCommitAtCursor();
+  const currentHash = getCommitAtCursor(inst.bufferId);
   if (!currentHash) {
     editor.setStatus(editor.t("status.move_to_line"));
     return;
@@ -606,62 +615,37 @@ async function git_blame_go_back() : Promise<void> {
   const parentCommit = `${currentHash}^`;
 
   // Push current state to stack for potential future navigation
-  if (blameState.currentCommit) {
-    blameState.commitStack.push(blameState.currentCommit);
+  if (inst.currentCommit) {
+    inst.commitStack.push(inst.currentCommit);
   } else {
-    blameState.commitStack.push("HEAD");
+    inst.commitStack.push("HEAD");
   }
 
   // Fetch file content and blame at parent commit
   const [fileContent, blameLines] = await Promise.all([
-    fetchFileContent(blameState.sourceFilePath, parentCommit),
-    fetchGitBlame(blameState.sourceFilePath, parentCommit),
+    fetchFileContent(inst.sourceFilePath, parentCommit),
+    fetchGitBlame(inst.sourceFilePath, parentCommit),
   ]);
 
   if (blameLines.length === 0) {
     // Pop the stack since we couldn't navigate
-    blameState.commitStack.pop();
+    inst.commitStack.pop();
     editor.setStatus(editor.t("status.cannot_go_back", { hash: currentHash.slice(0, 7) }));
     return;
   }
 
-  // Update state
-  blameState.currentCommit = parentCommit;
-  blameState.fileContent = fileContent;
-  blameState.lineByteOffsets = buildLineByteOffsets(fileContent);
-  blameState.blocks = groupIntoBlocks(blameLines);
+  // Update the instance's state
+  inst.currentCommit = parentCommit;
+  inst.fileContent = fileContent;
+  inst.lineByteOffsets = buildLineByteOffsets(fileContent);
+  inst.blocks = groupIntoBlocks(blameLines, inst.lineByteOffsets, fileContent.length);
 
-  // Update virtual buffer content
-  if (blameState.bufferId !== null) {
-    const entries: TextPropertyEntry[] = [];
-    let lineNum = 1;
-    const contentLines = fileContent.split('\n');
-    let byteOffset = 0;
+  // Update virtual buffer content + re-add the headers for the new data.
+  const entries = buildContentEntries(fileContent, inst.blocks);
+  editor.setVirtualBufferContent(inst.bufferId, entries);
+  addBlameHeaders(inst);
 
-    for (const line of contentLines) {
-      const block = findBlockForByteOffset(byteOffset);
-
-      entries.push({
-        text: line + (lineNum < contentLines.length || fileContent.endsWith('\n') ? '\n' : ''),
-        properties: {
-          type: "content",
-          hash: block?.hash ?? null,
-          shortHash: block?.shortHash ?? null,
-          lineNumber: lineNum,
-        },
-      });
-
-      byteOffset += line.length + 1;
-      lineNum++;
-    }
-
-    editor.setVirtualBufferContent(blameState.bufferId, entries);
-
-    // Re-add virtual lines for the new blame data
-    addBlameHeaders();
-  }
-
-  const depth = blameState.commitStack.length;
+  const depth = inst.commitStack.length;
   editor.setStatus(editor.t("status.blame_at_parent", { hash: currentHash.slice(0, 7), depth: String(depth) }));
 }
 registerHandler("git_blame_go_back", git_blame_go_back);
@@ -670,9 +654,10 @@ registerHandler("git_blame_go_back", git_blame_go_back);
  * Copy the commit hash at cursor to clipboard
  */
 function git_blame_copy_hash() : void {
-  if (!blameState.isOpen) return;
+  const inst = activeBlame();
+  if (!inst) return;
 
-  const hash = getCommitAtCursor();
+  const hash = getCommitAtCursor(inst.bufferId);
   if (!hash) {
     editor.setStatus(editor.t("status.move_to_line"));
     return;

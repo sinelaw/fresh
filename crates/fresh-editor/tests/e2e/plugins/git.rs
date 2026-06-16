@@ -2070,6 +2070,74 @@ fn test_git_blame_reopen_after_external_close() {
     );
 }
 
+/// Multiple blame buffers can be open at once: blaming a second file must
+/// create its own blame view instead of reporting "already open". The old
+/// single-`blameState` model only allowed one blame buffer at a time.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_multiple_files_open_simultaneously() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_blame_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Open two files in the same split.
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+    harness.open_file(&repo.path.join("src/lib.rs")).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("struct Config"))
+        .unwrap();
+
+    // Blame lib.rs (the focused file).
+    trigger_git_blame(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("──") && s.contains("blame:lib.rs")
+        })
+        .unwrap();
+
+    // Switch back to main.rs and blame it too.
+    harness.open_file(&repo.path.join("src/main.rs")).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+    trigger_git_blame(&mut harness);
+
+    // Both blame buffers should now exist as separate tabs — the second
+    // invocation must not have early-returned with "already open".
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("blame:lib.rs") && s.contains("blame:main.rs")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("blame:lib.rs") && screen.contains("blame:main.rs"),
+        "Both blame buffers should be open as separate tabs.\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("already open"),
+        "Opening blame on a second file must not report 'already open'.\nScreen:\n{screen}"
+    );
+}
+
 /// Test git blame go back in history with 'b' key
 // TODO: Fix git blame tests on Windows - they fail due to git command output differences
 #[test]
