@@ -13,7 +13,6 @@
 
 use crate::app::Editor;
 use fresh_core::LeafId;
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -269,20 +268,6 @@ pub struct StatusView {
     pub segments: Vec<StatusSegment>,
 }
 
-/// Plain text of cells `[x0, x1)` on row `y` of a rendered buffer. Used to lift
-/// a status-bar segment's text out of the render (the built-in segments are not
-/// otherwise exposed semantically — a Phase-3 cleanup will have the status
-/// renderer emit the model directly).
-fn text_in_row(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
-    let mut s = String::new();
-    for x in x0..x1 {
-        if let Some(cell) = buf.cell(ratatui::layout::Position::new(x, y)) {
-            s.push_str(cell.symbol());
-        }
-    }
-    s
-}
-
 // ─────────────────────────── command palette / picker ───────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -367,62 +352,27 @@ impl Editor {
     /// plus the untracked text runs between them (file name / Ln,Col). The
     /// segment *text* is lifted from the rendered `buf` for now. Single
     /// derivation shared by both frontends.
-    pub fn status_view(&self, buf: &Buffer) -> Option<StatusView> {
+    pub fn status_view(&self) -> Option<StatusView> {
         let chrome = self.active_chrome();
         let (sy, sx, sw) = chrome.status_bar_area?;
-        let bar_end = sx.saturating_add(sw);
         let mid = sx.saturating_add(sw / 2);
         let side = |x: u16| if x < mid { "left" } else { "right" };
 
-        let mut ind: Vec<(&'static str, (u16, u16, u16), Option<String>)> = Vec::new();
-        let mut push = |name: &'static str, area: Option<(u16, u16, u16)>| {
-            if let Some(a) = area {
-                ind.push((name, a, None));
-            }
-        };
-        push("lsp", chrome.status_bar_lsp_area);
-        push("warning", chrome.status_bar_warning_area);
-        push("language", chrome.status_bar_language_area);
-        push("encoding", chrome.status_bar_encoding_area);
-        push("lineEnding", chrome.status_bar_line_ending_area);
-        push("remote", chrome.status_bar_remote_area);
-        push("trust", chrome.status_bar_trust_area);
-        push("message", chrome.status_bar_message_area);
-        for (key, a) in &chrome.status_bar_plugin_token_areas {
-            ind.push(("plugin", *a, Some(key.clone())));
-        }
-        ind.sort_by_key(|(_, (_, start, _), _)| *start);
-
-        let mut segments: Vec<StatusSegment> = Vec::new();
-        let mut emit_gap = |segs: &mut Vec<StatusSegment>, from: u16, to: u16| {
-            if to > from {
-                let t = text_in_row(buf, sy, from, to);
-                if !t.trim().is_empty() {
-                    segs.push(StatusSegment {
-                        name: "text",
-                        key: None,
-                        text: t.trim().to_string(),
-                        x: from,
-                        w: to - from,
-                        side: side(from),
-                    });
-                }
-            }
-        };
-        let mut cur = sx;
-        for (name, (row, start, end), key) in &ind {
-            emit_gap(&mut segments, cur, *start);
-            segments.push(StatusSegment {
-                name,
-                key: key.clone(),
-                text: text_in_row(buf, *row, *start, *end).trim().to_string(),
-                x: *start,
-                w: end.saturating_sub(*start),
-                side: side(*start),
-            });
-            cur = (*end).max(cur);
-        }
-        emit_gap(&mut segments, cur, bar_end);
+        // Read the status bar's semantic model captured by the renderer — no
+        // cell scraping. Each rendered element (indicators + text) is a segment.
+        let segments: Vec<StatusSegment> = chrome
+            .status_bar_segments
+            .iter()
+            .filter(|s| !s.text.trim().is_empty())
+            .map(|s| StatusSegment {
+                name: s.name,
+                key: s.key.clone(),
+                text: s.text.trim().to_string(),
+                x: s.x,
+                w: s.w,
+                side: side(s.x),
+            })
+            .collect();
 
         Some(StatusView {
             rect: RectView {

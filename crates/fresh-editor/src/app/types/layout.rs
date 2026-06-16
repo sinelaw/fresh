@@ -152,6 +152,10 @@ pub(crate) struct ChromeLayout {
     /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
     /// design context.
     pub status_bar_plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
+    /// Semantic status-bar model (rendered elements + text + positions), captured
+    /// by the renderer so `status_view` derives the web status bar directly
+    /// instead of scraping the drawn cells.
+    pub status_bar_segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing

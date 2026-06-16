@@ -99,6 +99,21 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   frontend has ZERO cell-drawn chrome (buffer interiors only). Geometry comes
   from the pipeline's layout caches so clicks/scroll route back through the
   existing `handle_mouse` hit-testers.
+- [x] Phase 1b — comprehensive layout-vs-draw seam (the "don't draw what this
+  frontend doesn't need" model). Every chrome renderer now computes its
+  layout/geometry/semantic model but paints cells only when the active frontend
+  draws chrome itself; the web pipeline yields **pane-only cells** with no
+  draw-then-cover. Done for: menu, suggestions, overlay prompt (frame/title/
+  toolbar/separator/footer/preview), file-explorer sidebar, popups (local +
+  global), workspace-trust dialog, and the tab bar (threaded through
+  SplitRenderer). The **status bar** was the last cell-scraper: `status_view`
+  read text back out of the drawn cells; now `StatusBarRenderer` captures a
+  semantic `StatusBarLayout.segments` model (name/text/position per element)
+  that `status_view` reads directly, and its draw is gated like the rest. For the
+  TUI every guard is a no-op (draw=true) so cell rendering is byte-identical;
+  verified across menu/overlay/explorer/popup/tab/status e2e suites + the web
+  suite. Settings + remaining widget surfaces (panels/dock) still draw to cells
+  pending their own native projections.
 - [~] Phase 3: TUI renderers consume the same shared content as the projections,
   so the content logic lives in exactly one place (geometry/`MenuLayout` stays the
   renderer's output). Done for the **menu**: `MenuRenderer::render` now takes the

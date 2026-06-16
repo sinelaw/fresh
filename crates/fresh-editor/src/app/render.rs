@@ -1040,6 +1040,9 @@ impl Editor {
             // Theme-key runs the status bar records as it paints; applied to
             // the chrome's cell map after the window borrow is released.
             let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            // Web renders the status bar natively from `status_view`; skip painting
+            // it (the semantic segments + indicator rects are still captured).
+            let sb_draw = !self.suppress_chrome_cells;
             let __win = self
                 .windows
                 .get_mut(&__active_id)
@@ -1087,6 +1090,7 @@ impl Editor {
                         &mut status_ctx,
                         &self.config.editor.status_bar,
                         Some(&mut sb_rec),
+                        sb_draw,
                     )
                 })
                 .expect("active buffer must be present");
@@ -1109,6 +1113,7 @@ impl Editor {
             self.active_chrome_mut().status_bar_trust_area = status_bar_layout.trust_indicator;
             self.active_chrome_mut().status_bar_plugin_token_areas =
                 status_bar_layout.plugin_token_areas;
+            self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
         }
 
         // Render search options bar when in search prompt

@@ -295,6 +295,41 @@ pub struct StatusBarLayout {
     /// `docs/internal/trust-env-devcontainer-ux-plan.md`
     /// §"Path from here to the North Star".
     pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
+    /// Every rendered element, in screen order, with its semantic name, text and
+    /// cell position. This is the status bar's semantic model: a frontend renders
+    /// it directly (web) instead of scraping the drawn cells, and the TUI cell
+    /// rendering is just one consumer of the same data.
+    pub segments: Vec<StatusSegmentInfo>,
+}
+
+/// One rendered status-bar element, captured semantically (text + position)
+/// alongside the cell drawing so the web can render it natively.
+#[derive(Debug, Clone)]
+pub struct StatusSegmentInfo {
+    /// Semantic kind: "lsp" | "warning" | "language" | "encoding" |
+    /// "lineEnding" | "remote" | "trust" | "message" | "plugin" | "text".
+    pub name: &'static str,
+    /// Plugin token key for `name == "plugin"`.
+    pub key: Option<String>,
+    pub text: String,
+    pub x: u16,
+    pub w: u16,
+}
+
+/// Map an [`ElementKind`] to the stable semantic name `status_view` uses.
+fn element_kind_name(kind: ElementKind) -> &'static str {
+    match kind {
+        ElementKind::Lsp => "lsp",
+        ElementKind::WarningBadge => "warning",
+        ElementKind::Language => "language",
+        ElementKind::Encoding => "encoding",
+        ElementKind::LineEnding => "lineEnding",
+        ElementKind::RemoteIndicator(_) => "remote",
+        ElementKind::WorkspaceTrust(_) => "trust",
+        ElementKind::Messages => "message",
+        ElementKind::Custom => "plugin",
+        _ => "text",
+    }
 }
 
 /// Status bar hover state for styling clickable indicators
@@ -680,8 +715,12 @@ impl StatusBarRenderer {
         ctx: &mut StatusBarContext<'_>,
         config: &StatusBarConfig,
         rec: Option<&mut CellThemeRecorder>,
+        // When false, build the full semantic model (`StatusBarLayout.segments` +
+        // indicator rects) but paint no cells — the web renders the status bar
+        // natively from `status_view`. The TUI always passes `true`.
+        draw: bool,
     ) -> StatusBarLayout {
-        Self::render_status(frame, area, ctx, config, rec)
+        Self::render_status(frame, area, ctx, config, rec, draw)
     }
 
     /// Render the prompt/minibuffer
@@ -1555,6 +1594,7 @@ impl StatusBarRenderer {
         ctx: &mut StatusBarContext<'_>,
         config: &StatusBarConfig,
         mut rec: Option<&mut CellThemeRecorder>,
+        draw: bool,
     ) -> StatusBarLayout {
         let mut layout = StatusBarLayout::default();
         let base_style = Style::default()
@@ -1675,6 +1715,7 @@ impl StatusBarRenderer {
             let start_col = used_left;
 
             if width <= remaining {
+                let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
                 spans.extend(item_spans);
                 used_left += width;
 
@@ -1698,6 +1739,13 @@ impl StatusBarRenderer {
                     area.x + start_col as u16,
                     area.x + (start_col + width) as u16,
                 );
+                layout.segments.push(StatusSegmentInfo {
+                    name: element_kind_name(kind),
+                    key: token_key.clone(),
+                    text: seg_text,
+                    x: area.x + start_col as u16,
+                    w: width as u16,
+                });
             } else {
                 // Overflow: truncate the concatenated text of this element.
                 // Per-span styling is lost for the overflowed slice — we fall
@@ -1712,6 +1760,7 @@ impl StatusBarRenderer {
                     ctx.warning_level,
                     ctx.lsp_indicator_state,
                 );
+                let seg_text = truncated.clone();
                 spans.push(Span::styled(truncated, overflow_style));
 
                 if let Some(r) = rec.as_deref_mut() {
@@ -1735,6 +1784,13 @@ impl StatusBarRenderer {
                     area.x + start_col as u16,
                     area.x + (start_col + truncated_width) as u16,
                 );
+                layout.segments.push(StatusSegmentInfo {
+                    name: element_kind_name(kind),
+                    key: token_key.clone(),
+                    text: seg_text,
+                    x: area.x + start_col as u16,
+                    w: truncated_width as u16,
+                });
                 break;
             }
         }
@@ -1746,7 +1802,9 @@ impl StatusBarRenderer {
                     base_style,
                 ));
             }
-            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            if draw {
+                frame.render_widget(Paragraph::new(Line::from(spans)), area);
+            }
             return layout;
         }
 
@@ -1795,11 +1853,21 @@ impl StatusBarRenderer {
                 current_col,
                 current_col + width as u16,
             );
+            let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
+            layout.segments.push(StatusSegmentInfo {
+                name: element_kind_name(kind),
+                key: token_key.clone(),
+                text: seg_text,
+                x: current_col,
+                w: width as u16,
+            });
             spans.extend(item_spans);
             current_col += width as u16;
         }
 
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        if draw {
+            frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        }
         layout
     }
 

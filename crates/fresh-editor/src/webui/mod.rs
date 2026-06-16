@@ -400,7 +400,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // Semantic status bar and command palette are derived once in the core
     // (`Editor::status_view` / `Editor::palette_view`); the bridge only
     // serializes them. See crates/fresh-editor/src/view/scene.rs.
-    let statusbar = serde_json::to_value(editor.status_view(&buf)).unwrap_or(Value::Null);
+    let statusbar = serde_json::to_value(editor.status_view()).unwrap_or(Value::Null);
     let palette = serde_json::to_value(editor.palette_view()).unwrap_or(Value::Null);
     let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
 
