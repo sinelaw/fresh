@@ -522,6 +522,32 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // Full Settings modal (category tree, items, search, entry dialog).
     let settings = serde_json::to_value(editor.settings_view()).unwrap_or(Value::Null);
 
+    // Theme-accurate chrome palette: the active editor `Theme` resolves every
+    // UI color the TUI draws with. The frontend's CSS variables (--bg, --fg,
+    // --accent, …) are seeded from these so the native HTML chrome matches the
+    // terminal instead of a fixed dark palette. Color→CSS is the web renderer's
+    // job (the TUI uses `Color` directly), so it lives here in the bridge.
+    let theme = {
+        let t = editor.theme.read().unwrap();
+        json!({
+            "name": t.name,
+            "bg": color_css(t.editor_bg),
+            "fg": color_css(t.editor_fg),
+            "accent": color_css(t.cursor),
+            "muted": color_css(t.line_number_fg),
+            "selectionBg": color_css(t.selection_bg),
+            "menuBg": color_css(t.menu_bg),
+            "menuFg": color_css(t.menu_fg),
+            "menuHi": color_css(t.menu_highlight_bg),
+            "popupBg": color_css(t.popup_bg),
+            "popupFg": color_css(t.popup_text_fg),
+            "border": color_css(t.popup_border_fg),
+            "statusBg": color_css(t.status_bar_bg),
+            "statusFg": color_css(t.status_bar_fg),
+            "tabActiveBg": color_css(t.tab_active_bg),
+        })
+    };
+
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
         "menus": menus,
@@ -552,7 +578,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         }),
     });
 
-    json!({ "w": w, "h": h, "regions": regions })
+    json!({ "w": w, "h": h, "regions": regions, "theme": theme })
 }
 
 /// Map a browser key to a crossterm key and run the real input path.

@@ -21,7 +21,8 @@
 -->
 <style>
   :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#333;--fg:#d4d4d4;--muted:#9aa0a6;
-    --accent:#0a84ff;--border:#3a3a3a;--menuhi:#0a64c8}
+    --accent:#0a84ff;--border:#3a3a3a;--menuhi:#0a64c8;
+    --status-bg:#0a84ff;--status-fg:#fff}
   *{box-sizing:border-box}
   :focus{outline:none}
   html,body{height:100%;margin:0}
@@ -65,7 +66,7 @@
   .tab .x:hover{background:#5a5a5a;color:#fff}
 
   /* ---- status bar (native) ---- */
-  .statusbar{display:flex;align-items:center;background:var(--accent);color:#fff;
+  .statusbar{display:flex;align-items:center;background:var(--status-bg);color:var(--status-fg);
     padding:0 10px;font-size:12px;gap:0;white-space:pre}
   .statusbar .txt{padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60vw}
   .statusbar .seg{padding:0 8px;border-radius:3px;cursor:default}
@@ -328,9 +329,24 @@ function cellsSvg(cells, wCells){
   return s;
 }
 
+// Seed the chrome CSS variables from the editor's active theme so the native
+// HTML matches the terminal palette (instead of a fixed dark scheme). Each var
+// falls back to its :root default when the theme leaves a color at terminal
+// "reset" (null).
+function applyTheme(t){
+  if(!t) return;
+  const r=document.documentElement.style;
+  const set=(k,v)=>{ if(v) r.setProperty(k,v); else r.removeProperty(k); };
+  set("--bg",t.bg); set("--fg",t.fg); set("--accent",t.accent);
+  set("--muted",t.muted); set("--bg2",t.popupBg); set("--bg3",t.menuBg);
+  set("--menuhi",t.menuHi); set("--border",t.border);
+  set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
+}
+
 function render(){
   const app=document.getElementById("app");
   if(!scene){ app.textContent="connecting to editor…"; return; }
+  applyTheme(scene.theme);
   app.innerHTML="";
   const reg=scene.regions;
 
