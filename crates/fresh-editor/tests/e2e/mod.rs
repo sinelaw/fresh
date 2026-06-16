@@ -73,6 +73,7 @@ pub mod issue_2031_next_prev_window;
 pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_2119_wheel_scroll;
 pub mod issue_2124_quickfix_enter;
+pub mod issue_2362_replace_toolbar_theme;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod suspend_process;

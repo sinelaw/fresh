@@ -202,21 +202,24 @@ impl Editor {
             if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
                 if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
                     if in_rect(col, row, popup_rect) {
-                        // Check if click is on the button row (last content row before border)
-                        let actual_button_row = popup_rect.y + button_row_offset;
-                        if row == actual_button_row {
-                            let fg_key = self
-                                .active_window_mut()
-                                .theme_info_popup
-                                .as_ref()
-                                .and_then(|p| p.info.fg_key.clone());
-                            self.active_window_mut().theme_info_popup = None;
-                            if let Some(key) = fg_key {
-                                self.fire_theme_inspect_hook(key);
+                        // Check if click is on the button row (last content row
+                        // before border). `button_row_offset` is `None` when the
+                        // popup has no theme keys (no button to open).
+                        if let Some(offset) = button_row_offset {
+                            let actual_button_row = popup_rect.y + offset;
+                            if row == actual_button_row {
+                                let key =
+                                    self.active_window_mut().theme_info_popup.as_ref().and_then(
+                                        |p| p.info.fg_key.clone().or_else(|| p.info.bg_key.clone()),
+                                    );
+                                self.active_window_mut().theme_info_popup = None;
+                                if let Some(key) = key {
+                                    self.fire_theme_inspect_hook(key);
+                                }
+                                return Ok(true);
                             }
-                            return Ok(true);
                         }
-                        // Click inside popup but not button - ignore
+                        // Click inside popup but not on an actionable button - ignore
                         return Ok(true);
                     }
                 }
@@ -336,8 +339,10 @@ impl Editor {
                     self.update_terminal_link_hover(col, row, mouse_event.modifiers);
                 needs_render = needs_render || term_link_changed;
 
-                // Update theme info popup button highlight on hover
-                if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
+                // Update theme info popup button highlight on hover (only when
+                // the popup actually has a button — the keyless message variant
+                // returns `None` and never highlights).
+                if let Some((popup_rect, Some(button_row_offset))) = self.theme_info_popup_rect() {
                     let button_row = popup_rect.y + button_row_offset;
                     let new_highlighted = row == button_row
                         && col >= popup_rect.x

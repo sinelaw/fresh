@@ -1876,10 +1876,16 @@ impl StatusBarRenderer {
         let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
         let regex_checkbox = if use_regex { "[x]" } else { "[ ]" };
 
-        // Style for active (checked) options - highlighted with menu highlight colors
+        // Style for active (checked) options - highlighted with menu highlight
+        // colors. `menu_highlight_fg` is the foreground designed to pair with
+        // `menu_highlight_bg` (the same pairing the menu and settings UIs use),
+        // so it must be drawn on `menu_highlight_bg`, not the dropdown bg. The
+        // previous code kept `menu_dropdown_bg` here, which on themes where
+        // `menu_highlight_fg == menu_dropdown_bg` (e.g. Dracula, where both are
+        // [40,42,54]) rendered the checked checkbox as invisible fg-on-same-bg.
         let active_style = Style::default()
             .fg(theme.menu_highlight_fg)
-            .bg(theme.menu_dropdown_bg);
+            .bg(theme.menu_highlight_bg);
 
         // Style for keyboard shortcuts - use theme color for consistency
         let shortcut_style = Style::default()

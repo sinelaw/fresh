@@ -168,9 +168,44 @@ impl Editor {
             .fg(theme.popup_text_fg)
             .add_modifier(ratatui::style::Modifier::BOLD);
 
+        // When no theme key was recorded for this cell there is nothing the
+        // theme editor could open, so we show an explanatory message instead
+        // of a "▶ Open in Theme Editor" button that would silently do nothing.
+        let has_keys = info.fg_key.is_some() || info.bg_key.is_some();
+
         let mut lines = vec![];
-        lines.push(Line::from(format!(" Region: {}", info.region)));
-        lines.push(Line::from(""));
+        if !info.region.is_empty() {
+            lines.push(Line::from(format!(" Region: {}", info.region)));
+            lines.push(Line::from(""));
+        }
+
+        if !has_keys {
+            lines.push(Line::from(Span::styled(
+                " No theme key recorded here. ",
+                Style::default().fg(theme.popup_text_fg),
+            )));
+            lines.push(Line::from(Span::styled(
+                " This element isn't inspectable yet. ",
+                Style::default().fg(theme.menu_disabled_fg),
+            )));
+
+            let width = POPUP_WIDTH;
+            let height = lines.len() as u16 + 2; // +2 for borders
+
+            let screen = frame.area();
+            let rect =
+                compute_popup_rect(popup.position, width, height, screen.width, screen.height);
+
+            frame.render_widget(Clear, rect);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.popup_border_fg))
+                .title(" Theme Info ")
+                .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
+            let paragraph = Paragraph::new(lines).block(block);
+            frame.render_widget(paragraph, rect);
+            return;
+        }
 
         if let Some(ref fg_key) = info.fg_key {
             lines.push(Line::from(vec![
@@ -235,35 +270,52 @@ impl Editor {
         frame.render_widget(paragraph, rect);
     }
 
-    /// Compute the bounding rect of the theme info popup (for hit-testing).
-    pub(super) fn theme_info_popup_rect(&self) -> Option<(Rect, u16)> {
+    /// Compute the bounding rect of the theme info popup (for hit-testing),
+    /// plus the row offset of the "Open in Theme Editor" button relative to
+    /// `rect.y` (i.e. the button's screen row is `rect.y + offset`). The
+    /// offset is `None` when the popup carries no theme keys (the "no theme
+    /// key recorded" message variant has no button).
+    pub(super) fn theme_info_popup_rect(&self) -> Option<(Rect, Option<u16>)> {
         let popup = self.active_window().theme_info_popup.as_ref()?;
         let info = &popup.info;
+        let has_keys = info.fg_key.is_some() || info.bg_key.is_some();
 
         // Count lines (must match render_theme_info_popup logic)
-        let mut line_count: u16 = 2; // region + blank
-        if info.fg_key.is_some() {
-            line_count += 1; // foreground key
-            if info.fg_color.is_some() {
-                line_count += 1; // color swatch
-            }
-            if info.syntax_category.is_some() {
-                line_count += 1; // category
-            }
+        let mut line_count: u16 = 0;
+        if !info.region.is_empty() {
+            line_count += 2; // region + blank
         }
-        line_count += 1; // blank
-        if info.bg_key.is_some() {
-            line_count += 1; // background key
-            if info.bg_color.is_some() {
-                line_count += 1; // color swatch
+
+        let button_row_offset = if has_keys {
+            if info.fg_key.is_some() {
+                line_count += 1; // foreground key
+                if info.fg_color.is_some() {
+                    line_count += 1; // color swatch
+                }
+                if info.syntax_category.is_some() {
+                    line_count += 1; // category
+                }
             }
-        }
-        line_count += 2; // blank + button
+            line_count += 1; // blank
+            if info.bg_key.is_some() {
+                line_count += 1; // background key
+                if info.bg_color.is_some() {
+                    line_count += 1; // color swatch
+                }
+            }
+            line_count += 1; // blank before button
+            line_count += 1; // button (the last content row)
+                             // The button is the final content line, so its
+                             // screen row is `popup_rect.y + total_line_count`
+                             // (matches the click/hover hit-testing math).
+            Some(line_count)
+        } else {
+            line_count += 2; // two-line "no theme key recorded" message
+            None
+        };
 
         let width = POPUP_WIDTH;
         let height = line_count + 2; // +2 for borders
-                                     // The button is on the last content row (before bottom border)
-        let button_row_offset = line_count; // 0-indexed from popup y + 1 (top border)
 
         // Use the same screen-aware positioning as render to match the actual drawn rect
         let screen_w = self.active_chrome().last_frame_width;
