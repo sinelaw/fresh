@@ -121,13 +121,26 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
     3 radio options + selection, OK/Quit) from `TrustDialogLayout`; native modal
     with a scrim; options/OK/Quit route to `handle_workspace_trust_mouse` at the
     cached rects, keyboard via `handle_key`. (e2e: trust suite + drive.)
-  - [ ] **Settings UI** — large: `SettingsState`/`SettingsLayout` with 9 control
-    kinds (toggle/number/dropdown/text/lists/map/json/…), category tree, search,
-    nested entry dialogs. Big port; layout already cached for hit-testing.
-  - [ ] **Plugin widgets API** — `WidgetSpec` tree (15 kinds: Row/Col/Button/
-    Toggle/List/Tree/Text/…) used by prompt toolbars, dock/floating panels,
-    widget virtual buffers. The spec is already serde JSON + a `HitArea` registry;
-    project spec + instance state + hit areas, render natively, route
-    `widget_event` unchanged. Large.
-  - [ ] **Calibration wizard** — keyboard-only modal; small.
+  - [ ] **Plugin widgets API** (do FIRST — cleaner + higher leverage). `WidgetSpec`
+    is already serde-serializable, so `Editor::widgets_view() -> Vec<WidgetSurfaceView>`
+    emits, per surface, the raw spec tree + instance state (list/tree/text) + hit
+    areas (converted from buffer-row/byte to absolute cell rects) + on-screen rect.
+    Surfaces: prompt toolbar (`active_window().prompt.toolbar_widget`), mounted
+    panels (`Editor::widget_registry.panels` → add `all_panels()`/`get_panel()`),
+    floating/dock (`floating_widget_panel`/`dock`, rect = `last_inner_rect`).
+    Interaction reuses `fire_widget_event` (click) and `handle_widget_action`
+    (keys) — no per-plugin code. MVP renders Row/Col/Button/Toggle/Label/HintBar/
+    Divider/Spacer + List(read+select); Tree/Text-edit/Overlay fall back. Trigger
+    a surface in tests via the live-grep toolbar or a bundled-plugin dock.
+  - [ ] **Settings UI** — independent of widgets (overlap check: they share only
+    `view/controls/*`; Settings has 5 bespoke controls — DualList/Map/TextList/
+    Json/Complex — plus nullable/layer/category-tree/search/entry-dialogs that
+    widgets lack, so it can't ride on widgets). `Editor::settings_view()` from
+    `settings_state` + `active_chrome().settings_layout` (cached). Tagged
+    `ControlView` mirrors `SettingControl` with per-control sub-rects from
+    `ControlLayoutInfo`; clicks route to `handle_settings_mouse` at sub-rect
+    centers, text edit forwards keystrokes to `handle_settings_input`. First cut:
+    toggle/number/dropdown/text fully interactive; map/duallist/json/objectarray
+    + entry dialogs read-only fallback, then iterate. Large.
+  - [~] **Calibration wizard** — deprecate (not converting).
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.
