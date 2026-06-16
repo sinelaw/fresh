@@ -107,6 +107,8 @@
   .pane-content{background:var(--bg)}
   .separator{background:var(--border)}
   .separator:hover{background:var(--accent)}
+  .resize-grip{position:absolute;z-index:97;cursor:col-resize}
+  .resize-grip:hover{background:var(--accent);opacity:.5}
   .scrollbar{background:transparent}
   .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:#5a5a5a}
   .thumb:hover{background:#7a7a7a}
@@ -359,10 +361,17 @@ function applyTheme(t){
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
 }
 
+// Selectors for natively-scrolled chrome whose scrollTop must survive a full
+// DOM rebuild (otherwise any re-render would snap them back to the top).
+const SCROLL_KEEP = ".set-items,.set-cats,.w-list,.widget-surface";
 function render(){
   const app=document.getElementById("app");
   if(!scene){ app.textContent="connecting to editor…"; return; }
   applyTheme(scene.theme);
+  // Snapshot scroll positions before the rebuild, keyed by document-order
+  // ordinal (stable across a same-structure re-render).
+  const savedScroll=[];
+  document.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ savedScroll[i]=e.scrollTop; });
   app.innerHTML="";
   const reg=scene.regions;
 
@@ -426,6 +435,8 @@ function render(){
     const inPane=reg.panes.some(p=>reg.cursor.x>=p.content.x && reg.cursor.x<p.content.x+p.content.w && reg.cursor.y>=p.content.y && reg.cursor.y<p.content.y+p.content.h);
     if(inPane){ const c=div("caret"); c.style.left=px(reg.cursor.x,CW)+"px"; c.style.top=px(reg.cursor.y,CH)+"px"; c.style.height=CH+"px"; app.appendChild(c); }
   }
+  // Restore the scroll positions snapshotted above.
+  document.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(savedScroll[i]) e.scrollTop=savedScroll[i]; });
 }
 
 // ---- native menu bar ----------------------------------------------------
@@ -436,6 +447,13 @@ function menuBarEl(reg){
   reg.menus.forEach((m,i)=>{
     const el=div("menu"+(reg.menuOpen===i?" open":""));
     el.textContent=m.label;
+    // Position each title at its EDITOR cell x (not CSS flow), so the title sits
+    // exactly where the editor hit-tests it and the dropdown — positioned at the
+    // same cell coords — opens directly beneath it.
+    if(m.x!=null){ el.style.position="absolute";
+      el.style.left=px(m.x-rect.x,CW)+"px";
+      if(m.w) el.style.width=px(m.w,CW)+"px";
+      el.style.padding="0"; el.style.justifyContent="center"; }
     // forward to the real editor at the menu label's center cell -> it opens/toggles.
     const col=(m.x??rect.x)+Math.floor((m.w||1)/2);
     el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col,row:barRow}); };
@@ -1009,6 +1027,9 @@ function widgetSurfaceEl(s){
   const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
   const ctx={ kind:"panel", plugin:s.plugin, panelId:s.panelId, hits:s.hits, instances:s.instances, focusKey:s.focusKey };
   el.appendChild(widgetEl(s.spec, ctx));
+  // A left dock's rightmost column is an editor resize border (dock_resizing);
+  // give it an explicit grip since the .widget-surface is in onChrome.
+  if(s.kind==="dock") el.appendChild(borderDragHandle(s.rect.x + s.rect.w - 1, s.rect.y, s.rect.h));
   return el;
 }
 
@@ -1068,7 +1089,33 @@ function fileExplorerEl(fe){
   }
   el.appendChild(list);
   el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  // Right-edge resize handle: the editor treats the explorer's rightmost column
+  // as a drag border (handle_file_explorer_border_drag). The .fileexplorer div
+  // is in onChrome, so the document drag won't fire here — wire it explicitly.
+  el.appendChild(borderDragHandle(fe.rect.x + fe.rect.w - 1, fe.rect.y, fe.rect.h));
   return el;
+}
+
+// A 1-cell-wide vertical resize grip at editor column `bx`. Drives a real
+// editor drag: mousedown sends a `down` at that cell, pointer moves send
+// `drag` at the current column (same row), release sends `up` — exactly what
+// the TUI does for the file-explorer / dock borders. Uses window listeners so
+// the drag continues even when the pointer leaves the chrome element.
+function borderDragHandle(bx, by, h){
+  const grip=div("resize-grip");
+  grip.style.left=px(bx,CW)+"px"; grip.style.top=px(by,CH)+"px";
+  grip.style.width=px(1,CW)+"px"; grip.style.height=px(h,CH)+"px";
+  grip.onmousedown=e=>{
+    e.preventDefault(); e.stopPropagation();
+    sendMouse({kind:"down",button:"left",col:bx,row:by});
+    const move=ev=>{ const col=Math.max(0,Math.floor(ev.clientX/CW));
+      sendMouse({kind:"drag",button:"left",col,row:by}); };
+    const up=ev=>{ const col=Math.max(0,Math.floor(ev.clientX/CW));
+      sendMouse({kind:"up",button:"left",col,row:by});
+      window.removeEventListener("mousemove",move); window.removeEventListener("mouseup",up); };
+    window.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
+  };
+  return grip;
 }
 
 // --- bridge to the real editor ---
@@ -1126,7 +1173,12 @@ document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellA
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());
-document.addEventListener("wheel",e=>{ const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
+// Settings panes and plugin dock/widget panels emit their full content into the
+// DOM, so they scroll natively — forwarding their wheel to the editor would only
+// trigger a re-render that resets scrollTop. Let the browser handle those; route
+// everything else to the editor at the pointer cell.
+const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface");
+document.addEventListener("wheel",e=>{ if(onScrollable(e)) return; const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
 
 let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
 
