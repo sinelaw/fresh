@@ -494,11 +494,31 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             |(leaf, bufid, content_rect, scrollbar_rect, thumb_s, thumb_e)| {
                 // Tabs are derived once in the core (`Editor::tab_bar_view`).
                 let tb = editor.tab_bar_view(*leaf);
+                // Emit the line-number gutter as its own cell block, separate
+                // from the buffer text, sliced at the renderer's real gutter
+                // width — so the frontend keeps the gutter out of the text flow
+                // (future native selection covers only code). `cells` is the
+                // buffer text after the gutter; `gutter` is the line-number
+                // column. When line numbers are off, gutterWidth is 0 and
+                // `cells` is the whole pane.
+                let gw = editor
+                    .leaf_gutter_width(*leaf, *bufid)
+                    .min(content_rect.width);
+                let gutter_rect =
+                    Rect::new(content_rect.x, content_rect.y, gw, content_rect.height);
+                let text_rect = Rect::new(
+                    content_rect.x + gw,
+                    content_rect.y,
+                    content_rect.width - gw,
+                    content_rect.height,
+                );
                 json!({
                     "leaf": leaf.0 .0,
                     "buffer": bufid.0,
                     "content": rect_json(*content_rect),
-                    "cells": cells_json(&buf, *content_rect),
+                    "gutterWidth": gw,
+                    "gutter": if gw > 0 { cells_json(&buf, gutter_rect) } else { Value::Null },
+                    "cells": cells_json(&buf, text_rect),
                     "tabBar": serde_json::to_value(tb.bar).unwrap_or(Value::Null),
                     "tabs": serde_json::to_value(tb.tabs).unwrap_or_else(|_| json!([])),
                     "vscroll": rect_json(*scrollbar_rect),

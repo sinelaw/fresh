@@ -105,6 +105,10 @@
   .fileexplorer .fx-row .fx-name{overflow:hidden;text-overflow:ellipsis}
   .fileexplorer .fx-row .fx-name.dir{font-weight:600}
   .pane-content{background:var(--bg)}
+  /* Gutter (line numbers + separator) is its own element, kept out of the
+     buffer-text flow and non-selectable, so a future native text selection of
+     the buffer won't pick up line numbers. */
+  .pane-gutter{background:var(--bg);user-select:none;-webkit-user-select:none}
   .separator{background:var(--border)}
   .separator:hover{background:var(--accent)}
   .resize-grip{position:absolute;z-index:97;cursor:col-resize}
@@ -319,9 +323,15 @@ function div(cls){ const d=document.createElement("div"); d.className=cls; retur
 // cell coordinate to forward to the editor for a click on a chrome rect
 const rectCell = r => ({ col: r.x + Math.floor(r.w/2), row: r.y });
 
+// Vertical box-drawing glyphs the editor uses for the line-number gutter,
+// tree guides and rules. Rendered as crisp full-height vector lines instead of
+// the font glyph — stacked glyphs leave gaps at our cell height, so the gutter
+// looked dashed; a rule per cell is contiguous row-to-row, i.e. one clean line.
+const VRULE = "│┃";
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
 function cellsSvg(cells, wCells){
   let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="13">`;
+  let rules="";   // vector vertical rules, drawn above the text layer
   for(let row=0; row<cells.length; row++){
     const y=(row+1)*CH - 5;
     let col=0;
@@ -338,6 +348,18 @@ function cellsSvg(cells, wCells){
       const weight=r.b?` font-weight="bold"`:"";
       const style=r.i?` font-style="italic"`:"";
       const deco=r.u?` text-decoration="underline"`:"";
+      // Substitute vertical box-drawing chars with a vector rule: collect a
+      // full-height line per cell, and blank the glyph in the text so only the
+      // rule shows (no dashed glyph behind it).
+      let shown=r.t;
+      if([...r.t].some(ch=>VRULE.includes(ch))){
+        for(let i=0;i<r.t.length;i++){ if(VRULE.includes(r.t[i])){
+          const cx=px(col+i,CW)+CW/2;
+          const hv=r.t[i]==="┃"?1.8:1.1;
+          rules+=`<rect x="${(cx-hv/2).toFixed(2)}" y="${(row*CH).toFixed(1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
+        }}
+        shown=[...r.t].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+      }
       // Lock the run to exactly its cell width. The font's glyph advance isn't
       // exactly CW, so without this a run's text drifts off the grid as it gets
       // longer and snaps back at the next run boundary — which made the current
@@ -345,11 +367,12 @@ function cellsSvg(cells, wCells){
       // others. lengthAdjust="spacing" keeps glyph shapes, adjusting only the
       // inter-character spacing so every cell lands on the CW grid.
       const tl=px(r.t.length,CW);
-      s+=`<tspan x="${x.toFixed(1)}" textLength="${tl.toFixed(1)}" lengthAdjust="spacing" fill="${fill}"${weight}${style}${deco}>${esc(r.t)}</tspan>`;
+      s+=`<tspan x="${x.toFixed(1)}" textLength="${tl.toFixed(1)}" lengthAdjust="spacing" fill="${fill}"${weight}${style}${deco}>${esc(shown)}</tspan>`;
       col+=r.t.length;
     }
     s+=`</text>`;
   }
+  s+=rules;
   s+=`</svg>`;
   return s;
 }
@@ -385,10 +408,23 @@ function render(){
   // file explorer (UI pane; content = its real cells)
   if(reg.fileExplorer) app.appendChild(fileExplorerEl(reg.fileExplorer));
 
-  // panes: native tab bar + buffer interior (real cells) + scrollbar (UI)
+  // panes: native tab bar + buffer interior (real cells) + scrollbar (UI).
+  // The line-number gutter is rendered as its own element, separate from the
+  // buffer-text flow, so a future native text selection covers only the code
+  // (not the gutter/line-number column). Both are still real pipeline cells.
   for(const p of reg.panes){
     if(p.tabBar) app.appendChild(tabBarEl(p));
-    const c=div("region pane-content"); place(c,p.content); c.innerHTML=cellsSvg(p.cells, p.content.w); app.appendChild(c);
+    const gw=p.gutterWidth||0;
+    if(gw>0 && p.gutter){
+      // Gutter (line numbers + separator) and buffer text are emitted as
+      // separate cell blocks by the bridge — render them as separate elements.
+      const g=div("region pane-gutter"); place(g,{x:p.content.x,y:p.content.y,w:gw,h:p.content.h});
+      g.innerHTML=cellsSvg(p.gutter, gw); app.appendChild(g);
+      const c=div("region pane-content"); place(c,{x:p.content.x+gw,y:p.content.y,w:p.content.w-gw,h:p.content.h});
+      c.innerHTML=cellsSvg(p.cells, p.content.w-gw); app.appendChild(c);
+    } else {
+      const c=div("region pane-content"); place(c,p.content); c.innerHTML=cellsSvg(p.cells, p.content.w); app.appendChild(c);
+    }
     if(p.vscroll && p.vscroll.w>0){
       const sb=div("region scrollbar"); place(sb,p.vscroll); app.appendChild(sb);
       const th=document.createElement("div"); th.className="thumb";

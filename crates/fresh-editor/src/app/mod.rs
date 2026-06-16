@@ -1386,6 +1386,28 @@ impl Editor {
             .viewport
     }
 
+    /// Width (in cells) of the line-number gutter for a given split leaf, or 0
+    /// when that split hides line numbers. The same value the renderer uses, so
+    /// a frontend can peel the gutter off the buffer text at the exact column.
+    pub fn leaf_gutter_width(&self, leaf: fresh_core::LeafId, buffer_id: BufferId) -> u16 {
+        let Some(w) = self.windows.get(&self.active_window) else {
+            return 0;
+        };
+        let Some((_, view_states)) = w.buffers.splits() else {
+            return 0;
+        };
+        let Some(vs) = view_states.get(&leaf) else {
+            return 0;
+        };
+        if !vs.show_line_numbers {
+            return 0;
+        }
+        match w.buffers.get(&buffer_id) {
+            Some(state) => vs.viewport.gutter_width(&state.buffer) as u16,
+            None => 0,
+        }
+    }
+
     /// Get the display name for a buffer (filename or virtual buffer name)
     pub fn get_buffer_display_name(&self, buffer_id: BufferId) -> String {
         // Check composite buffers first
