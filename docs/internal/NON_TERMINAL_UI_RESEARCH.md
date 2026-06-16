@@ -193,6 +193,16 @@ UI. Pure-browser is a sharable, capability-limited demo.
 
 #### A.1 — Reference design: Tauri + DOM/CSS chrome + SVG text (PoC built)
 
+> **Superseded / historical.** The original `ChromeSnapshot` + `chrome_html` /
+> `chrome_layout` PoC referenced below was an early exploration. The shipped web
+> UI took the same idea further but through a different (and now single-source)
+> path: semantic projections in `crates/fresh-editor/src/view/scene.rs` consumed
+> by the live bridge (`crates/fresh-editor/src/webui/mod.rs`) and the
+> `web-ui/` frontend. The standalone PoC files (`chrome_html.rs`,
+> `chrome_layout.rs`, `chrome_snapshot.rs`, the `chrome_web_demo` example and its
+> generated HTML) have been removed; the references in this section are kept only
+> as a record of the exploration. See `docs/internal/UNIFIED_SCENE_DESIGN.md`.
+
 This is the concrete, recommended shape of Direction A, and a PoC renderer is in the
 tree (`crates/fresh-editor/src/view/chrome_html.rs`, demo `docs/internal/chrome-web-demo.html`).
 

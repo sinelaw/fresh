@@ -56,12 +56,6 @@ pub mod bracket_highlight_overlay;
 #[cfg(feature = "runtime")]
 pub mod calibration_wizard;
 #[cfg(feature = "runtime")]
-pub mod chrome_html;
-#[cfg(feature = "runtime")]
-pub mod chrome_layout;
-#[cfg(feature = "runtime")]
-pub mod chrome_snapshot;
-#[cfg(feature = "runtime")]
 pub mod event_debug;
 #[cfg(feature = "runtime")]
 pub mod file_browser_input;
