@@ -89,7 +89,15 @@
   .palette .prow .pkey{color:var(--muted);font-size:11px;border:1px solid #555;border-radius:3px;padding:0 5px}
   .palette .prow.sel .pkey{color:#fff;border-color:#9bbcf0}
   .palette .ptitle{padding:6px 12px;color:var(--muted);font-size:11px;border-bottom:1px solid #3a3a3a}
-  .fileexplorer{background:var(--bg2);border-right:1px solid var(--border)}
+  .fileexplorer{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+  .fileexplorer .fx-title{padding:2px 8px;color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
+  .fileexplorer .fx-list{overflow:auto;flex:1}
+  .fileexplorer .fx-row{display:flex;align-items:center;gap:4px;padding:0 6px;white-space:nowrap;cursor:default;color:var(--fg);line-height:1.5}
+  .fileexplorer .fx-row.sel{background:var(--menuhi);color:#fff}
+  .fileexplorer .fx-row .fx-chev{width:10px;flex:0 0 auto;color:var(--muted);text-align:center}
+  .fileexplorer .fx-row.sel .fx-chev{color:#fff}
+  .fileexplorer .fx-row .fx-name{overflow:hidden;text-overflow:ellipsis}
+  .fileexplorer .fx-row .fx-name.dir{font-weight:600}
   .pane-content{background:var(--bg)}
   .separator{background:var(--border)}
   .separator:hover{background:var(--accent)}
@@ -176,7 +184,7 @@ function render(){
   const reg=scene.regions;
 
   // file explorer (UI pane; content = its real cells)
-  if(reg.fileExplorer){ const d=div("region fileexplorer"); place(d,reg.fileExplorer.rect); d.innerHTML=cellsSvg(reg.fileExplorer.cells, reg.fileExplorer.rect.w); app.appendChild(d); }
+  if(reg.fileExplorer) app.appendChild(fileExplorerEl(reg.fileExplorer));
 
   // panes: native tab bar + buffer interior (real cells) + scrollbar (UI)
   for(const p of reg.panes){
@@ -425,6 +433,33 @@ function popupEl(p){
   return el;
 }
 
+// ---- native file explorer (sidebar tree) --------------------------------
+// The editor owns the tree (expand/collapse/selection/scroll); we render the
+// visible window natively and forward row clicks / wheel to handle_mouse at the
+// sidebar's content cells, which the existing file-explorer hit-test resolves.
+function fileExplorerEl(fe){
+  const el=div("region fileexplorer"); place(el,fe.rect);
+  const title=div("fx-title"); title.textContent=fe.title||"Explorer"; el.appendChild(title);
+  const list=div("fx-list");
+  const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
+  for(let j=0;j<n;j++){
+    const idx=start+j, r=fe.rows[idx]; if(!r) break;
+    const row=div("fx-row"+(idx===fe.selected?" sel":""));
+    row.style.paddingLeft=(6 + r.depth*10)+"px";
+    const chev=document.createElement("span"); chev.className="fx-chev";
+    chev.textContent=r.isDir?(r.expanded?"▾":"▸"):"";
+    row.appendChild(chev);
+    const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":""); name.textContent=r.name;
+    row.appendChild(name);
+    const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+    list.appendChild(row);
+  }
+  el.appendChild(list);
+  el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:fe.rect.x+1,row:fe.rect.y+1,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  return el;
+}
+
 // --- bridge to the real editor ---
 // Apply a scene from any endpoint, re-rendering only when it actually changed
 // so the idle poll loop doesn't churn the DOM (or restart the caret blink).
@@ -470,7 +505,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

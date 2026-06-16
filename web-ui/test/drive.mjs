@@ -94,6 +94,21 @@ const s2 = await scene(page);
 check('typed text appears in the real pipeline-rendered cells', paneText(s2).includes('QWZX'), `head="${paneText(s2).slice(0, 40)}"`);
 await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
 
+console.log('\n[file explorer = native tree, NOT cells]');
+await page.locator('body').click();
+// Open the sidebar if it isn't already (Ctrl+B toggles; the live editor may
+// carry prior state), then wait for the async directory scan to arrive via the
+// frame pump (don't re-toggle while it's merely still loading).
+if (!(await scene(page)).regions.fileExplorer) {
+  await page.keyboard.press('Control+b');
+}
+await page.waitForFunction(() => { const fe = window.fresh.scene.regions.fileExplorer; return fe && fe.rows && fe.rows.length > 0; }, { timeout: 8000 }).catch(() => {});
+const fx = await scene(page);
+check('file explorer is a native tree in the scene', !!(fx.regions.fileExplorer && fx.regions.fileExplorer.rows.length > 0), 'rows=' + ((fx.regions.fileExplorer && fx.regions.fileExplorer.rows.length) || 0));
+check('explorer rendered as native .fx-row', (await page.locator('.fileexplorer .fx-row').count()) >= 1);
+check('NO svg/cells inside the explorer', (await page.locator('.fileexplorer svg').count()) === 0);
+await page.screenshot({ path: `${SHOTS}/25-native-explorer.png` });
+
 console.log('\n[frame pump advances without user input, like the TUI loop]');
 const reqs0 = stateReqs;
 await page.waitForTimeout(1600);   // no input at all

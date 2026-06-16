@@ -579,3 +579,62 @@ impl Editor {
         out
     }
 }
+
+// ─────────────────────────── file explorer (sidebar tree) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRow {
+    pub name: String,
+    pub depth: usize,
+    pub is_dir: bool,
+    pub expanded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileExplorerView {
+    pub rect: RectView,
+    pub title: String,
+    pub scroll_offset: usize,
+    pub viewport_height: usize,
+    pub selected: Option<usize>,
+    pub rows: Vec<FileRow>,
+}
+
+impl Editor {
+    /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
+    /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
+    /// sidebar rect. Rendered natively by the web frontend; row clicks route back
+    /// through `handle_mouse` at the sidebar's content cells, which the existing
+    /// file-explorer hit-test resolves to the same display index.
+    pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
+        let rect = self.active_layout().file_explorer_area?;
+        let view = self.file_explorer()?;
+        let tree = view.tree();
+        let rows = view
+            .get_display_nodes()
+            .into_iter()
+            .filter_map(|(id, indent)| {
+                tree.get_node(id).map(|n| FileRow {
+                    name: n.entry.name.clone(),
+                    depth: indent,
+                    is_dir: n.is_dir(),
+                    expanded: n.is_expanded(),
+                })
+            })
+            .collect();
+        let title = tree
+            .get_node(tree.root_id())
+            .map(|n| n.entry.name.clone())
+            .unwrap_or_default();
+        Some(FileExplorerView {
+            rect: RectView::from(rect),
+            title,
+            scroll_offset: view.get_scroll_offset(),
+            viewport_height: view.viewport_height,
+            selected: view.get_selected_index(),
+            rows,
+        })
+    }
+}

@@ -379,9 +379,9 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         })
         .collect();
 
-    let file_explorer = layout
-        .file_explorer_area
-        .map(|r| json!({ "rect": rect_json(r), "cells": cells_json(&buf, r) }));
+    // Semantic file explorer (sidebar tree) — derived once in the core
+    // (`Editor::file_explorer_view`) and rendered as native UI, not cells.
+    let file_explorer = serde_json::to_value(editor.file_explorer_view()).unwrap_or(Value::Null);
 
     // Semantic status bar and command palette are derived once in the core
     // (`Editor::status_view` / `Editor::palette_view`); the bridge only

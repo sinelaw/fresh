@@ -110,4 +110,23 @@ The cell pass draws **only** panes (+ scrollbars/separators). Chrome is emitted 
   legitimately differs per frontend (the intended boundary). Tabs/status/palette/
   popups already read their content from a single source (buffer metadata /
   prompt state / popup structs / render output), so no second derivation remains.
+- [~] Phase 5: remaining cell-drawn surfaces → native semantic UI. The goal is
+  ZERO cell-drawn chrome of any kind. Each gets an `Editor::*_view()` projection
+  in `view/scene.rs`, native rendering in the frontend, and interactions routed
+  back through the existing `handle_mouse`/`handle_key` at the cached cell rects.
+  - [x] **File explorer** sidebar — `file_explorer_view()` (tree rows: name,
+    depth, is_dir, expanded + selection/scroll); native tree, click/scroll route
+    to the existing file-explorer hit-test. (e2e: explorer suite + drive.)
+  - [ ] **Workspace-trust dialog** — popup-stack `PopupResolver::WorkspaceTrust`
+    rendered as a dedicated modal (`TrustDialogLayout`: title/path/triggers,
+    3 radio options, OK/Quit). Small.
+  - [ ] **Settings UI** — large: `SettingsState`/`SettingsLayout` with 9 control
+    kinds (toggle/number/dropdown/text/lists/map/json/…), category tree, search,
+    nested entry dialogs. Big port; layout already cached for hit-testing.
+  - [ ] **Plugin widgets API** — `WidgetSpec` tree (15 kinds: Row/Col/Button/
+    Toggle/List/Tree/Text/…) used by prompt toolbars, dock/floating panels,
+    widget virtual buffers. The spec is already serde JSON + a `HitArea` registry;
+    project spec + instance state + hit areas, render natively, route
+    `widget_event` unchanged. Large.
+  - [ ] **Calibration wizard** — keyboard-only modal; small.
 - [ ] Phase 4: `Scene` umbrella + Tauri transport.
