@@ -63,7 +63,7 @@
     "settings_selected_bg": [63, 63, 63],
     "settings_selected_fg": [220, 220, 220],
     "suggestion_bg": [39, 39, 39],
-    "suggestion_selected_bg": [55, 55, 55],
+    "suggestion_selected_bg": [60, 60, 60],
     "help_bg": [40, 40, 40],
     "help_fg": [171, 178, 191],
     "help_key_fg": [107, 193, 255],
@@ -89,8 +89,7 @@
     "status_error_indicator_hover_bg": [250, 80, 77],
     "status_error_indicator_hover_fg": [255, 255, 255],
     "tab_drop_zone_bg": [97, 175, 239],
-    "tab_drop_zone_border": [97, 175, 239],
-    "suggestion_selected_bg": [60, 60, 60]
+    "tab_drop_zone_border": [97, 175, 239]
   },
   "search": {
     "match_bg": [229, 192, 123],
