@@ -150,6 +150,10 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  /* native right-click / new-tab context menu */
+  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;font-size:12px;min-width:160px}
+  .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
   /* floating / dock widget panel surfaces (native plugin UI) */
   .widget-surface{background:var(--bg2);overflow:auto;z-index:40;font-size:12px;padding:4px 6px}
   .widget-surface.w-dock{border-right:1px solid var(--border)}
@@ -271,6 +275,9 @@ function render(){
   // native plugin widget panels (floating / dock)
   if(reg.widgets) for(const s of reg.widgets) app.appendChild(widgetSurfaceEl(s));
 
+  // native right-click / new-tab context menu
+  if(reg.contextMenu) app.appendChild(contextMenuEl(reg.contextMenu));
+
   // native workspace-trust modal
   if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
 
@@ -381,7 +388,7 @@ function tabBarEl(p){
   for(const t of p.tabs){
     const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":""));
     if(t.rect){ const c=rectCell(t.rect);
-      el.onmousedown=e=>{ if(e.target.classList.contains("x")) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:c.col,row:c.row}); }; }
+      el.onmousedown=e=>{ if(e.target.classList.contains("x")) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row}); }; }
     const name=document.createElement("span"); name.className="name"; name.textContent=t.label; el.appendChild(name);
     const dot=document.createElement("span"); dot.className="dot"; el.appendChild(dot);
     const x=document.createElement("span"); x.className="x"; x.textContent="×";
@@ -567,6 +574,23 @@ function widgetEl(spec, ctx){
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
+// Native right-click / new-tab context menu. Rendered at the menu's cell
+// position; clicking item i forwards a click at (x+1, y+1+i) — the cell the
+// editor's hit-test resolves to that item (`item_idx = row - y - 1`).
+function contextMenuEl(cm){
+  const el=div("region ctxmenu");
+  el.style.left=px(cm.x,CW)+"px"; el.style.top=px(cm.y,CH)+"px";
+  cm.items.forEach((label,i)=>{
+    const row=div("ctxitem"+(i===cm.highlighted?" sel":""));
+    row.textContent=label;
+    const cell={col:cm.x+1,row:cm.y+1+i};
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+    row.onmouseenter=()=>sendMouse({kind:"moved",col:cell.col,row:cell.row});
+    el.appendChild(row);
+  });
+  return el;
+}
+
 // A floating / dock plugin widget panel, rendered natively at its cell rect.
 function widgetSurfaceEl(s){
   const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
@@ -625,7 +649,8 @@ function fileExplorerEl(fe){
     const name=document.createElement("span"); name.className="fx-name"+(r.isDir?" dir":""); name.textContent=r.name;
     row.appendChild(name);
     const cell={col:fe.rect.x+1,row:fe.rect.y+1+j};   // +1 for the title row
-    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cell.col,row:cell.row}); };
+    // Forward the real button so a right-click opens the explorer context menu.
+    row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:btn(e),col:cell.col,row:cell.row}); };
     list.appendChild(row);
   }
   el.appendChild(list);
@@ -679,7 +704,7 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface");
+const onChrome = e => e.target.closest(".menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu");
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });

@@ -784,3 +784,62 @@ impl Editor {
         out
     }
 }
+
+// ─────────────────────────── context menus (right-click / new-tab) ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextMenuView {
+    /// "tab" | "newTab" | "fileExplorer" — for styling / debugging.
+    pub kind: &'static str,
+    pub x: u16,
+    pub y: u16,
+    pub highlighted: usize,
+    pub items: Vec<String>,
+}
+
+impl Editor {
+    /// The active right-click / new-tab context menu (only one shows at a time),
+    /// projected for native rendering. Items render at `y + 1 + i` (the bordered
+    /// box); a click forwarded to `handle_mouse` at `(x + 1, y + 1 + i)` resolves
+    /// to item `i` via the existing hover/hit-test (`item_idx = row - y - 1`).
+    pub fn context_menu_view(&self) -> Option<ContextMenuView> {
+        let w = self.active_window();
+        let chrome = self.active_chrome();
+        if let Some(m) = &w.file_explorer_context_menu {
+            let (x, y) = m.clamped_position(chrome.last_frame_width, chrome.last_frame_height);
+            return Some(ContextMenuView {
+                kind: "fileExplorer",
+                x,
+                y,
+                highlighted: m.highlighted,
+                items: m.items().iter().map(|i| i.label()).collect(),
+            });
+        }
+        if let Some(m) = &w.new_tab_menu {
+            return Some(ContextMenuView {
+                kind: "newTab",
+                x: m.position.0,
+                y: m.position.1,
+                highlighted: m.highlighted,
+                items: crate::app::types::NewTabMenuItem::all()
+                    .iter()
+                    .map(|i| i.label())
+                    .collect(),
+            });
+        }
+        if let Some(m) = &w.tab_context_menu {
+            return Some(ContextMenuView {
+                kind: "tab",
+                x: m.position.0,
+                y: m.position.1,
+                highlighted: m.highlighted,
+                items: crate::app::types::TabContextMenuItem::all()
+                    .iter()
+                    .map(|i| i.label())
+                    .collect(),
+            });
+        }
+        None
+    }
+}

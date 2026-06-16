@@ -1545,21 +1545,25 @@ impl Editor {
             self.active_chrome_mut().menu_layout = None;
         }
 
-        // Render tab context menu if open
-        let tab_ctx_menu = self.active_window().tab_context_menu.clone();
-        if let Some(menu) = tab_ctx_menu {
-            self.render_tab_context_menu(frame, &menu);
-        }
+        // Context menus: the web renders these natively from `context_menu_view`
+        // (no cell drawing); the TUI draws them as before.
+        if !self.suppress_chrome_cells {
+            // Render tab context menu if open
+            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
+            if let Some(menu) = tab_ctx_menu {
+                self.render_tab_context_menu(frame, &menu);
+            }
 
-        let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
-        if let Some(menu) = fe_ctx_menu {
-            self.render_file_explorer_context_menu(frame, &menu);
-        }
+            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
+            if let Some(menu) = fe_ctx_menu {
+                self.render_file_explorer_context_menu(frame, &menu);
+            }
 
-        // Render the "+" new-tab popup menu if open
-        let new_tab_menu = self.active_window().new_tab_menu.clone();
-        if let Some(menu) = new_tab_menu {
-            self.render_new_tab_menu(frame, &menu);
+            // Render the "+" new-tab popup menu if open
+            let new_tab_menu = self.active_window().new_tab_menu.clone();
+            if let Some(menu) = new_tab_menu {
+                self.render_new_tab_menu(frame, &menu);
+            }
         }
 
         // Chrome theme-key provenance (status bar, menu, tabs, file explorer,

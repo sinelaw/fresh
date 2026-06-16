@@ -443,6 +443,8 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
     // Plugin-mounted floating / dock widget panels (e.g. the orchestrator dock),
     // rendered natively from their WidgetSpec.
     let widgets = serde_json::to_value(editor.widgets_view()).unwrap_or(Value::Null);
+    // Active right-click / new-tab context menu, rendered natively.
+    let context_menu = serde_json::to_value(editor.context_menu_view()).unwrap_or(Value::Null);
 
     let regions = json!({
         "menubar": menubar_rect.map(rect_json),
@@ -459,6 +461,7 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "palette": palette,
         "trustDialog": trust_dialog,
         "widgets": widgets,
+        "contextMenu": context_menu,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
         // Pacing hint for the frontend's poll loop: when something is animating /
         // an LSP spinner is live / a timer is pending, poll fast; otherwise idle
