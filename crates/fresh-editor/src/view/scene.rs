@@ -873,30 +873,11 @@ impl Editor {
     /// projected as a titled line list for native rendering. Only one shows at a
     /// time. Cells for these are suppressed on the web; keyboard drives them.
     pub fn aux_modals_view(&self) -> Option<AuxModalView> {
-        // Keybinding editor — the resolved binding list (filtered) + selection.
-        if let Some(kb) = &self.keybinding_editor {
-            let lines = kb
-                .filtered_indices
-                .iter()
-                .enumerate()
-                .filter_map(|(i, &bi)| {
-                    kb.bindings.get(bi).map(|b| AuxLine {
-                        text: format!(
-                            "{:<18} {:<30} {}",
-                            b.key_display, b.action_display, b.context
-                        ),
-                        selected: i == kb.selected,
-                    })
-                })
-                .collect();
-            return Some(AuxModalView {
-                kind: "keybindings",
-                title: rust_i18n::t!("keybinding_editor.title").into_owned(),
-                rect: None,
-                lines,
-                footer: Some(format!("{} · ↑↓ navigate · Esc close", kb.active_keymap)),
-            });
-        }
+        // NOTE: the keybinding editor is intentionally NOT projected here — it's a
+        // full interactive modal (search, context/source filters, an add/edit
+        // sub-dialog, help overlay), Settings-grade rather than a line list. It
+        // renders as cells (functional) until it gets a proper native projection,
+        // grouped with the Settings UI.
         let w = self.active_window();
         // Event-debug log.
         if let Some(ed) = &w.event_debug {
@@ -924,20 +905,40 @@ impl Editor {
         }
         // Theme-info popup (anchored at its click position).
         if let Some(ti) = &w.theme_info_popup {
+            fn color_str(c: ratatui::style::Color) -> String {
+                match c {
+                    ratatui::style::Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+                    other => format!("{other:?}"),
+                }
+            }
             let info = &ti.info;
             let mut lines = vec![AuxLine {
                 text: format!("Region: {}", info.region),
                 selected: false,
             }];
             if let Some(k) = &info.fg_key {
+                let c = info
+                    .fg_color
+                    .map(|c| format!("  {}", color_str(c)))
+                    .unwrap_or_default();
                 lines.push(AuxLine {
-                    text: format!("Foreground: {k}"),
+                    text: format!("Foreground: {k}{c}"),
                     selected: false,
                 });
             }
             if let Some(k) = &info.bg_key {
+                let c = info
+                    .bg_color
+                    .map(|c| format!("  {}", color_str(c)))
+                    .unwrap_or_default();
                 lines.push(AuxLine {
-                    text: format!("Background: {k}"),
+                    text: format!("Background: {k}{c}"),
+                    selected: false,
+                });
+            }
+            if let Some(cat) = &info.syntax_category {
+                lines.push(AuxLine {
+                    text: format!("Category: {cat}"),
                     selected: false,
                 });
             }
