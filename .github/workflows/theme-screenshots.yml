@@ -1,0 +1,83 @@
+name: Theme screenshots
+
+# Render before/after screenshots whenever a PR changes a built-in theme, so
+# reviewers can see the visual effect of a color tweak instead of reading RGB
+# triples in a JSON diff. The gallery is uploaded as a build artifact.
+#
+# See docs/theme-screenshot-diff.md for objectives & criteria.
+
+on:
+  pull_request:
+    paths:
+      - "crates/fresh-editor/themes/**"
+      - "crates/fresh-editor/tests/e2e/theme_screenshots.rs"
+      - ".github/workflows/theme-screenshots.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  theme-diff:
+    name: theme diff gallery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for base diff)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR base branch
+        run: git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Render theme diff gallery
+        env:
+          FRESH_THEME_BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          set -o pipefail
+          cargo nextest run \
+            --package fresh-editor \
+            --test e2e_tests \
+            -E 'test(theme_diff_gallery)' \
+            --run-ignored ignored-only \
+            --no-capture 2>&1 | tee /tmp/theme-diff.log
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Theme screenshot diff"
+            echo ""
+            if [ -f docs/blog/theme-diff/index.html ]; then
+              echo "Rendered before/after screenshots for the changed theme(s)."
+              echo "Download the **theme-diff-gallery** artifact below and open \`index.html\`."
+              echo ""
+              echo "Changed themes:"
+              echo ""
+              grep 'theme-diff: rendering' /tmp/theme-diff.log | sed 's/theme-diff: /- /' || true
+            else
+              echo "No theme changes detected against the base ref."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload gallery artifact
+        if: hashFiles('docs/blog/theme-diff/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-diff-gallery
+          path: docs/blog/theme-diff/
+          if-no-files-found: ignore

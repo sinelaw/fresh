@@ -53,6 +53,10 @@ crates/fresh-editor/npm-package/CHANGELOG.md
 bindings/
 crates/fresh-editor/target
 
+# Generated, PR-specific theme before/after diff gallery (see
+# docs/theme-screenshot-diff.md). Uploaded as a CI artifact, never committed.
+docs/blog/theme-diff/
+
 # VitePress
 docs/.vitepress/cache
 docs/.vitepress/dist
