@@ -47,7 +47,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: session (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -55,7 +55,7 @@ struct Cli {
     #[arg(value_name = "FILES")]
     files: Vec<String>,
 
-    /// Attach to session. Use -a for current dir, -a NAME for named session
+    /// Attach to a daemon. Use -a for current dir, -a NAME for a named daemon
     #[arg(short = 'a', long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
     attach: Option<String>,
 
@@ -174,12 +174,12 @@ struct Args {
     /// when the client saw an `ssh://` / scp-style remote in
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
-    // Session-related fields (set via subcommands or -a shortcut)
+    // Daemon-related fields (set via subcommands or -a shortcut)
     attach: bool,
     list_sessions: bool,
     session_name: Option<String>,
     kill: Option<Option<String>>,
-    /// Open files in a session without attaching (session_name, files, wait)
+    /// Open files in a daemon without attaching (session_name, files, wait)
     open_files_in_session: Option<(Option<String>, Vec<String>, bool)>,
     /// Launch in GUI mode
     #[cfg(feature = "gui")]
@@ -214,13 +214,20 @@ impl From<Cli> for Args {
             // Parse command from --cmd arguments
             let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
             match cmd_args.as_slice() {
-                // Session commands
-                ["session", "list", ..]
+                // Daemon commands. `daemon` is the current term; `session`
+                // (and the `s` short form) are kept as non-breaking aliases.
+                ["daemon", "list", ..]
+                | ["d", "list", ..]
+                | ["daemon", "ls", ..]
+                | ["d", "ls", ..]
+                | ["session", "list", ..]
                 | ["s", "list", ..]
                 | ["session", "ls", ..]
                 | ["s", "ls", ..] => (true, None, false, None, false, false, None, cli.files, None),
-                // Open file in session: fresh --cmd session open-file <name> <files...> [--wait]
-                ["session", "open-file", name, files @ ..]
+                // Open file in a daemon: fresh --cmd daemon open-file <name> <files...> [--wait]
+                ["daemon", "open-file", name, files @ ..]
+                | ["d", "open-file", name, files @ ..]
+                | ["session", "open-file", name, files @ ..]
                 | ["s", "open-file", name, files @ ..] => {
                     let session = if *name == "." {
                         None
@@ -245,7 +252,11 @@ impl From<Cli> for Args {
                         Some((session, file_list, wait)),
                     )
                 }
-                ["session", "attach", name, ..]
+                ["daemon", "attach", name, ..]
+                | ["d", "attach", name, ..]
+                | ["daemon", "a", name, ..]
+                | ["d", "a", name, ..]
+                | ["session", "attach", name, ..]
                 | ["s", "attach", name, ..]
                 | ["session", "a", name, ..]
                 | ["s", "a", name, ..] => (
@@ -259,10 +270,21 @@ impl From<Cli> for Args {
                     cli.files,
                     None,
                 ),
-                ["session", "attach"] | ["s", "attach"] | ["session", "a"] | ["s", "a"] => {
+                ["daemon", "attach"]
+                | ["d", "attach"]
+                | ["daemon", "a"]
+                | ["d", "a"]
+                | ["session", "attach"]
+                | ["s", "attach"]
+                | ["session", "a"]
+                | ["s", "a"] => {
                     (false, None, true, None, false, false, None, cli.files, None)
                 }
-                ["session", "new", name, rest @ ..]
+                ["daemon", "new", name, rest @ ..]
+                | ["d", "new", name, rest @ ..]
+                | ["daemon", "n", name, rest @ ..]
+                | ["d", "n", name, rest @ ..]
+                | ["session", "new", name, rest @ ..]
                 | ["s", "new", name, rest @ ..]
                 | ["session", "n", name, rest @ ..]
                 | ["s", "n", name, rest @ ..] => {
@@ -279,7 +301,11 @@ impl From<Cli> for Args {
                         None,
                     )
                 }
-                ["session", "kill", "--all"]
+                ["daemon", "kill", "--all"]
+                | ["d", "kill", "--all"]
+                | ["daemon", "k", "--all"]
+                | ["d", "k", "--all"]
+                | ["session", "kill", "--all"]
                 | ["s", "kill", "--all"]
                 | ["session", "k", "--all"]
                 | ["s", "k", "--all"] => (
@@ -293,7 +319,11 @@ impl From<Cli> for Args {
                     cli.files,
                     None,
                 ),
-                ["session", "kill", name, ..]
+                ["daemon", "kill", name, ..]
+                | ["d", "kill", name, ..]
+                | ["daemon", "k", name, ..]
+                | ["d", "k", name, ..]
+                | ["session", "kill", name, ..]
                 | ["s", "kill", name, ..]
                 | ["session", "k", name, ..]
                 | ["s", "k", name, ..] => (
@@ -307,7 +337,14 @@ impl From<Cli> for Args {
                     cli.files,
                     None,
                 ),
-                ["session", "kill"] | ["s", "kill"] | ["session", "k"] | ["s", "k"] => (
+                ["daemon", "kill"]
+                | ["d", "kill"]
+                | ["daemon", "k"]
+                | ["d", "k"]
+                | ["session", "kill"]
+                | ["s", "kill"]
+                | ["session", "k"]
+                | ["s", "k"] => (
                     false,
                     Some(None),
                     false,
@@ -319,12 +356,18 @@ impl From<Cli> for Args {
                     None,
                 ),
 
-                ["session", "info", name, ..] | ["s", "info", name, ..] => {
+                ["daemon", "info", name, ..]
+                | ["d", "info", name, ..]
+                | ["session", "info", name, ..]
+                | ["s", "info", name, ..] => {
                     // Info not fully implemented, treat as list for now
                     let _ = name;
                     (true, None, false, None, false, false, None, cli.files, None)
                 }
-                ["session", "info"] | ["s", "info"] => {
+                ["daemon", "info"]
+                | ["d", "info"]
+                | ["session", "info"]
+                | ["s", "info"] => {
                     (true, None, false, None, false, false, None, cli.files, None)
                 }
                 // Config commands
@@ -364,7 +407,7 @@ impl From<Cli> for Args {
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: session (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init");
+                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init");
                     std::process::exit(1);
                 }
             }
@@ -2535,7 +2578,7 @@ fn list_sessions_command() -> AnyhowResult<()> {
     let socket_dir = SocketPaths::socket_directory()?;
 
     if !socket_dir.exists() {
-        println!("No active sessions.");
+        println!("No running daemons.");
         return Ok(());
     }
 
@@ -2583,24 +2626,24 @@ fn list_sessions_command() -> AnyhowResult<()> {
     }
 
     if stale_cleaned > 0 {
-        eprintln!("Cleaned up {} stale session(s).", stale_cleaned);
+        eprintln!("Cleaned up {} stale daemon(s).", stale_cleaned);
     }
 
     if sessions.is_empty() {
-        println!("No active sessions.");
+        println!("No running daemons.");
     } else {
-        println!("Active sessions:");
+        println!("Running daemons:");
         for (id, display) in &sessions {
             if display != id {
-                // Working-directory session: show path and usable name
+                // Working-directory daemon: show path and usable name
                 println!("  {}  (name: {})", display, id);
             } else {
-                // Named session
+                // Named daemon
                 println!("  {}", id);
             }
         }
         println!();
-        // Show the most convenient attach form for each session type
+        // Show the most convenient attach form for each daemon type
         if sessions.len() == 1 {
             let (id, display) = &sessions[0];
             if display != id {
@@ -2617,21 +2660,21 @@ fn list_sessions_command() -> AnyhowResult<()> {
     Ok(())
 }
 
-/// Kill a session (terminate the server)
+/// Kill a daemon (terminate the daemon process)
 fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> {
     use fresh::server::ipc::ClientConnection;
     use fresh::server::protocol::ClientControl;
 
     let working_dir = std::env::current_dir()?;
 
-    // Determine session name: explicit arg > --session-name flag > working dir
+    // Determine daemon name: explicit arg > --session-name flag > working dir
     let socket_paths = match session.or(args.session_name.as_deref()) {
         Some(name) => SocketPaths::for_session_name(name)?,
         None => SocketPaths::for_working_dir(&working_dir)?,
     };
 
     if !socket_paths.data.exists() || !socket_paths.control.exists() {
-        eprintln!("No session found to kill.");
+        eprintln!("No daemon found to kill.");
         return Ok(());
     }
 
@@ -2682,7 +2725,7 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
         let _ = std::fs::remove_file(&socket_paths.control);
     }
 
-    println!("Session terminated.");
+    println!("Daemon terminated.");
     Ok(())
 }
 
@@ -2845,7 +2888,7 @@ fn resolve_session(session_name: Option<&str>) -> anyhow::Result<SocketPaths> {
     }
 }
 
-/// Open files in a running session without attaching
+/// Open files in a running daemon without attaching
 fn run_open_files_command(
     session_name: Option<&str>,
     files: &[String],
@@ -2936,14 +2979,14 @@ fn run_open_files_command(
             return run_attach(session_name, &[]);
         } else {
             eprintln!(
-                "Started new session and opened {} file(s). Attach with: fresh -a{}",
+                "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
                 file_requests.len(),
                 session_name.map_or(String::new(), |n| format!(" {}", n)),
             );
             return Ok(());
         }
     } else if wait {
-        // Existing session — block until the server sends WaitComplete
+        // Existing daemon — block until the daemon sends WaitComplete
         loop {
             match conn.read_control() {
                 Ok(Some(line)) => {
@@ -2960,7 +3003,7 @@ fn run_open_files_command(
             }
         }
     } else {
-        eprintln!("Opened {} file(s) in session.", file_requests.len());
+        eprintln!("Opened {} file(s) in the daemon.", file_requests.len());
     }
     Ok(())
 }
@@ -3121,7 +3164,7 @@ fn forward_to_session(session: &str, files: &[String]) -> AnyhowResult<bool> {
     Ok(true)
 }
 
-/// Attach to an existing session, starting a server if needed
+/// Attach to an existing daemon, starting one if needed
 fn run_attach_command(args: &Args) -> AnyhowResult<()> {
     run_attach(args.session_name.as_deref(), &args.files)
 }
@@ -3161,14 +3204,14 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
     // Determine socket paths based on session name or working directory
     let socket_paths = resolve_session(session_name)?;
 
-    // Clean up stale sockets if server is dead
+    // Clean up stale sockets if the daemon is dead
     if socket_paths.cleanup_if_stale() {
-        eprintln!("Cleaned up stale session.");
+        eprintln!("Cleaned up stale daemon.");
     }
 
-    // Check if a server is running, if not start one
+    // Check if a daemon is running, if not start one
     let server_was_started = if !socket_paths.is_server_alive() {
-        eprintln!("Starting server...");
+        eprintln!("Starting daemon...");
 
         // Spawn server in background
         let _pid = spawn_server_detached(session_name, ssh_url.as_deref())?;
@@ -3224,10 +3267,10 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         ServerControl::Hello(server_hello) => {
             if server_hello.protocol_version != PROTOCOL_VERSION {
                 eprintln!(
-                    "Version mismatch: server is v{}",
+                    "Version mismatch: daemon is v{}",
                     server_hello.server_version
                 );
-                eprintln!("Please restart the server with the same version as the client.");
+                eprintln!("Please restart the daemon with the same version as the client.");
                 return Ok(());
             }
             tracing::info!(
@@ -3237,8 +3280,8 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
             );
         }
         ServerControl::VersionMismatch(mismatch) => {
-            eprintln!("Version mismatch: server is v{}", mismatch.server_version);
-            eprintln!("Please restart the server with the same version as the client.");
+            eprintln!("Version mismatch: daemon is v{}", mismatch.server_version);
+            eprintln!("Please restart the daemon with the same version as the client.");
             return Ok(());
         }
         ServerControl::Error { message } => {
@@ -3309,13 +3352,13 @@ fn run_attach(session_name: Option<&str>, files: &[String]) -> AnyhowResult<()> 
         }
         Ok(client::ClientExitReason::Detached) => {
             tracing::debug!("Client exit: Detached");
-            eprintln!("Detached from session. Server continues running.");
-            eprintln!("Reattach with: fresh -a  or  fresh session attach");
+            eprintln!("Detached from daemon. The daemon keeps running.");
+            eprintln!("Reattach with: fresh -a  or  fresh --cmd daemon attach");
         }
         Ok(client::ClientExitReason::VersionMismatch { server_version }) => {
             tracing::debug!("Client exit: VersionMismatch");
-            eprintln!("Version mismatch: server is v{}", server_version);
-            eprintln!("Please restart the server with the same version as the client.");
+            eprintln!("Version mismatch: daemon is v{}", server_version);
+            eprintln!("Please restart the daemon with the same version as the client.");
         }
         Ok(client::ClientExitReason::Error(e)) => {
             tracing::debug!("Client exit: Error({})", e);
@@ -3533,23 +3576,23 @@ fn build_localized_after_help() -> String {
 
     out.push_str(&format!("{}\n", t("cli.section.session")));
     out.push_str(&format!(
-        "  session list              {}\n",
+        "  daemon list              {}\n",
         t("cli.cmd.session_list")
     ));
     out.push_str(&format!(
-        "  session attach [NAME]     {}\n",
+        "  daemon attach [NAME]     {}\n",
         t("cli.cmd.session_attach")
     ));
     out.push_str(&format!(
-        "  session new NAME          {}\n",
+        "  daemon new NAME          {}\n",
         t("cli.cmd.session_new")
     ));
     out.push_str(&format!(
-        "  session kill [NAME]       {}\n",
+        "  daemon kill [NAME]       {}\n",
         t("cli.cmd.session_kill")
     ));
     out.push_str(&format!(
-        "  session open-file NAME FILES [--wait]   {}\n",
+        "  daemon open-file NAME FILES [--wait]   {}\n",
         t("cli.cmd.session_open_file")
     ));
     out.push('\n');
@@ -3600,15 +3643,15 @@ fn build_localized_after_help() -> String {
         t("cli.example.attach_name")
     ));
     out.push_str(&format!(
-        "  fresh --cmd session new proj                 {}\n",
+        "  fresh --cmd daemon new proj                  {}\n",
         t("cli.example.new_session")
     ));
     out.push_str(&format!(
-        "  fresh --cmd session open-file . main.rs     {}\n",
+        "  fresh --cmd daemon open-file . main.rs      {}\n",
         t("cli.example.open_in_dir")
     ));
     out.push_str(&format!(
-        "  fresh --cmd session open-file proj a.rs     {}\n",
+        "  fresh --cmd daemon open-file proj a.rs      {}\n",
         t("cli.example.open_in_named")
     ));
     out.push('\n');
@@ -3629,17 +3672,17 @@ fn build_localized_after_help() -> String {
     out.push_str(&format!("  {}\n\n", t("cli.guided.wait_intro")));
     out.push_str(&format!("  {}\n\n", t("cli.guided.session_dot")));
     out.push_str(&format!("  {}\n", t("cli.guided.annotation")));
-    out.push_str("    fresh --cmd session open-file . 'src/main.rs:10-25@\"msg\"' --wait\n\n");
+    out.push_str("    fresh --cmd daemon open-file . 'src/main.rs:10-25@\"msg\"' --wait\n\n");
     out.push_str(&format!("  {}\n", t("cli.guided.markdown")));
     out.push_str(
-        "    fresh --cmd session open-file . \\\n      $'src/main.rs:10-25@\"**Title**\\nBody text here\"' --wait\n\n",
+        "    fresh --cmd daemon open-file . \\\n      $'src/main.rs:10-25@\"**Title**\\nBody text here\"' --wait\n\n",
     );
     out.push_str(&format!("  {}\n", t("cli.guided.walkthrough")));
-    out.push_str("    fresh --cmd session open-file . 'a.rs:1-10@\"Step 1\"' --wait\n");
-    out.push_str("    fresh --cmd session open-file . 'b.rs:5-20@\"Step 2\"' --wait\n");
-    out.push_str("    fresh --cmd session open-file . 'c.rs:30@\"Step 3\"'   --wait\n\n");
+    out.push_str("    fresh --cmd daemon open-file . 'a.rs:1-10@\"Step 1\"' --wait\n");
+    out.push_str("    fresh --cmd daemon open-file . 'b.rs:5-20@\"Step 2\"' --wait\n");
+    out.push_str("    fresh --cmd daemon open-file . 'c.rs:30@\"Step 3\"'   --wait\n\n");
     out.push_str(&format!("  {}\n", t("cli.guided.git_editor")));
-    out.push_str("    git config core.editor 'fresh --cmd session open-file . --wait'\n\n");
+    out.push_str("    git config core.editor 'fresh --cmd daemon open-file . --wait'\n\n");
 
     out.push_str(&format!(
         "{}: https://getfresh.dev/docs",

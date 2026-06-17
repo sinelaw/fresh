@@ -4,7 +4,7 @@
 //! - Unix domain sockets on Linux/macOS
 //! - Named pipes on Windows
 //!
-//! Each session has two sockets: data (byte stream) and control (JSON messages).
+//! Each daemon has two sockets: data (byte stream) and control (JSON messages).
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -27,14 +27,14 @@ use platform_unix as platform;
 #[cfg(windows)]
 use platform_windows as platform;
 
-/// Socket paths for a session
+/// Socket paths for a daemon
 #[derive(Debug, Clone)]
 pub struct SocketPaths {
     /// Data socket path (raw byte stream)
     pub data: PathBuf,
     /// Control socket path (JSON messages)
     pub control: PathBuf,
-    /// PID file path (for detecting stale sessions)
+    /// PID file path (for detecting stale daemons)
     pub pid: PathBuf,
 }
 
@@ -56,13 +56,13 @@ impl SocketPaths {
         })
     }
 
-    /// Get socket paths for a named session
+    /// Get socket paths for a named daemon
     pub fn for_session_name(name: &str) -> io::Result<Self> {
         let socket_dir = platform::get_socket_dir()?;
         Ok(Self::for_session_name_in_dir(name, &socket_dir))
     }
 
-    /// Get socket paths for a named session in a specific directory
+    /// Get socket paths for a named daemon in a specific directory
     /// (primarily for testing with isolated temp directories)
     pub fn for_session_name_in_dir(name: &str, socket_dir: &Path) -> Self {
         Self {
@@ -110,7 +110,7 @@ impl SocketPaths {
         false
     }
 
-    /// Clean up stale session files if server is not running
+    /// Clean up stale daemon files if the daemon is not running
     /// Returns true if files were cleaned up
     pub fn cleanup_if_stale(&self) -> bool {
         if self.exists() && !self.is_server_alive() {

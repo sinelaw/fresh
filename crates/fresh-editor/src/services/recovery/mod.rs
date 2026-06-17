@@ -140,7 +140,7 @@ impl RecoveryService {
         }
     }
 
-    /// Create a new recovery service scoped to a session or working directory.
+    /// Create a new recovery service scoped to a named daemon or working directory.
     ///
     /// Performs one-time migration of old flat-layout recovery files if needed.
     pub fn with_scope(

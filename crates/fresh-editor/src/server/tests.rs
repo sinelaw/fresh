@@ -372,7 +372,7 @@ mod integration_tests {
 
         let session_name = unique_session_name("relay");
 
-        // Get socket paths for this session
+        // Get socket paths for this daemon
         let socket_paths = SocketPaths::for_session_name(&session_name).unwrap();
         drop(socket_paths.cleanup()); // Clean any existing
 

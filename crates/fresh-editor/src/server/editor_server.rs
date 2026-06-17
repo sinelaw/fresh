@@ -1,4 +1,4 @@
-//! Editor integration with the session server
+//! Editor integration with the daemon server
 //!
 //! This module bridges the Editor with the server infrastructure:
 //! - Creates Editor with CaptureBackend for rendering
@@ -32,9 +32,9 @@ use crate::view::color_support::ColorCapability;
 
 /// Configuration for the editor server
 pub struct EditorServerConfig {
-    /// Working directory for this session
+    /// Working directory for this daemon
     pub working_dir: PathBuf,
-    /// Optional session name
+    /// Optional daemon name
     pub session_name: Option<String>,
     /// Idle timeout before auto-shutdown
     pub idle_timeout: Option<Duration>,
@@ -47,7 +47,7 @@ pub struct EditorServerConfig {
     /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
     pub init_enabled: bool,
     /// Authority to install at boot.  `None` means `Authority::local()`,
-    /// which is the standard session-mode default (principle 6 of
+    /// which is the standard daemon-mode default (principle 6 of
     /// `AUTHORITY_DESIGN.md`).  The CLI `ssh://` / `user@host:path`
     /// forms construct an `Authority::ssh(...)` and pass it here so
     /// the daemon boots already attached to the remote host.  Plugins
@@ -65,7 +65,7 @@ pub struct EditorServerConfig {
     /// Opaque handle kept alive for the server's lifetime alongside
     /// `startup_authority`.  SSH authorities back this with the Tokio
     /// runtime, the `SshConnection`, and the reconnect task — dropping
-    /// any of those tears down the remote session — so the caller
+    /// any of those tears down the remote backend — so the caller
     /// bundles them here and the server just holds on until shutdown.
     /// Local authorities leave this `None`.
     pub session_keepalive: Option<Box<dyn std::any::Any + Send>>,
@@ -194,7 +194,7 @@ impl EditorServer {
 
         let listener = ServerListener::bind(socket_paths)?;
 
-        // Write PID file so clients can detect stale sessions
+        // Write PID file so clients can detect stale daemons
         let pid = std::process::id();
         if let Err(e) = listener.paths().write_pid(pid) {
             tracing::warn!("Failed to write PID file: {}", e);
@@ -521,7 +521,7 @@ impl EditorServer {
             std::thread::sleep(Duration::from_millis(5));
         }
 
-        // Perform the same shutdown sequence as the normal (non-session) exit path
+        // Perform the same shutdown sequence as the normal (non-daemon) exit path
         // in run_event_loop_common: auto-save, end recovery session, save workspace.
         if let Some(ref mut editor) = self.editor {
             // Auto-save file-backed buffers to disk before exiting
@@ -538,7 +538,7 @@ impl EditorServer {
             }
 
             // End recovery session first (flushes dirty buffers + assigns recovery IDs),
-            // then save workspace (captures those IDs for next session restore).
+            // then save workspace (captures those IDs for next workspace restore).
             if let Err(e) = editor.end_recovery_session() {
                 tracing::warn!("Failed to end recovery session: {}", e);
             }
@@ -601,7 +601,7 @@ impl EditorServer {
 
         // Set session name for status bar display
         let session_display_name = self.config.session_name.clone().unwrap_or_else(|| {
-            // Use the directory name as a short display name for unnamed sessions
+            // Use the directory name as a short display name for unnamed daemons
             self.config
                 .working_dir
                 .file_name()
@@ -716,8 +716,8 @@ impl EditorServer {
         }
 
         // Non-transition rebuild (working-dir change, config reload): carry the
-        // active session's own backend forward by moving it out of the old
-        // editor, so a remote session isn't dropped to the local placeholder
+        // active workspace's own backend forward by moving it out of the old
+        // editor, so a remote workspace isn't dropped to the local placeholder
         // `build_editor_instance` leaves behind. A real authority transition
         // (`new_authority`) overwrites `current_authority` just below.
         if new_authority.is_none() {
@@ -762,8 +762,8 @@ impl EditorServer {
         // Adopt the keepalive that rode with a connection-backed authority
         // (remote agent / K8s) so its carrier + reconnect/heartbeat tasks
         // survive the rebuild; the previous keepalive drops, tearing down
-        // any prior remote session. A local/docker transition carries
-        // none, leaving the current session untouched.
+        // any prior remote backend. A local/docker transition carries
+        // none, leaving the current workspace untouched.
         if let Some(keepalive) = new_keepalive {
             self.session_keepalive = Some(keepalive);
         }

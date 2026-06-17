@@ -19,7 +19,7 @@ pub enum RecoveryScope {
     /// Standalone mode: recovery scoped by working directory.
     /// Directory: `recovery/default/{cwd_hash}/`
     Standalone { working_dir: PathBuf },
-    /// Named session mode (`fresh -a NAME`): recovery scoped by session name.
+    /// Named daemon (`fresh -a NAME`): recovery scoped by daemon name.
     /// Directory: `recovery/sessions/{name}/`
     Session { name: String },
 }
@@ -52,7 +52,7 @@ impl RecoveryStorage {
         Self { recovery_dir }
     }
 
-    /// Create a recovery storage scoped to a session or working directory.
+    /// Create a recovery storage scoped to a named daemon or working directory.
     pub fn with_scope(base_recovery_dir: &Path, scope: &RecoveryScope) -> Self {
         let recovery_dir = match scope {
             RecoveryScope::Standalone { working_dir } => {
@@ -60,7 +60,7 @@ impl RecoveryStorage {
                 base_recovery_dir.join("default").join(hash)
             }
             RecoveryScope::Session { name } => {
-                // Sanitize session name for filesystem safety
+                // Sanitize daemon name for filesystem safety
                 let safe_name: String = name
                     .chars()
                     .map(|c| {

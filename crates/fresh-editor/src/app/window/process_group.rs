@@ -13,7 +13,7 @@
 //! ## Why per-window?
 //!
 //! The Orchestrator lifecycle wants to terminate every process
-//! belonging to one editor session without touching the others.
+//! belonging to one workspace (a `Window`) without touching the others.
 //! Routing through the window keeps that aggregation in one
 //! place — callers don't need to know how many terminals the
 //! window has or whether a future feature added another kind of

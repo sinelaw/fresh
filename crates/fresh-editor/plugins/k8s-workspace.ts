@@ -2,12 +2,14 @@
 const editor = getEditor();
 
 /**
- * Kubernetes Workspace Plugin
+ * Kubernetes Environment Plugin
  *
  * Bring-your-own-cluster management for editing inside
- * an ephemeral Kubernetes pod. Everything customizable funnels through one
- * small `Provider` contract: given a workspace target, produce the pod
- * coordinates to attach to (and reverse it on disconnect).
+ * a Kubernetes environment. The durable environment is the identity you
+ * reconnect to; the live compute pod is recreated on resume. Everything
+ * customizable funnels through one small `Provider` contract: given an
+ * environment target, produce the pod coordinates to attach to (and reverse
+ * it on disconnect).
  *
  *   attach-existing  pick an already-running pod (zero infra)
  *   manifest         kubectl apply a (templated) Pod/Job manifest, wait Ready
@@ -84,7 +86,7 @@ interface K8sConfig {
   targets: Record<string, TargetConfig>;
 }
 
-/** What the plugin remembers about the live session for disconnect. */
+/** What the plugin remembers about the live environment for disconnect. */
 interface ActiveSession {
   targetName: string;
   coords: PodCoords;
@@ -344,7 +346,7 @@ function firstLine(s: string): string {
 async function confirmCreate(target: TargetConfig, name: string): Promise<boolean> {
   if (target.confirmCreate === false) return true;
   const answer = await editor.prompt(
-    `Create a cloud workspace pod for '${name}'? This may create a pod (and incur cost on managed clusters). (y/N)`,
+    `Create a cloud environment pod for '${name}'? This may create a pod (and incur cost on managed clusters). (y/N)`,
     "",
   );
   return answer !== null && /^y(es)?$/i.test(answer.trim());
@@ -472,7 +474,7 @@ async function connectWorkspace(): Promise<void> {
     base_env: baseEnv,
   };
 
-  // Remember the session so Disconnect can run the provider's teardown.
+  // Remember the environment so Disconnect can run the provider's teardown.
   const session: ActiveSession = { targetName: name, coords };
   editor.setGlobalState(SESSION_KEY, session as unknown);
 
@@ -503,7 +505,7 @@ async function disconnectWorkspace(): Promise<void> {
         cwd: editor.getCwd(),
         ...(target?.vars ?? {}),
       };
-      editor.setStatus("K8s: tearing down workspace…");
+      editor.setStatus("K8s: tearing down environment…");
       await editor.spawnHostProcess(
         provider.down.command,
         expandArgs(provider.down.args, vars),
@@ -530,12 +532,12 @@ registerHandler("k8s_connect", k8s_connect);
 registerHandler("k8s_disconnect", k8s_disconnect);
 
 editor.registerCommand(
-  "K8s: Connect Workspace",
-  "Connect / attach to a Kubernetes pod workspace via kubectl exec — edit inside a remote pod on any cluster: EKS, GKE, AKS, k3d, minikube, kind. Keywords: kubernetes k8s kubectl pod container cluster remote cloud workspace attach.",
+  "K8s: Connect Environment",
+  "Connect / attach to a Kubernetes environment via kubectl exec — edit inside a remote pod on any cluster: EKS, GKE, AKS, k3d, minikube, kind. Keywords: kubernetes k8s kubectl pod container cluster remote cloud environment workspace attach.",
   "k8s_connect",
 );
 editor.registerCommand(
-  "K8s: Disconnect Workspace",
-  "Disconnect / detach from the Kubernetes pod workspace and restore local editing. Keywords: kubernetes k8s kubectl pod cluster remote cloud disconnect detach.",
+  "K8s: Disconnect Environment",
+  "Disconnect / detach from the Kubernetes environment and restore local editing. Keywords: kubernetes k8s kubectl pod cluster remote cloud disconnect detach.",
   "k8s_disconnect",
 );

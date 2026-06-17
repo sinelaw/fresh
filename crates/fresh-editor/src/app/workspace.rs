@@ -398,7 +398,7 @@ impl Editor {
             }
         }
 
-        // For named sessions, save to session-scoped workspace file
+        // For a named daemon, save to the daemon-scoped workspace file
         if let Some(ref session_name) = self.session_name {
             workspace.save_session(session_name)
         } else {
@@ -459,9 +459,9 @@ impl Editor {
                 .get_mut(&id)
                 .expect("window present for restore");
             win.apply_workspace_layout(&workspace, session.as_deref());
-            // Restore the session's backend spec so a dormant remote session
-            // knows what to reconnect to (the live authority is still the
-            // local placeholder until reconnect).
+            // Restore the workspace's backend spec so a dormant remote
+            // workspace knows what to reconnect to (the live authority is still
+            // the local placeholder until reconnect).
             win.authority_spec = workspace.authority_spec.clone();
         } else {
             // Never-seeded shell: rebuild the window from the workspace via
@@ -580,7 +580,7 @@ impl Editor {
     /// `materialize_window`); this eager variant exists only for tests
     /// that need all windows populated up front — chiefly the
     /// orchestrator bring-up render tests, which assert every restored
-    /// session paints. Not called from production code.
+    /// workspace paints. Not called from production code.
     pub fn materialize_all_windows(&mut self) {
         let pending: Vec<fresh_core::WindowId> = self.materialize_pending.iter().copied().collect();
         for id in pending {
@@ -603,7 +603,7 @@ impl crate::app::window::Window {
         for terminal in terminals {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
                 terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
-                // The terminal was live when the session was saved and the
+                // The terminal was live when the workspace was saved and the
                 // user never explicitly exited it, so focusing it should
                 // bring back a live terminal rather than the read-only
                 // scrollback view. Seed the resume set so `set_active_buffer`
@@ -670,7 +670,7 @@ impl crate::app::window::Window {
     }
 
     /// Set a status-bar message summarising how many buffers were restored and from
-    /// which session, then emit a debug log with split/buffer counts.
+    /// which daemon, then emit a debug log with split/buffer counts.
     fn log_restore_summary(&mut self, session_name: Option<&str>) {
         tracing::debug!(
             "Workspace restore complete: {} splits, {} buffers",
@@ -758,10 +758,10 @@ impl crate::app::window::Window {
             .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
         let spawn_argv =
             resume_argv.or_else(|| terminal.command.as_ref().filter(|argv| !argv.is_empty()));
-        // Run the resume/launch argv through the session's backend (local →
+        // Run the resume/launch argv through the workspace's backend (local →
         // directly; container → `docker exec … <argv>`) so a restored agent
         // rejoins *inside* its backend, not on the host. For a dormant remote
-        // session the live authority is still the local placeholder until
+        // workspace the live authority is still the local placeholder until
         // reconnect — `terminal_command` composes with whatever backend is
         // live, so the reconnect-on-activate step re-runs it in the real one.
         let wrapper_for_spawn = match spawn_argv {
@@ -801,7 +801,7 @@ impl crate::app::window::Window {
         }
 
         // Carry the restore markers forward (even the empty-vec plain-shell
-        // marker) so a later save re-persists them and the session keeps
+        // marker) so a later save re-persists them and the workspace keeps
         // restoring — and resuming — across multiple restarts.
         if let Some(argv) = terminal.command.as_ref() {
             self.terminal_commands.insert(terminal_id, argv.clone());
@@ -1506,7 +1506,7 @@ impl crate::app::window::Window {
         }
     }
 
-    /// Re-apply read-only flags for files that were locked in the saved session.
+    /// Re-apply read-only flags for files that were locked in the saved workspace.
     /// Paths may be relative (under this window's `root`) or absolute.
     fn apply_read_only_flags(
         &mut self,
@@ -1622,7 +1622,7 @@ impl crate::app::window::Window {
                 if let Ok(mut state) = handle.state.lock() {
                     // Persist any scrolled-off lines not yet in the file (e.g.
                     // lines a resize spilled into history on a terminal that was
-                    // never viewed before quitting) so a restored session keeps
+                    // never viewed before quitting) so a restored workspace keeps
                     // the full scrollback.
                     if let Ok(mut file) = self
                         .authority()
@@ -2289,11 +2289,11 @@ impl crate::app::window::Window {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            // Session identity (windows.json is gone — the per-dir
+            // Workspace identity (windows.json is gone — the per-dir
             // workspace file is the sole record).
             label: Some(self.label.clone()),
             session_plugin_state: self.plugin_state.clone(),
-            // How to rebuild/reconnect this session's backend on restore.
+            // How to rebuild/reconnect this workspace's backend on restore.
             authority_spec: self.authority_spec.clone(),
         }
     }

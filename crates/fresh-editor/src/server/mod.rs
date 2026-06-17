@@ -1,4 +1,4 @@
-//! Server-side implementation for session persistence
+//! Server-side implementation for daemon persistence
 //!
 //! The server runs as a daemon and holds all editor state. Clients connect
 //! via IPC (Unix domain sockets or Windows named pipes) to send input and

@@ -23,9 +23,9 @@ use crossterm::event::Event;
 /// Server configuration
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
-    /// Working directory for this session
+    /// Working directory for this daemon
     pub working_dir: std::path::PathBuf,
-    /// Optional session name (otherwise derived from working_dir)
+    /// Optional daemon name (otherwise derived from working_dir)
     pub session_name: Option<String>,
     /// Idle timeout before auto-shutdown (None = never)
     pub idle_timeout: Option<Duration>,

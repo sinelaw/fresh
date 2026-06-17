@@ -80,7 +80,7 @@ pub struct ServerHello {
     pub protocol_version: u32,
     /// Server binary version
     pub server_version: String,
-    /// Session identifier (encoded working directory)
+    /// Daemon identifier (encoded working directory)
     pub session_id: String,
 }
 
@@ -124,13 +124,13 @@ pub enum ClientControl {
         #[serde(default)]
         wait: bool,
     },
-    /// Request to open a directory as a new orchestrator window/session.
+    /// Request to open a directory as a new orchestrator workspace (a `Window`).
     ///
     /// Unlike `OpenFiles` (which opens buffers in the current window),
     /// this pops a brand-new window rooted at `path` and focuses it.
     /// Used when a `fresh <dir>` is invoked from inside Fresh's own
-    /// embedded terminal: the directory becomes a new session instead
-    /// of launching a second editor in the terminal.
+    /// embedded terminal: the directory becomes a new workspace (a `Window`)
+    /// instead of launching a second editor in the terminal.
     OpenWindow { path: String },
 }
 
@@ -180,7 +180,7 @@ pub enum ServerControl {
     /// Tell this client to suspend itself (SIGTSTP on Unix) and resume on `fg`.
     ///
     /// Dispatched when the user triggers `Action::SuspendProcess` in session
-    /// mode: only the client should drop back to the shell — the server
+    /// mode: only the client should drop back to the shell — the daemon
     /// keeps running so the editor state is preserved and picked up cleanly
     /// when the client resumes.
     SuspendClient,

@@ -1,4 +1,4 @@
-//! Editor-lifecycle methods: quit, restart, session/detach control,
+//! Editor-lifecycle methods: quit, restart, daemon/detach control,
 //! focus/resize hooks, theme/settings queries, escape-sequence + clipboard
 //! piping, and the should_quit confirmation flow that walks modified buffers.
 
@@ -10,7 +10,7 @@ impl Editor {
         self.should_quit
     }
 
-    /// Check if the client should detach (keep server running)
+    /// Check if the client should detach (keep the daemon running)
     pub fn should_detach(&self) -> bool {
         self.should_detach
     }
@@ -223,7 +223,7 @@ impl Editor {
     /// Count modified buffers that would require a save prompt on quit.
     ///
     /// When `hot_exit` is enabled, unnamed buffers are excluded (they are
-    /// automatically recovered across sessions), but file-backed modified
+    /// automatically recovered across restarts), but file-backed modified
     /// buffers still trigger a prompt with a "recoverable" option.
     /// When `auto_save_enabled` is true, file-backed buffers are excluded
     /// (they will be saved to disk on exit).

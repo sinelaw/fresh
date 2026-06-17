@@ -41,7 +41,7 @@ fresh ssh://alice@host/home/alice/src/main.rs:42:7
 - Background auto-reconnect after a dropped connection, with a disconnected indicator in the status bar
 - Integrated terminal opens a login shell **on the remote host** (`ssh -t … 'cd <workspace>; exec $SHELL -l'`), rooted at the workspace
 
-Under the hood, attaching to an SSH remote points the editor's filesystem and process [Authority](../plugins/api/) at that host — file I/O, the embedded terminal, spawned LSP servers, and any process Fresh launches all run on the remote.
+Under the hood, attaching to an SSH host switches the workspace's backend to that host — file I/O, the embedded terminal, spawned LSP servers, and any process Fresh launches all run on the remote.
 
 Because the integrated terminal re-parents itself onto the remote host, it runs the *remote* `$SHELL` as a login shell and the local [`terminal.shell`](./terminal.md#shell-override) override does not apply. Interactive auth prompts (key passphrase, password, 2FA) surface inside the terminal pane on first open.
 
@@ -49,16 +49,16 @@ Because the integrated terminal re-parents itself onto the remote host, it runs 
 - SSH access to the remote host
 - Python 3 installed on the remote host (for the agent)
 
-## Alternative: SSH + Session Persistence
+## Alternative: SSH + Daemon Mode
 
-If you need a persistent editing session that survives connection drops, consider running Fresh directly on the remote host with [Session Persistence](./session-persistence.md):
+If you need an editor that survives connection drops, consider running Fresh directly on the remote host in [daemon mode](./session-persistence.md):
 
 ```bash
 ssh user@host
-fresh -a        # start a persistent session on the remote host
+fresh -a        # start a daemon on the remote host
 # if SSH disconnects, just reconnect and reattach:
 ssh user@host
 fresh -a
 ```
 
-You can also pair SSH with `tmux` for a similar effect—run `tmux` on the remote host and launch Fresh inside it. Session persistence has the advantage of being built into Fresh, so editor state (open files, terminals, undo history) is preserved without an external multiplexer.
+You can also pair SSH with `tmux` for a similar effect—run `tmux` on the remote host and launch Fresh inside it. Daemon mode has the advantage of being built into Fresh, so editor state (open files, terminals, undo history) is preserved without an external multiplexer.

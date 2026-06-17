@@ -82,10 +82,10 @@ pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
 
-    /// This session's backend — *where* it acts, *whether* it may
+    /// This workspace's backend — *where* it acts, *whether* it may
     /// (`workspace_trust`), and *with what env*. **Owned outright by this
     /// window**, never shared with another: it lives here (not in the
-    /// `Clone` `WindowResources`) so the type system prevents one session's
+    /// `Clone` `WindowResources`) so the type system prevents one workspace's
     /// authority/trust/env from leaking into another (issue #2280). The
     /// editor's active backend is just `active_window().authority` — there is
     /// no separate clonable editor-wide copy.
@@ -333,13 +333,13 @@ pub struct Window {
     /// data dir so it survives editor restarts.
     pub plugin_state: HashMap<String, HashMap<String, serde_json::Value>>,
 
-    /// Declarative spec for *how to rebuild this session's backend* — the
+    /// Declarative spec for *how to rebuild this workspace's backend* — the
     /// persisted source of truth behind the live `resources.authority`. Set
-    /// when an authority is installed for the session (`setAuthority` →
+    /// when an authority is installed for the workspace (`setAuthority` →
     /// `Plugin`, born-attached remote → `RemoteAgent`, new local → `Local`)
-    /// and round-tripped through the session's workspace file so a restart /
+    /// and round-tripped through the workspace's workspace file so a restart /
     /// relaunch can reconnect the backend rather than degrade it to local.
-    /// `Local` (the default) for an ordinary host-local session. A session
+    /// `Local` (the default) for an ordinary host-local workspace. A workspace
     /// whose spec is remote but whose live `authority` is local is *dormant*
     /// — disconnected, awaiting reconnect. See
     /// `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
@@ -668,7 +668,7 @@ pub struct Window {
 
     /// Argv each terminal was spawned with, when it ran a command other
     /// than the plain shell (e.g. an Orchestrator agent). Captured at spawn
-    /// and persisted into the workspace so a restored session re-runs the
+    /// and persisted into the workspace so a restored workspace re-runs the
     /// same command rather than coming back as a bare shell. Terminals
     /// spawned as a plain shell have no entry.
     pub terminal_commands:
@@ -872,7 +872,7 @@ pub(crate) fn configure_lsp_servers(
 
     // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
     // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
-    // against the window's own root so each session gets the detection for
+    // against the window's own root so each workspace gets the detection for
     // its actual project rather than the process cwd.
     if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
         tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
