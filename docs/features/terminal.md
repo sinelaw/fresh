@@ -54,7 +54,7 @@ The override applies to host-shell terminals; wrappers that re-parent the shell 
 ## Tips and Quirks
 
 *   **Workspace Persistence:** Terminal scrollback is preserved across editor restarts, but running processes are terminated.
-*   **Daemon Mode (Experimental):** Use `fresh -a` to start in daemon mode, then detach with `Ctrl+Shift+D` to keep terminal processes running in the background. Reattach with `fresh -a`. See [Daemon Mode](./session-persistence.md) for details.
+*   **Daemon Mode:** Use `fresh -a` to start in daemon mode, then detach with `Ctrl+Shift+D` to keep terminal processes running in the background. Reattach with `fresh -a`. See [Daemon Mode](./session-persistence.md) for details.
 *   **Automatic Scroll:** When new output arrives while you're in scrollback mode, the terminal automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option.
 *   **Resizing:** The terminal automatically resizes when you resize the editor or split panes.
 *   **Suspend (Unix):** Run **Suspend Process** from the palette to send the foreground Fresh process to the background (like Ctrl+Z in a shell). In daemon mode the suspend is routed through the client so the daemon stays up.

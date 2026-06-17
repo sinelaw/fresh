@@ -1,6 +1,11 @@
-# Daemon Mode (Experimental)
+# Daemon Mode
 
-> **Warning**: This feature is experimental. The API and behavior may change.
+> **Formerly "Session Mode" / "Session Persistence".** Daemon mode was
+> previously called *session mode*, and this page was titled *Session
+> Persistence*. The terminology changed to avoid the overloaded word
+> "session"; the old CLI form `fresh --cmd session …` still works as an
+> alias, and this page keeps its `/features/session-persistence` URL so
+> existing links and bookmarks continue to work.
 
 > **Palette:** `Detach`. **CLI:** `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `hot_exit`, `editor.restore_previous_session`.
 
