@@ -277,9 +277,7 @@ impl From<Cli> for Args {
                 | ["session", "attach"]
                 | ["s", "attach"]
                 | ["session", "a"]
-                | ["s", "a"] => {
-                    (false, None, true, None, false, false, None, cli.files, None)
-                }
+                | ["s", "a"] => (false, None, true, None, false, false, None, cli.files, None),
                 ["daemon", "new", name, rest @ ..]
                 | ["d", "new", name, rest @ ..]
                 | ["daemon", "n", name, rest @ ..]
@@ -364,10 +362,7 @@ impl From<Cli> for Args {
                     let _ = name;
                     (true, None, false, None, false, false, None, cli.files, None)
                 }
-                ["daemon", "info"]
-                | ["d", "info"]
-                | ["session", "info"]
-                | ["s", "info"] => {
+                ["daemon", "info"] | ["d", "info"] | ["session", "info"] | ["s", "info"] => {
                     (true, None, false, None, false, false, None, cli.files, None)
                 }
                 // Config commands
