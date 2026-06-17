@@ -24,6 +24,10 @@ jobs:
   theme-diff:
     name: theme diff gallery
     runs-on: ubuntu-latest
+    # Each changed theme renders ~15-20s (before + after); a job-level cap keeps
+    # a stuck render from wedging the runner. The render step also wraps cargo
+    # in `timeout` for a tighter, clearer failure.
+    timeout-minutes: 20
     steps:
       - name: Checkout (full history for base diff)
         uses: actions/checkout@v6
@@ -49,7 +53,9 @@ jobs:
           FRESH_THEME_BASE_REF: origin/${{ github.base_ref }}
         run: |
           set -o pipefail
-          cargo nextest run \
+          # Hard wall-clock cap so a hung render fails fast instead of running
+          # to the job timeout. Generous enough for a many-theme PR.
+          timeout 900 cargo nextest run \
             --package fresh-editor \
             --test e2e_tests \
             -E 'test(theme_diff_gallery)' \

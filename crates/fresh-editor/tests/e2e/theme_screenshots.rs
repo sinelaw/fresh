@@ -10,11 +10,13 @@
 //   scripts/generate-theme-screenshots.sh dracula
 
 use crate::common::blog_showcase::BlogShowcase;
+use crate::common::fake_lsp::FakeLspServer;
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, ThemeName};
 use fresh::config_io::DirectoryContext;
-use fresh::model::event::{Event, OverlayFace};
+use fresh::model::event::{Event, OverlayColorSpec, OverlayFace, OverlayOptions};
 use fresh::view::overlay::OverlayNamespace;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,6 +43,33 @@ fn snap_mouse(
     let c = h.screen_cursor_position();
     s.capture_frame(h.buffer(), c, key, Some(mouse), ms)
         .unwrap();
+}
+
+/// Build an `AddOverlay` event whose background is a *theme key* (resolved at
+/// render time) rather than a fixed RGB, so the overlay reflects the active
+/// theme's color for that key.
+fn themed_bg_overlay(
+    range: std::ops::Range<usize>,
+    priority: i32,
+    message: &str,
+    bg_theme_key: &str,
+    extend_to_line_end: bool,
+) -> Event {
+    Event::AddOverlay {
+        namespace: Some(OverlayNamespace::from_string("theme-diff".to_string())),
+        range,
+        face: OverlayFace::Style {
+            options: OverlayOptions {
+                bg: Some(OverlayColorSpec::theme_key(bg_theme_key)),
+                extend_to_line_end,
+                ..Default::default()
+            },
+        },
+        priority,
+        message: Some(message.to_string()),
+        extend_to_line_end,
+        url: None,
+    }
 }
 
 /// Create a rich demo project with multiple file types for maximum theme coverage.
@@ -313,31 +342,24 @@ fn scene_split_view(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
 /// Scene 8: Diagnostics / overlays.
 /// Covers: diagnostic.error/warning/info/hint fg/bg, status_warning/error_indicator
 fn scene_diagnostics(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
-    // Add simulated diagnostic overlays
-    h.apply_event(Event::AddOverlay {
-        namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
-        range: 40..50,
-        face: OverlayFace::Background {
-            color: (80, 20, 20),
-        },
-        priority: 100,
-        message: Some("error: unused variable `x`".to_string()),
-        extend_to_line_end: false,
-        url: None,
-    })
+    // Use theme-keyed overlays so the *theme's* diagnostic colors render
+    // (resolved at draw time), not fixed RGB. With diagnostics_inline_text
+    // enabled the messages also paint in the theme's diagnostic fg.
+    h.apply_event(themed_bg_overlay(
+        40..50,
+        100,
+        "error: unused variable `x`",
+        "diagnostic.error_bg",
+        false,
+    ))
     .unwrap();
-
-    h.apply_event(Event::AddOverlay {
-        namespace: Some(OverlayNamespace::from_string("lsp-diagnostic".to_string())),
-        range: 120..135,
-        face: OverlayFace::Background {
-            color: (60, 50, 10),
-        },
-        priority: 90,
-        message: Some("warning: unused import".to_string()),
-        extend_to_line_end: false,
-        url: None,
-    })
+    h.apply_event(themed_bg_overlay(
+        120..135,
+        90,
+        "warning: unused import",
+        "diagnostic.warning_bg",
+        false,
+    ))
     .unwrap();
 
     h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
@@ -409,31 +431,22 @@ fn scene_settings(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
 /// Scene 12: Diff highlights (simulate git diff coloring).
 /// Covers: diff_add_bg, diff_remove_bg, diff_modify_bg
 fn scene_diff_highlights(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
-    // Simulate diff overlays
-    h.apply_event(Event::AddOverlay {
-        namespace: Some(OverlayNamespace::from_string("git-diff".to_string())),
-        range: 200..230,
-        face: OverlayFace::Background {
-            color: (20, 60, 20),
-        },
-        priority: 50,
-        message: Some("added line".to_string()),
-        extend_to_line_end: true,
-        url: None,
-    })
+    // Theme-keyed diff overlays so the theme's diff colors render.
+    h.apply_event(themed_bg_overlay(
+        200..230,
+        50,
+        "added line",
+        "editor.diff_add_bg",
+        true,
+    ))
     .unwrap();
-
-    h.apply_event(Event::AddOverlay {
-        namespace: Some(OverlayNamespace::from_string("git-diff".to_string())),
-        range: 250..280,
-        face: OverlayFace::Background {
-            color: (60, 20, 20),
-        },
-        priority: 50,
-        message: Some("removed line".to_string()),
-        extend_to_line_end: true,
-        url: None,
-    })
+    h.apply_event(themed_bg_overlay(
+        250..280,
+        50,
+        "removed line",
+        "editor.diff_remove_bg",
+        true,
+    ))
     .unwrap();
 
     h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
@@ -597,14 +610,99 @@ fn scene_terminal(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
 
-    // Give the PTY a beat to spawn its shell and paint a prompt.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Give the PTY a beat to spawn its shell and paint a prompt, but return as
+    // soon as the terminal pane shows output (usually well under the cap).
+    poll_until(h, 300, |h| h.screen_to_string().contains('$'));
     h.render().unwrap();
     snap(h, s, Some("Terminal"), 300);
 
     // Back to the editor pane.
     h.send_key(KeyCode::Char('k'), KeyModifiers::CONTROL)
         .unwrap();
+    h.render().unwrap();
+}
+
+/// Scene 19: Completion popup (LSP-style), rendered deterministically.
+/// Covers: popup_bg/border/text, popup_selection_bg/fg.
+fn scene_completion_popup(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    use fresh::model::event::{
+        PopupContentData, PopupData, PopupKindHint, PopupListItemData, PopupPositionData,
+    };
+
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    for _ in 0..7 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+
+    let item = |text: &str, detail: &str, icon: &str| PopupListItemData {
+        text: text.to_string(),
+        detail: Some(detail.to_string()),
+        icon: Some(icon.to_string()),
+        data: Some(text.to_string()),
+    };
+    h.apply_event(Event::ShowPopup {
+        popup: PopupData {
+            kind: PopupKindHint::Completion,
+            title: Some("Completion".to_string()),
+            description: None,
+            transient: false,
+            content: PopupContentData::List {
+                items: vec![
+                    item("insert", "fn insert(&mut self, k: K, v: V)", "λ"),
+                    item("iter", "fn iter(&self) -> Iter<'_, K, V>", "λ"),
+                    item("is_empty", "fn is_empty(&self) -> bool", "λ"),
+                    item("index", "let index: usize", "v"),
+                ],
+                selected: 1,
+            },
+            position: PopupPositionData::Centered,
+            width: 52,
+            max_height: 12,
+            bordered: true,
+        },
+    })
+    .unwrap();
+    h.render().unwrap();
+    snap(h, s, Some("Completion"), 300);
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+}
+
+/// Scene 20: Reference / semantic highlight overlay.
+/// Covers: ui.semantic_highlight_bg.
+fn scene_reference_highlight(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.render().unwrap();
+
+    // Highlight a few occurrences as the document-highlight feature would.
+    for (i, range) in [(0usize, 6usize), (300, 306), (620, 626)]
+        .iter()
+        .enumerate()
+    {
+        h.apply_event(Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string(
+                "reference-highlight".to_string(),
+            )),
+            range: range.0..range.1,
+            face: OverlayFace::Style {
+                options: OverlayOptions {
+                    bg: Some(OverlayColorSpec::theme_key("ui.semantic_highlight_bg")),
+                    ..Default::default()
+                },
+            },
+            priority: 60 + i as i32,
+            message: None,
+            extend_to_line_end: false,
+            url: None,
+        })
+        .unwrap();
+    }
+    h.render().unwrap();
+    snap(h, s, Some("Semantic Highlight"), 300);
+
+    h.apply_event(Event::ClearOverlays).unwrap();
     h.render().unwrap();
 }
 
@@ -631,6 +729,8 @@ fn run_all_scenes(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     scene_replace_dialog(h, s);
     scene_goto_line(h, s);
     scene_keybinding_editor(h, s);
+    scene_completion_popup(h, s);
+    scene_reference_highlight(h, s);
     scene_terminal(h, s);
 }
 
@@ -821,7 +921,9 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
     let opts = HarnessOptions::new()
         .with_project_root()
         .with_config(config)
-        .with_shared_dir_context(ctx)
+        // Clone the shared dir context (themes dir) so the git/LSP scenes below
+        // can spin up their own harnesses against the same theme.
+        .with_shared_dir_context(ctx.clone())
         .with_full_grammar_registry();
     let mut h = match EditorTestHarness::create(120, 35, opts) {
         Ok(h) => h,
@@ -853,8 +955,159 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
     );
 
     run_all_scenes(&mut h, &mut s);
+    drop(h); // release the main harness before spinning up the extra ones
+
+    // Scenes that need a different harness setup (own working dir / LSP config)
+    // but the same theme. They share the themes dir via the cloned dir context.
+    scene_git_file_status(&mut s, ctx.clone(), theme_token);
+    scene_lsp_status(&mut s, ctx, theme_token);
+
     s.finalize().expect("finalize diff gallery");
     true
+}
+
+/// Scene: git file-status decorations in the file explorer (own harness rooted
+/// in a real git repo, sharing the theme). Covers: ui.file_status_modified_fg,
+/// file_status_added_fg, file_status_untracked_fg. Best-effort — if the git
+/// plugin/status doesn't surface in time it snaps whatever rendered (the same
+/// on both before/after, so frames stay aligned).
+fn scene_git_file_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &str) {
+    let repo = GitTestRepo::new();
+    repo.setup_git_explorer_plugin();
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.create_file("README.md", "# demo\n");
+    repo.git_add_all();
+    repo.git_commit("initial");
+    // Now create the working-tree states the explorer decorates.
+    repo.modify_file("src/main.rs", "fn main() { println!(\"hi\"); }\n");
+    repo.create_file("notes.txt", "untracked\n");
+
+    let config = Config {
+        theme: ThemeName(theme_token.to_string()),
+        ..Default::default()
+    };
+    let opts = HarnessOptions::new()
+        .with_working_dir(repo.path.clone())
+        .with_config(config)
+        .with_shared_dir_context(ctx)
+        .without_empty_plugins_dir();
+    let mut h = match EditorTestHarness::create(120, 35, opts) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("theme-diff: git-status harness failed: {e}");
+            return;
+        }
+    };
+
+    h.editor_mut().toggle_file_explorer();
+    poll_until(&mut h, 2000, |h| {
+        h.screen_to_string().contains("File Explorer")
+    });
+    // Bounded wait for the git plugin to decorate a modified file. `wait_until`
+    // has no timeout, so we poll ourselves and snap whatever rendered — the
+    // same on both before/after, so frames stay aligned even if git is slow.
+    poll_until(&mut h, 3000, |h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("main.rs") && l.contains('M'))
+    });
+    let _ = h.render();
+    snap(&mut h, s, Some("Git Status"), 300);
+}
+
+/// Poll up to `max_ms`, ticking the harness, until `cond` holds. Returns
+/// whether the condition was met. Unlike `wait_until` this has a timeout, so a
+/// best-effort scene never hangs the suite when a feature doesn't surface.
+fn poll_until(
+    h: &mut EditorTestHarness,
+    max_ms: u64,
+    mut cond: impl FnMut(&EditorTestHarness) -> bool,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        let _ = h.tick_and_render();
+        if cond(h) {
+            return true;
+        }
+        if start.elapsed().as_millis() as u64 >= max_ms {
+            return false;
+        }
+        h.sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Scene: LSP status indicator in the status bar (own harness with a fake LSP
+/// attached, sharing the theme). Covers: ui.status_lsp_on_fg/bg. Best-effort
+/// and PTY/bash-dependent; skips cleanly if the fake server can't spawn.
+fn scene_lsp_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &str) {
+    let lsp_dir = match tempfile::TempDir::new() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let fake_server = match FakeLspServer::spawn(lsp_dir.path()) {
+        Ok(srv) => srv,
+        Err(e) => {
+            eprintln!("theme-diff: fake LSP unavailable, skipping LSP scene: {e}");
+            return;
+        }
+    };
+
+    let work_dir = lsp_dir.path().to_path_buf();
+    let test_file = work_dir.join("main.rs");
+    if std::fs::write(&test_file, "fn main() {\n    let x = 1;\n}\n").is_err() {
+        return;
+    }
+
+    let mut config = Config {
+        theme: ThemeName(theme_token.to_string()),
+        ..Default::default()
+    };
+    config.editor.enable_semantic_tokens_full = true;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(lsp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: vec![],
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let opts = HarnessOptions::new()
+        .with_working_dir(work_dir)
+        .with_config(config)
+        .with_shared_dir_context(ctx)
+        .without_empty_plugins_dir();
+    let mut h = match EditorTestHarness::create(120, 35, opts) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("theme-diff: LSP harness failed: {e}");
+            return;
+        }
+    };
+
+    if h.open_file(&test_file).is_err() {
+        return;
+    }
+    // Let the fake server initialize so the status-bar LSP indicator settles.
+    for _ in 0..12 {
+        let _ = h.process_async_and_render();
+        h.sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = h.render();
+    snap(&mut h, s, Some("LSP Status"), 300);
+
+    drop(fake_server);
 }
 
 /// A leaf color value, flattened to "section.key" with a printable value.

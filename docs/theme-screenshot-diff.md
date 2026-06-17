@@ -68,15 +68,23 @@ The test is `theme_diff_gallery`
   synthetic swatches — so reviewers see colors in context. The scenes:
   syntax-highlighted code (with a vertical ruler), selection, multi-cursor,
   find, **command palette**, **file explorer**, split view, inline
-  diagnostics, **open menu dropdown**, help overlay, **settings UI**, diff
-  highlights, scrollbar, whitespace, **find & replace toolbar**, **go-to-line
-  prompt**, **keybinding editor**, and the **integrated terminal** (skipped on
-  both sides when no PTY is available, so frames stay aligned). The harness
-  enables inline diagnostic text and a ruler so `diagnostic.*` and `ruler_bg`
-  render through real paths.
+  diagnostics (theme-keyed overlays + inline text), **open menu dropdown**,
+  help overlay, **settings UI**, diff highlights (theme-keyed), scrollbar,
+  whitespace, **find & replace toolbar**, **go-to-line prompt**, **keybinding
+  editor**, **completion popup**, **reference/semantic highlight**, and the
+  **integrated terminal** (PTY-guarded). Two further scenes spin up their own
+  harness with the same theme: a **git file-status** explorer (real git repo +
+  `git_explorer` plugin → `file_status_*` colors) and an **LSP status**
+  indicator (fake LSP server → `status_lsp_on_*`). Best-effort scenes
+  (git/LSP/terminal) skip or snap-whatever-rendered on both sides identically,
+  so frames always stay aligned. Diagnostics/diff overlays use theme-keyed
+  `OverlayFace::Style`, so those colors come from the theme, not fixed RGB.
 - **Completeness backstop.** The per-theme changed-keys table lists *every*
   key the PR changed (with swatches), so a key that no scene happens to show
   in context is still surfaced explicitly.
+- **Cost.** A theme renders in ~15-20s (before + after, two extra harnesses for
+  git/LSP); the run scales linearly with the number of *changed* themes. The
+  CI job and the render step are both time-boxed so a hang fails fast.
 - **Determinism.** Both sides run the identical scene sequence at the same
   terminal size, so frame indices line up one-to-one for pairing.
 - **Robustness.** Missing git, a missing base file, or an unparseable baseline
