@@ -3921,14 +3921,6 @@ pub enum PluginCommand {
     },
 }
 
-impl PluginCommand {
-    /// Extract the enum variant name from the Debug representation.
-    pub fn debug_variant_name(&self) -> String {
-        let dbg = format!("{:?}", self);
-        dbg.split([' ', '{', '(']).next().unwrap_or("?").to_string()
-    }
-}
-
 // =============================================================================
 // Language Pack Configuration Types
 // =============================================================================
@@ -6046,23 +6038,6 @@ mod tests {
         let tk = OverlayColorSpec::theme_key("ui.status_bar_bg");
         assert_eq!(tk.as_rgb(), None);
         assert_eq!(tk.as_theme_key(), Some("ui.status_bar_bg"));
-    }
-
-    /// `PluginCommand::debug_variant_name` returns the actual variant name
-    /// derived from the `Debug` impl, not an empty or hard-coded string.
-    #[test]
-    fn plugin_command_debug_variant_name_returns_real_variant() {
-        let c = PluginCommand::SetStatus {
-            message: "hi".into(),
-        };
-        assert_eq!(c.debug_variant_name(), "SetStatus");
-
-        let c2 = PluginCommand::InsertText {
-            buffer_id: BufferId(1),
-            position: 0,
-            text: String::new(),
-        };
-        assert_eq!(c2.debug_variant_name(), "InsertText");
     }
 
     // ── PluginApi dispatch / mutation tests ────────────────────────────────

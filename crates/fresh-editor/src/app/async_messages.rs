@@ -1547,13 +1547,6 @@ impl Editor {
             _ => true,
         });
 
-        let cmd_names: Vec<String> = commands.iter().map(|c| c.debug_variant_name()).collect();
-        tracing::trace!(
-            count = commands.len(),
-            cmds = ?cmd_names,
-            "process_plugin_commands"
-        );
-
         for command in &commands {
             match command {
                 fresh_core::api::PluginCommand::RegisterGrammar {
