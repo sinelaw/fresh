@@ -855,7 +855,9 @@ mod tests {
         // (the trust marker scan still flags it, but activation needs evidence).
         std::fs::create_dir_all(root.join(".venv")).unwrap();
         assert_eq!(detect_default(root), None);
-        assert!(executable_content_markers(root).iter().any(|m| m == ".venv"));
+        assert!(executable_content_markers(root)
+            .iter()
+            .any(|m| m == ".venv"));
 
         // Add an interpreter → now it's an activatable path-only env.
         std::fs::create_dir_all(root.join(".venv/bin")).unwrap();
@@ -898,7 +900,10 @@ mod tests {
         let poetry = tmp.path().join("poetry");
         std::fs::create_dir_all(&poetry).unwrap();
         std::fs::write(poetry.join("poetry.lock"), "\n").unwrap();
-        assert_eq!(detect_default(&poetry).map(|d| d.name), Some("poetry".into()));
+        assert_eq!(
+            detect_default(&poetry).map(|d| d.name),
+            Some("poetry".into())
+        );
     }
 
     #[test]

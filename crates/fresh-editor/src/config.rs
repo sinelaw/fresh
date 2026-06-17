@@ -525,7 +525,11 @@ pub fn default_env_detectors() -> Vec<EnvDetector> {
         },
         EnvDetector {
             name: "mise".into(),
-            markers: vec!["mise.toml".into(), ".mise.toml".into(), ".tool-versions".into()],
+            markers: vec![
+                "mise.toml".into(),
+                ".mise.toml".into(),
+                ".tool-versions".into(),
+            ],
             kind: EnvKind::Shell,
             snippet: "eval \"$(mise env -s bash)\"".into(),
             require: vec![],

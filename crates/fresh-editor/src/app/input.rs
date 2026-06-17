@@ -935,13 +935,16 @@ impl Editor {
         // funnels through, since they all route here. Deliberately a hook and a
         // snapshot refresh, NOT a `request_restart`: a rebuild would reset every
         // other session's buffers/layout (see the note above).
-        self.update_plugin_state_snapshot();
-        self.plugin_manager.read().unwrap().run_hook(
-            "trust_changed",
-            crate::services::plugins::hooks::HookArgs::TrustChanged {
-                level: level.as_str().to_string(),
-            },
-        );
+        #[cfg(feature = "plugins")]
+        {
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "trust_changed",
+                crate::services::plugins::hooks::HookArgs::TrustChanged {
+                    level: level.as_str().to_string(),
+                },
+            );
+        }
     }
 
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {
