@@ -5318,7 +5318,7 @@ function buildFormSpec(): WidgetSpec {
     row(
       flexSpacer(),
       hintBar([
-        { keys: "Tab", label: "next field" },
+        { keys: "Tab", label: "next / accept" },
         { keys: "S-Tab", label: "prev" },
         { keys: "←→", label: "change option" },
         { keys: "↑↓", label: "suggest / history" },
@@ -6341,12 +6341,18 @@ function dispatchFormKey(name: string): void {
 // host emits — `completion_accept` and `completion_dismiss`,
 // handled in the `widget_event` dispatch below.
 registerHandler("orchestrator_form_key_tab", () => {
-  // Tab always advances to the next field — it never accepts a
-  // completion. When a popup is open the host closes it and advances
-  // (firing `completion_dismiss`, which clears our mirror). The
-  // optimistic mirror advance here is re-synced from the host's
-  // authoritative `focus` event either way.
-  advanceFormFocus(1);
+  // Tab applies the highlighted candidate when the user has stepped
+  // into an open dropdown (↑/↓/wheel); otherwise it advances to the
+  // next field. The host owns that decision (it tracks which row, if
+  // any, is highlighted), so when a popup is open we must NOT
+  // optimistically advance our mirror — doing so would desync it in
+  // the accept case, where the host keeps focus on the field and
+  // fires `completion_accept` (no `focus` event to snap back from).
+  // With no popup, the host always advances and fires an authoritative
+  // `focus` event, so the optimistic advance just avoids a frame lag.
+  if (!completionVisibleForFocused()) {
+    advanceFormFocus(1);
+  }
   dispatchFormKey("Tab");
 });
 // Ctrl+Enter: submit from anywhere, no matter which field is focused

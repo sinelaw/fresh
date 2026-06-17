@@ -182,11 +182,13 @@ fn completion_popup_renders_with_dim_separator() {
     );
 }
 
-/// Tab does NOT accept the highlighted completion — it moves focus to
-/// the next field (closing the popup) and leaves the typed text
-/// intact. (Accepting a completion is `↓`-then-Enter, or a click.)
-/// Before the focus-model fix, Tab fired the completion's accept, so
-/// the number of Tabs to reach a button was unpredictable.
+/// Tab on an *un-engaged* popup (one the user hasn't stepped into with
+/// ↑/↓, so no row is highlighted) does NOT accept — it moves focus to
+/// the next field, closing the popup and leaving the typed text intact.
+/// (Accepting is `↓`-then-Tab/Enter, or a click — see
+/// `down_then_tab_accepts_completion`.) Before the focus-model fix, Tab
+/// always fired the completion's accept, so the number of Tabs to reach
+/// a button was unpredictable.
 #[test]
 fn tab_advances_focus_without_accepting_completion() {
     let (_temp, workspace) = set_up_workspace();
@@ -199,7 +201,8 @@ fn tab_advances_focus_without_accepting_completion() {
 
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     // Popup closes (Tab moved focus); the typed text is untouched —
-    // Tab never accepts `alpha_dir/`.
+    // Tab doesn't accept `alpha_dir/` because the user never stepped
+    // into the dropdown.
     harness
         .wait_until(|h| !h.screen_to_string().contains("alpha_two/"))
         .unwrap();
@@ -230,10 +233,50 @@ fn tab_advances_focus_without_accepting_completion() {
     );
 }
 
+/// `↓` steps into the open dropdown (highlighting a row) and then Tab
+/// applies that highlighted candidate into the field — the "accept if
+/// engaged" half of Tab's behaviour. Focus stays on the field (the
+/// accepted value is left visible/editable), unlike an un-engaged Tab
+/// which advances. Mirrors `down_then_enter_accepts_completion`.
+#[test]
+fn down_then_tab_accepts_completion() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+    type_alpha_prefix_and_wait(&mut harness, &workspace);
+
+    // Step into the dropdown (↓ highlights the top row), then Tab
+    // applies it.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+
+    let expected = format!("{}/alpha_dir/", workspace.display());
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()) == expected)
+        .unwrap();
+
+    // Tab-accept keeps focus on the Project Path field (it didn't
+    // advance): the `▸` marker is still on the path line.
+    let screen = harness.screen_to_string();
+    let path_line = screen
+        .lines()
+        .find(|l| l.contains("alpha_dir/"))
+        .expect("project path line present");
+    assert!(
+        path_line.contains('▸'),
+        "Tab-accept should leave focus on the Project Path field. Line: {:?}\nScreen:\n{}",
+        path_line,
+        screen,
+    );
+}
+
 /// `↓` steps into the open dropdown (highlighting a row) and then
-/// Enter accepts the highlighted candidate into the field. This is the
-/// *only* keyboard accept path now that Tab and a bare Enter act on
-/// the form instead.
+/// Enter accepts the highlighted candidate into the field. Together
+/// with `down_then_tab_accepts_completion`, the keyboard accept paths
+/// are `↓`-then-Enter and `↓`-then-Tab (plus a click).
 #[test]
 fn down_then_enter_accepts_completion() {
     let (_temp, workspace) = set_up_workspace();

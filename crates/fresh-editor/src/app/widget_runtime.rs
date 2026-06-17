@@ -389,9 +389,19 @@ impl Editor {
                     self.dismiss_focused_text_completions(panel_key);
                 }
                 "Tab" => {
-                    // Tab never accepts a completion — it always moves
-                    // focus. Close the popup, then fall through to the
-                    // focus-advance dispatch below.
+                    if self.focused_text_completion_navigated(panel_key) {
+                        // The user stepped into the dropdown (↑/↓/wheel)
+                        // so a row is highlighted — Tab applies it and
+                        // closes the popup, just like Enter. Focus stays
+                        // on the field so the accepted value is visible
+                        // and editable (a second Tab then advances).
+                        self.fire_completion_accept(panel_key);
+                        return;
+                    }
+                    // Nothing highlighted (a freshly surfaced popup): Tab
+                    // commits the typed text and moves focus. Close the
+                    // popup, then fall through to the focus-advance
+                    // dispatch below.
                     self.dismiss_focused_text_completions(panel_key);
                 }
                 _ => {}
