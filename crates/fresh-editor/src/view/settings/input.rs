@@ -104,20 +104,6 @@ impl SettingsState {
             return InputResult::Consumed;
         }
 
-        // Ctrl+R resets/inherits the focused field (built-in default for plain
-        // fields, inherit for nullable ones). Only
-        // fires in navigation mode (not while typing into a control), so
-        // it doesn't conflict with editor inputs.
-        if event.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(event.code, KeyCode::Char('r') | KeyCode::Char('R'))
-        {
-            let editing = self.entry_dialog().map(|d| d.editing_text).unwrap_or(false);
-            if !editing {
-                self.reset_focused_entry_field();
-                return InputResult::Consumed;
-            }
-        }
-
         // Check if we're in a special editing mode
         let (editing_text, dropdown_open) = if let Some(dialog) = self.entry_dialog() {
             let dropdown_open = dialog

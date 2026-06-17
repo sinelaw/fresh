@@ -3941,7 +3941,7 @@ fn render_entry_footer(
     } else {
         // The `●:modified` legend is the only place that explains the row-indicator.
         (
-            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit  Ctrl+S:Save  Ctrl+R:Reset  Esc:Cancel  ●:modified",
+            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Apply  Ctrl+S:Save  Esc:Cancel  ●:modified",
             Style::default().fg(theme.line_number_fg),
         )
     };

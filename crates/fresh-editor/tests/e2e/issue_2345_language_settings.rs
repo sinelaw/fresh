@@ -235,9 +235,9 @@ fn issue_2345_per_field_inherit_button_reverts_single_field() {
 }
 
 /// Issue #2345: the per-field `[Inherit]` button must be reachable by keyboard,
-/// not just the mouse or the obscure `Ctrl+R`. Once a field is overriding, Tab
-/// moves focus from its control onto its `[Inherit]` button, and Enter there
-/// reverts the field to inherited.
+/// not just the mouse. Once a field is overriding, Tab moves focus from its
+/// control onto its `[Inherit]` button, and Enter there reverts the field to
+/// inherited.
 #[test]
 fn issue_2345_inherit_button_reachable_by_tab() {
     let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();

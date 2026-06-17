@@ -1096,49 +1096,13 @@ impl SettingsState {
     /// becomes dirty (user_edited = true) so the title flips to
     /// `• modified`, signalling that the parent still owes a save.
     /// If keyboard focus is on a field's per-field action button
-    /// (`[Reset]`/`[Inherit]`), perform it and return true (so Enter/Space
-    /// consume the key). The discoverable, Tab-reachable counterpart to
-    /// `Ctrl+R`.
+    /// (`[Reset]`/`[Inherit]`/`[Clear]`), perform it and return true (so
+    /// Enter/Space consume the key). These buttons are reached by Tab.
     pub fn entry_dialog_activate_focused_field_button(&mut self) -> bool {
         match self.entry_dialog_mut() {
             Some(dialog) => dialog.activate_focused_field_button(),
             None => false,
         }
-    }
-
-    pub fn reset_focused_entry_field(&mut self) {
-        let Some(dialog) = self.entry_dialog_mut() else {
-            return;
-        };
-        if dialog.focus_on_buttons {
-            return;
-        }
-        let idx = dialog.selected_item;
-        // For a nullable field, "reset" means inherit again (its default is
-        // null). Route through `inherit_field` so the control's inherited state
-        // is set consistently with the per-field [Inherit] button — otherwise
-        // e.g. a toggle wouldn't visibly revert to the neutral chip.
-        if dialog
-            .items
-            .get(idx)
-            .map(|item| item.nullable && !item.read_only)
-            .unwrap_or(false)
-        {
-            dialog.inherit_field(idx);
-            return;
-        }
-        let Some(item) = dialog.items.get_mut(idx) else {
-            return;
-        };
-        if item.read_only {
-            return;
-        }
-        let Some(default) = item.default.clone() else {
-            return;
-        };
-        update_control_from_value(&mut item.control, &default);
-        item.modified = false;
-        dialog.user_edited = true;
     }
 
     pub fn reset_current_to_default(&mut self) {

@@ -129,11 +129,10 @@ pub struct EntryDialogState {
     /// JSON-equality check that's too noisy at the schema layer.
     pub user_edited: bool,
     /// When `Some(i)`, keyboard focus is on the i-th per-field action button
-    /// (`[Reset]`/`[Inherit]`) of the currently selected field rather than on
-    /// the field's control — `i` indexes [`field_action_buttons`]. Lets users
-    /// Tab onto the affordances and activate them with Enter/Space, the
-    /// discoverable counterpart to `Ctrl+R`. Only set for simple (non-composite)
-    /// fields, which are the only ones whose buttons join the Tab order.
+    /// (`[Reset]`/`[Inherit]`/`[Clear]`) of the currently selected field rather
+    /// than on the field's control — `i` indexes [`field_action_buttons`]. Tab
+    /// moves onto these buttons and Enter/Space activates them; it is the only
+    /// keyboard path to the per-field actions.
     pub field_button_focus: Option<usize>,
     /// Field names (item path without the leading `/`) that genuinely *inherit*
     /// from a parent scope when unset — e.g. a per-language `line_wrap` falls
@@ -653,17 +652,13 @@ impl EntryDialogState {
     /// through their internal entries and [+] Add new row before moving to the
     /// next dialog item. When at the last editable item, wraps to buttons.
     /// When on the last button, wraps back to the first editable item.
-    /// Number of focusable per-field action buttons (`[Reset]`/`[Inherit]`) for
-    /// the field at `idx`. Only simple (non-composite) controls put their
-    /// buttons in the Tab order; composite controls keep their own internal
-    /// sub-navigation and their inherit affordance stays mouse-only.
+    /// Number of focusable per-field action buttons (`[Reset]`/`[Inherit]`/
+    /// `[Clear]`) for the field at `idx`. Every field's buttons join the Tab
+    /// order — for composite controls they come *after* the control's own
+    /// internal sub-navigation (handled by `try_composite_focus_*`), so Tab is
+    /// the sole keyboard path to these actions.
     fn field_focusable_count(&self, idx: usize) -> usize {
-        match self.items.get(idx) {
-            Some(item) if is_simple_field_control(&item.control) => {
-                self.field_action_buttons(idx).len()
-            }
-            _ => 0,
-        }
+        self.field_action_buttons(idx).len()
     }
 
     /// Advance focus to the next *field* (control), skipping any per-field
@@ -1932,6 +1927,67 @@ mod tests {
         assert_eq!(dialog.field_button_focus, None); // back on the control
         dialog.focus_prev();
         assert!(dialog.focus_on_buttons); // before first field → footer
+    }
+
+    /// A JSON/object field (like a language `formatter`) is not a "simple"
+    /// control, but its per-field action buttons must still be reachable by Tab
+    /// — that's the only keyboard path now that Ctrl+R is gone.
+    #[test]
+    fn focus_reaches_action_buttons_on_json_field() {
+        let schema = SettingSchema {
+            path: "/test".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            setting_type: SettingType::Object {
+                properties: vec![SettingSchema {
+                    path: "/formatter".to_string(),
+                    name: "Formatter".to_string(),
+                    description: None,
+                    // Object => rendered as a JSON control.
+                    setting_type: SettingType::Object { properties: vec![] },
+                    default: Some(serde_json::json!({ "command": "clang-format" })),
+                    read_only: false,
+                    section: None,
+                    order: None,
+                    nullable: true,
+                    enum_from: None,
+                    dual_list_sibling: None,
+                    dynamically_extendable_status_bar_elements: false,
+                }],
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+        // Overridden to a different command, so it differs from the default.
+        let mut dialog = EntryDialogState::from_schema(
+            "c".to_string(),
+            &serde_json::json!({ "formatter": { "command": "my-fmt" } }),
+            &schema,
+            "/languages",
+            false,
+            false,
+            &HashMap::new(),
+        );
+
+        // The JSON field offers buttons (at least [Reset]); Tab steps onto them.
+        assert_eq!(dialog.selected_item, 1);
+        assert!(
+            !dialog.field_action_buttons(1).is_empty(),
+            "overridden JSON field should offer action buttons"
+        );
+        assert_eq!(dialog.field_button_focus, None);
+        dialog.focus_next();
+        assert_eq!(
+            dialog.field_button_focus,
+            Some(0),
+            "Tab should land on the JSON field's first action button"
+        );
     }
 
     #[test]
