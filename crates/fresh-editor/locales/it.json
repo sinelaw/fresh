@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Cancella tutto",
   "settings.btn_edit": "Modifica",
   "settings.btn_inherit": "Eredita",
+  "settings.btn_clear": "Cancella",
   "settings.btn_reset": "Ripristina",
   "settings.btn_save": "Salva",
   "settings.cannot_edit_system": "Impossibile modificare il livello di Sistema (impostazioni predefinite di sola lettura)",

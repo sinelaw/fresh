@@ -1585,6 +1585,7 @@ impl SettingsState {
             &self.available_status_bar_tokens,
         );
         apply_builtin_defaults(&mut dialog, &entry_pointer);
+        dialog.inheritable_fields = inheritable_fields_for(path);
         self.entry_dialog_stack.push(dialog);
     }
 
@@ -2919,6 +2920,29 @@ impl SettingsState {
 }
 
 /// Update a control's state from a JSON value
+/// Field names whose per-entry "set to null" genuinely *inherits* a parent
+/// value (so the button reads `[Inherit]`) rather than just clearing the field
+/// (`[Clear]`). For a `/languages` entry a field inherits when the global
+/// `editor` config has a same-named setting (e.g. `line_wrap`, `tab_size`);
+/// fields with no global fallback (e.g. `formatter`) are clear-only. Other maps
+/// have no such parent scope, so nothing inherits.
+fn inheritable_fields_for(map_path: &str) -> std::collections::HashSet<String> {
+    if map_path == "/languages" {
+        serde_json::to_value(crate::config::EditorConfig::default())
+            .ok()
+            .and_then(|v| {
+                v.as_object().map(|o| {
+                    o.keys()
+                        .cloned()
+                        .collect::<std::collections::HashSet<String>>()
+                })
+            })
+            .unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    }
+}
+
 /// Override each dialog field's `default` with the bundled config's value for
 /// this map entry (e.g. `languages.html.grammar = "HTML"`), so `[Reset]`
 /// restores the built-in per-entry value rather than the generic schema default

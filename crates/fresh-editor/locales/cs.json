@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Vymazat vše",
   "settings.btn_edit": "Upravit",
   "settings.btn_inherit": "Zdědit",
+  "settings.btn_clear": "Vymazat",
   "settings.btn_reset": "Obnovit",
   "settings.btn_save": "Uložit",
   "settings.cannot_edit_system": "Nelze upravit systémovou vrstvu (výchozí hodnoty pouze pro čtení)",

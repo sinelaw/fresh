@@ -3671,19 +3671,27 @@ fn render_entry_items(
         // mirrors this geometry in `handle_entry_dialog_item_click`.
         if !item.read_only && skip_rows == 0 && control_area.width > 0 {
             let right_edge = control_area.x.saturating_add(control_area.width);
+            let inherits = dialog
+                .inheritable_fields
+                .contains(item.path.trim_start_matches('/'));
             if item.nullable && item.is_null {
-                let badge = t!("settings.inherited_badge").to_string();
-                let w = badge.chars().count() as u16 + 1;
-                let x = right_edge.saturating_sub(w);
-                if x > control_area.x {
-                    frame.render_widget(
-                        Paragraph::new(badge).style(
-                            Style::default()
-                                .fg(theme.line_number_fg)
-                                .add_modifier(Modifier::ITALIC),
-                        ),
-                        Rect::new(x, screen_y, w, 1),
-                    );
+                // Only show the "(Inherited)" badge when the unset value really
+                // does inherit a parent value; a clear-only field (e.g. a
+                // formatter) just reads as empty/not-set.
+                if inherits {
+                    let badge = t!("settings.inherited_badge").to_string();
+                    let w = badge.chars().count() as u16 + 1;
+                    let x = right_edge.saturating_sub(w);
+                    if x > control_area.x {
+                        frame.render_widget(
+                            Paragraph::new(badge).style(
+                                Style::default()
+                                    .fg(theme.line_number_fg)
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                            Rect::new(x, screen_y, w, 1),
+                        );
+                    }
                 }
             } else {
                 let buttons = dialog.field_action_buttons(idx);

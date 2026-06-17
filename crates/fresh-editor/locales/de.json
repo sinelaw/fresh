@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Alle löschen",
   "settings.btn_edit": "Bearbeiten",
   "settings.btn_inherit": "Erben",
+  "settings.btn_clear": "Leeren",
   "settings.btn_reset": "Zurücksetzen",
   "settings.btn_save": "Speichern",
   "settings.cannot_edit_system": "Systemebene kann nicht bearbeitet werden (schreibgeschützte Standards)",

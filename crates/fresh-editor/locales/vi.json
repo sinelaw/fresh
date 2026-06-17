@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Xóa tất cả",
   "settings.btn_edit": "Chỉnh sửa",
   "settings.btn_inherit": "Kế thừa",
+  "settings.btn_clear": "Xóa",
   "settings.btn_reset": "Đặt lại",
   "settings.btn_save": "Lưu",
   "settings.cannot_edit_system": "Không thể chỉnh sửa lớp Hệ thống (mặc định chỉ đọc)",

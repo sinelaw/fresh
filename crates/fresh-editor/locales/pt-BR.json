@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Limpar tudo",
   "settings.btn_edit": "Editar",
   "settings.btn_inherit": "Herdar",
+  "settings.btn_clear": "Limpar",
   "settings.btn_reset": "Redefinir",
   "settings.btn_save": "Salvar",
   "settings.cannot_edit_system": "Não é possível editar camada do Sistema (padrões somente leitura)",

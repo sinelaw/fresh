@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "全部清除",
   "settings.btn_edit": "编辑",
   "settings.btn_inherit": "继承",
+  "settings.btn_clear": "清除",
   "settings.btn_reset": "重置",
   "settings.btn_save": "保存",
   "settings.cannot_edit_system": "无法编辑系统层（只读默认值）",

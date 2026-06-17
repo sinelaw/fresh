@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "ล้างทั้งหมด",
   "settings.btn_edit": "แก้ไข",
   "settings.btn_inherit": "สืบทอด",
+  "settings.btn_clear": "ล้าง",
   "settings.btn_reset": "รีเซ็ต",
   "settings.btn_save": "บันทึก",
   "settings.cannot_edit_system": "ไม่สามารถแก้ไขเลเยอร์ระบบได้ (ค่าเริ่มต้นอ่านอย่างเดียว)",

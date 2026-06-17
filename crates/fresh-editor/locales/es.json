@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Borrar todo",
   "settings.btn_edit": "Editar",
   "settings.btn_inherit": "Heredar",
+  "settings.btn_clear": "Borrar",
   "settings.btn_reset": "Restablecer",
   "settings.btn_save": "Guardar",
   "settings.cannot_edit_system": "No se puede editar la capa del sistema (valores predeterminados de solo lectura)",

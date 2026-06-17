@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Очистити все",
   "settings.btn_edit": "Редагувати",
   "settings.btn_inherit": "Успадкувати",
+  "settings.btn_clear": "Очистити",
   "settings.btn_reset": "Скинути",
   "settings.btn_save": "Зберегти",
   "settings.cannot_edit_system": "Неможливо редагувати системний рівень (стандартні значення лише для читання)",

@@ -447,7 +447,8 @@ fn issue_2345_reset_restores_builtin_formatter() {
     open_html_language_dialog(&mut harness);
 
     // The Formatter shows the override and offers a [Reset] distinct from
-    // [Inherit] (which would clear it to null).
+    // [Clear]. It reads [Clear], not [Inherit], because a formatter has no
+    // global fallback — setting it to null just unsets it.
     assert!(
         harness.screen_to_string().contains("my-custom-fmt"),
         "dialog should show the overridden formatter; screen:\n{}",
@@ -455,8 +456,8 @@ fn issue_2345_reset_restores_builtin_formatter() {
     );
     let row = row_with(&harness, "Formatter");
     assert!(
-        row.contains("[Reset]") && row.contains("[Inherit]"),
-        "an overriding formatter should offer both [Reset] and [Inherit]; row: {:?}",
+        row.contains("[Reset]") && row.contains("[Clear]") && !row.contains("[Inherit]"),
+        "an overriding formatter should offer [Reset] and [Clear] (not [Inherit]); row: {:?}",
         row
     );
 

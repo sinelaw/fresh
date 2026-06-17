@@ -10,25 +10,29 @@ use super::schema::{SettingSchema, SettingType};
 use crate::view::controls::{FocusState, TextInputState};
 use rust_i18n::t;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A per-field action affordance rendered at the right edge of a field's row.
 ///
-/// These are kept distinct because they target different values:
+/// These target different values:
 /// * `Reset` sets the field to its *built-in default* (the value the bundled
 ///   config ships for this entry).
-/// * `Inherit` clears the field to `null` so it falls back to the global /
-///   parent-scope value.
+/// * `Inherit` sets the field to `null`. It renders as `[Inherit]` when null
+///   falls back to a parent-scope value (e.g. a per-language `line_wrap`
+///   inheriting `editor.line_wrap`), or `[Clear]` when there's no such fallback
+///   and null just unsets the field (e.g. a `formatter`). See
+///   [`EntryDialogState::field_action_buttons`].
 ///
 /// A field only offers the action(s) that lead to a *different* result, so a
-/// nullable field whose built-in default is itself `null` shows only `Inherit`
-/// (the two would be identical), while a plain field with a built-in default
-/// and no inheritance chain shows only `Reset`.
+/// nullable field whose built-in default is itself `null` shows only the
+/// Inherit/Clear button (Reset would be identical), while a plain field with a
+/// built-in default and no inheritance chain shows only `Reset`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldAction {
     /// Set the field to its built-in default value.
     Reset,
-    /// Clear the field so it inherits from the global / parent scope.
+    /// Set the field to `null` — inherit a parent value, or clear it when there
+    /// is no parent to inherit from.
     Inherit,
 }
 
@@ -131,6 +135,13 @@ pub struct EntryDialogState {
     /// discoverable counterpart to `Ctrl+R`. Only set for simple (non-composite)
     /// fields, which are the only ones whose buttons join the Tab order.
     pub field_button_focus: Option<usize>,
+    /// Field names (item path without the leading `/`) that genuinely *inherit*
+    /// from a parent scope when unset — e.g. a per-language `line_wrap` falls
+    /// back to the global `editor.line_wrap`. For these the per-field "set to
+    /// null" button is labelled `[Inherit]`; for everything else (a `formatter`
+    /// with no global fallback) it's labelled `[Clear]`, since null just unsets
+    /// the value rather than inheriting one. Empty means "nothing inherits".
+    pub inheritable_fields: HashSet<String>,
 }
 
 impl EntryDialogState {
@@ -235,6 +246,7 @@ impl EntryDialogState {
             is_array_item: false,
             user_edited: false,
             field_button_focus: None,
+            inheritable_fields: HashSet::new(),
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -314,6 +326,7 @@ impl EntryDialogState {
             is_array_item: true,
             user_edited: false,
             field_button_focus: None,
+            inheritable_fields: HashSet::new(),
         }
     }
 
@@ -485,10 +498,22 @@ impl EntryDialogState {
         Some(default.clone())
     }
 
-    /// The per-field action buttons (`[Reset]`/`[Inherit]`) to render at the
-    /// right edge of the field at `idx`, left to right, with their labels.
-    /// Empty when the field offers neither (e.g. inherited, at its default, or
-    /// read-only). The `(Inherited)` badge is rendered separately.
+    /// True when unsetting the field at `idx` makes it inherit a parent-scope
+    /// value (e.g. `editor.line_wrap`) rather than simply clearing it.
+    fn field_inherits(&self, idx: usize) -> bool {
+        self.items
+            .get(idx)
+            .map(|item| {
+                self.inheritable_fields
+                    .contains(item.path.trim_start_matches('/'))
+            })
+            .unwrap_or(false)
+    }
+
+    /// The per-field action buttons to render at the right edge of the field at
+    /// `idx`, left to right, with their labels. Empty when the field offers
+    /// none (e.g. inherited/unset, at its default, or read-only). The
+    /// `(Inherited)` badge is rendered separately.
     pub fn field_action_buttons(&self, idx: usize) -> Vec<(FieldAction, String)> {
         let Some(item) = self.items.get(idx) else {
             return Vec::new();
@@ -503,13 +528,16 @@ impl EntryDialogState {
                 format!("[{}]", t!("settings.btn_reset")),
             ));
         }
-        // Inherit is offered for any overriding nullable field (composite ones
-        // too — they're click-only, see `field_focusable_count`).
+        // "Set to null" is offered for any overriding nullable field (composite
+        // ones too — they're click-only, see `field_focusable_count`). The label
+        // is [Inherit] when null falls back to a parent value, else [Clear].
         if item.nullable && !item.is_null {
-            buttons.push((
-                FieldAction::Inherit,
-                format!("[{}]", t!("settings.btn_inherit")),
-            ));
+            let label = if self.field_inherits(idx) {
+                t!("settings.btn_inherit")
+            } else {
+                t!("settings.btn_clear")
+            };
+            buttons.push((FieldAction::Inherit, format!("[{}]", label)));
         }
         buttons
     }

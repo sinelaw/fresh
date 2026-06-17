@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "모두 지우기",
   "settings.btn_edit": "편집",
   "settings.btn_inherit": "상속",
+  "settings.btn_clear": "지우기",
   "settings.btn_reset": "재설정",
   "settings.btn_save": "저장",
   "settings.cannot_edit_system": "시스템 레이어를 편집할 수 없음 (읽기 전용 기본값)",

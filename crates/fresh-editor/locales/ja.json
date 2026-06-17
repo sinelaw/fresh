@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "すべてクリア",
   "settings.btn_edit": "編集",
   "settings.btn_inherit": "継承",
+  "settings.btn_clear": "クリア",
   "settings.btn_reset": "リセット",
   "settings.btn_save": "保存",
   "settings.cannot_edit_system": "システムレイヤーを編集できません（読み取り専用のデフォルト）",

@@ -1308,6 +1308,7 @@
   "settings.btn_clear_category": "Tout effacer",
   "settings.btn_edit": "Modifier",
   "settings.btn_inherit": "Hériter",
+  "settings.btn_clear": "Effacer",
   "settings.btn_reset": "Réinitialiser",
   "settings.btn_save": "Enregistrer",
   "settings.cannot_edit_system": "Impossible de modifier la couche système (valeurs par défaut en lecture seule)",
