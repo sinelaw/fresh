@@ -24,9 +24,9 @@ jobs:
   theme-diff:
     name: theme diff gallery
     runs-on: ubuntu-latest
-    # Each changed theme renders ~15-20s (before + after); a job-level cap keeps
-    # a stuck render from wedging the runner. The render step also wraps cargo
-    # in `timeout` for a tighter, clearer failure.
+    # Each changed theme renders ~10-12s (before + after); a job-level cap keeps
+    # a stuck wait_until from wedging the runner. The render step also wraps
+    # cargo in `timeout` for a tighter, clearer failure.
     timeout-minutes: 20
     steps:
       - name: Checkout (full history for base diff)

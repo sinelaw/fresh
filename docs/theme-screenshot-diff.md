@@ -82,9 +82,13 @@ The test is `theme_diff_gallery`
 - **Completeness backstop.** The per-theme changed-keys table lists *every*
   key the PR changed (with swatches), so a key that no scene happens to show
   in context is still surfaced explicitly.
-- **Cost.** A theme renders in ~15-20s (before + after, two extra harnesses for
-  git/LSP); the run scales linearly with the number of *changed* themes. The
-  CI job and the render step are both time-boxed so a hang fails fast.
+- **Cost.** A theme renders in ~10-12s (before + after). Every wait uses
+  `wait_until`, which returns the instant its condition holds (git status,
+  LSP "on" pill, and terminal pane each settle in tens of ms) — no fixed
+  sleeps or polling budgets. The bulk is the ~4s/side of real keystroke +
+  render work across the scene suite. The run scales linearly with the number
+  of *changed* themes; the CI job and render step are time-boxed so a stuck
+  `wait_until` fails fast instead of hanging.
 - **Determinism.** Both sides run the identical scene sequence at the same
   terminal size, so frame indices line up one-to-one for pairing.
 - **Robustness.** Missing git, a missing base file, or an unparseable baseline

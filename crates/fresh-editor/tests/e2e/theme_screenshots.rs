@@ -608,11 +608,9 @@ fn scene_terminal(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     }
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-
-    // Give the PTY a beat to spawn its shell and paint a prompt, but return as
-    // soon as the terminal pane shows output (usually well under the cap).
-    poll_until(h, 300, |h| h.screen_to_string().contains('$'));
+    // Wait for the terminal pane to exist (its tab name appears) — that's when
+    // terminal_bg/fg start rendering. Returns the instant it's up.
+    let _ = h.wait_until(|h| h.screen_to_string().contains("Terminal"));
     h.render().unwrap();
     snap(h, s, Some("Terminal"), 300);
 
@@ -883,30 +881,33 @@ fn rewrite_theme_name(json: &str, token: &str) -> String {
     }
 }
 
+/// Create a throwaway config dir holding the theme version under `theme_token`
+/// as a user theme, so a harness can select it via `config.theme`. Each harness
+/// gets its *own* context (sharing one across harnesses breaks plugin loading),
+/// so the returned `TempDir` must be kept alive for the harness's lifetime.
+fn make_theme_ctx(
+    theme_token: &str,
+    theme_json: &str,
+) -> Option<(tempfile::TempDir, DirectoryContext)> {
+    let cfg_temp = tempfile::TempDir::new().ok()?;
+    let ctx = DirectoryContext::for_testing(cfg_temp.path());
+    let themes_dir = ctx.themes_dir();
+    fs::create_dir_all(&themes_dir).ok()?;
+    let rewritten = rewrite_theme_name(theme_json, theme_token);
+    fs::write(themes_dir.join(format!("{theme_token}.json")), &rewritten).ok()?;
+    Some((cfg_temp, ctx))
+}
+
 /// Render the scene suite with `theme_json` active, writing frames under
 /// `docs/blog/<gallery_name>/`. Returns `true` if the theme actually loaded
 /// and frames were produced; `false` (without writing frames) if the version
 /// could not be selected — which happens when a baseline JSON is incompatible
 /// with the current theme schema. The caller decides whether that's fatal.
 fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -> bool {
-    let cfg_temp = match tempfile::TempDir::new() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("theme-diff: could not create temp dir: {e}");
-            return false;
-        }
+    let Some((cfg_temp, ctx)) = make_theme_ctx(theme_token, theme_json) else {
+        eprintln!("theme-diff: could not stage theme ctx for '{theme_token}'");
+        return false;
     };
-    let ctx = DirectoryContext::for_testing(cfg_temp.path());
-    let themes_dir = ctx.themes_dir();
-    if let Err(e) = fs::create_dir_all(&themes_dir) {
-        eprintln!("theme-diff: could not create themes dir: {e}");
-        return false;
-    }
-    let rewritten = rewrite_theme_name(theme_json, theme_token);
-    if let Err(e) = fs::write(themes_dir.join(format!("{theme_token}.json")), &rewritten) {
-        eprintln!("theme-diff: could not write theme file: {e}");
-        return false;
-    }
 
     let mut config = Config {
         theme: ThemeName(theme_token.to_string()),
@@ -921,9 +922,7 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
     let opts = HarnessOptions::new()
         .with_project_root()
         .with_config(config)
-        // Clone the shared dir context (themes dir) so the git/LSP scenes below
-        // can spin up their own harnesses against the same theme.
-        .with_shared_dir_context(ctx.clone())
+        .with_shared_dir_context(ctx)
         .with_full_grammar_registry();
     let mut h = match EditorTestHarness::create(120, 35, opts) {
         Ok(h) => h,
@@ -956,11 +955,12 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
 
     run_all_scenes(&mut h, &mut s);
     drop(h); // release the main harness before spinning up the extra ones
+    drop(cfg_temp); // main theme ctx no longer needed
 
     // Scenes that need a different harness setup (own working dir / LSP config)
-    // but the same theme. They share the themes dir via the cloned dir context.
-    scene_git_file_status(&mut s, ctx.clone(), theme_token);
-    scene_lsp_status(&mut s, ctx, theme_token);
+    // but the same theme. Each makes its own theme ctx (see make_theme_ctx).
+    scene_git_file_status(&mut s, theme_token, theme_json);
+    scene_lsp_status(&mut s, theme_token, theme_json);
 
     s.finalize().expect("finalize diff gallery");
     true
@@ -971,15 +971,19 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
 /// file_status_added_fg, file_status_untracked_fg. Best-effort — if the git
 /// plugin/status doesn't surface in time it snaps whatever rendered (the same
 /// on both before/after, so frames stay aligned).
-fn scene_git_file_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &str) {
+fn scene_git_file_status(s: &mut BlogShowcase, theme_token: &str, theme_json: &str) {
+    let Some((_cfg_temp, ctx)) = make_theme_ctx(theme_token, theme_json) else {
+        return;
+    };
     let repo = GitTestRepo::new();
     repo.setup_git_explorer_plugin();
-    repo.create_file("src/main.rs", "fn main() {}\n");
+    // Root-level files so the explorer shows them without expanding a subdir.
+    repo.create_file("main.rs", "fn main() {}\n");
     repo.create_file("README.md", "# demo\n");
     repo.git_add_all();
     repo.git_commit("initial");
-    // Now create the working-tree states the explorer decorates.
-    repo.modify_file("src/main.rs", "fn main() { println!(\"hi\"); }\n");
+    // Working-tree states the explorer decorates: a modified + an untracked file.
+    repo.modify_file("main.rs", "fn main() { println!(\"hi\"); }\n");
     repo.create_file("notes.txt", "untracked\n");
 
     let config = Config {
@@ -1000,13 +1004,11 @@ fn scene_git_file_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_toke
     };
 
     h.editor_mut().toggle_file_explorer();
-    poll_until(&mut h, 2000, |h| {
-        h.screen_to_string().contains("File Explorer")
-    });
-    // Bounded wait for the git plugin to decorate a modified file. `wait_until`
-    // has no timeout, so we poll ourselves and snap whatever rendered — the
-    // same on both before/after, so frames stay aligned even if git is slow.
-    poll_until(&mut h, 3000, |h| {
+    let _ = h.wait_until(|h| h.screen_to_string().contains("File Explorer"));
+    // Wait for the git plugin to decorate the modified file with its "M"
+    // status (file_status_modified_fg). `wait_until` returns the instant the
+    // condition holds, pumping async each tick (~tens of ms in practice).
+    let _ = h.wait_until(|h| {
         h.screen_to_string()
             .lines()
             .any(|l| l.contains("main.rs") && l.contains('M'))
@@ -1015,31 +1017,13 @@ fn scene_git_file_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_toke
     snap(&mut h, s, Some("Git Status"), 300);
 }
 
-/// Poll up to `max_ms`, ticking the harness, until `cond` holds. Returns
-/// whether the condition was met. Unlike `wait_until` this has a timeout, so a
-/// best-effort scene never hangs the suite when a feature doesn't surface.
-fn poll_until(
-    h: &mut EditorTestHarness,
-    max_ms: u64,
-    mut cond: impl FnMut(&EditorTestHarness) -> bool,
-) -> bool {
-    let start = std::time::Instant::now();
-    loop {
-        let _ = h.tick_and_render();
-        if cond(h) {
-            return true;
-        }
-        if start.elapsed().as_millis() as u64 >= max_ms {
-            return false;
-        }
-        h.sleep(std::time::Duration::from_millis(50));
-    }
-}
-
 /// Scene: LSP status indicator in the status bar (own harness with a fake LSP
 /// attached, sharing the theme). Covers: ui.status_lsp_on_fg/bg. Best-effort
 /// and PTY/bash-dependent; skips cleanly if the fake server can't spawn.
-fn scene_lsp_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &str) {
+fn scene_lsp_status(s: &mut BlogShowcase, theme_token: &str, theme_json: &str) {
+    let Some((_cfg_temp, ctx)) = make_theme_ctx(theme_token, theme_json) else {
+        return;
+    };
     let lsp_dir = match tempfile::TempDir::new() {
         Ok(d) => d,
         Err(_) => return,
@@ -1087,7 +1071,8 @@ fn scene_lsp_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &s
         .with_working_dir(work_dir)
         .with_config(config)
         .with_shared_dir_context(ctx)
-        .without_empty_plugins_dir();
+        // LSP status needs no plugins; skip embedded plugin loading for speed.
+        .with_empty_plugins_dir();
     let mut h = match EditorTestHarness::create(120, 35, opts) {
         Ok(h) => h,
         Err(e) => {
@@ -1099,11 +1084,10 @@ fn scene_lsp_status(s: &mut BlogShowcase, ctx: DirectoryContext, theme_token: &s
     if h.open_file(&test_file).is_err() {
         return;
     }
-    // Let the fake server initialize so the status-bar LSP indicator settles.
-    for _ in 0..12 {
-        let _ = h.process_async_and_render();
-        h.sleep(std::time::Duration::from_millis(50));
-    }
+    // Wait until the fake server is running and the status bar shows the
+    // "on" pill (status_lsp_on_* colors). `wait_until` returns the instant
+    // it appears, pumping async LSP messages each tick.
+    let _ = h.wait_until(|h| h.screen_to_string().contains("LSP (on)"));
     let _ = h.render();
     snap(&mut h, s, Some("LSP Status"), 300);
 
