@@ -78,22 +78,20 @@ fn open_html_language_dialog(harness: &mut EditorTestHarness) {
     harness.open_settings().unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    for _ in 0..40 {
-        if harness.screen_to_string().contains("Languages:") {
+    // Walk down until the (single) language map entry is the focused row — its
+    // "[Enter to edit]" affordance is the reliable signal across terminal
+    // heights (the "Languages:" label can be visible before the entry is
+    // selected).
+    for _ in 0..60 {
+        if harness.screen_to_string().contains("[Enter to edit]") {
             break;
         }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
     }
     assert!(
-        harness.screen_to_string().contains("Languages:"),
-        "could not reach the Languages map in Settings"
-    );
-    // The single `html` entry is already the focused map row ("[Enter to
-    // edit]"). Enter opens its dialog.
-    assert!(
         harness.screen_to_string().contains("[Enter to edit]"),
-        "html map row should be focused with an edit affordance"
+        "language map row should be focused with an edit affordance"
     );
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -101,7 +99,7 @@ fn open_html_language_dialog(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
     assert!(
         harness.screen_to_string().contains("Auto Surround"),
-        "html entry dialog should show the Auto Surround field"
+        "language entry dialog should show the Auto Surround field"
     );
 }
 
@@ -414,5 +412,70 @@ fn issue_2345_reset_button_reachable_by_back_tab() {
         row.contains("[v]") && !row.contains("[Reset]"),
         "Shift+Tab to [Reset] then Enter should restore the default; row: {:?}",
         row
+    );
+}
+
+/// Issue #2345: an object/JSON field with a non-null built-in default — a
+/// language's `formatter` — can be reset to that default from the UI. Its only
+/// other action, Inherit → null, would *clear* the formatter rather than
+/// restore it, so without a [Reset] there'd be no way back to the bundled
+/// value. (Reset on these fields is mouse-only; the JSON editor isn't a Tab
+/// stop.)
+#[test]
+fn issue_2345_reset_restores_builtin_formatter() {
+    // A language that ships a formatter (c -> clang-format), overridden here to
+    // a custom command so it differs from the built-in default.
+    let mut config = Config::default();
+    config.languages.retain(|name, _| name == "c");
+    let mut fmt = config
+        .languages
+        .get("c")
+        .unwrap()
+        .formatter
+        .clone()
+        .expect("c ships a built-in formatter");
+    assert_eq!(
+        fmt.command, "clang-format",
+        "precondition: c default formatter"
+    );
+    fmt.command = "my-custom-fmt".to_string();
+    config.languages.get_mut("c").unwrap().formatter = Some(fmt);
+
+    let mut harness = EditorTestHarness::with_config(120, 50, config).unwrap();
+    harness.render().unwrap();
+    // Only `c` is in the languages map, so this opens c's dialog.
+    open_html_language_dialog(&mut harness);
+
+    // The Formatter shows the override and offers a [Reset] distinct from
+    // [Inherit] (which would clear it to null).
+    assert!(
+        harness.screen_to_string().contains("my-custom-fmt"),
+        "dialog should show the overridden formatter; screen:\n{}",
+        harness.screen_to_string()
+    );
+    let row = row_with(&harness, "Formatter");
+    assert!(
+        row.contains("[Reset]") && row.contains("[Inherit]"),
+        "an overriding formatter should offer both [Reset] and [Inherit]; row: {:?}",
+        row
+    );
+
+    // Click [Reset]: the bundled clang-format is restored and [Reset] goes away
+    // (the value now matches the default).
+    let (bx, by) = harness
+        .find_text_on_screen("[Reset]")
+        .expect("[Reset] should be visible on the Formatter row");
+    harness.mouse_click(bx + 1, by).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("clang-format"),
+        "after [Reset] the bundled clang-format should be restored; screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        !row_with(&harness, "Formatter").contains("[Reset]"),
+        "[Reset] should disappear once the value matches the default; row: {:?}",
+        row_with(&harness, "Formatter")
     );
 }

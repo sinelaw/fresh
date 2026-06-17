@@ -462,7 +462,14 @@ impl EntryDialogState {
     /// `null` (which `[Inherit]` already covers). Returns `None` otherwise.
     fn reset_distinct_default(&self, idx: usize) -> Option<Value> {
         let item = self.items.get(idx)?;
-        if item.read_only || item.is_null || !is_simple_field_control(&item.control) {
+        // Reset is offered for simple scalar controls and for object/JSON
+        // controls (e.g. a language's `formatter`), whose only other per-field
+        // action — Inherit → null — would *clear* a non-null built-in default
+        // rather than restore it. Composite list/map controls and opaque
+        // Complex controls are excluded.
+        let resettable = is_simple_field_control(&item.control)
+            || matches!(item.control, SettingControl::Json(_));
+        if item.read_only || item.is_null || !resettable {
             return None;
         }
         let default = item.default.as_ref()?;
