@@ -17,7 +17,14 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 | **System** | Built-in defaults | Global | Factory defaults (read-only) |
 | **User** | `~/.config/fresh/config.json` | All projects | Personal preferences |
 | **Project** | `.fresh/config.json` in project root | Single project | Project-specific settings |
-| **Session** | `.fresh/session.json` (temporary) | Current session | Temporary overrides |
+| **Session** | `.fresh/session.json` (temporary) | Current run | Temporary overrides |
+
+> **Note:** the **Session** layer here is a *config scope* — temporary
+> overrides for the current run, stored in `.fresh/session.json`. It is
+> unrelated to the [daemon](../features/session-persistence.md) you
+> attach/detach from, or to a [workspace](../features/session-persistence.md).
+> The name is kept for now to match the Settings UI; see
+> `docs/internal/TERMINOLOGY.md`.
 
 **Path Notes:**
 - On Windows, User config is at `%APPDATA%\fresh\config.json`

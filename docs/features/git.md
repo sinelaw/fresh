@@ -23,7 +23,7 @@ Inside a review:
 
 - **`n` / `p`** jump to the next and previous hunk.
 - Stage, unstage, or discard the hunk, file, or a line-level visual selection on the cursor row.
-- **Comments** — leave a line comment or a session-wide note. Comments persist per repository across sessions, so you can close the editor mid-review and pick up where you left off. A dedicated Comments panel lets you jump through them, edit, delete, or export to Markdown.
+- **Comments** — leave a line comment or a review-wide note. Comments persist per repository across editor restarts, so you can close the editor mid-review and pick up where you left off. A dedicated Comments panel lets you jump through them, edit, delete, or export to Markdown.
 
 ## Git Log
 

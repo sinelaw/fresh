@@ -41,6 +41,19 @@
   **"k8s environment"** (display text and command titles).
 - **Code comments** that explain these concepts.
 
+### The config-layer "Session" (a separate concept)
+
+There is a tenth use of "session" that is **not** the daemon and **not** a
+workspace: the **config layer**. Settings merge across layers
+System → User → Project → **Session**, where the Session layer is
+temporary per-run overrides stored in `.fresh/session.json` (surfaced in
+the Settings UI as the `[ Session ]` layer button and a `(session)`
+indicator). A good future name is the **Runtime** (or **Temporary**) layer.
+The rename is **deferred** because it is coupled to the Settings UI label
+and the on-disk `.fresh/session.json` filename (breaking). Docs keep the
+"Session" layer name for now but add a note distinguishing it from the
+daemon/workspace.
+
 ### Do NOT rename (would break things — out of scope)
 - **Plugin API** surface: `createWindow`, `listWindows`, `setWindowState`,
   `attachRemoteAgent`, `window_created`/`window_closed`/`active_window_changed`

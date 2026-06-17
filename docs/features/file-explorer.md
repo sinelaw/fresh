@@ -35,6 +35,6 @@ Dragging the divider preserves whichever form you configured — a sidebar set u
 
 - The file explorer respects your `.gitignore` by default, and auto-reloads when `.gitignore` changes on disk.
 - A file is shown only if it isn't hidden by **any** active filter — so if a file is both a dotfile and gitignored, it takes enabling both toggles to see it.
-- Use **Toggle Hidden Files** and **Toggle Gitignored Files** from the command palette to flip either filter. Both settings persist to config across sessions.
+- Use **Toggle Hidden Files** and **Toggle Gitignored Files** from the command palette to flip either filter. Both settings persist to config across restarts.
 
 See it in action: [Preview Tabs in the 0.3.0 blog](/blog/fresh-0.3.0/#preview-tabs-in-file-explorer).
