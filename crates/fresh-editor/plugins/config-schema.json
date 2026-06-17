@@ -269,7 +269,7 @@
               ".venv"
             ],
             "kind": "path-only",
-            "snippet": "source {dir}/.venv/bin/activate",
+            "snippet": "source .venv/bin/activate",
             "require": [
               ".venv/bin/python",
               ".venv/bin/python3",
@@ -282,7 +282,7 @@
               "venv"
             ],
             "kind": "path-only",
-            "snippet": "source {dir}/venv/bin/activate",
+            "snippet": "source venv/bin/activate",
             "require": [
               "venv/bin/python",
               "venv/bin/python3",
@@ -1914,7 +1914,7 @@
                 ".venv"
               ],
               "kind": "path-only",
-              "snippet": "source {dir}/.venv/bin/activate",
+              "snippet": "source .venv/bin/activate",
               "require": [
                 ".venv/bin/python",
                 ".venv/bin/python3",
@@ -1927,7 +1927,7 @@
                 "venv"
               ],
               "kind": "path-only",
-              "snippet": "source {dir}/venv/bin/activate",
+              "snippet": "source venv/bin/activate",
               "require": [
                 "venv/bin/python",
                 "venv/bin/python3",
@@ -1996,7 +1996,7 @@
           "$ref": "#/$defs/EnvKind"
         },
         "snippet": {
-          "description": "Shell snippet handed to `editor.setEnv` to activate. `{dir}` expands to\nthe absolute workspace root.",
+          "description": "Shell snippet handed to `editor.setEnv` to activate. It runs with the\nworking directory set to the workspace root, so **prefer relative paths**\n(e.g. `source .venv/bin/activate`). `{dir}` expands to the absolute\nworkspace root, but interpolating it into a shell command is a\nshell-injection surface when the path is attacker-influenced\n(cf. CVE-2024-9287) — avoid it unless you control the path.",
           "type": "string"
         },
         "require": {
