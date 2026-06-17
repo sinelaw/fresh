@@ -865,10 +865,9 @@ mod tests {
         let det = detect_default(root).expect("venv detected");
         assert_eq!(det.name, ".venv");
         assert_eq!(det.kind, EnvKind::PathOnly);
-        assert_eq!(
-            det.snippet,
-            format!("source {}/.venv/bin/activate", root.to_string_lossy())
-        );
+        // Relative path (recipe runs in the workspace root) — no absolute-path
+        // interpolation, so no shell-injection surface.
+        assert_eq!(det.snippet, "source .venv/bin/activate");
     }
 
     #[test]

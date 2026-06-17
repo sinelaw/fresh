@@ -1013,33 +1013,28 @@ impl Editor {
         let markers =
             crate::services::workspace_trust::executable_content_markers(self.working_dir());
 
-        // Categorize the markers so we can route to the right surface.
-        // Path-only envs (`.venv`, `venv`) are not modeled as a
-        // "would-run-shell" question — activation is a `PATH` prepend,
-        // not arbitrary user shell. The North Star treats them as
-        // "Cheap actions don't ask": auto-activate silently, undo via
-        // status pill. So path-only env *alone* doesn't trigger any
-        // prompt; we hand the workspace to env-manager as Trusted.
-        let path_only_env_markers = [".venv", "venv"];
-        let only_path_only_env = !markers.is_empty()
-            && markers
-                .iter()
-                .all(|m| path_only_env_markers.contains(&m.as_str()));
-
-        if markers.is_empty() || only_path_only_env {
-            // Nothing genuinely needs gating. Default to Trusted so the
-            // restricted chip doesn't appear, env-manager auto-activates
-            // any path-only env silently, and the user isn't blocked on
-            // a question that has no real downside. Persist this — it's
-            // the same decision we'd record if the user had explicitly
-            // confirmed.
+        if markers.is_empty() {
+            // Nothing executable to gate (plain text/docs). Trust silently so
+            // the restricted chip doesn't appear and the user isn't blocked on
+            // a question with no real downside. Persist it — same decision we'd
+            // record if the user had explicitly confirmed.
             self.authority()
                 .workspace_trust
                 .set_level(crate::services::workspace_trust::TrustLevel::Trusted);
             return;
         }
 
-        // For all executable content, seed Restricted *in memory only* —
+        // All executable content — including a *bare* `.venv`/`venv` — goes
+        // through the trust decision. A virtualenv is a module-namespace
+        // boundary, NOT a security boundary: activating it runs the repo's
+        // interpreter, which auto-executes any `.pth`/`sitecustomize.py` shipped
+        // inside the venv (a documented malware-drop vector), so its mere
+        // presence must not silently grant trust. "Path-only" still governs how
+        // it *activates* — silently, with no second prompt, once the workspace
+        // is trusted (see env-manager) — it just no longer exempts the folder
+        // from the trust decision itself.
+
+        // Seed Restricted *in memory only* —
         // `set_level_transient` does not write to disk. The on-disk store
         // stays undecided until the user picks a concrete option in the
         // modal. That preserves the contract: cancelling (quit) leaves the

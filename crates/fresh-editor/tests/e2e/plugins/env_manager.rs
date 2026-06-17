@@ -153,29 +153,14 @@ fn boot_with_dir_context(
     harness
 }
 
-/// Run a palette command by typing its name and confirming. Used to drive
-/// `Env: Show Environment Status` to observe the env state — the status pill
-/// itself isn't in the default status-bar layout, but the palette's status
-/// message is.
-fn run_palette_command(harness: &mut EditorTestHarness, query: &str) {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text(query).unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
-    harness.render().unwrap();
-}
-
-/// `.venv` auto-activates on plugin load. The user-visible signal is the
-/// `"Environment active (.venv)"` message that `Env: Show Environment
-/// Status` writes to the status bar.
+/// A bare `.venv` is executable content: activating it runs the repo's Python,
+/// which auto-executes any `.pth`/`sitecustomize.py` shipped inside the venv (a
+/// documented malware-drop vector), and a virtualenv is a module-namespace
+/// boundary — NOT a security boundary. So a venv-only folder raises the single
+/// core trust modal like any other executable content; it must NOT silently
+/// auto-trust. Once trusted, the path-only env activates with no second prompt.
 #[test]
-fn test_venv_silently_auto_activates() {
+fn test_venv_prompts_then_activates_on_trust() {
     let tmp = TempDir::new().unwrap();
     let project = tmp.path().to_path_buf();
     make_venv(&project);
@@ -183,59 +168,54 @@ fn test_venv_silently_auto_activates() {
 
     let mut harness = boot_harness_like_main(120, 40, project);
 
-    // Wait for env-manager's `plugins_loaded` hook to fire and the
-    // activation message to render in the status bar. The activation
-    // message string (i18n key `status.activating`) contains both
-    // ".venv" and "Activating" so the predicate only matches the
-    // intended state.
+    // venv-only raises the core trust modal naming the marker — not silently
+    // trusted, not silently activated.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains(".venv") && (s.contains("Activating") || s.contains("active"))
+            s.contains("SECURITY WARNING") && s.contains("Detected: .venv")
         })
         .unwrap();
-
-    // Confirm via the status command. The screen should show
-    // "Environment active (.venv)" — the only way env-manager surfaces
-    // that string is from a real activation in trusted state.
-    run_palette_command(&mut harness, "Env: Show");
-    let status = harness.screen_to_string();
+    let s = harness.screen_to_string();
     assert!(
-        status.contains("Environment active") && status.contains(".venv"),
-        "expected `Env: Show` to confirm .venv active. Screen:\n{}",
-        status
+        !s.contains("Trust & activate") && !s.contains("Environment detected"),
+        "venv must not surface the env-manager popup"
     );
 
-    // No combined trust+activate popup — venv is the silent path.
-    assert!(
-        !status.contains("Trust & activate"),
-        "venv must not surface the combined trust+activate popup"
-    );
-    // No SECURITY WARNING modal either — venv is path-only and defaults Trusted.
-    assert!(
-        !status.contains("SECURITY WARNING"),
-        "venv-only folder must not raise the core trust modal"
-    );
+    // Trust the folder: mnemonic 't' selects "Trust", Enter confirms.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Now the path-only env activates silently (no second prompt) via the
+    // `trust_changed` hook.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("SECURITY WARNING")
+                && s.contains(".venv")
+                && (s.contains("Activating") || s.contains("active"))
+        })
+        .unwrap();
 }
 
 /// A session opened through the Orchestrator — a window created via
 /// `create_window_with_terminal`, the path the "New Session (Local)" flow and
-/// the session dock drive — must run the same workspace-trust decision and env
-/// auto-activation a direct `fresh <dir>` launch gets.
+/// the session dock drive — must run the same workspace-trust decision a direct
+/// `fresh <dir>` launch gets. For a `.venv` that means: raise the core trust
+/// modal (a venv is executable content, not silently trusted), and once trusted
+/// activate the env in the new window via the `trust_changed` hook.
 ///
-/// Regression: before the fix the orchestrator window bypassed
-/// `maybe_prompt_workspace_trust` (so a path-only `.venv` stayed `Restricted`
-/// instead of auto-trusting) *and* env-manager only auto-activated on
-/// `plugins_loaded` (which does not re-fire for a new window), so the session
-/// came up on the system toolchain — `python` resolved to `/usr/bin/python`
-/// even though opening the same folder from the CLI activated its `.venv`.
-///
-/// Drives the create-window action and asserts only on the rendered status
-/// message env-manager surfaces on activation; without the fix that message
-/// never appears (the session never activates), so this hangs until the
-/// external test timeout — i.e. it fails without the change.
+/// Regression (issue #2355): the orchestrator window used to bypass
+/// `maybe_prompt_workspace_trust` entirely, so the session never got the trust
+/// decision and never activated. This drives the create-window action and
+/// asserts the modal appears in the new window and that trusting activates the
+/// env there.
 #[test]
-fn test_orchestrator_session_auto_activates_venv() {
+fn test_orchestrator_session_prompts_then_activates_venv() {
     if !pty_available() {
         eprintln!("Skipping orchestrator env activation test: PTY not available");
         return;
@@ -272,14 +252,30 @@ fn test_orchestrator_session_auto_activates_venv() {
         )
         .expect("create orchestrator session window");
 
-    // The new session auto-activates its `.venv` just like a direct launch:
-    // env-manager writes its activation message to the status bar. Without the
-    // fix the window stays Restricted / never re-activates, so this predicate
-    // is never satisfied and the test times out externally.
+    // The new session gets the trust decision just like a direct launch: the
+    // core modal fires in the new window, naming the marker. (Before the
+    // regression fix it never appeared — the session bypassed the prompt.)
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains(".venv") && (s.contains("Activating") || s.contains("active"))
+            s.contains("SECURITY WARNING") && s.contains("Detected: .venv")
+        })
+        .unwrap();
+
+    // Trust it (mnemonic 't' + Enter); the path-only env then activates in the
+    // new window via `trust_changed`.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            !s.contains("SECURITY WARNING")
+                && s.contains(".venv")
+                && (s.contains("Activating") || s.contains("active"))
         })
         .unwrap();
 }

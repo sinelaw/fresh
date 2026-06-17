@@ -478,8 +478,12 @@ pub struct EnvDetector {
     pub markers: Vec<String>,
     /// Activation risk class (see [`EnvKind`]).
     pub kind: EnvKind,
-    /// Shell snippet handed to `editor.setEnv` to activate. `{dir}` expands to
-    /// the absolute workspace root.
+    /// Shell snippet handed to `editor.setEnv` to activate. It runs with the
+    /// working directory set to the workspace root, so **prefer relative paths**
+    /// (e.g. `source .venv/bin/activate`). `{dir}` expands to the absolute
+    /// workspace root, but interpolating it into a shell command is a
+    /// shell-injection surface when the path is attacker-influenced
+    /// (cf. CVE-2024-9287) — avoid it unless you control the path.
     pub snippet: String,
     /// Optional evidence paths (relative to the workspace root); when present,
     /// at least one must exist for the detector to match — e.g. a `.venv` must
@@ -506,14 +510,18 @@ pub fn default_env_detectors() -> Vec<EnvDetector> {
             name: ".venv".into(),
             markers: vec![".venv".into()],
             kind: EnvKind::PathOnly,
-            snippet: "source {dir}/.venv/bin/activate".into(),
+            // Relative path: the recipe runs with cwd = the workspace root, so
+            // there is no need to interpolate the (attacker-influenced) absolute
+            // path into a `source` command — which would be a shell-injection
+            // surface (cf. CVE-2024-9287, venv activation command injection).
+            snippet: "source .venv/bin/activate".into(),
             require: venv_interp(".venv"),
         },
         EnvDetector {
             name: "venv".into(),
             markers: vec!["venv".into()],
             kind: EnvKind::PathOnly,
-            snippet: "source {dir}/venv/bin/activate".into(),
+            snippet: "source venv/bin/activate".into(),
             require: venv_interp("venv"),
         },
         EnvDetector {
