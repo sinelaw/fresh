@@ -6907,15 +6907,14 @@ impl QuickJsBackend {
 
                 // Resolve a pending callback (called from Rust)
                 globalThis._resolveCallback = function(callbackId, result) {
-                    console.log('[JS] _resolveCallback called with callbackId=' + callbackId + ', pendingCallbacks.size=' + globalThis._pendingCallbacks.size);
+                    // No per-resolve logging here: this fires once per async op
+                    // completion (potentially at very high frequency), and
+                    // console.log is captured into the host log, so logging here
+                    // floods the log and can feed a tail-driven feedback loop.
                     const cb = globalThis._pendingCallbacks.get(callbackId);
                     if (cb) {
-                        console.log('[JS] _resolveCallback: found callback, calling resolve()');
                         globalThis._pendingCallbacks.delete(callbackId);
                         cb.resolve(result);
-                        console.log('[JS] _resolveCallback: resolve() called');
-                    } else {
-                        console.log('[JS] _resolveCallback: NO callback found for id=' + callbackId);
                     }
                 };
 

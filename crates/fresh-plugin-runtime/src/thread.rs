@@ -1254,7 +1254,11 @@ async fn handle_request(
             callback_id,
             result_json,
         } => {
-            tracing::info!(
+            // One callback resolves per async op completion; a plugin that
+            // fires async calls in bulk (or a feedback loop) drives this at
+            // high frequency, and `result_json` can be large. Keep both at
+            // `trace` so it's off by default and not amplifying log volume.
+            tracing::trace!(
                 "ResolveCallback: resolving callback_id={} with result_json={}",
                 callback_id,
                 result_json
@@ -1263,7 +1267,7 @@ async fn handle_request(
                 .borrow_mut()
                 .resolve_callback(callback_id, &result_json);
             // resolve_callback now runs execute_pending_job() internally
-            tracing::info!(
+            tracing::trace!(
                 "ResolveCallback: done resolving callback_id={}",
                 callback_id
             );

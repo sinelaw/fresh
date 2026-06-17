@@ -520,7 +520,16 @@ impl TerminalManager {
                         }
                         Ok(n) => {
                             total_bytes += n;
-                            tracing::debug!(
+                            // Per-read logging is on the PTY hot path: a busy
+                            // terminal reads tens of thousands of chunks/sec, so
+                            // this must stay at `trace` (off by default). At
+                            // `debug` it not only floods the log but, if that log
+                            // is being `tail -f`'d into a terminal this manager
+                            // owns, it closes a positive-feedback loop (each read
+                            // logs a line, which tail echoes, which is read and
+                            // logged again). Lifecycle boundaries (EOF, error)
+                            // are logged above/below at higher levels instead.
+                            tracing::trace!(
                                 "Terminal {:?} received {} bytes (total: {})",
                                 terminal_id,
                                 n,
