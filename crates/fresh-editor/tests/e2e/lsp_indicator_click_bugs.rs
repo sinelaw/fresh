@@ -11,11 +11,13 @@
 //!      two popups on the buffer's popup stack.
 //!
 //!   2. **Plugin popup ignores the theme.** Every popup that flows
-//!      through `Event::ShowPopup` → `convert_popup_data_to_popup`
-//!      ends up with `background_style.bg = Color::Rgb(30, 30, 30)`,
+//!      through `Event::ShowPopup` → `convert_popup_data_to_popup` used
+//!      to end up with `background_style.bg = Color::Rgb(30, 30, 30)`,
 //!      hardcoded at `state.rs:convert_popup_data_to_popup`. In a
-//!      light theme that's a near-black rectangle in the middle of a
-//!      near-white UI.
+//!      light theme that was a near-black rectangle in the middle of
+//!      a near-white UI. Fixed: the converter now takes `popup_bg` /
+//!      `popup_border_fg` parameters; `Editor::show_popup` re-stamps
+//!      with the live theme after the event-replay path.
 //!
 //!   3. **Popup keeps showing "ready / indexing" after the server
 //!      died externally** (SIGKILL by the OOM killer, `process_limits`,
@@ -42,8 +44,9 @@
 //!      stops (e.g. server died, see #3), the spinner appears frozen
 //!      and only twitches forward by one glyph on user input.
 //!
-//! Each test is written so that **it fails today** (i.e. the bug is
-//! observable) and would pass once the bug is fixed.
+//! Each test is written so that **it fails when the bug is observable**
+//! and passes once the bug is fixed (issue 2 is fixed and the test now
+//! serves as a regression guard).
 
 use std::time::Duration;
 
@@ -311,16 +314,18 @@ fn issue_1_click_stacks_plugin_popup_and_lsp_servers_popup() -> anyhow::Result<(
 }
 
 // ---------------------------------------------------------------------------
-// Issue 2 — popups created via the `PopupData` event use a hardcoded
-//           dark background that ignores the theme.
+// Issue 2 — popups created via the `PopupData` event must follow the
+//           active theme (regression guard).
 // ---------------------------------------------------------------------------
 //
-// `state.rs::convert_popup_data_to_popup` sets
+// `state.rs::convert_popup_data_to_popup` used to set
 //     background_style: Style::default().bg(Color::Rgb(30, 30, 30))
 // regardless of theme. Every plugin popup (rust-lsp's "Not Found",
 // the Rust LSP mode chooser, every `editor.showActionPopup` call, …)
-// flows through that conversion and ends up with the same near-black
-// rectangle. In a light theme this is unmistakable on screen.
+// flowed through that conversion and ended up with the same near-black
+// rectangle. The converter now takes `popup_bg` / `popup_border_fg`
+// parameters and `Editor::show_popup` re-stamps with the live theme
+// after the event-replay path. This test guards against regression.
 
 #[test]
 fn issue_2_show_popup_ignores_theme_popup_bg() -> anyhow::Result<()> {
@@ -335,8 +340,8 @@ fn issue_2_show_popup_ignores_theme_popup_bg() -> anyhow::Result<()> {
 
     // Sanity: the theme has a `popup_bg` defined. If this ever became
     // `Color::Reset` we'd want a separate check; for now any
-    // non-`Reset` value is fine — the bug is that the rendered popup
-    // uses a *different* color (the hardcoded 30,30,30 dark grey).
+    // non-`Reset` value is fine — the regression we're guarding is
+    // the popup using a *different* color (e.g. hardcoded dark grey).
     assert_ne!(
         theme_popup_bg,
         Color::Reset,
@@ -378,10 +383,10 @@ fn issue_2_show_popup_ignores_theme_popup_bg() -> anyhow::Result<()> {
     assert_eq!(
         bg,
         Some(theme_popup_bg),
-        "BUG: a popup created via `Event::ShowPopup` has background \
-         {:?}, but the active theme's `popup_bg` is {:?}. \
-         `convert_popup_data_to_popup` hardcodes \
-         `Color::Rgb(30, 30, 30)` instead of reading the theme.",
+        "regression: a popup created via `Event::ShowPopup` has background \
+         {:?}, but the active theme's `popup_bg` is {:?}. The converter \
+         should be called with the live theme's `popup_bg`, or \
+         `Editor::show_popup` should re-stamp it.",
         bg,
         theme_popup_bg
     );

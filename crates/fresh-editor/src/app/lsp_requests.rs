@@ -209,6 +209,10 @@ impl Editor {
             crate::app::popup_actions::build_completion_popup_from_items(all_popup_items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
+        let (popup_bg, popup_border_fg) = {
+            let theme = self.theme();
+            (theme.popup_bg, theme.popup_border_fg)
+        };
 
         {
             let buffer_id = self.active_buffer();
@@ -220,7 +224,8 @@ impl Editor {
                 .get_mut(&buffer_id)
                 .unwrap();
             // Convert PopupData to Popup and use show_or_replace to avoid stacking
-            let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+            let mut popup_obj =
+                crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
             popup_obj.accept_key_hint = accept_hint;
             popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
             popup_obj.focus_key_hint = focus_hint;
@@ -683,6 +688,10 @@ impl Editor {
         let popup_data = crate::app::popup_actions::build_completion_popup_from_items(items, 0);
         let accept_hint = self.completion_accept_key_hint();
         let focus_hint = self.popup_focus_key_hint();
+        let (popup_bg, popup_border_fg) = {
+            let theme = self.theme();
+            (theme.popup_bg, theme.popup_border_fg)
+        };
 
         let buffer_id = self.active_buffer();
         let state = self
@@ -692,7 +701,8 @@ impl Editor {
             .expect("active window present")
             .get_mut(&buffer_id)
             .unwrap();
-        let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        let mut popup_obj =
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
         popup_obj.accept_key_hint = accept_hint;
         popup_obj.resolver = crate::view::popup::PopupResolver::Completion;
         popup_obj.focus_key_hint = focus_hint;

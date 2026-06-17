@@ -687,7 +687,19 @@ impl EditorState {
             }
 
             Event::ShowPopup { popup } => {
-                let popup_obj = convert_popup_data_to_popup(popup);
+                // The replay path has no theme handle, so we synthesize the
+                // popup with theme *defaults*. Editor-level callers
+                // (`Editor::apply_event_to_active_buffer`) intercept
+                // `Event::ShowPopup` *before* it reaches `state.apply` and
+                // build the popup with the live theme — see `event_apply.rs`.
+                // This arm is reached only when tests drive `state.apply`
+                // directly (no surrounding `Editor`).
+                use crate::view::theme::{default_popup_bg, default_popup_border_fg};
+                let popup_obj = convert_popup_data_to_popup(
+                    popup,
+                    default_popup_bg().into(),
+                    default_popup_border_fg().into(),
+                );
                 self.popups.show_or_replace(popup_obj);
             }
 
@@ -1045,8 +1057,17 @@ fn convert_event_face_to_overlay_face(event_face: &EventOverlayFace) -> OverlayF
     }
 }
 
-/// Convert popup data to the actual popup object
-pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
+/// Convert popup data to the actual popup object.
+///
+/// `popup_bg` and `popup_border_fg` come from the active theme (the
+/// caller resolves them from `Theme::popup_bg` / `Theme::popup_border_fg`,
+/// which are already `ratatui::style::Color`). The replay path inside
+/// `EditorState::apply` has no theme handle and falls back to theme defaults.
+pub(crate) fn convert_popup_data_to_popup(
+    data: &PopupData,
+    popup_bg: Color,
+    popup_border_fg: Color,
+) -> Popup {
     let content = match &data.content {
         crate::model::event::PopupContentData::Text(lines) => PopupContent::Text(lines.clone()),
         crate::model::event::PopupContentData::List { items, selected } => PopupContent::List {
@@ -1132,8 +1153,8 @@ pub(crate) fn convert_popup_data_to_popup(data: &PopupData) -> Popup {
         width: data.width,
         max_height: data.max_height,
         bordered: data.bordered,
-        border_style: Style::default().fg(Color::Gray),
-        background_style: Style::default().bg(Color::Rgb(30, 30, 30)),
+        border_style: Style::default().fg(popup_border_fg),
+        background_style: Style::default().bg(popup_bg),
         scroll_offset: 0,
         text_selection: None,
         accept_key_hint: None,

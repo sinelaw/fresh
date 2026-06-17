@@ -85,13 +85,12 @@ impl Editor {
         // doesn't carry this — it's a view-layer concern set after the
         // converter pushes the Popup onto the active buffer's stack.
         //
-        // Same logic for the popup's background / border styles: the
-        // `convert_popup_data_to_popup` shim (state.rs:1040) has no
-        // theme handle, so it pushes a popup with a default-dark
-        // background. Override it here with the active theme's
-        // `popup_bg` / `popup_border_fg` so e.g. a plugin's
-        // `showActionPopup` doesn't render as a near-black rectangle
-        // inside a light theme.
+        // Background / border: the `convert_popup_data_to_popup` shim is
+        // called from `EditorState::apply` without a theme handle, so its
+        // replay path uses theme *defaults*. Re-stamp here with the
+        // *live* theme's `popup_bg` / `popup_border_fg` so the popup
+        // tracks the user's active theme (e.g. an ANSI-16 dark theme
+        // overrides the default `Rgb(30, 30, 30)` here).
         let hint = self.popup_focus_key_hint();
         let (popup_bg, popup_border_fg) = {
             let theme = self.theme();

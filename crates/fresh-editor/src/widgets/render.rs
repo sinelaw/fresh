@@ -120,6 +120,11 @@ const KEY_COMPLETION_DIM_FG: &str = "ui.menu_disabled_fg";
 // re-skin one re-skin the other.
 const KEY_COMPLETION_SEL_FG: &str = "ui.popup_selection_fg";
 const KEY_COMPLETION_SEL_BG: &str = "ui.popup_selection_bg";
+// Foreground for *unselected* completion rows. Without this, the
+// row text inherits the terminal's default foreground, which has
+// no relationship to the popup's themed `popup_bg` and reads
+// poorly on coloured backgrounds.
+const KEY_COMPLETION_FG: &str = "ui.popup_text_fg";
 // Border chrome the popup paints around its own rows (the
 // `│ ... │` sides extending below the input + the `╰─...─╯`
 // closing border). Distinct theme key from the wrapping
@@ -2651,7 +2656,16 @@ fn render_completion_item(
             ..Default::default()
         })
     } else {
-        None
+        // Stamp the popup's text fg on the whole row so the
+        // candidate text reads against `popup_bg` rather than
+        // inheriting the terminal's default foreground (which
+        // has no relationship to the themed popup surface).
+        Some(OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_FG)),
+            extend_to_line_end: true,
+            fg_on_collision_only: false,
+            ..Default::default()
+        })
     };
     let mut inline_overlays: Vec<InlineOverlay> = Vec::new();
     // History rows: paint the `↶` marker in the popup-border

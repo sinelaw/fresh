@@ -998,10 +998,10 @@ fn default_prompt_selection_bg() -> ColorDef {
 }
 
 // Default popup colors
-fn default_popup_border_fg() -> ColorDef {
+pub(crate) fn default_popup_border_fg() -> ColorDef {
     ColorDef::Named("Gray".to_string())
 }
-fn default_popup_bg() -> ColorDef {
+pub(crate) fn default_popup_bg() -> ColorDef {
     ColorDef::Rgb(30, 30, 30)
 }
 fn default_popup_selection_bg() -> ColorDef {

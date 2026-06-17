@@ -1388,15 +1388,26 @@ impl Popup {
                             }
                         }
 
-                        // Row style (background only, no underline)
+                        // Row style: stamp the popup's text fg/bg on the
+                        // whole row so item text reads against the popup
+                        // surface rather than inheriting the terminal's
+                        // default fg (which has no relationship to the
+                        // themed popup_bg / popup_selection_bg). Selected
+                        // rows use popup_selection_fg/bg, hovered rows
+                        // use menu_hover_*, otherwise popup_text_fg on
+                        // popup_bg.
                         let row_style = if is_selected {
-                            Style::default().bg(theme.popup_selection_bg)
+                            Style::default()
+                                .fg(theme.popup_selection_fg)
+                                .bg(theme.popup_selection_bg)
                         } else if is_hovered {
                             Style::default()
                                 .bg(theme.menu_hover_bg)
                                 .fg(theme.menu_hover_fg)
                         } else {
                             Style::default()
+                                .fg(theme.popup_text_fg)
+                                .bg(theme.popup_bg)
                         };
 
                         ListItem::new(Line::from(spans)).style(row_style)

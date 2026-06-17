@@ -3124,22 +3124,15 @@ impl Editor {
         // The resolver carries the popup_id so confirm/cancel fires
         // `action_popup_result` for exactly THIS popup, even when
         // multiple plugin popups are stacked concurrently.
-        let mut popup_obj = crate::state::convert_popup_data_to_popup(&popup_data);
+        let (popup_bg, popup_border_fg) = {
+            let theme = self.theme();
+            (theme.popup_bg, theme.popup_border_fg)
+        };
+        let mut popup_obj =
+            crate::state::convert_popup_data_to_popup(&popup_data, popup_bg, popup_border_fg);
         popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
             popup_id: popup_id.clone(),
         };
-
-        // `convert_popup_data_to_popup` hardcodes a default dark
-        // background because it has no theme handle (it's called from
-        // `EditorState::apply` too). Restamp the active theme's
-        // `popup_bg` / `popup_border_fg` here so plugin popups don't
-        // render as a near-black rectangle on top of a light theme —
-        // #1941 issue 2.
-        {
-            let theme = self.theme();
-            popup_obj.background_style = ratatui::style::Style::default().bg(theme.popup_bg);
-            popup_obj.border_style = ratatui::style::Style::default().fg(theme.popup_border_fg);
-        }
 
         // Dismiss any built-in LSP-status popup that the editor put
         // on `active_state().popups` in response to the same click —
