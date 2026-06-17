@@ -7,8 +7,10 @@
 //!
 //! - **Path-only env (`.venv`)**: auto-activate silently, status pill shows
 //!   `.venv ✓`, no popup, no trust modal.
-//! - **Shell env (`.envrc`)**: combined "Trust this folder and activate?"
-//!   popup. Pick first option → trust elevates, env activates.
+//! - **Shell env (`.envrc`)**: the *core* trust modal (the same single prompt
+//!   manifests get), with concrete framing naming `.envrc`. Picking "Trust"
+//!   elevates trust and env-manager activates direnv in response — driven by
+//!   the `trust_changed` hook, not a separate plugin "Trust & activate" popup.
 //! - **Project manifest (`Cargo.toml`)**: trust modal fires with concrete
 //!   framing that names the actual marker.
 //! - **Cancel the trust modal** (T19 — Ctrl+Q quit without picking): the
@@ -282,10 +284,13 @@ fn test_orchestrator_session_auto_activates_venv() {
         .unwrap();
 }
 
-/// `.envrc` surfaces env-manager's combined popup. Picking "Trust & activate"
-/// (the first option) elevates trust and applies the env.
+/// `.envrc` raises the *core* trust modal — the single trust prompt, same as
+/// any other executable content — with concrete framing naming the marker.
+/// Picking "Trust" elevates trust, and env-manager activates direnv in
+/// response to the resulting `trust_changed` hook. There is no separate,
+/// plugin-owned "Trust & activate" popup (that duplicate was removed).
 #[test]
-fn test_envrc_shows_combined_trust_popup_and_elevates_on_accept() {
+fn test_envrc_raises_core_trust_modal_and_activates_on_trust() {
     let tmp = TempDir::new().unwrap();
     let project = tmp.path().to_path_buf();
     make_envrc(&project);
@@ -293,39 +298,36 @@ fn test_envrc_shows_combined_trust_popup_and_elevates_on_accept() {
 
     let mut harness = boot_harness_like_main(140, 40, project);
 
-    // env popup appears once `plugins_loaded` fires and detect() returns
-    // the shell-kind env. The body contains both signals so the predicate
-    // can't false-match on an unrelated popup that happens to say "Trust".
+    // The core trust modal fires for `.envrc`, naming the marker concretely.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("Environment detected") && s.contains("Trust & activate")
+            s.contains("SECURITY WARNING") && s.contains("Detected: .envrc")
         })
         .unwrap();
-    // No SECURITY WARNING modal stacked behind — env-shell case should
-    // not co-fire the core trust modal.
+    // The old plugin-owned combined popup must NOT appear — that's the
+    // duplicate this change removed.
     let snapshot = harness.screen_to_string();
     assert!(
-        !snapshot.contains("SECURITY WARNING"),
-        ".envrc must not stack the core trust modal alongside env popup"
+        !snapshot.contains("Environment detected") && !snapshot.contains("Trust & activate"),
+        ".envrc must not surface the env-manager trust popup (duplicate removed)"
     );
 
-    // The action popup needs explicit focus before Enter selects a row.
-    // Alt+T is the popup-focus binding. The first action is "Trust &
-    // activate".
+    // Select "Trust this folder" (mnemonic `t`), then confirm with Enter.
     harness
-        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // After accept, popup goes away and direnv activates. The activation
-    // message from `applyActivation` includes "Activating direnv".
+    // Trusting fires `trust_changed`; env-manager activates direnv in
+    // response. The activation message from `applyActivation` includes
+    // "Activating direnv", and the modal is gone.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            !s.contains("Environment detected") && s.contains("Activating direnv")
+            !s.contains("SECURITY WARNING") && s.contains("Activating direnv")
         })
         .unwrap();
 }

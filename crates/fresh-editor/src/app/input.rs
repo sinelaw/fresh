@@ -926,6 +926,22 @@ impl Editor {
         }
         .to_string();
         self.active_window_mut().status_message = Some(msg);
+
+        // Refresh the plugin-visible state snapshot so `editor.workspaceTrustLevel()`
+        // reflects the new level, then notify plugins. The `trust_changed` hook
+        // lets trust-gated work re-trigger inline — env-manager re-activates a
+        // now-trusted env without a window switch — and it is the single signal
+        // every trust-change path (modal confirm, status pill, plugin action)
+        // funnels through, since they all route here. Deliberately a hook and a
+        // snapshot refresh, NOT a `request_restart`: a rebuild would reset every
+        // other session's buffers/layout (see the note above).
+        self.update_plugin_state_snapshot();
+        self.plugin_manager.read().unwrap().run_hook(
+            "trust_changed",
+            crate::services::plugins::hooks::HookArgs::TrustChanged {
+                level: level.as_str().to_string(),
+            },
+        );
     }
 
     pub(crate) fn handle_action(&mut self, action: Action) -> AnyhowResult<()> {

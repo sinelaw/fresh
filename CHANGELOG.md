@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Improvements
+
+* **Unified workspace-trust prompt**: there is now a single trust prompt for every kind of project. Folders with a shell environment (`.envrc` / `mise` / `.tool-versions`) previously showed the env-manager plugin's own "Trust & activate" popup, while other projects showed the core trust modal — two different-looking prompts for the same decision, kept in separate state. The core trust modal is now the only trust prompt; it names the detected markers concretely, and env-manager activates the environment as a consequence of trusting (via a new `trust_changed` plugin hook) instead of asking the trust question itself.
+
 ## 0.4.0
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

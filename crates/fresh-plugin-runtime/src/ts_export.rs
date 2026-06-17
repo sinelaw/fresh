@@ -513,6 +513,7 @@ interface HookEventMap {
   ready: Record<string, never>;
   focus_gained: Record<string, never>;
   authority_changed: { label: string };
+  trust_changed: { level: "trusted" | "restricted" | "blocked" };
 
   // ── buffer lifecycle ─────────────────────────────────────────────────────
   buffer_activated: { buffer_id: number };

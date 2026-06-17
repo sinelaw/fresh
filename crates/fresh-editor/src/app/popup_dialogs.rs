@@ -983,24 +983,23 @@ impl Editor {
     pub fn maybe_prompt_workspace_trust(&mut self) {
         // Phase 1 of the trust+env+devcontainer UX plan (see
         // `docs/internal/trust-env-devcontainer-ux-plan.md`): when the
-        // workspace is undecided AND has executable content, two paths:
+        // workspace is undecided AND has executable content, the core trust
+        // modal is the *single* trust prompt for every kind of marker —
+        // env-shell (`.envrc`/`mise.toml`/`.tool-versions`), project
+        // manifests, devcontainer config, .NET solution/project files. It is
+        // shown with concrete framing: the popup names the *specific* markers
+        // that triggered it (Cargo.toml, build.rs, .envrc, App.sln…) rather
+        // than the abstract "this project can run code on your machine." The
+        // workspace starts Restricted while waiting for the user to choose.
         //
-        // - The folder has env-shell markers (`.envrc`/`mise.toml`/
-        //   `.tool-versions`) — start as Restricted and let the
-        //   env-manager plugin's combined "Trust this folder and
-        //   activate?" popup do the asking, because that prompt is the
-        //   most concrete framing of the decision (it names the
-        //   specific env). The user's "Trust & activate" choice
-        //   dispatches `workspace_trust_trust`, which records the
-        //   decision and raises the level to Trusted.
-        //
-        // - Any other executable content (project manifests, devcontainer-
-        //   only, .NET solution/project files, …) — fire the core trust
-        //   modal here, with concrete framing: the popup names the
-        //   *specific* markers that triggered it (Cargo.toml, build.rs,
-        //   App.sln, devcontainer.json…) rather than the abstract
-        //   "this project can run code on your machine." Start as
-        //   Restricted while waiting for the user to choose.
+        // Previously env-shell folders were carved out here so the
+        // env-manager plugin could surface its own combined "Trust this
+        // folder and activate?" popup — a *second* trust UI for the same
+        // decision, which is exactly the duplication users hit. Now the
+        // plugin no longer asks the trust question: it activates the env as a
+        // *consequence* of trust, driven by the `trust_changed` hook this
+        // editor fires when the level changes (see env-manager.ts). One
+        // decision, one prompt, one place it is recorded.
         //
         // A decision the user explicitly recorded is always honored — this
         // branch only fires for undecided projects.
@@ -1022,14 +1021,10 @@ impl Editor {
         // status pill. So path-only env *alone* doesn't trigger any
         // prompt; we hand the workspace to env-manager as Trusted.
         let path_only_env_markers = [".venv", "venv"];
-        let env_shell_markers = [".envrc", "mise.toml", ".mise.toml", ".tool-versions"];
         let only_path_only_env = !markers.is_empty()
             && markers
                 .iter()
                 .all(|m| path_only_env_markers.contains(&m.as_str()));
-        let has_env_shell = markers
-            .iter()
-            .any(|m| env_shell_markers.contains(&m.as_str()));
 
         if markers.is_empty() || only_path_only_env {
             // Nothing genuinely needs gating. Default to Trusted so the
@@ -1044,25 +1039,21 @@ impl Editor {
             return;
         }
 
-        // For env-shell and other executable content, seed Restricted
-        // *in memory only* — `set_level_transient` does not write to
-        // disk. The on-disk store stays undecided until the user picks
-        // a concrete option in the surfaced prompt. That preserves the
-        // contract: cancelling (quit) leaves the project undecided so
-        // the prompt fires again next time, while any deliberate
-        // choice (env-manager's "Trust & activate" / "Never here" or
-        // the core modal's three radios) writes the decision through
-        // via `set_level`.
+        // For all executable content, seed Restricted *in memory only* —
+        // `set_level_transient` does not write to disk. The on-disk store
+        // stays undecided until the user picks a concrete option in the
+        // modal. That preserves the contract: cancelling (quit) leaves the
+        // project undecided so the prompt fires again next time, while any
+        // deliberate choice (the modal's three radios) writes the decision
+        // through via `set_level`.
         self.authority()
             .workspace_trust
             .set_level_transient(crate::services::workspace_trust::TrustLevel::Restricted);
 
-        if !has_env_shell {
-            // Non-cancellable on open: the choice has to be made, but
-            // any concrete option resolves it. (`Esc` is inert on the
-            // forced-choice variant; user must pick a row.)
-            self.show_workspace_trust_popup(false);
-        }
+        // Non-cancellable on open: the choice has to be made, but any
+        // concrete option resolves it. (`Esc` is inert on the forced-choice
+        // variant; the user must pick a row.)
+        self.show_workspace_trust_popup(false);
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this

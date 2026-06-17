@@ -147,6 +147,17 @@ pub enum HookArgs {
     /// without that, which keeps the harness in sync too.
     AuthorityChanged { label: String },
 
+    /// The workspace trust level changed (e.g. Restricted → Trusted) via the
+    /// trust modal, the status-bar trust pill, or a plugin-dispatched trust
+    /// action. Fires after the new level is live and persisted *and* the
+    /// plugin state snapshot has been refreshed, so handlers can read it via
+    /// `editor.workspaceTrustLevel()` (or the `level` payload). Plugins use
+    /// this to re-trigger trust-gated work inline — env-manager re-runs its
+    /// activation flow the moment a folder is trusted, instead of waiting for
+    /// the next window switch or editor restart. Deliberately a lightweight
+    /// hook, *not* an editor rebuild (which would reset other sessions).
+    TrustChanged { level: String },
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
