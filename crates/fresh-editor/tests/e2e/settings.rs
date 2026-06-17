@@ -1328,8 +1328,8 @@ fn test_settings_file_explorer_width_shows_percent_suffix() {
     harness.open_settings().unwrap();
 
     // Navigate to File Explorer category.
-    // Categories in order: General, Clipboard, Editor, File Browser, File Explorer, ...
-    for _ in 0..4 {
+    // Categories in order: General, Clipboard, Editor, Env, File Browser, File Explorer, ...
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.render().unwrap();
@@ -1381,7 +1381,7 @@ fn test_settings_file_explorer_width_applies_live() {
     // Navigate to File Explorer category (see
     // `test_settings_file_explorer_width_shows_percent_suffix` for the same
     // navigation pattern).
-    for _ in 0..4 {
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -1489,8 +1489,8 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
     harness.open_settings().unwrap();
 
     // Navigate to File Explorer category. Order (from test_settings_percentage):
-    // General, Clipboard, Editor, File Browser, File Explorer.
-    for _ in 0..4 {
+    // General, Clipboard, Editor, Env, File Browser, File Explorer.
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
