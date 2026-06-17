@@ -71,7 +71,7 @@ export default defineConfig({
           { text: "Encoding", link: "/features/encoding" },
           { text: "Remote Editing (SSH)", link: "/features/ssh" },
           { text: "Devcontainers", link: "/features/devcontainer" },
-          { text: "Session Persistence", link: "/features/session-persistence" },
+          { text: "Daemon Mode", link: "/features/session-persistence" },
           { text: "Keybinding Editor", link: "/features/keybinding-editor" },
           { text: "Dashboard", link: "/features/dashboard" },
         ],
