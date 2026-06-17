@@ -93,6 +93,9 @@ pub struct PartialConfig {
     pub warnings: Option<PartialWarningsConfig>,
     pub plugins: Option<HashMap<String, PartialPluginConfig>>,
     pub packages: Option<PartialPackagesConfig>,
+    /// Environment detectors — overridden wholesale (the whole detector list
+    /// is replaced if provided), not merged per-detector.
+    pub env: Option<crate::config::EnvConfig>,
 }
 
 impl Merge for PartialConfig {
@@ -110,6 +113,8 @@ impl Merge for PartialConfig {
         merge_partial(&mut self.terminal, &other.terminal);
         merge_partial(&mut self.warnings, &other.warnings);
         merge_partial(&mut self.packages, &other.packages);
+        // Env detectors: higher precedence replaces the whole list.
+        self.env.merge_from(&other.env);
 
         // Lists: higher precedence replaces (per design doc)
         self.keybindings.merge_from(&other.keybindings);
@@ -1164,6 +1169,7 @@ impl From<&crate::config::Config> for PartialConfig {
                 }
             },
             packages: Some(PartialPackagesConfig::from(&cfg.packages)),
+            env: Some(cfg.env.clone()),
         }
     }
 }
@@ -1320,6 +1326,7 @@ impl PartialConfig {
                 .packages
                 .map(|e| e.resolve(&defaults.packages))
                 .unwrap_or_else(|| defaults.packages.clone()),
+            env: self.env.unwrap_or_else(|| defaults.env.clone()),
         };
         // Treat `0` as "not set" for numeric settings where a literal zero is
         // meaningless (wrap_column, page_width, tab_size).

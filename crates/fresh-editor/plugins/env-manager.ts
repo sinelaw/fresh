@@ -3,15 +3,21 @@
 /**
  * Environment Manager
  *
- * Detects a project's environment manager (Python venv, direnv, mise) and
- * activates it by handing core an activation **snippet** via `editor.setEnv`.
- * Core captures the resulting environment on the active backend (local / SSH)
- * and applies it to every editor-spawned process — language servers,
- * formatters, `spawnProcess`.
+ * Activates a project's environment manager (Python venv, direnv, mise, …) by
+ * handing core an activation **snippet** via `editor.setEnv`. Core captures the
+ * resulting environment on the active backend (local / SSH) and applies it to
+ * every editor-spawned process — language servers, formatters, `spawnProcess`.
  *
- * Detection is passive (reads files only). Activation runs repo-controlled
- * code, so it is gated on Workspace Trust: the plugin only calls `setEnv` when
- * `editor.workspaceTrustLevel() === "trusted"` (and core enforces the same).
+ * **Detection lives in core, not here.** Which marker files mean which
+ * environment, and the snippet that activates it, are defined by `env.detectors`
+ * in the editor config (single source of truth, user-configurable). The plugin
+ * reads core's resolved result via `editor.detectedEnv()` and decides only
+ * *when* to apply it — it never probes the filesystem or hardcodes markers.
+ *
+ * Activation runs repo-controlled code, so it is gated on Workspace Trust: the
+ * plugin only calls `setEnv` when `editor.workspaceTrustLevel() === "trusted"`
+ * (and core enforces the same). The plugin can *request* the trust prompt but
+ * never sets the trust level itself — that is core's and the user's decision.
  *
  * ## Activation strategy (see `docs/internal/trust-env-devcontainer-ux-plan.md`)
  *
@@ -85,48 +91,29 @@ function fileExists(p: string): boolean {
 }
 
 /**
- * Detect the environment in the current workspace and return its activation
- * snippet, or null if none. These are auto-detected default snippets; direnv
- * and mise need their exporters (they're prompt-hook driven), venv sources its
- * activate script, and anything else is a pure login shell / user snippet.
+ * The environment detected in the current workspace, or null if none.
+ *
+ * Detection lives entirely in core, which is configurable through
+ * `env.detectors` in the editor config (venv / direnv / mise / pipenv /
+ * poetry by default). The plugin does *not* probe the filesystem or hardcode
+ * any markers or snippets — it just reads core's resolved result (name, kind,
+ * and a ready-to-run activation snippet) and decides *when* to apply it.
  */
 function detect(): Detected | null {
-  const cwd = editor.getCwd();
-  if (!cwd) return null;
-
-  for (const name of [".venv", "venv"]) {
-    const dir = editor.pathJoin(cwd, name);
+  const raw = editor.detectedEnv();
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as Partial<Detected>;
     if (
-      fileExists(editor.pathJoin(dir, "bin", "python")) ||
-      fileExists(editor.pathJoin(dir, "bin", "python3")) ||
-      fileExists(editor.pathJoin(dir, "Scripts", "python.exe"))
+      typeof d.name === "string" &&
+      typeof d.snippet === "string" &&
+      (d.kind === "path-only" || d.kind === "shell")
     ) {
-      return {
-        name,
-        snippet: `source ${editor.pathJoin(dir, "bin", "activate")}`,
-        kind: "path-only",
-      };
+      return { name: d.name, snippet: d.snippet, kind: d.kind };
     }
+  } catch (_e) {
+    // Malformed payload — treat as "no env detected".
   }
-
-  if (fileExists(editor.pathJoin(cwd, ".envrc"))) {
-    return {
-      name: "direnv",
-      snippet: `eval "$(direnv export bash)"`,
-      kind: "shell",
-    };
-  }
-
-  for (const name of ["mise.toml", ".mise.toml", ".tool-versions"]) {
-    if (fileExists(editor.pathJoin(cwd, name))) {
-      return {
-        name: "mise",
-        snippet: `eval "$(mise env -s bash)"`,
-        kind: "shell",
-      };
-    }
-  }
-
   return null;
 }
 

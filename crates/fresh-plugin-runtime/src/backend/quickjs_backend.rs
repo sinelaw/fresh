@@ -2100,6 +2100,17 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// The environment core detected in the workspace, as a JSON string
+    /// (`{name, kind, snippet}`) or empty when none. Exposed to JS as
+    /// `editor.detectedEnv()`. Detection lives only in core; the env-manager
+    /// plugin consumes this result instead of probing the filesystem itself.
+    pub fn detected_env(&self) -> String {
+        self.state_snapshot
+            .read()
+            .map(|s| s.detected_env.clone())
+            .unwrap_or_default()
+    }
+
     // === Path Operations ===
 
     /// Join path components (variadic - accepts multiple string arguments)

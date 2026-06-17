@@ -2109,6 +2109,13 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
+	* The environment core detected in the workspace, as a JSON string
+	* (`{name, kind, snippet}`) or empty when none. Exposed as
+	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
+	* plugin consumes this result instead of probing the filesystem itself.
+	*/
+	detectedEnv(): string;
+	/**
 	* Join path components (variadic - accepts multiple string arguments)
 	* Always uses forward slashes for cross-platform consistency (like Node.js path.posix.join)
 	* 

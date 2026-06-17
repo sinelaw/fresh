@@ -163,6 +163,17 @@ impl Editor {
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
 
+        // Core is the *only* place that detects which environment a workspace
+        // has. The env-manager plugin reads this resolved result via
+        // `editor.detectedEnv()` rather than probing the filesystem itself.
+        // Empty string ⇒ no env detected.
+        snapshot.detected_env = crate::services::workspace_trust::detect_env(
+            self.working_dir(),
+            &self.config.env.detectors,
+        )
+        .and_then(|d| serde_json::to_string(&d).ok())
+        .unwrap_or_default();
+
         // Publish the session list so plugins (Orchestrator, etc.)
         // see updates from createWindow/closeWindow without
         // a separate notification path. Sorted by id for
@@ -1997,7 +2008,27 @@ impl Editor {
         use crate::input::keybindings::Action;
         use std::collections::HashMap;
 
+        // Plugins may *request* the trust prompt (`workspace_trust_prompt`,
+        // which asks the user) but must never *set* the trust level
+        // themselves. Granting/lowering trust is a user+core decision — the
+        // same boundary VS Code, JetBrains, and Zed enforce: an extension can
+        // open the prompt, the user decides. Silently drop any attempt to
+        // dispatch the level-setting actions through this generic channel.
+        const PLUGIN_FORBIDDEN_ACTIONS: &[&str] = &[
+            "workspace_trust_trust",
+            "workspace_trust_restrict",
+            "workspace_trust_block",
+        ];
+
         for action_spec in actions {
+            if PLUGIN_FORBIDDEN_ACTIONS.contains(&action_spec.action.as_str()) {
+                tracing::warn!(
+                    "plugin attempted to set workspace trust via '{}' — denied; \
+                     plugins may request the prompt (workspace_trust_prompt), not set the level",
+                    action_spec.action
+                );
+                continue;
+            }
             if let Some(action) = Action::from_str(&action_spec.action, &HashMap::new()) {
                 // Execute the action `count` times
                 for _ in 0..action_spec.count {

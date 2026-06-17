@@ -1106,6 +1106,13 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// The environment core detected in the workspace, as a JSON string
+    /// (`{"name","kind","snippet"}`) or empty when none is detected. The
+    /// env-manager plugin reads this via `editor.detectedEnv()` instead of
+    /// probing the filesystem itself — detection lives only in core (see
+    /// `workspace_trust::detect_env`).
+    #[serde(default)]
+    pub detected_env: String,
     /// LSP diagnostics per file URI.
     /// Maps file URI string to Vec of diagnostics for that file.
     ///
@@ -1246,6 +1253,7 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
             config: Arc::new(serde_json::Value::Null),

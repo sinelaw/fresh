@@ -5,6 +5,8 @@
 ### Improvements
 
 * **Unified workspace-trust prompt**: there is now a single trust prompt for every kind of project. Folders with a shell environment (`.envrc` / `mise` / `.tool-versions`) previously showed the env-manager plugin's own "Trust & activate" popup, while other projects showed the core trust modal — two different-looking prompts for the same decision, kept in separate state. The core trust modal is now the only trust prompt; it names the detected markers concretely, and env-manager activates the environment as a consequence of trusting (via a new `trust_changed` plugin hook) instead of asking the trust question itself.
+* **Single, configurable environment detection**: which marker files identify which environment (and how to activate it) is now defined once in core, in the `env.detectors` config — covering venv, direnv, mise, and now pipenv and poetry. The env-manager plugin no longer probes the filesystem or hardcodes markers/snippets; it reads core's detected result via `editor.detectedEnv()`. Detectors are user-extensible (add your own env type in config).
+* **Plugins can no longer set workspace trust**: a plugin may *request* the trust prompt (the user decides) but can never grant or change the trust level itself — matching VS Code / JetBrains / Zed. The level-setting actions are now denied when dispatched from a plugin.
 
 ## 0.4.0
 

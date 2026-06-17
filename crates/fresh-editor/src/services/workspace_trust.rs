@@ -434,16 +434,25 @@ pub fn workspace_has_executable_content(root: &Path) -> bool {
 /// passive scan — never runs anything. Order is roughly env-managers, then
 /// repo-local toolchains, then devcontainer, then .NET project files.
 pub fn executable_content_markers(root: &Path) -> Vec<String> {
-    // Files that drive env activation or whose project loader runs code.
+    let mut found = Vec::new();
+
+    // Env-manager markers come from the single built-in detector list
+    // (`config::default_env_detectors`), so the trust prompt and env
+    // activation can never disagree about what an env file is. We check
+    // existence only (file *or* dir) and ignore each detector's `require`
+    // evidence: for trust, the mere presence of `.venv`/`.envrc`/`Pipfile`/…
+    // is the signal; whether the env is actually *activatable* is the
+    // activation path's concern (`detect_env`), not trust's.
+    for d in crate::config::default_env_detectors() {
+        for m in &d.markers {
+            if root.join(m).exists() {
+                found.push(m.clone());
+            }
+        }
+    }
+
+    // Project manifests whose language servers run project code at load.
     const FILE_MARKERS: &[&str] = &[
-        // env managers
-        ".envrc",         // direnv
-        "mise.toml",      // mise
-        ".mise.toml",     // mise
-        ".tool-versions", // mise / asdf
-        "Pipfile",        // pipenv
-        "poetry.lock",    // poetry
-        // project manifests (their language servers run project code at load)
         "Cargo.toml",            // rust-analyzer: build scripts, proc-macros
         "go.mod",                // gopls
         "package.json",          // ts/eslint, npm scripts
@@ -456,18 +465,8 @@ pub fn executable_content_markers(root: &Path) -> Vec<String> {
         "Gemfile",               // ruby
         "composer.json",         // php
     ];
-    // Directories that hold a repo-local interpreter/toolchain.
-    const DIR_MARKERS: &[&str] = &[".venv", "venv"];
-
-    let mut found = Vec::new();
-
     for m in FILE_MARKERS {
         if root.join(m).is_file() {
-            found.push((*m).to_string());
-        }
-    }
-    for m in DIR_MARKERS {
-        if root.join(m).is_dir() {
             found.push((*m).to_string());
         }
     }
@@ -496,6 +495,45 @@ pub fn executable_content_markers(root: &Path) -> Vec<String> {
         }
     }
     found
+}
+
+/// The activatable environment detected at a workspace root. Serializes to
+/// `{ "name", "kind", "snippet" }` (kind as `"path-only"` / `"shell"`), which
+/// is what the env-manager plugin reads via `editor.detectedEnv()`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DetectedEnv {
+    /// Status-pill label (the matching detector's `name`).
+    pub name: String,
+    /// Activation risk class.
+    pub kind: crate::config::EnvKind,
+    /// Ready-to-run activation snippet (`{dir}` already expanded to `root`).
+    pub snippet: String,
+}
+
+/// Detect the activatable environment at `root` using `detectors`
+/// (first match wins). The single activation-detection entry point: the
+/// env-manager plugin consumes this result and never probes the filesystem
+/// itself, and core surfaces it through the plugin state snapshot.
+///
+/// A detector matches when any of its `markers` exists *and* — if it lists
+/// `require` evidence — at least one required path also exists (e.g. a `.venv`
+/// directory that actually contains an interpreter). The returned snippet has
+/// `{dir}` expanded to `root`.
+pub fn detect_env(root: &Path, detectors: &[crate::config::EnvDetector]) -> Option<DetectedEnv> {
+    for d in detectors {
+        if !d.markers.iter().any(|m| root.join(m).exists()) {
+            continue;
+        }
+        if !d.require.is_empty() && !d.require.iter().any(|r| root.join(r).exists()) {
+            continue;
+        }
+        return Some(DetectedEnv {
+            name: d.name.clone(),
+            kind: d.kind,
+            snippet: d.snippet.replace("{dir}", &root.to_string_lossy()),
+        });
+    }
+    None
 }
 
 /// Map a trust decision for `command` (with the child's `cwd`) onto a spawn
@@ -793,5 +831,103 @@ mod tests {
         let empty = tmp.path().join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         assert!(executable_content_markers(&empty).is_empty());
+    }
+
+    // === detect_env (the single activation-detection entry point) ===
+
+    use crate::config::{default_env_detectors, EnvKind};
+
+    fn detect_default(root: &Path) -> Option<DetectedEnv> {
+        detect_env(root, &default_env_detectors())
+    }
+
+    #[test]
+    fn detect_env_none_for_plain_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(detect_default(tmp.path()), None);
+    }
+
+    #[test]
+    fn detect_env_venv_requires_an_interpreter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // A bare `.venv` dir with no interpreter must NOT detect as activatable
+        // (the trust marker scan still flags it, but activation needs evidence).
+        std::fs::create_dir_all(root.join(".venv")).unwrap();
+        assert_eq!(detect_default(root), None);
+        assert!(executable_content_markers(root).iter().any(|m| m == ".venv"));
+
+        // Add an interpreter → now it's an activatable path-only env.
+        std::fs::create_dir_all(root.join(".venv/bin")).unwrap();
+        std::fs::write(root.join(".venv/bin/python"), "").unwrap();
+        let det = detect_default(root).expect("venv detected");
+        assert_eq!(det.name, ".venv");
+        assert_eq!(det.kind, EnvKind::PathOnly);
+        assert_eq!(
+            det.snippet,
+            format!("source {}/.venv/bin/activate", root.to_string_lossy())
+        );
+    }
+
+    #[test]
+    fn detect_env_direnv_and_mise_are_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join(".envrc"), "use flake\n").unwrap();
+        let det = detect_default(root).expect("direnv detected");
+        assert_eq!(det.name, "direnv");
+        assert_eq!(det.kind, EnvKind::Shell);
+        assert_eq!(det.snippet, "eval \"$(direnv export bash)\"");
+
+        let mise = tmp.path().join("mise");
+        std::fs::create_dir_all(&mise).unwrap();
+        std::fs::write(mise.join(".tool-versions"), "python 3.12\n").unwrap();
+        let det = detect_default(&mise).expect("mise detected");
+        assert_eq!(det.name, "mise");
+        assert_eq!(det.kind, EnvKind::Shell);
+    }
+
+    #[test]
+    fn detect_env_pipenv_and_poetry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pip = tmp.path().join("pip");
+        std::fs::create_dir_all(&pip).unwrap();
+        std::fs::write(pip.join("Pipfile"), "[packages]\n").unwrap();
+        assert_eq!(detect_default(&pip).map(|d| d.name), Some("pipenv".into()));
+
+        let poetry = tmp.path().join("poetry");
+        std::fs::create_dir_all(&poetry).unwrap();
+        std::fs::write(poetry.join("poetry.lock"), "\n").unwrap();
+        assert_eq!(detect_default(&poetry).map(|d| d.name), Some("poetry".into()));
+    }
+
+    #[test]
+    fn detect_env_first_detector_wins() {
+        // A folder with both a real `.venv` and an `.envrc` resolves to the
+        // first matching detector in the list (venv precedes direnv).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".venv/bin")).unwrap();
+        std::fs::write(root.join(".venv/bin/python3"), "").unwrap();
+        std::fs::write(root.join(".envrc"), "\n").unwrap();
+        assert_eq!(detect_default(root).map(|d| d.name), Some(".venv".into()));
+    }
+
+    #[test]
+    fn detect_env_honors_custom_config() {
+        // A user-defined detector is respected — detection is data-driven.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join(".nvmrc"), "20\n").unwrap();
+        let detectors = vec![crate::config::EnvDetector {
+            name: "node".into(),
+            markers: vec![".nvmrc".into()],
+            kind: EnvKind::Shell,
+            snippet: "eval \"$(fnm env)\"".into(),
+            require: vec![],
+        }];
+        let det = detect_env(root, &detectors).expect("custom env detected");
+        assert_eq!(det.name, "node");
+        assert_eq!(det.snippet, "eval \"$(fnm env)\"");
     }
 }

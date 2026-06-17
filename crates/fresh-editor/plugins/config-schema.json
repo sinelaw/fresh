@@ -257,6 +257,78 @@
           "https://github.com/sinelaw/fresh-plugins-registry"
         ]
       }
+    },
+    "env": {
+      "description": "Environment auto-activation detectors (venv / direnv / mise / …).",
+      "$ref": "#/$defs/EnvConfig",
+      "default": {
+        "detectors": [
+          {
+            "name": ".venv",
+            "markers": [
+              ".venv"
+            ],
+            "kind": "path-only",
+            "snippet": "source {dir}/.venv/bin/activate",
+            "require": [
+              ".venv/bin/python",
+              ".venv/bin/python3",
+              ".venv/Scripts/python.exe"
+            ]
+          },
+          {
+            "name": "venv",
+            "markers": [
+              "venv"
+            ],
+            "kind": "path-only",
+            "snippet": "source {dir}/venv/bin/activate",
+            "require": [
+              "venv/bin/python",
+              "venv/bin/python3",
+              "venv/Scripts/python.exe"
+            ]
+          },
+          {
+            "name": "direnv",
+            "markers": [
+              ".envrc"
+            ],
+            "kind": "shell",
+            "snippet": "eval \"$(direnv export bash)\"",
+            "require": []
+          },
+          {
+            "name": "mise",
+            "markers": [
+              "mise.toml",
+              ".mise.toml",
+              ".tool-versions"
+            ],
+            "kind": "shell",
+            "snippet": "eval \"$(mise env -s bash)\"",
+            "require": []
+          },
+          {
+            "name": "pipenv",
+            "markers": [
+              "Pipfile"
+            ],
+            "kind": "shell",
+            "snippet": "source \"$(pipenv --venv)/bin/activate\"",
+            "require": []
+          },
+          {
+            "name": "poetry",
+            "markers": [
+              "poetry.lock"
+            ],
+            "kind": "shell",
+            "snippet": "source \"$(poetry env info --path)/bin/activate\"",
+            "require": []
+          }
+        ]
+      }
     }
   },
   "$defs": {
@@ -1824,6 +1896,139 @@
           ]
         }
       }
+    },
+    "EnvConfig": {
+      "description": "Environment-detection configuration: the single source of truth for which\nmarker files identify which activatable environment and how to activate it.\n\nCore does the detection; the env-manager plugin only *consumes* the\nresolved result (via `editor.detectedEnv()`) — it does not probe the\nfilesystem itself. The same detector markers also feed the Workspace Trust\nprompt, so trust and activation can never disagree about what an env file\nis. Users may add or override detectors here.",
+      "type": "object",
+      "properties": {
+        "detectors": {
+          "description": "Ordered list of detectors; the first whose markers match the workspace\nroot wins. Defaults cover venv, direnv, mise, pipenv, and poetry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvDetector"
+          },
+          "default": [
+            {
+              "name": ".venv",
+              "markers": [
+                ".venv"
+              ],
+              "kind": "path-only",
+              "snippet": "source {dir}/.venv/bin/activate",
+              "require": [
+                ".venv/bin/python",
+                ".venv/bin/python3",
+                ".venv/Scripts/python.exe"
+              ]
+            },
+            {
+              "name": "venv",
+              "markers": [
+                "venv"
+              ],
+              "kind": "path-only",
+              "snippet": "source {dir}/venv/bin/activate",
+              "require": [
+                "venv/bin/python",
+                "venv/bin/python3",
+                "venv/Scripts/python.exe"
+              ]
+            },
+            {
+              "name": "direnv",
+              "markers": [
+                ".envrc"
+              ],
+              "kind": "shell",
+              "snippet": "eval \"$(direnv export bash)\"",
+              "require": []
+            },
+            {
+              "name": "mise",
+              "markers": [
+                "mise.toml",
+                ".mise.toml",
+                ".tool-versions"
+              ],
+              "kind": "shell",
+              "snippet": "eval \"$(mise env -s bash)\"",
+              "require": []
+            },
+            {
+              "name": "pipenv",
+              "markers": [
+                "Pipfile"
+              ],
+              "kind": "shell",
+              "snippet": "source \"$(pipenv --venv)/bin/activate\"",
+              "require": []
+            },
+            {
+              "name": "poetry",
+              "markers": [
+                "poetry.lock"
+              ],
+              "kind": "shell",
+              "snippet": "source \"$(poetry env info --path)/bin/activate\"",
+              "require": []
+            }
+          ]
+        }
+      }
+    },
+    "EnvDetector": {
+      "description": "One environment detector: which marker files/dirs identify it, how risky\nactivation is, how to activate it, and what to call it.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Short label shown in the status pill (e.g. \".venv\", \"direnv\", \"mise\").",
+          "type": "string"
+        },
+        "markers": {
+          "description": "Marker files or directories at the workspace root. The detector matches\nif any one of them exists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "description": "Activation risk class (see [`EnvKind`]).",
+          "$ref": "#/$defs/EnvKind"
+        },
+        "snippet": {
+          "description": "Shell snippet handed to `editor.setEnv` to activate. `{dir}` expands to\nthe absolute workspace root.",
+          "type": "string"
+        },
+        "require": {
+          "description": "Optional evidence paths (relative to the workspace root); when present,\nat least one must exist for the detector to match — e.g. a `.venv` must\nactually contain an interpreter, not just the directory. Empty means\nthe markers alone are enough.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "name",
+        "markers",
+        "kind",
+        "snippet"
+      ]
+    },
+    "EnvKind": {
+      "description": "Activation risk class for an environment — decides whether activating it\nneeds a trust prompt first.",
+      "oneOf": [
+        {
+          "description": "Activation only prepends to `PATH` / sets a few vars (e.g. a Python\nvirtualenv). Low-risk: auto-activates silently once trusted, and a\nfolder whose *only* env is path-only is trusted without a prompt.",
+          "type": "string",
+          "const": "path-only"
+        },
+        {
+          "description": "Activation evaluates project-controlled shell (e.g. `direnv export`,\n`mise env`). Runs only after the workspace is trusted.",
+          "type": "string",
+          "const": "shell"
+        }
+      ]
     }
   }
 }

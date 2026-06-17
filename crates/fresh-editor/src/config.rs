@@ -423,6 +423,128 @@ pub struct Config {
     /// Package manager settings for plugin/theme installation
     #[serde(default)]
     pub packages: PackagesConfig,
+
+    /// Environment auto-activation detectors (venv / direnv / mise / …).
+    #[serde(default)]
+    pub env: EnvConfig,
+}
+
+/// Environment-detection configuration: the single source of truth for which
+/// marker files identify which activatable environment and how to activate it.
+///
+/// Core does the detection; the env-manager plugin only *consumes* the
+/// resolved result (via `editor.detectedEnv()`) — it does not probe the
+/// filesystem itself. The same detector markers also feed the Workspace Trust
+/// prompt, so trust and activation can never disagree about what an env file
+/// is. Users may add or override detectors here.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnvConfig {
+    /// Ordered list of detectors; the first whose markers match the workspace
+    /// root wins. Defaults cover venv, direnv, mise, pipenv, and poetry.
+    #[serde(default = "default_env_detectors")]
+    pub detectors: Vec<EnvDetector>,
+}
+
+impl Default for EnvConfig {
+    fn default() -> Self {
+        Self {
+            detectors: default_env_detectors(),
+        }
+    }
+}
+
+/// Activation risk class for an environment — decides whether activating it
+/// needs a trust prompt first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvKind {
+    /// Activation only prepends to `PATH` / sets a few vars (e.g. a Python
+    /// virtualenv). Low-risk: auto-activates silently once trusted, and a
+    /// folder whose *only* env is path-only is trusted without a prompt.
+    PathOnly,
+    /// Activation evaluates project-controlled shell (e.g. `direnv export`,
+    /// `mise env`). Runs only after the workspace is trusted.
+    Shell,
+}
+
+/// One environment detector: which marker files/dirs identify it, how risky
+/// activation is, how to activate it, and what to call it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EnvDetector {
+    /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
+    pub name: String,
+    /// Marker files or directories at the workspace root. The detector matches
+    /// if any one of them exists.
+    pub markers: Vec<String>,
+    /// Activation risk class (see [`EnvKind`]).
+    pub kind: EnvKind,
+    /// Shell snippet handed to `editor.setEnv` to activate. `{dir}` expands to
+    /// the absolute workspace root.
+    pub snippet: String,
+    /// Optional evidence paths (relative to the workspace root); when present,
+    /// at least one must exist for the detector to match — e.g. a `.venv` must
+    /// actually contain an interpreter, not just the directory. Empty means
+    /// the markers alone are enough.
+    #[serde(default)]
+    pub require: Vec<String>,
+}
+
+/// Built-in environment detectors. The single source for the env files core
+/// knows about, shared by activation detection ([`crate::services::workspace_trust::detect_env`])
+/// and the trust-prompt marker scan
+/// ([`crate::services::workspace_trust::executable_content_markers`]).
+pub fn default_env_detectors() -> Vec<EnvDetector> {
+    let venv_interp = |dir: &str| {
+        vec![
+            format!("{dir}/bin/python"),
+            format!("{dir}/bin/python3"),
+            format!("{dir}/Scripts/python.exe"),
+        ]
+    };
+    vec![
+        EnvDetector {
+            name: ".venv".into(),
+            markers: vec![".venv".into()],
+            kind: EnvKind::PathOnly,
+            snippet: "source {dir}/.venv/bin/activate".into(),
+            require: venv_interp(".venv"),
+        },
+        EnvDetector {
+            name: "venv".into(),
+            markers: vec!["venv".into()],
+            kind: EnvKind::PathOnly,
+            snippet: "source {dir}/venv/bin/activate".into(),
+            require: venv_interp("venv"),
+        },
+        EnvDetector {
+            name: "direnv".into(),
+            markers: vec![".envrc".into()],
+            kind: EnvKind::Shell,
+            snippet: "eval \"$(direnv export bash)\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "mise".into(),
+            markers: vec!["mise.toml".into(), ".mise.toml".into(), ".tool-versions".into()],
+            kind: EnvKind::Shell,
+            snippet: "eval \"$(mise env -s bash)\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "pipenv".into(),
+            markers: vec!["Pipfile".into()],
+            kind: EnvKind::Shell,
+            snippet: "source \"$(pipenv --venv)/bin/activate\"".into(),
+            require: vec![],
+        },
+        EnvDetector {
+            name: "poetry".into(),
+            markers: vec!["poetry.lock".into()],
+            kind: EnvKind::Shell,
+            snippet: "source \"$(poetry env info --path)/bin/activate\"".into(),
+            require: vec![],
+        },
+    ]
 }
 
 fn default_keybinding_map_name() -> KeybindingMapName {
@@ -2679,6 +2801,7 @@ impl Default for Config {
             warnings: WarningsConfig::default(),
             plugins: HashMap::new(),
             packages: PackagesConfig::default(),
+            env: EnvConfig::default(),
         }
     }
 }
