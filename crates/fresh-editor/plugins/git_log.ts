@@ -68,6 +68,16 @@ interface GitLogState {
    * git invocation, scroll position preserved.
    */
   commitBuffers: Map<string, number>;
+  /**
+   * shas whose detail buffer has fully loaded — either the streaming
+   * `git show` ran to completion (final `refreshBufferFromDisk` applied)
+   * or the cache file was opened from a complete on-disk diff. A cached
+   * buffer that is *not* in this set and has no in-flight spawn was left
+   * incomplete by a superseded/killed stream (the user navigated away
+   * before the diff finished loading); revisiting it must re-drive the
+   * stream rather than reuse the stale/empty buffer.
+   */
+  completedCommits: Set<string>;
   /** sha → in-flight spawnProcess handle, for kill-on-supersession. */
   inFlightSpawns: Map<string, ProcessHandle<SpawnResult>>;
   /**
@@ -92,6 +102,7 @@ const state: GitLogState = {
   selectedIndex: 0,
   pathFilter: null,
   commitBuffers: new Map(),
+  completedCommits: new Set(),
   inFlightSpawns: new Map(),
   pendingSelectId: 0,
 };
@@ -377,6 +388,14 @@ async function pollUntilSpawnDone(
   if (state.inFlightSpawns.get(hash) === handle) {
     state.inFlightSpawns.delete(hash);
   }
+  // Mark the buffer fully loaded so revisits reuse it as-is. We only
+  // reach here on natural completion (the superseded/closed paths
+  // `return` early above), so the on-disk diff is complete and the
+  // final refresh has applied it — a later revisit can safely skip the
+  // re-fetch. Without this, a buffer whose stream was *not* superseded
+  // is still treated as complete on revisit; the marker is what lets
+  // `ensureCommitBuffer` distinguish "done" from "abandoned mid-stream".
+  state.completedCommits.add(hash);
   // Apply diff coloring once the buffer is complete. Doing this
   // pre-completion would either churn (re-walk on every refresh) or
   // double-overlay newly-extended lines; on completion we walk once.
@@ -472,7 +491,24 @@ async function applyDiffHighlights(bufferId: number): Promise<void> {
 async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<number | null> {
   const hash = commit.hash;
   const existing = state.commitBuffers.get(hash);
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) {
+    // Reuse the cached buffer only if its diff is fully loaded or is
+    // still streaming (the in-flight poll will finish it). A buffer
+    // that's neither — left empty/partial because the user navigated
+    // away before the stream completed and `showCommitInDetail` killed
+    // it — must be re-driven, or the detail panel shows nothing on
+    // every revisit until a manual refresh. Re-spawn `git show` into
+    // the same cache file (File::create truncates it) and re-poll the
+    // *same* buffer id so the panel retarget and scroll handling are
+    // unaffected.
+    if (state.completedCommits.has(hash) || state.inFlightSpawns.has(hash)) {
+      return existing;
+    }
+    const handle = spawnGitShow(hash, cwd);
+    state.inFlightSpawns.set(hash, handle);
+    void pollUntilSpawnDone(hash, existing, handle);
+    return existing;
+  }
 
   const path = cachePathForHash(hash);
   const cacheHit = editor.fileExists(path);
@@ -494,10 +530,14 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
     return bufferId;
   }
 
-  // Cache hit: just open the existing file. No git spawned.
+  // Cache hit: just open the existing file. No git spawned. The file
+  // was written by a completed `git show` (the cache path only exists
+  // once the spawner has flushed + synced on exit), so the buffer is
+  // complete as opened — mark it so revisits stay zero-git.
   const bufferId = await editor.openFileStreaming(path);
   if (bufferId === null) return null;
   state.commitBuffers.set(hash, bufferId);
+  state.completedCommits.add(hash);
   return bufferId;
 }
 
@@ -621,6 +661,7 @@ async function openGitLog(pathFilter: string | null): Promise<void> {
   }
   state.selectedIndex = 0;
   state.commitBuffers = new Map();
+  state.completedCommits = new Set();
   state.inFlightSpawns = new Map();
   state.isOpen = true;
 
@@ -703,6 +744,7 @@ function git_log_cleanup(): void {
     editor.closeBuffer(bufferId);
   }
   state.commitBuffers.clear();
+  state.completedCommits.clear();
   // The buffer-group's `close` will tear down its own panel buffers
   // (toolbar/log/initialDetail) too, which implicitly drops the widget
   // panels rendering into them. We still null out the handles so any
@@ -750,6 +792,7 @@ function on_git_log_buffer_closed(data: { buffer_id: number }): void {
   for (const [hash, bufId] of state.commitBuffers) {
     if (bufId === data.buffer_id) {
       state.commitBuffers.delete(hash);
+      state.completedCommits.delete(hash);
       state.inFlightSpawns.get(hash)?.kill?.();
       state.inFlightSpawns.delete(hash);
       break;
@@ -771,6 +814,7 @@ async function git_log_refresh(): Promise<void> {
   state.inFlightSpawns.clear();
   for (const [, bufferId] of state.commitBuffers) editor.closeBuffer(bufferId);
   state.commitBuffers.clear();
+  state.completedCommits.clear();
   if (state.selectedIndex >= state.commits.length) {
     state.selectedIndex = Math.max(0, state.commits.length - 1);
   }
