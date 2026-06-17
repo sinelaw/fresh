@@ -215,5 +215,3 @@ Check for forgotten daemons with `fresh --cmd daemon list`.
 | Linux | `$XDG_RUNTIME_DIR/fresh/` or `/tmp/fresh-$UID/` |
 | macOS | `/tmp/fresh-$UID/` |
 | Windows | `%LOCALAPPDATA%\fresh\sockets\` |
-</content>
-</invoke>
