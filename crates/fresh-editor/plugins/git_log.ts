@@ -69,16 +69,11 @@ interface GitLogState {
    */
   commitBuffers: Map<string, number>;
   /**
-   * shas whose detail buffer has fully loaded — either the streaming
-   * `git show` ran to completion (final `refreshBufferFromDisk` applied)
-   * or the cache file was opened from a complete on-disk diff. A cached
-   * buffer that is *not* in this set and has no in-flight spawn was left
-   * incomplete by a superseded/killed stream (the user navigated away
-   * before the diff finished loading); revisiting it must re-drive the
-   * stream rather than reuse the stale/empty buffer.
+   * sha → in-flight `git show` handle. Tracked so the view can kill any
+   * still-running spawns when it closes (`git_log_cleanup`), and so a
+   * revisit while a commit is still streaming reuses the buffer instead
+   * of starting a second spawn for the same sha.
    */
-  completedCommits: Set<string>;
-  /** sha → in-flight spawnProcess handle, for kill-on-supersession. */
   inFlightSpawns: Map<string, ProcessHandle<SpawnResult>>;
   /**
    * Debounce token for List `select` events. Rapid selection moves
@@ -102,7 +97,6 @@ const state: GitLogState = {
   selectedIndex: 0,
   pathFilter: null,
   commitBuffers: new Map(),
-  completedCommits: new Set(),
   inFlightSpawns: new Map(),
   pendingSelectId: 0,
 };
@@ -321,16 +315,39 @@ function cachePathForHash(hash: string): string {
   return `${editor.getDataDir()}/git-show/${hash}.diff`;
 }
 
+/**
+ * Path of the per-SHA completion marker. Written only after `git show`
+ * exits 0, so its existence is a durable "this diff is fully written"
+ * signal that survives the editor exiting (or git being killed) mid-
+ * stream. Commits are immutable, so a complete diff stays valid forever
+ * — the marker is never removed.
+ */
+function donePathForHash(hash: string): string {
+  return `${cachePathForHash(hash)}.done`;
+}
+
+/**
+ * Is `hash`'s cached diff known-complete? Both the diff and its
+ * completion marker must exist. A diff present *without* the marker was
+ * interrupted (external kill, editor exit, crash) and must be
+ * regenerated rather than displayed partially.
+ */
+function isCommitDiffComplete(hash: string): boolean {
+  return (
+    editor.fileExists(cachePathForHash(hash)) &&
+    editor.fileExists(donePathForHash(hash))
+  );
+}
+
 /** Polling interval while git is still writing. ~5 fps is plenty. */
 const STREAM_POLL_MS = 200;
 
 /**
  * Start a `git show --patch` for `hash`, piping stdout straight into the
- * cache file. Returns the handle so a later commit switch can `.kill()`
- * the still-running spawn.
- *
- * Caller has already verified the cache file doesn't yet exist (or wants
- * to overwrite it).
+ * cache file (the host opens it with `File::create`, which truncates any
+ * existing partial content — so this safely regenerates an interrupted
+ * diff). Returns the handle; it's stashed in `inFlightSpawns` so the
+ * view can `.kill()` it on close.
  */
 function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
   // `--stat --patch` matches what the previous plugin used. The stat
@@ -352,22 +369,28 @@ function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
 
 /**
  * Poll `editor.refreshBufferFromDisk` until the spawn handle resolves,
- * then do one final catch-up refresh. Returns immediately if the
- * commit is no longer in flight (e.g. user moved on, kill() fired).
+ * doing one final catch-up refresh on exit. On a clean exit (code 0)
+ * write the durable completion marker so future visits — this session
+ * or after a restart — can trust the cached diff. We do NOT kill spawns
+ * on navigation, so every spawn runs to completion and the buffer
+ * always ends up fully populated; the only early-out is the view
+ * closing mid-stream, which leaves no marker (the partial diff is
+ * regenerated next time).
  */
 async function pollUntilSpawnDone(
   hash: string,
   bufferId: number,
   handle: ProcessHandle<SpawnResult>,
 ): Promise<void> {
-  // Wrap the handle's settlement in a non-rejecting marker promise so
-  // a fast subscription loop can `await` it (or race it against a
-  // delay) without worrying about whether the spawn errored. The
-  // ProcessHandle is a thenable, not a real Promise, so adapt via
-  // Promise.resolve().
+  // Wrap the handle's settlement so the poll loop can observe both that
+  // it finished and whether it exited cleanly. The ProcessHandle is a
+  // thenable, not a real Promise, so adapt via Promise.resolve(); a
+  // rejection (spawn error / killed) leaves `cleanExit` false.
   let done = false;
+  let cleanExit = false;
   void Promise.resolve(handle).then(
-    () => {
+    (r) => {
+      cleanExit = r.exit_code === 0;
       done = true;
     },
     () => {
@@ -377,8 +400,7 @@ async function pollUntilSpawnDone(
 
   while (!done) {
     await editor.delay(STREAM_POLL_MS);
-    if (!state.isOpen) return; // group closed mid-stream
-    if (state.inFlightSpawns.get(hash) !== handle) return; // superseded
+    if (!state.isOpen) return; // group closed mid-stream — no marker
     await editor.refreshBufferFromDisk(bufferId);
   }
   // Final catch-up so any bytes written between the last poll and
@@ -388,14 +410,14 @@ async function pollUntilSpawnDone(
   if (state.inFlightSpawns.get(hash) === handle) {
     state.inFlightSpawns.delete(hash);
   }
-  // Mark the buffer fully loaded so revisits reuse it as-is. We only
-  // reach here on natural completion (the superseded/closed paths
-  // `return` early above), so the on-disk diff is complete and the
-  // final refresh has applied it — a later revisit can safely skip the
-  // re-fetch. Without this, a buffer whose stream was *not* superseded
-  // is still treated as complete on revisit; the marker is what lets
-  // `ensureCommitBuffer` distinguish "done" from "abandoned mid-stream".
-  state.completedCommits.add(hash);
+  // Only a clean exit means the diff is fully written. A non-zero exit
+  // or rejection (killed, spawn error) leaves the diff partial and
+  // unmarked, so `ensureCommitBuffer` regenerates it on the next visit.
+  if (!cleanExit) return;
+  // Durable completion marker: an empty sidecar file whose existence
+  // says "complete". Written after the bytes are on disk so a reader
+  // that sees the marker also sees the full diff.
+  editor.writeFile(donePathForHash(hash), "");
   // Apply diff coloring once the buffer is complete. Doing this
   // pre-completion would either churn (re-walk on every refresh) or
   // double-overlay newly-extended lines; on completion we walk once.
@@ -483,25 +505,27 @@ async function applyDiffHighlights(bufferId: number): Promise<void> {
 }
 
 /**
- * Get (or create) the file-backed buffer that displays `commit`.
- * On first call for a hash: ensure cache file exists, kick off
- * `git show` if it doesn't, openFileStreaming, start the poll loop.
- * Returns the buffer id on success or null on failure.
+ * Get (or create) the file-backed buffer that displays `commit`'s diff.
+ * Reuses a cached buffer when it's complete or still streaming; opens a
+ * complete cache file zero-git; otherwise streams `git show` into the
+ * cache file and polls it. A diff is "complete" only if its durable
+ * completion marker exists (see `isCommitDiffComplete`), so an interrupted
+ * diff (editor exit / external kill) is regenerated rather than shown
+ * partially. Returns the buffer id on success or null on failure.
  */
 async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<number | null> {
   const hash = commit.hash;
+  const path = cachePathForHash(hash);
   const existing = state.commitBuffers.get(hash);
+
   if (existing !== undefined) {
-    // Reuse the cached buffer only if its diff is fully loaded or is
-    // still streaming (the in-flight poll will finish it). A buffer
-    // that's neither — left empty/partial because the user navigated
-    // away before the stream completed and `showCommitInDetail` killed
-    // it — must be re-driven, or the detail panel shows nothing on
-    // every revisit until a manual refresh. Re-spawn `git show` into
-    // the same cache file (File::create truncates it) and re-poll the
-    // *same* buffer id so the panel retarget and scroll handling are
-    // unaffected.
-    if (state.completedCommits.has(hash) || state.inFlightSpawns.has(hash)) {
+    // We already have a buffer for this commit this session. Reuse it
+    // if it's still streaming (the in-flight poll will finish it) or its
+    // diff is marked complete. Otherwise the stream ended without a
+    // clean exit (e.g. git was killed externally) and left the buffer
+    // partial — regenerate into the same buffer id so the panel retarget
+    // and scroll handling are unaffected.
+    if (state.inFlightSpawns.has(hash) || isCommitDiffComplete(hash)) {
       return existing;
     }
     const handle = spawnGitShow(hash, cwd);
@@ -510,12 +534,12 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
     return existing;
   }
 
-  const path = cachePathForHash(hash);
-  const cacheHit = editor.fileExists(path);
-
-  if (!cacheHit) {
-    // Cache miss: spawn git, polling the file as it grows. The handle
-    // is stashed so a fast-scrolling user can supersede us via kill().
+  // First time this session for `hash`. A cache hit is only trustworthy
+  // when the completion marker is present; a diff left without one (the
+  // editor exited or git was killed mid-stream in a previous run) is
+  // regenerated. `openFileStreaming` opens the file either way — for the
+  // regenerate path the spawn truncates and rewrites it underneath.
+  if (!isCommitDiffComplete(hash)) {
     const handle = spawnGitShow(hash, cwd);
     state.inFlightSpawns.set(hash, handle);
     const bufferId = await editor.openFileStreaming(path);
@@ -530,32 +554,26 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
     return bufferId;
   }
 
-  // Cache hit: just open the existing file. No git spawned. The file
-  // was written by a completed `git show` (the cache path only exists
-  // once the spawner has flushed + synced on exit), so the buffer is
-  // complete as opened — mark it so revisits stay zero-git.
+  // Cache hit with a valid completion marker: just open it. No git.
   const bufferId = await editor.openFileStreaming(path);
   if (bufferId === null) return null;
   state.commitBuffers.set(hash, bufferId);
-  state.completedCommits.add(hash);
   return bufferId;
 }
 
 /**
- * Show `commit` in the detail panel. Cancels any superseded in-flight
- * spawn for *other* commits (the user has navigated past them) and
- * retargets the panel at the chosen commit's buffer.
+ * Show `commit` in the detail panel: ensure its diff buffer exists
+ * (streaming it in if needed) and retarget the panel at it.
+ *
+ * We deliberately do NOT kill in-flight `git show` spawns for commits
+ * the user navigated past. Killing was the source of a bug where a
+ * superseded stream left its buffer empty forever; letting each spawn
+ * finish guarantees every cached buffer ends up complete (and writes
+ * its durable completion marker). Burst navigation is already collapsed
+ * by the `SELECT_DEBOUNCE_MS` debounce, so in practice only commits the
+ * user pauses on ever spawn git.
  */
 async function showCommitInDetail(commit: GitCommit, cwd: string): Promise<void> {
-  // Cancel anything still streaming for a commit that isn't this one —
-  // the user has moved on; no point keeping git running.
-  for (const [hash, handle] of state.inFlightSpawns) {
-    if (hash !== commit.hash) {
-      handle.kill?.();
-      state.inFlightSpawns.delete(hash);
-    }
-  }
-
   const bufferId = await ensureCommitBuffer(commit, cwd);
   if (bufferId === null) {
     editor.setStatus(
@@ -661,7 +679,6 @@ async function openGitLog(pathFilter: string | null): Promise<void> {
   }
   state.selectedIndex = 0;
   state.commitBuffers = new Map();
-  state.completedCommits = new Set();
   state.inFlightSpawns = new Map();
   state.isOpen = true;
 
@@ -744,7 +761,6 @@ function git_log_cleanup(): void {
     editor.closeBuffer(bufferId);
   }
   state.commitBuffers.clear();
-  state.completedCommits.clear();
   // The buffer-group's `close` will tear down its own panel buffers
   // (toolbar/log/initialDetail) too, which implicitly drops the widget
   // panels rendering into them. We still null out the handles so any
@@ -792,7 +808,6 @@ function on_git_log_buffer_closed(data: { buffer_id: number }): void {
   for (const [hash, bufId] of state.commitBuffers) {
     if (bufId === data.buffer_id) {
       state.commitBuffers.delete(hash);
-      state.completedCommits.delete(hash);
       state.inFlightSpawns.get(hash)?.kill?.();
       state.inFlightSpawns.delete(hash);
       break;
@@ -814,7 +829,6 @@ async function git_log_refresh(): Promise<void> {
   state.inFlightSpawns.clear();
   for (const [, bufferId] of state.commitBuffers) editor.closeBuffer(bufferId);
   state.commitBuffers.clear();
-  state.completedCommits.clear();
   if (state.selectedIndex >= state.commits.length) {
     state.selectedIndex = Math.max(0, state.commits.length - 1);
   }
