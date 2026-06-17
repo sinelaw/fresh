@@ -633,9 +633,17 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     harness.type_text(APPEND_PAYLOAD).unwrap();
     harness.render().unwrap();
 
-    // Wait until BOTH OLD virtual lines are present as their own rows.
+    // Wait until BOTH OLD virtual lines are present as their own rows AND
+    // the screen has stopped changing. Presence alone is necessary but not
+    // sufficient for the anchoring assertions below: the recompute is
+    // debounced/async, so there is a transient window where both virtual
+    // lines exist but the layout hasn't converged to its final anchoring
+    // yet. Snapshotting that intermediate frame produces an off-by-one row
+    // (the source of the rare flake). `wait_until_stable` drains the
+    // debounce before we read the buffer, so the positioning assertions run
+    // against a settled frame.
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             virtual_row_present(&s, "UNIQUE_IF_BODY_OLD_MARKER")
                 && virtual_row_present(&s, "UNIQUE_ELSE_BODY_OLD_MARKER")
