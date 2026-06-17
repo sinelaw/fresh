@@ -8,8 +8,8 @@ pub mod slow;
 
 // Re-export types from model::filesystem for convenience
 pub use crate::model::filesystem::{
-    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileSystemExt,
-    FileWriter, NoopFileSystem, StdFileSystem,
+    DirEntry, EntryType, FileFingerprint, FileMetadata, FilePermissions, FileReader, FileSystem,
+    FileSystemExt, FileWriter, NoopFileSystem, StdFileSystem,
 };
 pub use manager::FsManager;
 pub use slow::{BackendMetrics, SlowFileSystem, SlowFsConfig};

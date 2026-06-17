@@ -9,7 +9,7 @@
 //! - Save conflict detection
 
 use crate::model::buffer::SudoSaveRequired;
-use crate::model::filesystem::FileSystem;
+use crate::model::filesystem::{FileFingerprint, FileSystem};
 use crate::view::file_tree::FileTreeView;
 use crate::view::prompt::PromptType;
 use std::path::{Path, PathBuf};
@@ -128,11 +128,11 @@ impl Editor {
             event_log.mark_saved();
         }
 
-        // Update file modification time after save
+        // Update file change fingerprint after save
         if let Some(ref p) = path {
             if let Ok(metadata) = self.authority().filesystem.metadata(p) {
-                if let Some(mtime) = metadata.modified {
-                    self.file_mod_times_mut().insert(p.clone(), mtime);
+                if let Some(fp) = FileFingerprint::from_metadata(&metadata) {
+                    self.file_mod_times_mut().insert(p.clone(), fp);
                 }
             }
         }
@@ -513,10 +513,10 @@ impl Editor {
         // Clear seen_byte_ranges so plugins get notified of all visible lines
         self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
 
-        // Update the file modification time
+        // Update the file change fingerprint
         if let Ok(metadata) = self.authority().filesystem.metadata(&path) {
-            if let Some(mtime) = metadata.modified {
-                self.file_mod_times_mut().insert(path.clone(), mtime);
+            if let Some(fp) = FileFingerprint::from_metadata(&metadata) {
+                self.file_mod_times_mut().insert(path.clone(), fp);
             }
         }
 
@@ -601,11 +601,15 @@ impl Editor {
         std::thread::Builder::new()
             .name("poll-file-changes".to_string())
             .spawn(move || {
-                let results: Vec<(PathBuf, Option<std::time::SystemTime>)> = files_to_check
+                let results: Vec<(PathBuf, Option<FileFingerprint>)> = files_to_check
                     .into_iter()
                     .map(|path| {
-                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
-                        (path, mtime)
+                        let fp = fs
+                            .metadata(&path)
+                            .ok()
+                            .as_ref()
+                            .and_then(FileFingerprint::from_metadata);
+                        (path, fp)
                     })
                     .collect();
                 // Receiver may have been dropped if auto-revert was disabled
@@ -621,24 +625,24 @@ impl Editor {
     /// Process results from a background file poll
     fn process_file_poll_results(
         &mut self,
-        results: Vec<(PathBuf, Option<std::time::SystemTime>)>,
+        results: Vec<(PathBuf, Option<FileFingerprint>)>,
     ) -> bool {
         let mut any_changed = false;
-        for (path, mtime_opt) in results {
-            let Some(current_mtime) = mtime_opt else {
+        for (path, fp_opt) in results {
+            let Some(current_fp) = fp_opt else {
                 continue;
             };
 
-            if let Some(&stored_mtime) = self.file_mod_times().get(&path) {
-                if current_mtime != stored_mtime {
+            if let Some(&stored_fp) = self.file_mod_times().get(&path) {
+                if current_fp != stored_fp {
                     let path_str = path.display().to_string();
                     if self.handle_async_file_changed(path_str) {
                         any_changed = true;
                     }
                 }
             } else {
-                // First time seeing this file, record its mtime
-                self.file_mod_times_mut().insert(path, current_mtime);
+                // First time seeing this file, record its fingerprint
+                self.file_mod_times_mut().insert(path, current_fp);
             }
         }
         any_changed
@@ -1185,10 +1189,10 @@ impl Editor {
         // Clear seen_byte_ranges so plugins get notified of all visible lines
         self.active_window_mut().seen_byte_ranges.remove(&buffer_id);
 
-        // Update the file modification time
+        // Update the file change fingerprint
         if let Ok(metadata) = self.authority().filesystem.metadata(path) {
-            if let Some(mtime) = metadata.modified {
-                self.file_mod_times_mut().insert(path.to_path_buf(), mtime);
+            if let Some(fp) = FileFingerprint::from_metadata(&metadata) {
+                self.file_mod_times_mut().insert(path.to_path_buf(), fp);
             }
         }
 
@@ -1248,27 +1252,34 @@ impl Editor {
                 None => continue,
             };
 
-            // Check if the file actually changed (compare mod times)
-            // We use optimistic concurrency: check mtime, and if we decide to revert,
-            // re-check to handle the race where a save completed between our checks.
-            let current_mtime = match self
+            // Check if the file actually changed (compare fingerprints — mtime
+            // *and* size). Size matters on coarse-granularity filesystems
+            // (HFS+, SMB/NFS, FAT, many macOS volumes) where a same-second
+            // external write leaves the 1-second mtime unchanged: mtime alone
+            // would miss it and the buffer would silently go stale.
+            //
+            // We use optimistic concurrency: check now, and if we decide to
+            // revert, re-check to handle the race where a save completed
+            // between our checks.
+            let current_fp = match self
                 .authority()
                 .filesystem
                 .metadata(&path)
                 .ok()
-                .and_then(|m| m.modified)
+                .as_ref()
+                .and_then(FileFingerprint::from_metadata)
             {
-                Some(mtime) => mtime,
+                Some(fp) => fp,
                 None => continue, // Can't read file, skip
             };
 
-            let dominated_by_stored = self
+            let in_sync_with_disk = self
                 .file_mod_times()
                 .get(&path)
-                .map(|stored| current_mtime <= *stored)
+                .map(|stored| current_fp == *stored)
                 .unwrap_or(false);
 
-            if dominated_by_stored {
+            if in_sync_with_disk {
                 continue;
             }
 
@@ -1283,13 +1294,13 @@ impl Editor {
 
             // Auto-revert if enabled and buffer is not modified
             if self.active_window().auto_revert_enabled {
-                // Optimistic concurrency: re-check mtime before reverting.
-                // A save may have completed between our first check and now,
-                // updating file_mod_times. If so, skip the revert.
+                // Optimistic concurrency: re-check before reverting. A save may
+                // have completed between our first check and now, updating
+                // file_mod_times to match disk. If so, we're in sync — skip.
                 let still_needs_revert = self
                     .file_mod_times()
                     .get(&path)
-                    .map(|stored| current_mtime > *stored)
+                    .map(|stored| current_fp != *stored)
                     .unwrap_or(true);
 
                 if !still_needs_revert {
@@ -1327,20 +1338,19 @@ impl Editor {
     pub fn check_save_conflict(&self) -> Option<std::time::SystemTime> {
         let path = self.active_state().buffer.file_path()?;
 
-        // Get current file modification time
-        let current_mtime = self
+        // Get the file's current change fingerprint (mtime + size)
+        let current_fp = self
             .authority()
             .filesystem
             .metadata(path)
             .ok()
-            .and_then(|m| m.modified)?;
+            .as_ref()
+            .and_then(FileFingerprint::from_metadata)?;
 
-        // Compare with our recorded modification time
+        // Compare with the fingerprint we recorded when we last loaded/saved it.
+        // Any difference (mtime or size) means the file changed underneath us.
         match self.file_mod_times().get(path) {
-            Some(recorded_mtime) if current_mtime > *recorded_mtime => {
-                // File was modified externally since we last loaded/saved it
-                Some(current_mtime)
-            }
+            Some(recorded_fp) if current_fp != *recorded_fp => Some(current_fp.modified),
             _ => None,
         }
     }
@@ -1559,12 +1569,12 @@ impl crate::app::window::Window {
         }
     }
 
-    /// Record a file's modification time (called when opening files).
+    /// Record a file's change fingerprint (called when opening files).
     /// Window-local: records into this window's own `file_mod_times`.
     pub(crate) fn watch_file(&mut self, path: &Path) {
         if let Ok(metadata) = self.authority().filesystem.metadata(path) {
-            if let Some(mtime) = metadata.modified {
-                self.file_mod_times.insert(path.to_path_buf(), mtime);
+            if let Some(fp) = FileFingerprint::from_metadata(&metadata) {
+                self.file_mod_times.insert(path.to_path_buf(), fp);
             }
         }
     }

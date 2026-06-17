@@ -112,7 +112,7 @@ pub struct Window {
     /// stay frozen at dive-out time and resync on dive-back —
     /// matching the user's mental model that a dormant window "is
     /// paused".
-    pub file_mod_times: HashMap<PathBuf, std::time::SystemTime>,
+    pub file_mod_times: HashMap<PathBuf, crate::model::filesystem::FileFingerprint>,
 
     /// LSP manager (running language servers, configs, per-language
     /// root URIs). Each window owns its own LSP set, rooted at its
@@ -645,8 +645,11 @@ pub struct Window {
     /// Receiver for background file change poll results for this window.
     /// `Some` while a metadata poll is in flight.
     #[allow(clippy::type_complexity)]
-    pub pending_file_poll_rx:
-        Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
+    pub pending_file_poll_rx: Option<
+        std::sync::mpsc::Receiver<
+            Vec<(PathBuf, Option<crate::model::filesystem::FileFingerprint>)>,
+        >,
+    >,
 
     /// Receiver for background directory change poll results for this window.
     #[allow(clippy::type_complexity)]

@@ -893,7 +893,25 @@ impl Editor {
     /// insert into the active window's cache.)
     #[doc(hidden)]
     pub fn insert_mtime_for_test(&mut self, path: std::path::PathBuf, t: std::time::SystemTime) {
-        self.file_mod_times_mut().insert(path, t);
+        self.file_mod_times_mut().insert(
+            path,
+            crate::model::filesystem::FileFingerprint {
+                modified: t,
+                size: 0,
+            },
+        );
+    }
+
+    /// Inject a full change fingerprint (mtime + size) into the active
+    /// session's cache. Lets tests reproduce coarse-mtime collisions where the
+    /// recorded mtime matches disk but the size differs.
+    #[doc(hidden)]
+    pub fn insert_fingerprint_for_test(
+        &mut self,
+        path: std::path::PathBuf,
+        fingerprint: crate::model::filesystem::FileFingerprint,
+    ) {
+        self.file_mod_times_mut().insert(path, fingerprint);
     }
 
     /// Whether the active session's mtime cache contains `path`.
@@ -1056,14 +1074,16 @@ impl Editor {
     /// keep their mtime snapshot until the next dive.
     pub(crate) fn file_mod_times(
         &self,
-    ) -> &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
+    ) -> &std::collections::HashMap<std::path::PathBuf, crate::model::filesystem::FileFingerprint>
+    {
         &self.active_window().file_mod_times
     }
 
     /// Mutable handle to the active window's mtime cache.
     pub(crate) fn file_mod_times_mut(
         &mut self,
-    ) -> &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
+    ) -> &mut std::collections::HashMap<std::path::PathBuf, crate::model::filesystem::FileFingerprint>
+    {
         &mut self.active_window_mut().file_mod_times
     }
 

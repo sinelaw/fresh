@@ -112,6 +112,38 @@ pub struct FileMetadata {
     pub gid: Option<u32>,
 }
 
+/// A cheap change-detection fingerprint for a file on disk.
+///
+/// Auto-revert decides "did this file change since we last loaded it?" by
+/// comparing fingerprints. Using mtime *and* size — rather than mtime alone —
+/// closes a real gap on coarse-granularity filesystems: HFS+, SMB/NFS mounts,
+/// FAT, many disk images, and some macOS volumes report mtime with only
+/// 1-second resolution, so an external write landing in the same second as the
+/// editor's last-recorded mtime leaves mtime byte-for-byte identical. A
+/// mtime-only check never notices, and the buffer silently goes stale until a
+/// manual revert. Comparing size as well catches every external write that
+/// changes the file's length (the overwhelmingly common case), regardless of
+/// mtime resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileFingerprint {
+    /// Last modification time, when the filesystem reports one.
+    pub modified: SystemTime,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+impl FileFingerprint {
+    /// Build a fingerprint from metadata. Returns `None` when the filesystem
+    /// doesn't report a modification time — without it there's nothing stable
+    /// to compare against, so callers treat the file as untracked.
+    pub fn from_metadata(metadata: &FileMetadata) -> Option<Self> {
+        metadata.modified.map(|modified| Self {
+            modified,
+            size: metadata.size,
+        })
+    }
+}
+
 impl FileMetadata {
     /// Create minimal metadata with just size
     pub fn new(size: u64) -> Self {

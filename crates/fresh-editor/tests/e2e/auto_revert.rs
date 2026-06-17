@@ -419,6 +419,60 @@ fn test_auto_revert_background_file_does_not_affect_active_viewport() {
     );
 }
 
+/// Test that auto-revert fires when an external write changes the file's
+/// contents (and size) but leaves its mtime unchanged.
+///
+/// Regression test for the coarse-mtime blind spot: on filesystems with
+/// 1-second mtime resolution (HFS+, SMB/NFS, FAT, many macOS volumes, disk
+/// images), an external write that lands in the same second as the editor's
+/// last-recorded mtime leaves mtime byte-for-byte identical. A change detector
+/// that compares only mtime never notices, so the buffer silently goes stale
+/// until a manual revert — exactly the "external tool wrote the file but it
+/// never auto-reverts" report. Comparing file size as well catches it.
+///
+/// We model the collision directly: write new (different-length) content, then
+/// seed the editor's recorded fingerprint with the file's *current* mtime but
+/// the *old* size — i.e. mtime matches disk, size doesn't. Without the size
+/// component this hangs (mtime equal → no revert); with it, the size mismatch
+/// triggers the revert.
+#[test]
+fn test_auto_revert_when_mtime_unchanged_but_size_differs() {
+    use fresh::model::filesystem::FileFingerprint;
+
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+    let file_path = project_dir.join("coarse_mtime.txt");
+
+    let original = "v1";
+    write_and_sync(&file_path, original);
+
+    harness.open_file(&file_path).unwrap();
+    harness.assert_buffer_content(original);
+
+    // External tool rewrites the file with longer content.
+    let updated = "a much longer replacement line that changes the size";
+    write_and_sync(&file_path, updated);
+
+    // Simulate a 1-second-granularity filesystem where the write did NOT bump
+    // the mtime the editor already has on record: stored mtime == the file's
+    // current on-disk mtime, but the stored size is still the old (shorter) one.
+    let disk_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+    harness.editor_mut().insert_fingerprint_for_test(
+        file_path.clone(),
+        FileFingerprint {
+            modified: disk_mtime,
+            size: original.len() as u64,
+        },
+    );
+
+    // Auto-revert must still fire: the size differs even though mtime matches.
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap() == updated)
+        .expect("Auto-revert should fire when size changes even if mtime is unchanged");
+
+    harness.assert_buffer_content(updated);
+}
+
 /// Test auto-revert with temp+rename save pattern (like vim, vscode, etc.)
 /// This specifically tests the inode change scenario on Linux where inotify
 /// watches inodes rather than paths. When a file is saved via temp+rename,

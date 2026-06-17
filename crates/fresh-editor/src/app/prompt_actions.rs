@@ -811,8 +811,10 @@ impl Editor {
                 );
 
                 if let Ok(metadata) = self.authority().filesystem.metadata(&full_path) {
-                    if let Some(mtime) = metadata.modified {
-                        self.file_mod_times_mut().insert(full_path.clone(), mtime);
+                    if let Some(fp) =
+                        crate::model::filesystem::FileFingerprint::from_metadata(&metadata)
+                    {
+                        self.file_mod_times_mut().insert(full_path.clone(), fp);
                     }
                 }
 
