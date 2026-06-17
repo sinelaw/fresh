@@ -69,12 +69,11 @@ interface Detected {
   /** The activation snippet handed to `editor.setEnv`. */
   snippet: string;
   /**
-   * "path-only" envs (`.venv`/`venv`) auto-activate silently.
-   * "shell" envs (`.envrc`/`mise.toml`/`.tool-versions`) prompt first.
+   * "path-only" envs (`.venv`/`venv`) auto-activate silently when trusted.
+   * "shell" envs (`.envrc`/`mise.toml`/`.tool-versions`) only activate once
+   * the workspace is trusted (the core trust modal owns that prompt).
    */
   kind: "path-only" | "shell";
-  /** Marker file or directory name that triggered detection (for the popup body). */
-  marker: string;
 }
 
 function fileExists(p: string): boolean {
@@ -106,7 +105,6 @@ function detect(): Detected | null {
         name,
         snippet: `source ${editor.pathJoin(dir, "bin", "activate")}`,
         kind: "path-only",
-        marker: name,
       };
     }
   }
@@ -116,7 +114,6 @@ function detect(): Detected | null {
       name: "direnv",
       snippet: `eval "$(direnv export bash)"`,
       kind: "shell",
-      marker: ".envrc",
     };
   }
 
@@ -126,7 +123,6 @@ function detect(): Detected | null {
         name: "mise",
         snippet: `eval "$(mise env -s bash)"`,
         kind: "shell",
-        marker: name,
       };
     }
   }
@@ -160,27 +156,6 @@ function devcontainerConfigPresent(): boolean {
  */
 function authorityIsNonLocal(): boolean {
   return editor.getAuthorityLabel().length > 0;
-}
-
-// === Per-cwd activation memory ===
-//
-// We only remember that we *activated* a folder's env, so a trusted folder
-// re-activates silently on the next open without re-running detection logic
-// against trust. The trust decision itself (and its "Restricted"/"Blocked"
-// dismissals) lives in core's per-project trust store, not here — the core
-// trust modal is the single owner of that question. So there is no
-// "dismissed" value to track on this side anymore.
-
-function envDecisionKey(): string {
-  return "env-decision:" + editor.getCwd();
-}
-
-function readEnvActivated(): boolean {
-  return editor.getGlobalState(envDecisionKey()) === "activated";
-}
-
-function writeEnvActivated(): void {
-  editor.setGlobalState(envDecisionKey(), "activated");
 }
 
 // === Cross-plugin: devcontainer decline observation ===
@@ -239,7 +214,6 @@ function applyActivation(det: Detected): void {
   editor.setStatus(
     editor.t(editor.envActive() ? "status.reloading" : "status.activating", { name: det.name }),
   );
-  writeEnvActivated();
 }
 
 /** Activate (or, when already active, reload) the detected environment.
@@ -406,8 +380,7 @@ function maybeAutoActivate(): void {
   }
 
   if (isTrusted()) {
-    // Trust is granted (now or previously) → activate. `readEnvActivated()`
-    // is informational only; trust is the gate that matters.
+    // Trust is granted (now or previously) → activate. Trust is the only gate.
     applyActivation(det);
     return;
   }
