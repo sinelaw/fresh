@@ -961,13 +961,25 @@ fn test_switch_project_double_click_parent_navigates_up() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for the folder browser, including the ".." entry.
+    // Wait for the folder browser AND its async directory listing to land.
+    // There are two ".." on screen: the inline parent *shortcut* on the
+    // "Navigation:" line (built synchronously, so it appears the instant the
+    // browser opens) and the ".." *list entry* (added only when the async
+    // directory read completes). The click below targets the list entry by
+    // anchoring below the header, so a bare `screen.contains("..")` is the
+    // wrong signal — it is satisfied by the sync shortcut before the list
+    // populates, after which the row-finder below finds no ".." entry and
+    // panics. Gate on the same thing the click needs: a ".." on a row below
+    // the Navigation header.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("Navigation:") && screen.contains("..")
+            let Some(nav_row) = screen.lines().position(|l| l.contains("Navigation:")) else {
+                return false;
+            };
+            screen.lines().skip(nav_row + 1).any(|l| l.contains(".."))
         })
-        .expect("Folder browser should appear with parent entry");
+        .expect("Folder browser should appear with the parent ('..') list entry");
 
     // Locate the row with the ".." entry by *position*, not by dot-matching.
     // The ".." entry is the first list row, which sits below the
