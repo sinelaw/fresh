@@ -16,10 +16,6 @@ use fresh::config::{Config, ThemeName};
 use fresh::config_io::DirectoryContext;
 use fresh::model::event::{Event, OverlayFace};
 use fresh::view::overlay::OverlayNamespace;
-use fresh::view::theme::ThemeFile;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -495,6 +491,123 @@ fn scene_whitespace(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     h.render().unwrap();
 }
 
+/// Scene 15: Find & Replace toolbar (prompt + text-input styling).
+/// Covers: prompt_fg/bg, prompt_selection_fg/bg, text_input_selection_bg,
+///         search.match_bg/fg in the replace context.
+fn scene_replace_dialog(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    h.send_key(KeyCode::Home, KeyModifiers::CONTROL).unwrap();
+    h.render().unwrap();
+
+    // Open Replace via the command palette.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    for ch in "Replace".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+
+    // Type a search term so the toolbar + match highlights are populated.
+    for ch in "config".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    snap(h, s, Some("Replace"), 300);
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+}
+
+/// Scene 16: Go to Line prompt.
+/// Covers: prompt_fg/bg, status_palette_fg/bg, popup input styling.
+fn scene_goto_line(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    for ch in "Go to Line".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    for ch in "20".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    snap(h, s, Some("Go to Line"), 300);
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+}
+
+/// Scene 17: Keybinding editor dialog.
+/// Covers: popup_*, settings_selected_bg/fg, scrollbar, prompt styling.
+fn scene_keybinding_editor(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    h.editor_mut().open_keybinding_editor();
+    h.render().unwrap();
+    snap(h, s, Some("Keybindings"), 300);
+
+    for _ in 0..5 {
+        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+
+    // Search within the editor.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    for ch in "save".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    snap(h, s, Some("Search"), 300);
+
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+}
+
+/// Scene 18: Integrated terminal panel.
+/// Covers: terminal_bg, terminal_fg, split separators with a focused pane.
+/// Skips itself (on both before/after sides, so frames stay aligned) when no
+/// PTY is available.
+fn scene_terminal(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
+    use portable_pty::{native_pty_system, PtySize};
+    if native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_err()
+    {
+        return;
+    }
+
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+    for ch in "Open Terminal".chars() {
+        h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+
+    // Give the PTY a beat to spawn its shell and paint a prompt.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    h.render().unwrap();
+    snap(h, s, Some("Terminal"), 300);
+
+    // Back to the editor pane.
+    h.send_key(KeyCode::Char('k'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.render().unwrap();
+}
+
 /// Run the full scene suite against a harness/showcase pair.
 ///
 /// Every scene captures one or more frames showing a distinct UI surface.
@@ -515,6 +628,10 @@ fn run_all_scenes(h: &mut EditorTestHarness, s: &mut BlogShowcase) {
     scene_diff_highlights(h, s);
     scene_scrollbar(h, s);
     scene_whitespace(h, s);
+    scene_replace_dialog(h, s);
+    scene_goto_line(h, s);
+    scene_keybinding_editor(h, s);
+    scene_terminal(h, s);
 }
 
 // ---------------------------------------------------------------------------
@@ -666,147 +783,6 @@ fn rewrite_theme_name(json: &str, token: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Theme-key swatch board
-//
-// The 14 realistic scenes show many theme keys in context, but not all of
-// them (terminal, git file-status, semantic/LSP indicators, rulers, hover/drag
-// states, …). To *guarantee* every defined key is represented in the
-// before/after comparison, we also render a deterministic swatch board built
-// generically from the live theme — so any key (including ones added later)
-// shows up automatically.
-// ---------------------------------------------------------------------------
-
-/// Parse a serialized `ColorDef` value (`[r, g, b]` or a named color string)
-/// back into a ratatui `Color`. The SVG renderer resolves named colors, so we
-/// keep them named rather than flattening to RGB here.
-fn color_from_value(v: &serde_json::Value) -> Option<Color> {
-    if let Some(arr) = v.as_array() {
-        if arr.len() == 3 {
-            let comp = |i: usize| arr[i].as_u64().map(|n| n as u8);
-            if let (Some(r), Some(g), Some(b)) = (comp(0), comp(1), comp(2)) {
-                return Some(Color::Rgb(r, g, b));
-            }
-        }
-        return None;
-    }
-    let s = v.as_str()?;
-    Some(match s {
-        "White" => Color::White,
-        "Black" => Color::Black,
-        "Red" => Color::Red,
-        "Green" => Color::Green,
-        "Blue" => Color::Blue,
-        "Yellow" => Color::Yellow,
-        "Magenta" => Color::Magenta,
-        "Cyan" => Color::Cyan,
-        "Gray" | "Grey" => Color::Gray,
-        "DarkGray" | "DarkGrey" => Color::DarkGray,
-        "LightRed" => Color::LightRed,
-        "LightGreen" => Color::LightGreen,
-        "LightBlue" => Color::LightBlue,
-        "LightYellow" => Color::LightYellow,
-        "LightMagenta" => Color::LightMagenta,
-        "LightCyan" => Color::LightCyan,
-        "Default" | "Reset" => Color::Reset,
-        _ => return None,
-    })
-}
-
-/// Flatten a serialized `ThemeFile` into `(section.key, color)` pairs, in a
-/// stable section/alphabetical order so before/after boards line up.
-fn theme_color_entries(theme_json: &serde_json::Value) -> Vec<(String, Color)> {
-    let mut out = Vec::new();
-    let Some(obj) = theme_json.as_object() else {
-        return out;
-    };
-    for sec in ["editor", "ui", "search", "diagnostic", "syntax"] {
-        let Some(inner) = obj.get(sec).and_then(|v| v.as_object()) else {
-            continue;
-        };
-        let mut keys: Vec<&String> = inner.keys().collect();
-        keys.sort();
-        for k in keys {
-            if let Some(c) = color_from_value(&inner[k]) {
-                out.push((format!("{sec}.{k}"), c));
-            }
-        }
-    }
-    out
-}
-
-/// Write `text` into `buf` starting at `(x, y)`, clipped to `width`.
-fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, fg: Color, bg: Color, width: u16) {
-    for (i, ch) in text.chars().enumerate() {
-        let cx = x + i as u16;
-        if cx >= width {
-            break;
-        }
-        buf[(cx, y)]
-            .set_char(ch)
-            .set_style(Style::default().fg(fg).bg(bg));
-    }
-}
-
-/// Build a swatch board: one labelled color cell per theme key, laid out in
-/// columns. Rendered into a standalone buffer so it can be captured as a frame
-/// without involving the editor UI.
-fn build_swatch_board(
-    entries: &[(String, Color)],
-    base_bg: Color,
-    base_fg: Color,
-    width: u16,
-    height: u16,
-) -> Buffer {
-    let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
-    for y in 0..height {
-        for x in 0..width {
-            buf[(x, y)]
-                .set_char(' ')
-                .set_style(Style::default().bg(base_bg).fg(base_fg));
-        }
-    }
-    put_str(
-        &mut buf,
-        1,
-        0,
-        "Theme color keys — every defined key, resolved",
-        base_fg,
-        base_bg,
-        width,
-    );
-
-    let ncols: u16 = 4;
-    let colw = width / ncols;
-    let top: u16 = 1;
-    let rows = height.saturating_sub(top);
-    let n = entries.len() as u16;
-    let per_col = n.div_ceil(ncols).max(1);
-
-    for (i, (label, color)) in entries.iter().enumerate() {
-        let i = i as u16;
-        let col = i / per_col;
-        let row = i % per_col;
-        if col >= ncols || row >= rows {
-            continue;
-        }
-        let x0 = col * colw;
-        let y = top + row;
-        // 4-cell swatch
-        for sx in 0..4u16 {
-            if x0 + sx < width {
-                buf[(x0 + sx, y)]
-                    .set_char(' ')
-                    .set_style(Style::default().bg(*color));
-            }
-        }
-        let max_label = colw.saturating_sub(5) as usize;
-        let label: String = label.chars().take(max_label).collect();
-        put_str(&mut buf, x0 + 5, y, &label, base_fg, base_bg, width);
-    }
-    buf
-}
-
 /// Render the scene suite with `theme_json` active, writing frames under
 /// `docs/blog/<gallery_name>/`. Returns `true` if the theme actually loaded
 /// and frames were produced; `false` (without writing frames) if the version
@@ -832,10 +808,15 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
         return false;
     }
 
-    let config = Config {
+    let mut config = Config {
         theme: ThemeName(theme_token.to_string()),
         ..Default::default()
     };
+    // Light up theme keys that only render under specific settings, so the
+    // before/after scenes exercise them: a vertical ruler (ruler_bg) and inline
+    // diagnostic text (diagnostic.*_fg rendered through the real text path).
+    config.editor.rulers = vec![80];
+    config.editor.diagnostics_inline_text = true;
 
     let opts = HarnessOptions::new()
         .with_project_root()
@@ -870,22 +851,6 @@ fn try_render_version(theme_token: &str, theme_json: &str, gallery_name: &str) -
         gallery_name,
         "Before/after theme diff frames.",
     );
-
-    // Frame 0: deterministic swatch board covering every defined key, so the
-    // comparison represents keys no realistic scene happens to show.
-    {
-        let (bg, fg) = {
-            let t = h.editor().theme();
-            (t.editor_bg, t.editor_fg)
-        };
-        let theme_file: ThemeFile = (*h.editor().theme()).clone().into();
-        if let Ok(val) = serde_json::to_value(&theme_file) {
-            let entries = theme_color_entries(&val);
-            let board = build_swatch_board(&entries, bg, fg, 120, 35);
-            s.capture_frame(&board, (0, 0), Some("Theme keys"), None, 400)
-                .expect("capture swatch board");
-        }
-    }
 
     run_all_scenes(&mut h, &mut s);
     s.finalize().expect("finalize diff gallery");

@@ -64,16 +64,19 @@ The test is `theme_diff_gallery`
     keys (old → new) followed by every captured frame as a before | after pair.
   - `docs/blog/theme-diff/<theme>/{before,after}/` — the raw SVG frames +
     `showcase.json` metadata for each side.
-- **Key coverage.** Frame 0 of each side is a deterministic *swatch board*:
-  one labelled color cell per theme key, built generically from the live theme
-  (so keys added later are covered automatically). This guarantees every
-  defined key is visually represented in the before/after comparison even when
-  no realistic scene happens to show it (terminal, git file-status,
-  semantic/LSP indicators, rulers, hover/drag states, …). The 14 scenes that
-  follow show the most common keys in realistic UI context. Note: the
-  diagnostics and diff-highlight scenes paint simulated overlays with fixed
-  colors, so the authoritative view of `diagnostic.*` / `diff_*` keys is the
-  swatch board plus the changed-keys table, not those scenes.
+- **UI coverage.** Both sides render a suite of real editor surfaces — not
+  synthetic swatches — so reviewers see colors in context. The scenes:
+  syntax-highlighted code (with a vertical ruler), selection, multi-cursor,
+  find, **command palette**, **file explorer**, split view, inline
+  diagnostics, **open menu dropdown**, help overlay, **settings UI**, diff
+  highlights, scrollbar, whitespace, **find & replace toolbar**, **go-to-line
+  prompt**, **keybinding editor**, and the **integrated terminal** (skipped on
+  both sides when no PTY is available, so frames stay aligned). The harness
+  enables inline diagnostic text and a ruler so `diagnostic.*` and `ruler_bg`
+  render through real paths.
+- **Completeness backstop.** The per-theme changed-keys table lists *every*
+  key the PR changed (with swatches), so a key that no scene happens to show
+  in context is still surfaced explicitly.
 - **Determinism.** Both sides run the identical scene sequence at the same
   terminal size, so frame indices line up one-to-one for pairing.
 - **Robustness.** Missing git, a missing base file, or an unparseable baseline
