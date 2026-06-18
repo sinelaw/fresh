@@ -206,7 +206,10 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
         .unwrap();
 }
 

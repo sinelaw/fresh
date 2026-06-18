@@ -95,7 +95,10 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
         .unwrap();
 }
 
@@ -795,7 +798,10 @@ fn bracketed_paste_routes_to_focused_dialog_field() {
     // the now-revealed buffer.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
         .unwrap();
     assert!(
         !harness.screen_to_string().contains("PASTEDMARKER"),
@@ -846,7 +852,10 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
     // the hidden buffer; revealing it after Esc surfaces the marker.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
         .unwrap();
     assert!(
         !harness.screen_to_string().contains("IGNORED_PASTE"),
@@ -1054,7 +1063,10 @@ fn esc_closes_dropdown_first_then_cancels_dialog() {
     // Second Esc: dialog cancels.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
         .unwrap();
 }
 
