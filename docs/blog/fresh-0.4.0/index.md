@@ -7,7 +7,7 @@ outline: false
 
 # What's New in Fresh (0.4.0)
 
-*Draft — rolling up everything since the [0.3.0 release](../fresh-0.3.0/).*
+*June 9, 2026 — rolling up everything since the [0.3.0 release](../fresh-0.3.0/).*
 
 A dozen point releases since 0.3.0, and the through-line is **working across many workspaces and machines from one Fresh daemon**: a multi-window Orchestrator with a persistent dock, remote workspaces you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, and the usual long tail of editor, LSP, and language work.
 

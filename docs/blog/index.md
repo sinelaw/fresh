@@ -21,6 +21,14 @@ Updates on new features and changes in Fresh.
   </div>
 </a>
 
+<a class="blog-card" href="./fresh-0.4.0/">
+  <img src="./fresh-0.4.0/orchestrator-dock/showcase.gif" alt="What's New (0.4.0)" />
+  <div class="blog-card-body">
+    <h3>What's New (0.4.0)</h3>
+    <p>The multi-window Orchestrator and dock, remote workspaces (SSH / Kubernetes) from the UI, universal search across files/buffers/terminals, a reimagined review diff, live diff, terminal path links, and unified workspace trust.</p>
+  </div>
+</a>
+
 <a class="blog-card" href="./fresh-0.3.0/">
   <img src="./fresh-0.3.0/review-diff/showcase.gif" alt="What's New (0.3.0)" />
   <div class="blog-card-body">
