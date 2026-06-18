@@ -3355,8 +3355,11 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     hold(&mut h, &mut s, 2, 60);
 
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
-        .unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("ORCHESTRATOR :: New Workspace")
+    })
+    .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 
