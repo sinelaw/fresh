@@ -227,3 +227,108 @@ fn test_maximize_button_click_targets_clicked_split_not_active() {
         "After maximizing the top split, main.txt should still be on screen.\nScreen:\n{screen}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Bug 3
+// ---------------------------------------------------------------------------
+
+/// Maximize the focused dock via the command palette ("Toggle Maximize
+/// Split"). The dock currently holds focus, so it becomes the maximized
+/// split and the editor content is hidden.
+fn maximize_focused_dock(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Maximize Split").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Toggle Maximize Split"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // A maximized split shows the restore glyph "⧉" on its tab bar in
+    // place of the "□" maximize glyph. (The global status bar's "Maximized
+    // split" message is covered by the dock's own footer here, so the glyph
+    // is the reliable rendered signal.)
+    harness
+        .wait_until(|h| h.screen_to_string().contains('⧉'))
+        .unwrap();
+}
+
+/// Opening a file while a *different* split is maximized must restore the
+/// layout so the freshly-focused buffer is actually visible.
+///
+/// This is the rendered-output repro of the embedded-`fresh` hang: with the
+/// docked panel maximized, forwarding a file open from a nested process (or
+/// any Quick Open — both go through `Editor::open_file`) focuses the buffer
+/// in the editor split, but `get_visible_buffers` only draws the maximized
+/// dock. The buffer renders hidden behind the dock, so the user sees no
+/// change and a blocking `fresh <file>` forward looks like it has hung.
+///
+/// Fails on the buggy build (the opened file's content never renders) and
+/// passes once the open path un-maximizes to reveal the focused split.
+#[test]
+fn test_open_file_while_split_maximized_reveals_buffer() {
+    let (_temp_dir, project_root) = setup_dock_project();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&project_root.join("main.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Open Search/Replace in the bottom dock (it takes focus), then
+    // maximize it so only the dock is shown.
+    open_search_replace_panel(&mut harness);
+    maximize_focused_dock(&mut harness);
+
+    // Precondition: maximizing the dock hides the editor — main.txt's
+    // content is no longer on screen.
+    harness
+        .wait_until_stable(|h| !h.screen_to_string().contains("main file content"))
+        .unwrap();
+
+    // Now open another file via Quick Open. This focuses other.txt in the
+    // editor split. Under the bug the dock stays maximized and the new
+    // buffer renders behind it; the fix restores the layout.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    // Drop the ">" command-mode prefix the palette remembers from the
+    // previous (maximize) invocation, so the filename query runs in file mode.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("other").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("other.txt"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // The "Opened …/other.txt" status (full path) lands in the always-visible
+    // status bar in both the buggy and fixed builds, so this wait completes
+    // either way — it just marks "the open finished". The assertion below is
+    // what distinguishes them.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("Opened ") && s.contains("other.txt")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("other file content"),
+        "Bug: the opened file is hidden behind the maximized dock — its content never \
+         rendered, so the user can't see the buffer that was opened.\nScreen:\n{screen}"
+    );
+}

@@ -176,6 +176,13 @@ impl Editor {
 
         self.set_active_buffer(buffer_id);
 
+        // Opening a file focuses a buffer in the active split. If a
+        // *different* split is maximized (most commonly the docked
+        // terminal), the renderer shows only the maximized split, so the
+        // freshly-focused buffer would be invisible. Restore the layout so
+        // the user actually sees the file they just opened.
+        self.reveal_active_split_if_hidden_by_maximize();
+
         // If the initial empty buffer was replaced in-place with file content,
         // set_active_buffer is a no-op (same buffer ID). Fire buffer_activated
         // explicitly so plugins see the newly loaded file.
@@ -217,6 +224,32 @@ impl Editor {
         }
 
         Ok(buffer_id)
+    }
+
+    /// Restore the split layout when the just-focused buffer would be
+    /// hidden behind a maximized split.
+    ///
+    /// `SplitManager::get_visible_buffers` renders *only* the maximized
+    /// split. A file open focuses its buffer in the active split, which —
+    /// after `redirect_active_split_away_from_dock_if_needed` — is a
+    /// regular editor leaf, not the maximized dock. With nothing reset, the
+    /// new buffer renders behind the maximized terminal: the user sees no
+    /// change, and an embedded `fresh <file>` that forwarded the open
+    /// blocks waiting for that invisible buffer to be closed, so the
+    /// terminal appears to hang. Un-maximize so the focused buffer shows.
+    fn reveal_active_split_if_hidden_by_maximize(&mut self) {
+        let mgr = self.split_manager();
+        let active: crate::model::event::SplitId = mgr.active_split().into();
+        let hidden = matches!(mgr.maximized_split(), Some(maximized) if maximized != active);
+        if !hidden {
+            return;
+        }
+        // `unmaximize_split` only errors when nothing is maximized, which
+        // the `hidden` guard above already excludes.
+        self.split_manager_mut()
+            .unmaximize_split()
+            .expect("a split is maximized (checked above)");
+        self.relayout();
     }
 
     /// If the active split leaf carries `SplitRole::UtilityDock`,
