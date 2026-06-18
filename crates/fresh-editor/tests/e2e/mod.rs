@@ -125,6 +125,7 @@ pub mod macros;
 pub mod markdown_compose;
 pub mod markdown_compose_diagnostics;
 pub mod markdown_compose_scroll_reach;
+pub mod markdown_compose_stray_pipe;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;

@@ -2589,6 +2589,138 @@ End.
     );
 }
 
+/// Regression test: an escaped pipe (`\|`) inside a table cell is *content*,
+/// not a column separator. Before the fix the renderer split on every `|`,
+/// so a row like `| a \| b \| c | ... |` fanned out into phantom columns
+/// (visible as extra `│` borders past the table frame) and the stray `\`
+/// stayed on screen. After the fix:
+///   1. Every visual line of the 3-column table has exactly 4 box separators.
+///   2. The escaped pipe renders as a literal `|` (the backslash is concealed).
+#[test]
+fn test_compose_mode_table_escaped_pipe() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // 3-column table. The middle data row uses escaped pipes in cell 2.
+    let md_content = "\
+# Escaped Pipe Test
+
+| Case | Value | Notes |
+|---|---|---|
+| Plain | ok | nothing special |
+| Escaped pipe | a \\| b \\| c | pipe stays in one cell |
+
+End.
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("escaped_pipe_test.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("escaped_pipe_test.md");
+
+    // Enable compose mode
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("│") && s.contains("─")
+        })
+        .unwrap();
+    let mut prev = String::new();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            let stable = s == prev;
+            prev = s;
+            stable
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+
+    eprintln!("=== Rendered escaped-pipe table ===");
+    for (i, line) in screen.lines().enumerate() {
+        eprintln!("{:3}: {}", i, line);
+    }
+    eprintln!("=== End ===");
+
+    // Every visual line of this 3-column table must have exactly 4 box
+    // separators (leading │, two inner │, trailing │ — or ├/┼/┤ on the rule).
+    // The escaped row's `\|` must NOT add phantom separators.
+    let pipe_chars = ['│', '┼', '├', '┤'];
+    let table_lines: Vec<(usize, &str)> = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim();
+            t.contains('│') || t.contains('┼') || t.contains('├')
+        })
+        .collect();
+
+    let mut failures = Vec::new();
+    for (line_num, line_text) in &table_lines {
+        let pipe_count = line_text.chars().filter(|c| pipe_chars.contains(c)).count();
+        if pipe_count != 4 {
+            failures.push(format!(
+                "  line {}: {} box separators (expected 4): {:?}",
+                line_num,
+                pipe_count,
+                line_text.trim()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "Escaped pipe broke column separators (phantom columns?):\n{}\n\nFull table:\n{}",
+        failures.join("\n"),
+        table_lines
+            .iter()
+            .map(|(n, l)| format!("  {:3}: {}", n, l))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    // The escaped pipe renders as a literal `|` inside the cell, and the
+    // backslash escape marker is concealed (no `\|` left on screen).
+    assert!(
+        screen.contains("a | b | c"),
+        "Escaped pipes should render as literal `|` in the cell.\nScreen:\n{}",
+        screen,
+    );
+    assert!(
+        !screen.contains("\\|"),
+        "The backslash escape marker should be concealed.\nScreen:\n{}",
+        screen,
+    );
+}
+
 /// Regression test: pressing Down arrow past the end of a table should
 /// advance the cursor to the next line below the table, NOT jump it
 /// back to the beginning of the document.

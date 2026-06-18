@@ -217,6 +217,61 @@ function isTableSeparatorContent(lineContent: string): boolean {
   return /^\|[-:\s|]+\|$/.test(lineContent.trim());
 }
 
+/** True if the `|` at char offset `i` is escaped (`\|`) — i.e. preceded by an
+ *  odd run of backslashes. Escaped pipes are cell *content*, not column
+ *  separators, and must not split the row. */
+function isEscapedPipe(line: string, i: number): boolean {
+  let bs = 0;
+  for (let j = i - 1; j >= 0 && line[j] === '\\'; j--) bs++;
+  return bs % 2 === 1;
+}
+
+/** Char offsets of every *unescaped* `|` in `line` (the column separators).
+ *  Escaped pipes (`\|`) are skipped — they render as a literal `|` inside a
+ *  cell rather than ending it. */
+function tablePipePositions(line: string): number[] {
+  const pos: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '|' && !isEscapedPipe(line, i)) pos.push(i);
+  }
+  return pos;
+}
+
+/** Strip a table row's outer border pipes, leaving the inner cell text. A
+ *  trailing `|` that is escaped (`\|`) is cell content, not a border. */
+function tableRowInner(trimmed: string): string {
+  let inner = trimmed;
+  if (inner.startsWith('|')) inner = inner.slice(1);
+  if (inner.endsWith('|') && !isEscapedPipe(inner, inner.length - 1)) {
+    inner = inner.slice(0, -1);
+  }
+  return inner;
+}
+
+/** Split a table row's inner text (outer pipes already stripped via
+ *  `tableRowInner`) into cells on *unescaped* pipes, unescaping `\|` → `|`
+ *  within each cell so the literal pipe renders as one character. */
+function splitTableCells(inner: string): string[] {
+  const cells: string[] = [];
+  let cur = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '\\' && inner[i + 1] === '|') {
+      cur += '|';
+      i++;
+      continue;
+    }
+    if (ch === '|') {
+      cells.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur);
+  return cells;
+}
+
 /**
  * Wrap a markdown table data row into per-column visual-line fragments.
  *
@@ -236,10 +291,7 @@ function wrapTableRow(
   colWidths: number[],
   raw: boolean,
 ): { cellWrapped: string[][]; numCols: number; maxVisualLines: number } {
-  let inner = lineContent.trim();
-  if (inner.startsWith('|')) inner = inner.slice(1);
-  if (inner.endsWith('|')) inner = inner.slice(0, -1);
-  const cells = inner.split('|');
+  const cells = splitTableCells(tableRowInner(lineContent.trim()));
   const numCols = Math.min(cells.length, colWidths.length);
   const cellWrapped: string[][] = [];
   let maxVisualLines = 1;
@@ -1611,18 +1663,14 @@ function processLineConceals(
     const widthInfo = bufWidths && lineNumber !== undefined ? bufWidths.get(lineNumber) : undefined;
     const colWidths = widthInfo ? widthInfo.allocated : undefined;
 
-    // Split the line into cells to compute per-cell padding
-    let inner = trimmed;
-    if (inner.startsWith('|')) inner = inner.slice(1);
-    if (inner.endsWith('|')) inner = inner.slice(0, -1);
-    const cells = inner.split('|');
+    // Split the line into cells to compute per-cell padding. Escaped pipes
+    // (`\|`) are cell content, so split only on the unescaped column borders.
+    const cells = splitTableCells(tableRowInner(trimmed));
 
     // Pipe positions in the (untrimmed) source line — shared by the wrapped
-    // first-line path and the single-line path below.
-    const pipePositions: number[] = [];
-    for (let i = 0; i < lineContent.length; i++) {
-      if (lineContent[i] === '|') pipePositions.push(i);
-    }
+    // first-line path and the single-line path below. Unescaped pipes only:
+    // an escaped `\|` is rendered inline by the char loop, not as a border.
+    const pipePositions = tablePipePositions(lineContent);
 
     // Multi-line cell wrapping. When a column's text is wider than its
     // allocated width the row spans several visual lines. The FIRST visual
@@ -1681,6 +1729,25 @@ function processLineConceals(
       // Track which pipe index we're on (0 = leading pipe)
       let pipeIdx = 0;
       for (let i = 0; i < lineContent.length; i++) {
+        // Escaped pipe `\|`: cell content, not a column border. Render it as a
+        // literal `|` (the backslash is just the escape marker), and do NOT
+        // count it as a column separator. Skip the conceal when the cursor is
+        // on the row (leave the raw `\|` visible for editing, like other
+        // revealed markers) or when the enclosing cell is truncated (its
+        // cell-wide conceal already covers these bytes).
+        if (lineContent[i] === '|' && isEscapedPipe(lineContent, i)) {
+          if (!cursorStrictlyOnLine) {
+            const inTruncated = truncatedCellCharRanges.some(
+              r => (i - 1) >= r.start && (i - 1) < r.end,
+            );
+            if (!inTruncated) {
+              const escStart = charToByte(lineContent, i - 1, byteStart);
+              const escEnd = charToByte(lineContent, i + 1, byteStart);
+              editor.addConceal(bufferId, "md-syntax", escStart, escEnd, "|");
+            }
+          }
+          continue;
+        }
         if (lineContent[i] === '|') {
           const pipeByte = charToByte(lineContent, i, byteStart);
           const pipeByteEnd = charToByte(lineContent, i + 1, byteStart);
@@ -1720,8 +1787,8 @@ function processLineConceals(
           }
 
           if (isSeparator) {
-            const pipeIndex = lineContent.substring(0, i + 1).split('|').length - 1;
-            const totalPipes = lineContent.split('|').length - 1;
+            const pipeIndex = pipeIdx + 1;
+            const totalPipes = pipePositions.length;
             let replacement = '┼';
             if (pipeIndex === 1) replacement = '├';
             else if (pipeIndex === totalPipes) replacement = '┤';
@@ -1986,11 +2053,9 @@ function processTableAlignment(
 
     for (const line of group) {
       const trimmed = line.content.trim();
-      // Strip outer pipes and split on inner pipes
-      let inner = trimmed;
-      if (inner.startsWith('|')) inner = inner.slice(1);
-      if (inner.endsWith('|')) inner = inner.slice(0, -1);
-      const cells = inner.split('|');
+      // Strip outer pipes and split on unescaped inner pipes (so `\|` stays
+      // cell content and doesn't inflate the column count / widths).
+      const cells = splitTableCells(tableRowInner(trimmed));
       allCells.push(cells);
     }
 
