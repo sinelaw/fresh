@@ -1520,8 +1520,9 @@ impl Editor {
             self.authority()
                 .env_provider
                 .set(snippet, dir.map(std::path::PathBuf::from));
-            // Re-evaluate already-running tooling under the new env.
-            self.request_restart(self.working_dir().to_path_buf());
+            // Re-evaluate already-running tooling under the new env — scoped to
+            // THIS window only.
+            self.refresh_active_window_lsp_for_env();
         } else {
             self.active_window_mut().status_message =
                 Some("Workspace not trusted — cannot activate environment".to_string());
@@ -1532,7 +1533,48 @@ impl Editor {
         let was_active = self.authority().env_provider.is_active();
         self.authority().env_provider.clear();
         if was_active {
-            self.request_restart(self.working_dir().to_path_buf());
+            self.refresh_active_window_lsp_for_env();
+        }
+    }
+
+    /// Re-launch the *active window's* already-running language servers so they
+    /// pick up a just-changed environment (`editor.setEnv` / `clearEnv`),
+    /// WITHOUT a process-wide editor rebuild.
+    ///
+    /// The window's `EnvProvider` is updated in place (see
+    /// `services::env_provider` — "the plugin sets the recipe in place […] and
+    /// there is no authority rebuild"), so every *new* spawn — new terminals,
+    /// servers started later — already inherits the change. Only servers that
+    /// were spawned under the old env need a re-launch, and only this window's:
+    /// each `Window` owns its own LSP, terminals, and authority, so a single
+    /// workspace's env activation must not touch the others. The previous
+    /// `request_restart` here rebuilt the whole editor — tearing down every
+    /// other orchestrator session's terminals and closing the dock — which is
+    /// the "Trust restarted everything" bug. Already-open terminals keep
+    /// running and only adopt the new env when reopened (matching the env
+    /// subsystem's lazy, capture-at-spawn model).
+    fn refresh_active_window_lsp_for_env(&mut self) {
+        let active_id = self.active_window;
+        let running: Vec<String> = self
+            .windows
+            .get(&active_id)
+            .map(|w| w.lsp.running_servers())
+            .unwrap_or_default();
+        if running.is_empty() {
+            return;
+        }
+        let file_path = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .and_then(|meta| meta.file_path().cloned());
+        for language in &running {
+            if let Some(w) = self.windows.get_mut(&active_id) {
+                let _ = w.lsp.manual_restart(language, file_path.as_deref());
+            }
+            // Re-send didOpen for this language's buffers so the fresh server
+            // (now under the new env) sees the open documents.
+            self.reopen_buffers_for_language(language);
         }
     }
 

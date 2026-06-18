@@ -896,10 +896,13 @@ impl Editor {
     /// Handle an action (for normal mode and command execution).
     /// Used by the app module internally and by the GUI module for native menu dispatch.
     /// Change the current workspace's trust level, persist it, and report it.
-    /// When the level actually changes, the editor restarts so the new policy
-    /// applies to already-running tooling (a now-trusted project's LSP starts;
-    /// a now-restricted/blocked one is torn down). Already-correct selections
-    /// (e.g. confirming the current level) only persist the decision.
+    /// The new policy applies live at the next authority-routed spawn (the
+    /// guarding spawners read the level on every spawn) — there is NO editor
+    /// restart here, deliberately: a rebuild would reset every other
+    /// orchestrator session's buffers/layout (see the body). Trust-gated work
+    /// re-triggers via the `trust_changed` hook instead (e.g. env-manager
+    /// re-activates a now-trusted env). Already-correct selections (e.g.
+    /// confirming the current level) only persist the decision.
     pub(crate) fn set_workspace_trust_level(
         &mut self,
         level: crate::services::workspace_trust::TrustLevel,

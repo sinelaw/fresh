@@ -534,3 +534,61 @@ fn activating_env_in_one_session_does_not_affect_another() -> anyhow::Result<()>
     );
     Ok(())
 }
+
+/// Regression (orchestrator "Trust restarted everything"): activating an env
+/// via `setEnv` — the path the env-manager drives on `trust_changed` for a
+/// shell/venv project — must NOT request a process-wide editor restart.
+///
+/// The `EnvProvider` is updated in place and every *new* spawn inherits it, so
+/// no rebuild is needed. The old `handle_set_env` called `request_restart`,
+/// which rebuilds the whole editor process — dropping every window's
+/// `terminal_manager` (all orchestrator sessions' PTYs) and reconstructing the
+/// orchestrator plugin (closing the dock). Asserting `!should_restart()` after
+/// activation locks that out. Drives `PluginCommand::SetEnv` directly (what
+/// `editor.setEnv` dispatches) rather than poking the provider, so it covers
+/// the actual restart decision.
+#[test]
+fn activating_env_does_not_restart_the_editor() -> anyhow::Result<()> {
+    use fresh::services::workspace_trust::TrustLevel;
+    use fresh_core::api::PluginCommand;
+
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+    let active = harness.editor_mut().active_window_id();
+    // Env activation only applies in a Trusted workspace (`handle_set_env`).
+    harness
+        .editor()
+        .session(active)
+        .unwrap()
+        .authority()
+        .workspace_trust
+        .set_level(TrustLevel::Trusted);
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetEnv {
+            snippet: "export FRESH_TEST=1".into(),
+            dir: None,
+        })?;
+
+    assert!(
+        harness
+            .editor()
+            .session(active)
+            .unwrap()
+            .authority()
+            .env_provider
+            .is_active(),
+        "env activated in place"
+    );
+    assert!(
+        !harness.editor().should_restart(),
+        "activating an env must not request a process-wide editor restart \
+         (a rebuild tears down other sessions' terminals and closes the dock)"
+    );
+    Ok(())
+}
