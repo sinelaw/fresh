@@ -651,9 +651,9 @@ fn mouse_click_on_dock_new_button_opens_form() {
     // a dock widget proves mouse hit-testing routes into the panel.
     let new_row = row_of(&h, "+ New") as u16;
     h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    h.assert_screen_contains("New Session");
+    h.assert_screen_contains("New Workspace");
     // The dock and the centered form occupy disjoint slots, so opening
     // the form must NOT tear down the dock — its header stays painted in
     // the left column beside the modal.
@@ -661,7 +661,7 @@ fn mouse_click_on_dock_new_button_opens_form() {
 
     // Esc cancels the form; the dock regains focus and stays visible.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.assert_screen_contains("Orchestrator");
 }
@@ -679,14 +679,14 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     // `dock_new` widget_event since the dock has no editor mode). The dock
     // lives in its own slot, so the centered form coexists with it.
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    h.assert_screen_contains("New Session");
+    h.assert_screen_contains("New Workspace");
     h.assert_screen_contains("Orchestrator");
 
     // Esc returns to the dock, which is still mounted and re-focused.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.assert_screen_contains("Orchestrator");
 }
@@ -712,13 +712,13 @@ fn dock_enter_on_focused_button_runs_button_action() {
     // form — the same thing a click on "+ New" does — not dive the list.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    h.assert_screen_contains("New Session");
+    h.assert_screen_contains("New Workspace");
 
     // Esc the form; the dock is still mounted and re-focused on the list.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
     // Walk focus to the "view:" toggle button (sessions → new-session →
@@ -893,7 +893,7 @@ fn picker_space_toggles_focused_checkbox_not_list() {
     // the worktree filter row is visible, and the list shows alphaproj.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("ORCHESTRATOR :: Sessions")
+        s.contains("ORCHESTRATOR :: Workspaces")
             && s.contains("Show all worktrees")
             && s.contains("[ ] alphaproj")
     })
@@ -988,7 +988,7 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     // Sanity: the dock (not the modal picker) is what's up, and the dock's
     // "Manage" button — which only the dock renders, never the picker — is
     // on screen.
-    h.assert_screen_not_contains("ORCHESTRATOR :: Sessions");
+    h.assert_screen_not_contains("ORCHESTRATOR :: Workspaces");
     h.assert_screen_contains("Manage");
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
@@ -1002,7 +1002,7 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // The control room surfaces (no nag) ...
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
     h.assert_screen_not_contains("the dock already lists sessions");
     // ... fullscreen *over* the dock: the modal's title renders well within
@@ -1014,9 +1014,9 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     let screen = h.screen_to_string();
     let title_line = screen
         .lines()
-        .find(|l| l.contains("ORCHESTRATOR :: Sessions"))
+        .find(|l| l.contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
-    let byte_idx = title_line.find("ORCHESTRATOR :: Sessions").unwrap();
+    let byte_idx = title_line.find("ORCHESTRATOR :: Workspaces").unwrap();
     let title_col = title_line[..byte_idx].chars().count();
     assert!(
         title_col < 38,
@@ -1031,7 +1031,7 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     // dock — it could not regain focus if it had been unmounted — and the
     // dock's "Manage" button is still there.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+    h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
     h.assert_screen_contains("Manage");
@@ -1113,7 +1113,7 @@ fn control_room_preview_buttons_wrap_on_narrow_pane() {
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
 
     // Every action stays on screen — the right-most "Delete" would be
@@ -1135,8 +1135,8 @@ fn control_room_preview_buttons_wrap_on_narrow_pane() {
     );
 }
 
-/// The New-Session form's Cancel / Create Session buttons must wrap onto
-/// separate lines on a narrow form rather than "Create Session" being
+/// The New-Session form's Cancel / Create Workspace buttons must wrap onto
+/// separate lines on a narrow form rather than "Create Workspace" being
 /// clipped off the right edge (a plain row truncates the merged button line
 /// to the form width). `wrappingRow` reflows the pair instead.
 #[test]
@@ -1153,24 +1153,24 @@ fn new_session_form_buttons_wrap_on_narrow_form() {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: New Session").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+    h.type_text("Orchestrator: New Workspace").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
-    // Both buttons stay on screen — "Create Session" would be clipped off a
+    // Both buttons stay on screen — "Create Workspace" would be clipped off a
     // non-wrapping row at this width — and they land on different rows.
-    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+    h.wait_until(|h| h.screen_to_string().contains("Create Workspace"))
         .unwrap();
     let cancel_row = row_of(&h, "Cancel");
-    let create_row = row_of(&h, "Create Session");
+    let create_row = row_of(&h, "Create Workspace");
     assert_ne!(
         cancel_row,
         create_row,
         "New-Session form buttons must wrap onto separate rows on a narrow \
-         form (Cancel at row {cancel_row}, Create Session at {create_row}).\n\
+         form (Cancel at row {cancel_row}, Create Workspace at {create_row}).\n\
          Screen:\n{}",
         h.screen_to_string()
     );
@@ -1199,11 +1199,11 @@ fn new_session_form_swallows_doubleclick_no_buffer_leak() {
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: New Session").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+    h.type_text("Orchestrator: New Workspace").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
     // "hello world" stays visible above the vertically-centered form. Find
@@ -1225,7 +1225,7 @@ fn new_session_form_swallows_doubleclick_no_buffer_leak() {
     // Full modal capture leaves the buffer untouched, so the insert lands at
     // the cursor (end): "hello worldZ".
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.type_text("Z").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("hello worldZ"))
@@ -1524,10 +1524,10 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     // Open the new-session form. The "Create a new git worktree" box
     // defaults on for a git repo, so submitting attempts a worktree add.
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
-    // Tab forward until the "Create Session" button is the focused
+    // Tab forward until the "Create Workspace" button is the focused
     // control — its line carries the `▸` focus marker right before it
     // (the form reserves the marker gutter). Walking to the button by
     // its marker keeps this robust to the focus-cycle length: each radio
@@ -1535,13 +1535,13 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     // stops depends on the active backend's field count. Tab also closes
     // any open path-completion popup along the way. Enter then submits.
     let mut guard = 0;
-    while !h.screen_to_string().contains("▸ [ Create Session ]") {
+    while !h.screen_to_string().contains("▸ [ Create Workspace ]") {
         h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         guard += 1;
         assert!(
             guard < 30,
-            "Tab never focused the Create Session button.\n{}",
+            "Tab never focused the Create Workspace button.\n{}",
             h.screen_to_string(),
         );
     }
@@ -1609,10 +1609,10 @@ fn dock_new_session_name_is_rooted_in_the_project() {
     open_dock(&mut h);
 
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
-    // The Session Name field's auto-default carries the project basename
+    // The Workspace Name field's auto-default carries the project basename
     // and a numeric suffix ("alphaproj-…"). Without the fix it reads
     // "session-N", which has no "alphaproj-" stem.
     h.wait_until(|h| h.screen_to_string().contains("alphaproj-"))
@@ -1623,7 +1623,7 @@ fn dock_new_session_name_is_rooted_in_the_project() {
 /// F8: accepting a directory path-completion with Tab CLOSES the
 /// dropdown instead of re-popping it over the form fields. Because Tab
 /// *accepts* while a popup is open, the old re-pop (which listed the
-/// accepted directory's children) buried the worktree / Session Name
+/// accepted directory's children) buried the worktree / Workspace Name
 /// fields and trapped a Tab-to-advance user in a loop of re-accepting.
 ///
 /// We observe the dropdown's open/closed state through the **"Session
@@ -1655,11 +1655,11 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     open_dock(&mut h);
 
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    // The form opens with every field visible, "Session Name" among them.
+    // The form opens with every field visible, "Workspace Name" among them.
     assert!(
-        h.screen_to_string().contains("Session Name"),
+        h.screen_to_string().contains("Workspace Name"),
         "form should open with its fields visible:\n{}",
         h.screen_to_string()
     );
@@ -1669,17 +1669,17 @@ fn dock_form_tab_accepting_directory_completion_closes_dropdown() {
     // dropdown lists the directory's children; the top one is `aaa_dir/`.
     // Path completion is synchronous, so the popup is up once typing
     // finishes — and it paints over the fields below Project Path, hiding
-    // the "Session Name" label.
+    // the "Workspace Name" label.
     h.type_text(&format!("{}/", root.display())).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Session Name"))
+    h.wait_until(|h| !h.screen_to_string().contains("Workspace Name"))
         .unwrap();
 
     // Tab accepts the highlighted `aaa_dir/`. With the fix the dropdown
-    // CLOSES, so the form fields — including "Session Name" — reappear.
+    // CLOSES, so the form fields — including "Workspace Name" — reappear.
     // Without the fix it re-pops `aaa_dir`'s children, keeping the fields
     // buried, and this wait times out: the observable bug.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Session Name"))
+    h.wait_until(|h| h.screen_to_string().contains("Workspace Name"))
         .unwrap();
 }
 
@@ -1798,7 +1798,7 @@ fn creating_session_moves_dock_highlight_to_new_session() {
 
     // Open the new-session form and point it at the non-git dir.
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.type_text(&plain.display().to_string()).unwrap();
     // The typed path lands in the field (its last segment is visible).
@@ -1807,16 +1807,16 @@ fn creating_session_moves_dock_highlight_to_new_session() {
     // Accept the path completion with Tab so the popup closes and the
     // Create button is no longer obscured by it.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Create Session"))
+    h.wait_until(|h| h.screen_to_string().contains("Create Workspace"))
         .unwrap();
 
-    // Submit by clicking "Create Session".
+    // Submit by clicking "Create Workspace".
     let screen = h.screen_to_string();
     let (col, btn_row) = screen
         .lines()
         .enumerate()
-        .find_map(|(r, l)| l.find("Create Session").map(|c| (c as u16, r as u16)))
-        .expect("Create Session button should be visible");
+        .find_map(|(r, l)| l.find("Create Workspace").map(|c| (c as u16, r as u16)))
+        .expect("Create Workspace button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
     // The dock's right-edge divider, sampled on the toolbar row (row 0),

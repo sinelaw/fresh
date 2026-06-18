@@ -1400,7 +1400,7 @@ function buildPreviewEntries(
     return [
       styledRow([
         {
-          text: "No session selected",
+          text: "No workspace selected",
           style: { fg: "editor.whitespace_indicator_fg", italic: true },
         },
       ]),
@@ -1689,7 +1689,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       styledRow([{ text: "" }]),
       styledRow([
         {
-          text: "Click it (or press Enter) to open this worktree as a session.",
+          text: "Click it (or press Enter) to open this worktree as a workspace.",
           style: { fg: "ui.help_key_fg", italic: true },
         },
       ]),
@@ -1763,7 +1763,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // It's the dir the editor was started in — informational only; it's
   // deletable like any other session once another window exists.
   const sectionLabel = s.id === 1
-    ? `${s.label}  —  launch session`
+    ? `${s.label}  —  launch workspace`
     : s.label;
   return labeledSection({
     label: sectionLabel,
@@ -1778,24 +1778,24 @@ function confirmActionLines(action: BulkAction): string[] {
   switch (action) {
     case "stop":
       return [
-        "  • send SIGTERM to all session processes",
+        "  • send SIGTERM to all workspace processes",
         "  • SIGKILL after a short grace period",
         "",
-        "The worktree and session record remain.",
+        "The worktree and workspace record remain.",
       ];
     case "archive":
       return [
-        "  • SIGKILL all session processes",
-        "  • close the editor session",
+        "  • SIGKILL all workspace processes",
+        "  • close the editor workspace",
         "  • move the worktree to .archived/",
         "",
         "Reversible via Unarchive.",
       ];
     case "delete":
       return [
-        "  • stop all session processes",
+        "  • stop all workspace processes",
         "  • run `git worktree remove`",
-        "  • drop the session record",
+        "  • drop the workspace record",
       ];
   }
 }
@@ -1819,7 +1819,7 @@ function buildConfirmPane(
   if (bulk) {
     entries.push(
       styledRow([
-        { text: `${cap} these ${existing.length} sessions?`, style: { bold: true } },
+        { text: `${cap} these ${existing.length} workspaces?`, style: { bold: true } },
       ]),
       styledRow([{ text: "" }]),
     );
@@ -1847,13 +1847,13 @@ function buildConfirmPane(
     const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
     entries.push(
       styledRow([
-        { text: `${cap} session ${ss?.label ?? ""}?`, style: { bold: true } },
+        { text: `${cap} workspace ${ss?.label ?? ""}?`, style: { bold: true } },
       ]),
     );
   }
   entries.push(
     styledRow([{ text: "" }]),
-    styledRow([{ text: bulk ? "For each session this will:" : "This will:" }]),
+    styledRow([{ text: bulk ? "For each workspace this will:" : "This will:" }]),
   );
   for (const line of confirmActionLines(action)) {
     entries.push(styledRow([{ text: line }]));
@@ -1870,7 +1870,7 @@ function buildConfirmPane(
     );
   }
   return labeledSection({
-    label: bulk ? `Confirm ${cap} — ${existing.length} sessions` : `Confirm ${cap}`,
+    label: bulk ? `Confirm ${cap} — ${existing.length} workspaces` : `Confirm ${cap}`,
     child: col(
       { kind: "raw", entries },
       spacer(0),
@@ -2067,7 +2067,7 @@ function buildOpenSpec(): WidgetSpec {
   const curName = projectLabel(curKey);
   const scopeKey = editor.getKeybindingLabel("orchestrator_toggle_scope", OPEN_MODE);
   const titleSuffix = scope === "current" ? `  —  ${curName}` : "  —  all projects";
-  const sectionLabel = "Sessions";
+  const sectionLabel = "Workspaces";
   // `Project:` control — a visible, clickable scope switch with the
   // Alt+P hint baked into the button label. Shows the current
   // project's name when scoped, "All" when showing every project.
@@ -2116,8 +2116,8 @@ function buildOpenSpec(): WidgetSpec {
     OPEN_MODE,
   );
   const trivialLabel = trivialKey
-    ? `Show empty/1-file sessions   (${trivialKey})`
-    : "Show empty/1-file sessions";
+    ? `Show empty/1-file workspaces   (${trivialKey})`
+    : "Show empty/1-file workspaces";
   const trivialFilterRow = row(
     toggle(!openDialog.hideTrivial, trivialLabel, {
       key: openDialog.pendingConfirm !== null ? undefined : "hide-trivial",
@@ -2131,7 +2131,7 @@ function buildOpenSpec(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: "ORCHESTRATOR :: Sessions",
+            text: "ORCHESTRATOR :: Workspaces",
             style: { fg: "ui.popup_border_fg", bold: true },
           },
           {
@@ -3391,7 +3391,7 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
     return true;
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: could not open a replacement session — ${
+      `Orchestrator: could not open a replacement workspace — ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
@@ -3434,7 +3434,7 @@ interface LifecycleResult {
 // the whole run.
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
-  if (!s) return { ok: false, err: "session gone" };
+  if (!s) return { ok: false, err: "workspace gone" };
   const removable = ownsWorktree(s);
 
   // Live session: the editor must always host a window. If this is the
@@ -3728,7 +3728,7 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 // batches it.
 async function deleteOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
-  if (!s) return { ok: false, err: "session gone" };
+  if (!s) return { ok: false, err: "workspace gone" };
   const removable = ownsWorktree(s);
 
   if (!s.discovered && id > 0) {
@@ -3811,7 +3811,7 @@ async function runConfirmedAction(
   if (action === "stop") {
     let n = 0;
     for (const id of targets) if (stopOne(id)) n += 1;
-    editor.setStatus(`Orchestrator: stop signal sent to ${n} session(s)`);
+    editor.setStatus(`Orchestrator: stop signal sent to ${n} workspace(s)`);
     // Stop leaves sessions in place; drop them from the selection so
     // the bulk bar reflects that the action ran.
     for (const id of targets) openDialog.selectedIds.delete(id);
@@ -3854,7 +3854,7 @@ async function runConfirmedAction(
   } else if (lastErr) {
     setDialogError(`${verb} ${okCount}/${targets.length}; last error: ${lastErr}`);
   } else {
-    editor.setStatus(`Orchestrator: ${verb} ${okCount} session(s)`);
+    editor.setStatus(`Orchestrator: ${verb} ${okCount} workspace(s)`);
   }
   for (const repo of touchedRepos) triggerSyncAsync(repo);
   refreshOpenDialog();
@@ -4902,7 +4902,7 @@ function localBodyFields(): WidgetSpec[] {
       }),
     }),
     worktreeEnabled
-      ? toggle(effectiveCreateWorktree, "Create a new git worktree for this session", {
+      ? toggle(effectiveCreateWorktree, "Create a new git worktree for this workspace", {
           key: "worktree",
         })
       : {
@@ -4910,7 +4910,7 @@ function localBodyFields(): WidgetSpec[] {
           entries: [
             styledRow([
               {
-                text: "[ ] Create a new git worktree for this session",
+                text: "[ ] Create a new git worktree for this workspace",
                 style: { fg: "editor.whitespace_indicator_fg" },
               },
               {
@@ -4929,7 +4929,7 @@ function localBodyFields(): WidgetSpec[] {
           {
             text: form.createWorktree
               ? "  ↳ existing worktree here — uncheck to attach instead of forking a new one"
-              : "  ↳ existing worktree — this session will attach to it",
+              : "  ↳ existing worktree — this workspace will attach to it",
             style: { fg: "ui.help_key_fg", italic: true },
           },
         ]),
@@ -5171,7 +5171,7 @@ function buildConnectingView(): WidgetSpec {
     rows.push(roRow("Project", form.projectPath.value.trim() || form.defaultProjectPath));
   }
   const name = form.name.value.trim();
-  if (name) rows.push(roRow("Session", name));
+  if (name) rows.push(roRow("Workspace", name));
 
   const remote = form.backend === "ssh" || form.backend === "kubernetes";
   return col(
@@ -5183,7 +5183,7 @@ function buildConnectingView(): WidgetSpec {
           styledRow([
             { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "New Session", style: HEADER_LABEL_STYLE },
+            { text: "New Workspace", style: HEADER_LABEL_STYLE },
           ]),
         ],
       },
@@ -5197,7 +5197,7 @@ function buildConnectingView(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: remote ? "Connecting… " : "Creating session… ",
+            text: remote ? "Connecting… " : "Creating workspace… ",
             style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
           },
           {
@@ -5211,7 +5211,7 @@ function buildConnectingView(): WidgetSpec {
     wrappingRow(
       button("Cancel", { intent: "danger", key: "cancel" }),
       spacer(2),
-      button("Create Session", { intent: "primary", key: "create", disabled: true }),
+      button("Create Workspace", { intent: "primary", key: "create", disabled: true }),
     ),
   );
 }
@@ -5231,7 +5231,7 @@ function buildFormSpec(): WidgetSpec {
           styledRow([
             { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "New Session", style: HEADER_LABEL_STYLE },
+            { text: "New Workspace", style: HEADER_LABEL_STYLE },
           ]),
         ],
       },
@@ -5248,7 +5248,7 @@ function buildFormSpec(): WidgetSpec {
     // the host based on the panel's focus_key) is the authoritative
     // focus cue.
     labeledSection({
-      label: "Session Name",
+      label: "Workspace Name",
       child: text({
         value: form.name.value,
         cursorByte: form.name.cursor,
@@ -5311,7 +5311,7 @@ function buildFormSpec(): WidgetSpec {
     wrappingRow(
       button("Cancel", { intent: "danger", key: "cancel" }),
       spacer(2),
-      button("Create Session", { intent: "primary", key: "create" }),
+      button("Create Workspace", { intent: "primary", key: "create" }),
     ),
     spacer(0),
     // === Footer: keybinding helper, centered. ====================
@@ -5980,7 +5980,7 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
   // dedicated command (the devcontainer plugin owns `devcontainer up` + the
   // docker-exec authority).
   fail(
-    "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer sessions are coming next.)",
+    "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)",
   );
 }
 
@@ -6203,7 +6203,7 @@ async function submitForm(): Promise<void> {
     }
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: failed to start session — ${
+      `Orchestrator: failed to start workspace — ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
@@ -6281,7 +6281,7 @@ async function attachToWorktree(opts: {
     }
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: failed to attach session — ${
+      `Orchestrator: failed to attach workspace — ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
@@ -6535,7 +6535,7 @@ function enterBulkConfirm(action: BulkAction): void {
   if (!openDialog || !openPanel) return;
   const targets = eligibleSelected(action);
   if (targets.length === 0) {
-    setDialogError(`no selected session can be ${action === "stop" ? "stopped" : action + "d"}`);
+    setDialogError(`no selected workspace can be ${action === "stop" ? "stopped" : action + "d"}`);
     refreshOpenDialog();
     return;
   }
@@ -7193,23 +7193,23 @@ editor.on("widget_event", (e) => {
 function killSelected(): void {
   if (!openDialog) {
     editor.setStatus(
-      "Orchestrator: open the session list (Ctrl+P → Orchestrator: Open) first",
+      "Orchestrator: open the workspace list (Ctrl+P → Orchestrator: Open) first",
     );
     return;
   }
   const ids = openDialog.filteredIds;
   if (ids.length === 0) {
-    editor.setStatus("Orchestrator: no session selected");
+    editor.setStatus("Orchestrator: no workspace selected");
     return;
   }
   const id = ids[Math.max(0, Math.min(openDialog.selectedIndex, ids.length - 1))];
   if (id <= 0) {
-    editor.setStatus("Orchestrator: select a session row first");
+    editor.setStatus("Orchestrator: select a workspace row first");
     return;
   }
   if (id === editor.activeWindow()) {
     editor.setStatus(
-      "Orchestrator: dive elsewhere first, then kill this session",
+      "Orchestrator: dive elsewhere first, then kill this workspace",
     );
     return;
   }
@@ -7368,28 +7368,28 @@ registerHandler("orchestrator_kill", killSelected);
 // directly.
 editor.registerCommand(
   "Orchestrator: Open",
-  "Show all editor sessions in a floating selector",
+  "Show all editor workspaces in a floating selector",
   "orchestrator_open",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
-  "Orchestrator: New Session",
-  "Spawn a new editor session in a worktree",
+  "Orchestrator: New Workspace",
+  "Spawn a new editor workspace in a worktree",
   "orchestrator_new",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
   "Orchestrator: Kill Selected",
-  "Close the session highlighted in the open Orchestrator prompt",
+  "Close the workspace highlighted in the open Orchestrator prompt",
   "orchestrator_kill",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
   "Orchestrator: Toggle Dock",
-  "Show/hide the persistent left session dock (↑↓ switches windows live)",
+  "Show/hide the persistent left workspace dock (↑↓ switches windows live)",
   "orchestrator_dock_toggle",
   null,
   { terminalBypass: true },

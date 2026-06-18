@@ -7,7 +7,7 @@
 //!    rows. The user can dive one to open a session there without
 //!    creating it by hand.
 //!
-//! 2. **Form attach hint**: pointing the New Session form's Project
+//! 2. **Form attach hint**: pointing the New Workspace form's Project
 //!    Path at an existing linked worktree surfaces an "existing
 //!    worktree" hint, signalling that submitting will attach to it
 //!    (managed) rather than fork a fresh worktree.
@@ -173,7 +173,7 @@ fn open_orchestrator_dialog(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Sessions"))
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
 }
 
@@ -198,15 +198,15 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Orchestrator: New Session").unwrap();
+    harness.type_text("Orchestrator: New Workspace").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
 }
 
@@ -285,7 +285,7 @@ fn discovered_worktree_preview_offers_open() {
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("On-disk worktree") && s.contains("to open this worktree as a session")
+            s.contains("On-disk worktree") && s.contains("to open this worktree as a workspace")
         })
         .unwrap_or_else(|_| {
             panic!(
@@ -364,14 +364,14 @@ fn diving_discovered_worktree_attaches_managed_session() {
     );
 }
 
-/// Pointing the New Session form's Project Path at an existing linked
+/// Pointing the New Workspace form's Project Path at an existing linked
 /// worktree surfaces the "existing worktree" attach hint.
 #[test]
 fn new_session_form_hints_existing_worktree() {
     let (_temp, repo, wt) = set_up_repo_with_worktree();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
     harness.tick_and_render().unwrap();
-    wait_for_command(&mut harness, "Orchestrator: New Session");
+    wait_for_command(&mut harness, "Orchestrator: New Workspace");
 
     open_new_session_form(&mut harness);
 
@@ -383,7 +383,7 @@ fn new_session_form_hints_existing_worktree() {
         .wait_until(|h| h.screen_to_string().contains("existing worktree"))
         .unwrap_or_else(|_| {
             panic!(
-                "New Session form should hint that Project Path is an existing \
+                "New Workspace form should hint that Project Path is an existing \
                  worktree.\nScreen:\n{}",
                 harness.screen_to_string()
             )
@@ -634,8 +634,8 @@ fn scrollbar_click_scrolls_the_session_list() {
     let lines: Vec<&str> = screen.lines().collect();
     let top_border_row = lines
         .iter()
-        .position(|l| l.contains("╭─ Sessions"))
-        .expect("Sessions box top border");
+        .position(|l| l.contains("╭─ Workspaces"))
+        .expect("Workspaces box top border");
     let border_col = lines[top_border_row]
         .chars()
         .position(|c| c == '╮')
@@ -949,7 +949,7 @@ fn dock_opening_worktree_keeps_its_row_position() {
 
 /// Archiving the *last* session — which is also the launch / in-place
 /// session (no dedicated worktree) — must not be refused. Every session
-/// is archivable now: the launch session is recorded at its own root and,
+/// is archivable now: the launch workspace is recorded at its own root and,
 /// because it's the only live window, a replacement terminal session is
 /// opened in its project first so the editor is never left empty.
 ///
@@ -963,7 +963,7 @@ fn archive_last_in_place_session_opens_replacement() {
         eprintln!("skipping: no PTY available in this environment");
         return;
     }
-    // Only the launch session exists (the on-disk worktree is never
+    // Only the launch workspace exists (the on-disk worktree is never
     // attached here) — an in-place session with no dedicated worktree.
     let (_temp, repo, _wt) = set_up_repo_with_worktree();
     let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
@@ -971,22 +971,22 @@ fn archive_last_in_place_session_opens_replacement() {
     wait_for_command(&mut harness, "Orchestrator: Open");
 
     open_orchestrator_dialog(&mut harness);
-    // The launch session is a trivial (empty) session, hidden by default;
+    // The launch workspace is a trivial (empty) session, hidden by default;
     // Alt+I reveals it so it can be selected.
     harness
         .send_key(KeyCode::Char('i'), KeyModifiers::ALT)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("launch session"))
+        .wait_until(|h| h.screen_to_string().contains("launch workspace"))
         .unwrap_or_else(|_| {
             panic!(
-                "the launch session should be listed after Alt+I.\nScreen:\n{}",
+                "the launch workspace should be listed after Alt+I.\nScreen:\n{}",
                 harness.screen_to_string()
             )
         });
 
     // Focus opens on Visit; Tab to the Archive button (Stop is disabled
-    // for the terminal-less launch session, so the cycle skips it:
+    // for the terminal-less launch workspace, so the cycle skips it:
     // visit -> toggle-details -> archive). Activate it to open the
     // confirm. Without the fix Archive is disabled (dropped from the Tab
     // cycle) and the action is refused, so the confirm never shows.
@@ -999,7 +999,7 @@ fn archive_last_in_place_session_opens_replacement() {
         .wait_until(|h| h.screen_to_string().contains("Confirm Archive"))
         .unwrap_or_else(|_| {
             panic!(
-                "archiving the launch session should reach the confirm step.\n\
+                "archiving the launch workspace should reach the confirm step.\n\
                  Screen:\n{}",
                 harness.screen_to_string()
             )
@@ -1011,7 +1011,7 @@ fn archive_last_in_place_session_opens_replacement() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // The launch session is archived; because it was the only window, a
+    // The launch workspace is archived; because it was the only window, a
     // replacement terminal session was opened in its project — so the
     // editor still hosts a live session, now a *Terminal*.
     harness

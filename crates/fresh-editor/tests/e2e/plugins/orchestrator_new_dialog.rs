@@ -1,4 +1,4 @@
-//! E2E coverage for the Orchestrator "New Session" form's path-
+//! E2E coverage for the Orchestrator "New Workspace" form's path-
 //! completion popup behaviour:
 //!
 //! 1. The dropdown renders inside a bordered box (it used to be bare
@@ -77,7 +77,7 @@ fn wait_for_new_session_command(harness: &mut EditorTestHarness) {
             let reg = h.editor().command_registry().read().unwrap();
             reg.get_all()
                 .iter()
-                .any(|c| c.get_localized_name() == "Orchestrator: New Session")
+                .any(|c| c.get_localized_name() == "Orchestrator: New Workspace")
         })
         .unwrap();
 }
@@ -87,15 +87,15 @@ fn open_new_session_form(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Orchestrator: New Session").unwrap();
+    harness.type_text("Orchestrator: New Workspace").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+        .wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
 }
 
@@ -684,7 +684,7 @@ fn enter_advance_after_popup_dismiss_moves_plugin_focus_mirror() {
 
     // Now type a marker character. If the plugin's focus
     // mirror correctly advanced past Project Path, this char
-    // lands somewhere else (Session Name's input replaces the
+    // lands somewhere else (Workspace Name's input replaces the
     // placeholder, etc.) and the Project Path value stays at
     // `typed`. If the plugin's mirror is stuck on
     // project_path, the marker extends it.
@@ -795,7 +795,7 @@ fn bracketed_paste_routes_to_focused_dialog_field() {
     // the now-revealed buffer.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
     assert!(
         !harness.screen_to_string().contains("PASTEDMARKER"),
@@ -846,7 +846,7 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
     // the hidden buffer; revealing it after Esc surfaces the marker.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
     assert!(
         !harness.screen_to_string().contains("IGNORED_PASTE"),
@@ -889,7 +889,7 @@ fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
 /// Tab moves linearly between *fields* — one stop per radio group, not
 /// one per option. Walking a full cycle lands the marker on the active
 /// "Run in:" tab exactly once and the active "Agent:" preset exactly
-/// once (never on an inactive option), and reaches `[ Create Session ]`.
+/// once (never on an inactive option), and reaches `[ Create Workspace ]`.
 #[test]
 fn tab_is_linear_one_stop_per_radio_group() {
     let (_temp, workspace) = set_up_workspace();
@@ -957,7 +957,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("Create Session") {
+        if line.contains("Create Workspace") {
             saw_create = true;
         }
     }
@@ -976,7 +976,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
         agent_stops, 1,
         "the 'Agent:' group is a single Tab stop per cycle (got {agent_stops})",
     );
-    assert!(saw_create, "Tab must reach the [ Create Session ] button");
+    assert!(saw_create, "Tab must reach the [ Create Workspace ] button");
 }
 
 /// ←/→ changes the option *within* the "Run in:" selector (and swaps
@@ -1040,7 +1040,7 @@ fn esc_closes_dropdown_first_then_cancels_dialog() {
         .unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("ORCHESTRATOR :: New Session"),
+        screen.contains("ORCHESTRATOR :: New Workspace"),
         "first Esc must NOT cancel the dialog. Screen:\n{}",
         screen,
     );
@@ -1054,7 +1054,7 @@ fn esc_closes_dropdown_first_then_cancels_dialog() {
     // Second Esc: dialog cancels.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+        .wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
 }
 
