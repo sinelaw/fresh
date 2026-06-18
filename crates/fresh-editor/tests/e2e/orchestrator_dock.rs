@@ -1157,7 +1157,10 @@ fn new_session_form_buttons_wrap_on_narrow_form() {
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+    // Wait on a short, clip-safe form signal: the centered header
+    // "ORCHESTRATOR :: New Workspace" overflows this deliberately narrow
+    // (~26-col) form and gets truncated, so don't key off it here.
+    h.wait_until(|h| h.screen_to_string().contains("Workspace Name"))
         .unwrap();
 
     // Both buttons stay on screen — "Create Workspace" would be clipped off a
