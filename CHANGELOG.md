@@ -14,7 +14,7 @@ This releases introduces new names (in docs, cli, etc) to clarify the ambiguousl
 * **workspace** — the editor's per-project unit. Multiple workspaces are managed by the Orchestrator.
 * **backend** — where a workspace runs (local / SSH / dev container / Kubernetes).
 
-The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd session` as an alias.
+The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd session` as an alias. The new vocabulary also reaches the user-facing surfaces of the editor: the Orchestrator now lists, dives into, and manages **workspaces** (commands, dialogs, dock chrome, and status messages), and the replace-in-project confirmation refers to files open "in this workspace". Localized strings were updated to match in every supported locale.
 
 ### Features
 
@@ -34,7 +34,8 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
   * Environment detection is defined once in core and user-extensible (`env.detectors`, now also covering pipenv and poetry); the activated environment applies uniformly across every backend — integrated terminal, Docker, Kubernetes, SSH.
   * Hardening: plugins can request but never grant trust; a lone `.venv` no longer silently auto-trusts; venv activation uses a relative `source .venv/bin/activate` snippet to avoid shell injection (cf. CVE-2024-9287).
 * **Settings**: distinct, keyboard-reachable `[Inherit]` / `[Reset]` / `[Clear]` per field; the language entry dialog no longer clobbers inherited fields (#2345, reported by @ren-lv).
-* The Orchestrator New Session dialog has a clearer, keyboard-linear focus model (Tab accepts the highlighted completion).
+* **Orchestrator localization**: the Orchestrator plugin is now fully internationalized — all 225 user-facing strings go through the editor's i18n mechanism, with translations for the 14 supported locales (cs, de, es, fr, it, ja, ko, pt-BR, ru, th, uk, vi, zh-CN, and en).
+* The Orchestrator New Workspace dialog has a clearer, keyboard-linear focus model (Tab accepts the highlighted completion).
 
 ### Bug Fixes
 
@@ -53,6 +54,8 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * Replace toolbar: checked search options are visible in every theme (#2363).
 * Alt+W and other search toggles no longer leak into the close prompt (#2359).
 * Fixed a crash on a stale soft-wrap position in multi-byte text (#2320).
+* Trusting a workspace with a shell or virtualenv environment (`.envrc` / `mise` / `.venv`) no longer restarts the whole editor: other windows keep their running terminals, language servers, and Orchestrator dock; only the active window refreshes to pick up the new environment.
+* A file opened while a split is maximized — for example via an embedded `fresh <file>` forwarded from a maximized terminal dock — is now revealed instead of rendering hidden behind the maximized split (which previously looked like the terminal had hung).
 
 ### Internals
 
