@@ -547,6 +547,7 @@ fn activating_env_in_one_session_does_not_affect_another() -> anyhow::Result<()>
 /// activation locks that out. Drives `PluginCommand::SetEnv` directly (what
 /// `editor.setEnv` dispatches) rather than poking the provider, so it covers
 /// the actual restart decision.
+#[cfg(feature = "plugins")]
 #[test]
 fn activating_env_does_not_restart_the_editor() -> anyhow::Result<()> {
     use fresh::services::workspace_trust::TrustLevel;
