@@ -5,7 +5,7 @@ outline: false
 
 # The Orchestrator Dock
 
-A persistent, non-modal left-column session switcher: every session in one process, each row showing project, branch, and status. The arrow keys live-switch the active session.
+A persistent, non-modal left-column workspace switcher: every workspace in one daemon, each row showing project, branch, and status. The arrow keys live-switch the active workspace.
 
 <div class="showcase-demo">
   <img src="./showcase.gif" alt="The Orchestrator Dock demo" />

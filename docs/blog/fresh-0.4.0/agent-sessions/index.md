@@ -1,11 +1,11 @@
 ---
-title: "Agent Sessions"
+title: "Agent Workspaces"
 outline: false
 ---
 
-# Agent Sessions
+# Agent Workspaces
 
-The New Session dialog now knows about coding agents. Pick one from the Agent dropdown — agents tagged ↻ resume on restart, so a restart rejoins the running agent instead of relaunching it.
+The New Workspace dialog now knows about coding agents. Pick one from the Agent dropdown — agents tagged ↻ resume on restart, so a restart rejoins the running agent instead of relaunching it.
 
 <div class="showcase-demo">
   <img src="./showcase.gif" alt="Agent Sessions demo" />

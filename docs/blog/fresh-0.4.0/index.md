@@ -1,7 +1,7 @@
 ---
 title: "What's New in Fresh (0.4.0)"
 date: 2026-06-09
-description: "The multi-window Orchestrator and dock, remote sessions (SSH / Kubernetes) from the UI, universal search across files/buffers/terminals, a reimagined review diff, live diff, terminal path links, and a long tail of editor, LSP, and language refinements."
+description: "The multi-window Orchestrator and dock, remote workspaces (SSH / Kubernetes) from the UI, universal search across files/buffers/terminals, a reimagined review diff, live diff, terminal path links, unified workspace trust with environments, and a long tail of editor, LSP, and language refinements."
 outline: false
 ---
 
@@ -9,7 +9,9 @@ outline: false
 
 *Draft — rolling up everything since the [0.3.0 release](../fresh-0.3.0/).*
 
-A dozen point releases since 0.3.0, and the through-line is **working across many sessions and machines from one Fresh process**: a multi-window Orchestrator with a persistent dock, remote sessions you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, and the usual long tail of editor, LSP, and language work.
+A dozen point releases since 0.3.0, and the through-line is **working across many workspaces and machines from one Fresh daemon**: a multi-window Orchestrator with a persistent dock, remote workspaces you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, and the usual long tail of editor, LSP, and language work.
+
+> **A note on vocabulary (new in 0.4.1).** Fresh has sharpened the overloaded word *session*. A **workspace** is the editor's per-project unit — what the Orchestrator lists, opens, and manages. A **daemon** is the persistent background process you attach to and detach from. A **backend** is where a workspace runs: local, SSH, dev container, or Kubernetes. The screenshots below use the new names; the CLI still accepts the now-deprecated `--cmd session` as an alias for `--cmd daemon`.
 
 ## Wave Screensaver
 
@@ -21,28 +23,28 @@ Pure eye-candy: a decorative **wave** washes over the editor — a rising sea of
 
 ## The Orchestrator & Dock
 
-Fresh can now juggle several independent sessions in one process. The **Orchestrator Dock** is a persistent, non-modal left column that lists every session — each row showing working/idle status, project, branch, a git summary, and a PR badge. `Alt+O` toggles focus to the dock; the arrow keys *live-switch* the active session as you move; right-click a row for Visit / Archive / Delete. Spin up new sessions from the **New Session** dialog (a type selector for Local / SSH / Kubernetes / Devcontainer), attach to existing git worktrees, or run bulk actions across a multi-select.
+Fresh can now juggle several independent workspaces in one daemon. The **Orchestrator Dock** is a persistent, non-modal left column that lists every workspace — each row showing working/idle status, project, branch, a git summary, and a PR badge. `Alt+O` toggles focus to the dock; the arrow keys *live-switch* the active workspace as you move; right-click a row for Visit / Archive / Delete. Spin up new workspaces from the **New Workspace** dialog (a backend selector for Local / SSH / Kubernetes / Devcontainer), attach to existing git worktrees, or run bulk actions across a multi-select.
 
-Every session keeps running on its own — in the demo below, two of them each run a (fake) coding agent in a terminal while a third holds a file explorer open. Bounce between the two agents and each has kept working: new log lines have streamed in and the spinner is still turning, captured mid-stride.
+Every workspace keeps running on its own — in the demo below, two of them each run a (fake) coding agent in a terminal while a third holds a file explorer open. Bounce between the two agents and each has kept working: new log lines have streamed in and the spinner is still turning, captured mid-stride.
 
 <div class="showcase-demo">
   <img src="./orchestrator-dock/showcase.gif" alt="Orchestrator dock demo" />
 </div>
 
-## Agent Sessions
+## Agent Workspaces
 
-The New Session dialog now knows about coding agents. An **Agent:** dropdown offers the plain terminal plus known agents (claude, aider); the ones tagged **`↻`** *resume on restart* — Fresh provisions a session id when it launches the agent, so reopening the project rejoins the running conversation instead of relaunching it. Pick one and it fills in the Agent Command for you.
+The New Workspace dialog now knows about coding agents. An **Agent:** dropdown offers the plain terminal plus known agents (claude, aider); the ones tagged **`↻`** *resume on restart* — Fresh provisions a session id when it launches the agent, so reopening the workspace rejoins the running conversation instead of relaunching it. Pick one and it fills in the Agent Command for you.
 
 <div class="showcase-demo">
-  <img src="./agent-sessions/showcase.gif" alt="Agent sessions demo" />
+  <img src="./agent-sessions/showcase.gif" alt="Agent workspaces demo" />
 </div>
 
-## Remote Sessions from the UI
+## Remote Workspaces from the UI
 
-You could already launch a remote host from the CLI; now the **New Session** dialog attaches one for you. Pick the **SSH** backend, point it at a host — `host`, `user@host:port`, or `ssh://…`, with an optional identity file and extra ssh options — and Fresh brings up a full remote session: the filesystem, LSP, process spawners, and an integrated terminal all run on the remote host. Switching sessions retargets without a restart. An initial, experimental **Kubernetes** backend connects over `kubectl exec` with a keepalive heartbeat and reconnect.
+You could already launch a remote host from the CLI; now the **New Workspace** dialog attaches one for you. Pick the **SSH** backend, point it at a host — `host`, `user@host:port`, or `ssh://…`, with an optional identity file and extra ssh options — and Fresh brings up a full remote workspace: the filesystem, LSP, process spawners, and an integrated terminal all run on the remote host. Switching workspaces retargets without a restart. An initial, experimental **Kubernetes** backend connects over `kubectl exec` with a keepalive heartbeat and reconnect. Each workspace owns its own backend, trust level, and environment, and remote workspaces reconnect when you activate them again.
 
 <div class="showcase-demo">
-  <img src="./ssh-session/showcase.gif" alt="New SSH session demo" />
+  <img src="./ssh-session/showcase.gif" alt="New SSH workspace demo" />
 </div>
 
 See [Remote Editing over SSH](/features/ssh).
@@ -79,6 +81,16 @@ Run a build, a test, or a `grep` in the integrated terminal and **`Ctrl+Click`**
   <img src="./terminal-path-links/showcase.gif" alt="Terminal path links demo" />
 </div>
 
+## Workspace Trust & Environments
+
+Open a folder that can run code — a project manifest (`Cargo.toml`, `package.json`, `pyproject.toml`…), a build script, or a shell environment (`.envrc`, `mise`, `.tool-versions`) — and Fresh raises a **full-screen security prompt** that names exactly which markers it found and offers three choices: **Trust folder & Allow Tooling** (run language servers, build scripts, tasks, and env activation), **Keep Restricted** (run the *system* tools on your PATH but block the project's own scripts, env activation, and language servers), or **Block All Execution**. Trust is **per-workspace**, surfaced by a clickable **`{trust}`** element that now *leads* the status bar.
+
+0.4.1 made it **one prompt for everything**. A folder with a shell environment no longer pops a second dialog from the env-manager plugin — the single trust prompt names the detected environment and activates it on trust. And once trusted, that environment now applies **uniformly across every backend** — the integrated terminal, Docker, Kubernetes, and SSH — so language servers, formatters, the tools Fresh spawns, *and your terminal* all see the same `python`, `node`, and env vars. Detection lives in core and is user-extensible (`env.detectors`, now also covering pipenv and poetry); a lone `.venv` no longer silently auto-trusts; and changing the trust level refreshes only the active workspace — other windows keep their running terminals, language servers, and dock — instead of restarting the whole editor.
+
+<div class="showcase-demo">
+  <img src="./workspace-trust/showcase.gif" alt="Workspace trust and environments demo" />
+</div>
+
 ## Go to LSP Symbol
 
 A symbol finder with live preview: filter your document's symbols, see source-line snippets, and jump precisely to the symbol name (line *and* column), with the symbol under the cursor preselected.
@@ -93,6 +105,8 @@ A symbol finder with live preview: filter your document's symbols, see source-li
 - **Distribute clipboard across cursors** — VS Code-style column-mode paste when the clipboard line count matches the cursor count.
 - **Add Cursors to Line Ends**, **Move to Next / Previous Paragraph**, and **Go to line with selection**.
 - **User-configurable indentation rules** — VS Code-style regex tiers via `[languages.<id>.indent]`.
+- **Cancel / Clear Mark** actions for fine-grained selection-anchor management.
+- **Git Log (Current File)** command, plus concurrent git-blame buffers.
 
 ### Terminal
 
@@ -108,7 +122,7 @@ A symbol finder with live preview: filter your document's symbols, see source-li
 
 ### Settings & Themes
 
-- Settings UI overhaul: **tree-view categories**, **direct number typing**, inline list editing, and **`Ctrl+R`** to reset a field to its default.
+- Settings UI overhaul: **tree-view categories**, **direct number typing**, inline list editing, **`Ctrl+R`** to reset a field to its default, and distinct, keyboard-reachable **`[Inherit]` / `[Reset]` / `[Clear]`** per field.
 - New options: **`lsp_enabled`** (disable all LSP globally), **`auto_read_only`** (turn off automatic read-only mode for foreign files), and a **configurable status-bar separator** with its own theme keys.
 - **Theme inheritance** with `extends: "builtin://dark"`, plus a new **`terminal`** theme that uses your terminal's own palette.
 - **Animations** framework — tab-switch slide, a cursor-jump trail, and a color-transition on theme switch (toggleable).
@@ -117,12 +131,14 @@ A symbol finder with live preview: filter your document's symbols, see source-li
 ### Platform & Plugins
 
 - **LSP over SSH** runs the language server on the remote host.
+- **Windows on ARM** release artifacts.
+- The **Orchestrator is fully internationalized** — all 225 user-facing strings across the 14 supported locales.
 - Status-bar element registration API (`git_statusbar`), `tab_actions`, plugin-registered config items, overlay toolbar widgets, and `editor.httpFetch`.
 - A **minimal static musl** Linux binary, and an ~18 MB smaller default binary from trimming bundled grammars.
 
 ### New Languages
 
-C3, Templ, HDL (Verilog / SystemVerilog / VHDL), Racket, and GDScript.
+C3, Templ, HDL (Verilog / SystemVerilog / VHDL), Racket, and GDScript — plus, in 0.4.1, **Assembly** (GAS and NASM/Intel across x86 / ARM / RISC-V via asm-lsp), **Fish**, and **Smali**. `yarn.lock` and other well-known lock/config files now highlight by their real format.
 
 ## Related
 

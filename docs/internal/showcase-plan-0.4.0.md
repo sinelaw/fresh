@@ -45,12 +45,13 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   (terminal / claude ↻ / aider ↻ / custom…); picking an agent fills the
   Agent Command, and the `↻ resumes on restart` legend is shown. 160-wide
   so the legend isn't truncated.
-## Dropped from the 0.4.0 blog
-
-- **workspace-trust** — pulled from the blog post. The trust UX has two
-  divergent prompts and the integrated terminal doesn't inherit the activated
-  env (see issue #2355); not showcasing it until that's resolved. The e2e test
-  `blog_showcase_fresh_0_4_0_workspace_trust` still exists if we revisit it.
+- [x] **workspace-trust** — open an untrusted Rust crate with a `build.rs`;
+  Fresh raises the full-screen "⚠ SECURITY WARNING" prompt naming the markers
+  (Cargo.toml), with Trust / Keep Restricted / Block. ↑ selects "Trust folder &
+  Allow Tooling", Enter flips `{trust}` Restricted → Trusted. Core (no plugin);
+  booted like `main.rs` (trust store + `maybe_prompt_workspace_trust`).
+  *Dropped briefly while #2355 was open; restored once 0.4.1 unified the prompt
+  and made the activated env reach every backend (incl. the terminal).*
 
 ## Tier 1 — headliners still to create
 
@@ -82,14 +83,24 @@ Platform/Plugins: LSP over SSH, `lsp_enabled` master switch, `auto_read_only`,
 minimal static musl binary + ~18 MB grammar trim, `git_statusbar` / status-bar
 element API, `tab_actions`, plugin-registered config items, overlay toolbar
 widgets, `httpFetch`.
-Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript.
+Languages: C3, Templ, HDL (Verilog/SystemVerilog/VHDL), Racket, GDScript,
+plus 0.4.1's Assembly (asm-lsp), Fish, Smali, and real-format lock-file
+highlighting.
+0.4.1 also: vocabulary rename (session → workspace / daemon / backend),
+Windows on ARM, Cancel/Clear Mark, Git Log (Current File) + concurrent
+git-blame, Settings [Inherit]/[Reset]/[Clear], fully-i18n'd Orchestrator.
 
 ## Notes / open questions
 
 - **Terminal-scope search**: in manual testing, universal search matched
   *retained/closed* terminal scrollback but not a *live* terminal's latest
   output — confirm whether that's intended before the blog leans on it.
-- The rollup `index.md` embeds **eight** finished GIFs (orchestrator-dock,
+- The rollup `index.md` embeds **nine** finished GIFs (orchestrator-dock,
   ssh-session, universal-search, wave-screensaver, live-diff, terminal-path-
-  links, review-diff, agent-sessions). The workspace-trust showcase was dropped
-  (see above). Remaining work is Tier-2 / mention-only.
+  links, review-diff, agent-sessions, workspace-trust). Remaining work is
+  Tier-2 / mention-only.
+- **0.4.1 rename**: the Orchestrator UI now says **workspace** / **New
+  Workspace** / **Create Workspace** (was "session"). The ssh-session,
+  agent-sessions, orchestrator-dock and workspace-trust tests + GIFs were
+  regenerated against the renamed strings; the other five GIFs are unaffected
+  (their flows don't touch the Orchestrator dialog chrome).

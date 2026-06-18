@@ -3011,7 +3011,7 @@ fn blog_showcase_fresh_0_2_26_review_diff() {
 // Blog Post: Orchestrator — New SSH Session (0.3.10)
 // =========================================================================
 //
-// Showcases the SSH backend of the Orchestrator's "New Session" dialog
+// Showcases the SSH backend of the Orchestrator's "New Workspace" dialog
 // against a *real* connection: a throwaway, non-root `sshd` on
 // `127.0.0.1`, reached through a fake hostname (`demo-box`) that resolves
 // via `/etc/hosts`. The dialog points the SSH backend at `demo-box:<port>`
@@ -3240,7 +3240,7 @@ mod ssh_session_showcase_support {
     }
 }
 
-/// Orchestrator: New SSH Session — open the New Session dialog, pick the
+/// Orchestrator: New SSH Session — open the New Workspace dialog, pick the
 /// SSH backend, point it at `demo-box:<port>` (a fake hostname resolving to
 /// a local user-space sshd via `/etc/hosts`), and watch Fresh attach the
 /// remote session for real.
@@ -3319,7 +3319,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
         let reg = h.editor().command_registry().read().unwrap();
         reg.get_all()
             .iter()
-            .any(|c| c.get_localized_name() == "Orchestrator: New Session")
+            .any(|c| c.get_localized_name() == "Orchestrator: New Workspace")
     })
     .unwrap();
     // Open the local file so the launch session has content to show.
@@ -3329,7 +3329,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/ssh-session",
         "New SSH Session",
-        "Start a remote SSH session from the Orchestrator's New Session dialog: \
+        "Start a remote SSH session from the Orchestrator's New Workspace dialog: \
          pick the SSH backend and point it at a host. Fresh attaches its \
          filesystem, terminal, and LSP over the connection, so you can open \
          remote files in buffers — then hop back to a local session through \
@@ -3339,23 +3339,23 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     // Open on the local session: a local Rust file, "Local" in the status bar.
     hold(&mut h, &mut s, 5, 80);
 
-    // --- Open the New Session dialog via the command palette. ---------------
+    // --- Open the New Workspace dialog via the command palette. ---------------
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
     snap(&mut h, &mut s, Some("Ctrl+P"), 80);
 
-    for ch in "New Session".chars() {
+    for ch in "New Workspace".chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         snap(&mut h, &mut s, Some(&ch.to_string()), 28);
     }
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     hold(&mut h, &mut s, 2, 60);
 
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Session"))
+    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
         .unwrap();
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
@@ -3425,10 +3425,10 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap(&mut h, &mut s, None, 75);
     hold(&mut h, &mut s, 2, 60);
 
-    // --- Submit: click "Create Session". ------------------------------------
+    // --- Submit: click "Create Workspace". ------------------------------------
     let (create_col, create_row) = h
-        .find_text_on_screen("Create Session")
-        .expect("the form should offer a 'Create Session' button");
+        .find_text_on_screen("Create Workspace")
+        .expect("the form should offer a 'Create Workspace' button");
     snap_mouse(&mut h, &mut s, None, (create_col, create_row), 80);
     h.mouse_click(create_col, create_row).unwrap();
     h.render().unwrap();
@@ -3444,13 +3444,13 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     //     wait robust. -------------------------------------------------------
     h.wait_until(|h| {
         let screen = h.screen_to_string();
-        !screen.contains("ORCHESTRATOR :: New Session") || screen.contains("Error:")
+        !screen.contains("ORCHESTRATOR :: New Workspace") || screen.contains("Error:")
     })
     .unwrap();
     let screen = h.screen_to_string();
     assert!(
         !screen.contains("Error:"),
-        "SSH attach failed — the New Session dialog surfaced an error.\nScreen:\n{screen}",
+        "SSH attach failed — the New Workspace dialog surfaced an error.\nScreen:\n{screen}",
     );
 
     // The born-attached remote window is now live, with an integrated terminal
@@ -4406,7 +4406,7 @@ fn blog_showcase_fresh_0_4_0_review_diff() {
 // Blog Post: Agent Sessions (0.4.0)
 // =========================================================================
 
-/// Agent Sessions — the New Session dialog's agent-command dropdown. An
+/// Agent Sessions — the New Workspace dialog's agent-command dropdown. An
 /// "Agent:" preset row offers the plain terminal plus known coding agents
 /// (claude, aider) tagged with `↻` ("resumes on restart"); picking one fills
 /// the Agent Command and arms the session to rejoin its agent after a restart.
@@ -4448,7 +4448,7 @@ fn blog_showcase_fresh_0_4_0_agent_sessions() {
         let reg = h.editor().command_registry().read().unwrap();
         reg.get_all()
             .iter()
-            .any(|c| c.get_localized_name() == "Orchestrator: New Session")
+            .any(|c| c.get_localized_name() == "Orchestrator: New Workspace")
     })
     .unwrap();
     h.open_file(&repo.path.join("src/main.rs")).unwrap();
@@ -4457,21 +4457,21 @@ fn blog_showcase_fresh_0_4_0_agent_sessions() {
     let mut s = BlogShowcase::new(
         "fresh-0.4.0/agent-sessions",
         "Agent Sessions",
-        "The New Session dialog now knows about coding agents. Pick one from the \
+        "The New Workspace dialog now knows about coding agents. Pick one from the \
          Agent dropdown — agents tagged ↻ resume on restart, so a restart rejoins \
          the running agent instead of relaunching it.",
     );
 
     hold(&mut h, &mut s, 4, 110);
 
-    // Open the New Session dialog.
+    // Open the New Workspace dialog.
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
-    h.type_text("New Session").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Session"))
+    h.type_text("New Workspace").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
-    snap(&mut h, &mut s, Some("New Session"), 130);
+    snap(&mut h, &mut s, Some("New Workspace"), 130);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // The dialog shows an "Agent:" preset row with the resume legend.
     h.wait_until(|h| {
@@ -4587,9 +4587,10 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
         "Open a folder that can run code — a project manifest, a build script, a \
          direnv/mise env — and Fresh raises a full-screen prompt that names what \
          it found and lets you Trust, Keep Restricted, or Block. Trust is \
-         per-session, shown by a clickable {trust} element that now leads the \
+         per-workspace, shown by a clickable {trust} element that now leads the \
          status bar; Restricted runs your system tools but blocks the project's \
-         own scripts, env activation, and language servers.",
+         own scripts, env activation, and language servers. Trusting activates \
+         the detected environment across every backend, including the terminal.",
     );
 
     // Open on the Restricted state with the full-screen prompt up.
