@@ -1344,11 +1344,11 @@
         <div class="feature-section">
             <div class="feature-content">
                 <h2>Git review &amp; diff</h2>
-                <p>Split-panel review with staged / unstaged / untracked files on the left and the selected diff on the right. Stage, unstage or discard individual hunks; leave line comments and session notes; export to Markdown. Side-by-side diff view for file comparisons.</p>
+                <p>Split-panel review with staged / unstaged / untracked files on the left and the selected diff on the right. Stage, unstage or discard individual hunks; leave line comments and review notes; export to Markdown. Side-by-side diff view for file comparisons.</p>
                 <ul class="feature-list">
                     <li>Hunk-level stage / unstage / discard</li>
                     <li>Side-by-side diff view</li>
-                    <li>Line comments and session notes</li>
+                    <li>Line comments and review notes</li>
                     <li>Git gutter, git log viewer, git grep</li>
                 </ul>
             </div>
@@ -1380,10 +1380,10 @@
 
         <div class="feature-section">
             <div class="feature-content">
-                <h2>Detachable sessions</h2>
-                <p>Start a named session, detach and reattach across terminal disconnects. The <code style="color: var(--accent-green);">--wait</code> flag blocks until the buffer is closed, which lets Fresh serve as <code style="color: var(--accent-green);">git core.editor</code> or <code style="color: var(--accent-green);">$EDITOR</code>. Hot Exit persists every buffer across restarts and crashes.</p>
+                <h2>Detachable daemon</h2>
+                <p>Start a named daemon, detach and reattach across terminal disconnects. The <code style="color: var(--accent-green);">--wait</code> flag blocks until the buffer is closed, which lets Fresh serve as <code style="color: var(--accent-green);">git core.editor</code> or <code style="color: var(--accent-green);">$EDITOR</code>. Hot Exit persists every buffer across restarts and crashes.</p>
                 <ul class="feature-list">
-                    <li>Named and directory-based sessions (<code style="color: var(--accent-green);">fresh -a myproject</code>)</li>
+                    <li>Named and directory-based daemons (<code style="color: var(--accent-green);">fresh -a myproject</code>)</li>
                     <li><code style="color: var(--accent-green);">--wait</code> for commit messages, rebases and scripted flows</li>
                     <li>Hot Exit with crash recovery, including unnamed scratch buffers</li>
                 </ul>
@@ -1396,11 +1396,11 @@
                     <span class="code-line"><span class="code-comment"># Use Fresh as your git editor</span></span>
                     <span class="code-line"><span class="code-function">git</span> <span class="code-string">config --global core.editor "fresh --wait"</span></span>
                     <span class="code-line"></span>
-                    <span class="code-line"><span class="code-comment"># Attach a persistent session</span></span>
+                    <span class="code-line"><span class="code-comment"># Attach a persistent daemon</span></span>
                     <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">-a myproject</span></span>
                     <span class="code-line"></span>
-                    <span class="code-line"><span class="code-comment"># Open a file in the running session</span></span>
-                    <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">--cmd session open-file myproject src/main.rs:42</span></span>
+                    <span class="code-line"><span class="code-comment"># Open a file in the running daemon</span></span>
+                    <span class="code-line"><span class="code-function">fresh</span> <span class="code-string">--cmd daemon open-file myproject src/main.rs:42</span></span>
                 </div>
             </div>
         </div>
@@ -1475,7 +1475,7 @@
                     <li>Vim mode with operators, motions, text objects and colon commands</li>
                     <li>Multi-cursor, block selection, surround, smart home and smart backspace</li>
                     <li>Keyboard macros and regex find &amp; replace with capture groups</li>
-                    <li>Integrated terminal with session-persistent scrollback</li>
+                    <li>Integrated terminal with persistent scrollback</li>
                 </ul>
             </div>
             <div class="feature-visual">
@@ -1616,7 +1616,7 @@
             <li>Code actions with workspace edits</li>
             <li>Format-on-save</li>
             <li>SSH remote editing</li>
-            <li>Detachable sessions (<code>fresh -a</code>)</li>
+            <li>Detachable daemon (<code>fresh -a</code>)</li>
             <li><code>--wait</code> for <code>git core.editor</code> / <code>$EDITOR</code></li>
             <li>Hot Exit with crash recovery</li>
             <li>Integrated terminal (mouse forwarding, scrollback)</li>
