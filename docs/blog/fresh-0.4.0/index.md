@@ -65,7 +65,7 @@ The review diff picked up a real review workflow: a **file sidebar** grouped by 
 
 ## Live Diff
 
-The experimental **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter, with **word-level highlighting** inside changed line pairs. Especially handy for watching an agent rewrite a file under you.
+The **Live Diff** plugin overlays a unified diff *inside the editable buffer* and keeps it current as the file changes — pick a reference (`vs HEAD`, `vs Disk`, `vs Branch…`) and watch edits land in real time. Added lines get a `+` gutter and a green background; an edited line shows its old text above with a `-` gutter, with **word-level highlighting** inside changed line pairs. Especially handy for watching an agent rewrite a file under you.
 
 <div class="showcase-demo">
   <img src="./live-diff/showcase.gif" alt="Live diff demo" />

@@ -1,4 +1,4 @@
-# Remote Editing (Experimental)
+# Remote Editing
 
 > **Activation:** command-line only — no palette command or settings toggle. Launch Fresh with a remote path as the first argument (see forms below).
 

@@ -194,7 +194,7 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 - Tab indents list items and cycles the bullet style
 - Single-quote auto-close is disabled so apostrophes don't interfere
 
-### Compose Mode (experimental)
+### Compose Mode
 
 "Markdown: Toggle Compose" from the command palette enables a distraction-free mode that conceals markup (`**`, `*`, `[]()`), applies soft line breaks at a configurable width, and renders tables. Use "Markdown: Set Compose Width" to adjust the width. Open the same file in a vertical split to see source and composed views side by side.
 
