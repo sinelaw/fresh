@@ -250,10 +250,10 @@ function discoveredIdFor(path: string): number {
 type SessionBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
 
 const SESSION_BACKENDS: { id: SessionBackend; label: string; key: string }[] = [
-  { id: "local", label: "Local", key: "type-local" },
-  { id: "ssh", label: "SSH", key: "type-ssh" },
-  { id: "kubernetes", label: "Kubernetes", key: "type-kubernetes" },
-  { id: "devcontainer", label: "Devcontainer", key: "type-devcontainer" },
+  { id: "local", label: editor.t("backend.local"), key: "type-local" },
+  { id: "ssh", label: editor.t("backend.ssh"), key: "type-ssh" },
+  { id: "kubernetes", label: editor.t("backend.kubernetes"), key: "type-kubernetes" },
+  { id: "devcontainer", label: editor.t("backend.devcontainer"), key: "type-devcontainer" },
 ];
 
 interface NewSessionForm {
@@ -1149,7 +1149,7 @@ function dockProjectOptions(): string[] {
 // + 4 cols). The status symbol lives in the left margin now, so there's
 // no separate status column to label.
 function sessionsColumnHeader(): WidgetSpec {
-  const text = " ".repeat(STATUS_MARGIN_W + 4) + "NAME";
+  const text = " ".repeat(STATUS_MARGIN_W + 4) + editor.t("list.col_name");
   return {
     kind: "raw",
     entries: [
@@ -1190,7 +1190,7 @@ const BRANCH_ICON = "▸";
 // (`+added −deleted`), or `clean`.
 function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
   const dim = "ui.menu_disabled_fg";
-  let branch = s.branch || (s.discovered ? "(worktree)" : "(detached)");
+  let branch = s.branch || (s.discovered ? editor.t("pill.branch_worktree") : editor.t("pill.branch_detached"));
   // Cap the branch so it doesn't push the right-aligned git summary off
   // the tail (the host truncates the row's *end*, which is the summary)
   // on a normal-width card. Very narrow docks may still clip it.
@@ -1227,7 +1227,7 @@ function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
     right.push({ text: `${sep()}−${g.deleted}`, style: { fg: "ui.file_status_deleted_fg" } });
   }
   if (right.length === 0) {
-    right.push({ text: "clean", style: { fg: dim, italic: true } });
+    right.push({ text: editor.t("pill.clean"), style: { fg: dim, italic: true } });
   }
   return { left, right };
 }
@@ -1244,10 +1244,10 @@ function prLineEntries(s: AgentSession): Entry[] {
   if (probe?.info && (probe.status === "ok" || probe.status === "loading")) {
     const p = probe.info;
     const out: Entry[] = [
-      { text: "PR ", style: { fg: dim } },
+      { text: editor.t("pill.pr_prefix"), style: { fg: dim } },
       { text: `#${p.number}`, style: { fg: "ui.help_key_fg", bold: true } },
     ];
-    if (p.isDraft) out.push({ text: " draft", style: { fg: dim } });
+    if (p.isDraft) out.push({ text: editor.t("pill.pr_draft"), style: { fg: dim } });
     if (p.checksFail && p.checksFail > 0) {
       out.push({ text: ` ✗${p.checksFail}`, style: { fg: "diagnostic.error_fg" } });
     } else if (p.checksPending && p.checksPending > 0) {
@@ -1259,12 +1259,12 @@ function prLineEntries(s: AgentSession): Entry[] {
       out.push({ text: ` ●${p.comments}`, style: { fg: dim } });
     }
     if (p.reviewDecision === "APPROVED") {
-      out.push({ text: " approved", style: { fg: "ui.file_status_added_fg" } });
+      out.push({ text: editor.t("pill.pr_approved"), style: { fg: "ui.file_status_added_fg" } });
     } else if (p.reviewDecision === "CHANGES_REQUESTED") {
-      out.push({ text: " chg-req", style: { fg: "diagnostic.warning_fg" } });
+      out.push({ text: editor.t("pill.pr_chg_req"), style: { fg: "diagnostic.warning_fg" } });
     }
     if (p.mergeable === "CONFLICTING") {
-      out.push({ text: " · ✗ conflicts", style: { fg: "diagnostic.error_fg" } });
+      out.push({ text: editor.t("pill.pr_conflicts"), style: { fg: "diagnostic.error_fg" } });
     }
     return out;
   }
@@ -1274,7 +1274,7 @@ function prLineEntries(s: AgentSession): Entry[] {
   // caller renders a blank spacer line in its place (keeping the card a
   // uniform three lines) rather than a "no PR yet" placeholder.
   if (s.discovered) {
-    return [{ text: "· on-disk worktree", style: { fg: dim, italic: true } }];
+    return [{ text: editor.t("pill.on_disk_worktree"), style: { fg: dim, italic: true } }];
   }
   return [];
 }
@@ -1324,7 +1324,7 @@ function renderPillSpec(
   activeId: number,
 ): WidgetSpec {
   const s = orchestratorSessions.get(id);
-  if (!s) return labeledSection({ label: "", child: styledRow([{ text: "(unknown)" }]) });
+  if (!s) return labeledSection({ label: "", child: styledRow([{ text: editor.t("pill.unknown") }]) });
   const isActive = id === activeId;
   const nameEntry: Entry = {
     text: s.label,
@@ -1400,7 +1400,7 @@ function buildPreviewEntries(
     return [
       styledRow([
         {
-          text: "No workspace selected",
+          text: editor.t("preview.no_workspace_selected"),
           style: { fg: "editor.whitespace_indicator_fg", italic: true },
         },
       ]),
@@ -1410,7 +1410,11 @@ function buildPreviewEntries(
   const isActive = s.id === activeId;
   // The focused window is labelled "active"; everything else shows its
   // live working/idle activity (recomputed from the output timestamp).
-  const stateText = isActive ? "active" : sessionState(s);
+  const stateText = isActive
+    ? editor.t("preview.state_active")
+    : sessionState(s) === "working"
+    ? editor.t("preview.state_working")
+    : editor.t("preview.state_idle");
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
       text: stateText,
@@ -1427,7 +1431,7 @@ function buildPreviewEntries(
     // apply (Delete just forgets it, leaving the directory untouched).
     headerEntries.push(
       { text: "  " },
-      { text: "in-place", style: { fg: "ui.menu_disabled_fg", italic: true } },
+      { text: editor.t("preview.in_place"), style: { fg: "ui.menu_disabled_fg", italic: true } },
     );
   }
   return [
@@ -1583,8 +1587,8 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // a second click can't double-fire.
   if (openDialog?.inFlight && s && openDialog.inFlight.sessionId === s.id) {
     const label = openDialog.inFlight.action === "archive"
-      ? "Archiving…"
-      : "Deleting…";
+      ? editor.t("preview.archiving")
+      : editor.t("preview.deleting");
     return labeledSection({
       label,
       child: col(
@@ -1593,14 +1597,14 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
           entries: [
             styledRow([
               {
-                text: `${label} [${s.id}] ${s.label}`,
+                text: editor.t("preview.inflight_row", { label, id: String(s.id), name: s.label }),
                 style: { bold: true, fg: "ui.menu_disabled_fg" },
               },
             ]),
             styledRow([{ text: "" }]),
             styledRow([
               {
-                text: "Waiting for git…",
+                text: editor.t("preview.waiting_for_git"),
                 style: { fg: "ui.menu_disabled_fg", italic: true },
               },
             ]),
@@ -1648,7 +1652,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // jarringly when the filter matches nothing.
   if (!s) {
     return labeledSection({
-      label: "Preview",
+      label: editor.t("preview.title"),
       child: col(
         { kind: "raw", entries: buildPreviewEntries(s) },
         windowEmbed({ windowId: 0, rows: embedRows, key: "live-preview" }),
@@ -1662,7 +1666,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // labels with the *target* state — pressing `[ Details ]`
   // turns details on, pressing `[ Preview ]` turns them off
   // (back to compact).
-  const detailsToggleLabel = detailsOn ? "Preview" : "Details";
+  const detailsToggleLabel = detailsOn ? editor.t("preview.toggle_preview") : editor.t("preview.toggle_details");
   // Discovered worktree: no live window to embed, so there's
   // nothing to Stop / Archive / Delete yet. Offer only "Open"
   // (Visit attaches a fresh session to the worktree) and describe
@@ -1671,31 +1675,31 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // doesn't jump when the selection moves between row kinds.
   if (s.discovered) {
     const openButtonRow = row(
-      button("Open", { intent: "primary", key: "visit" }),
+      button(editor.t("preview.btn_open"), { intent: "primary", key: "visit" }),
       flexSpacer(),
-      button("Stop", { key: "stop", disabled: true }),
+      button(editor.t("preview.btn_stop"), { key: "stop", disabled: true }),
       spacer(2),
-      button("Archive", { key: "archive", disabled: true }),
+      button(editor.t("preview.btn_archive"), { key: "archive", disabled: true }),
       spacer(2),
-      button("Delete", { intent: "danger", key: "delete", disabled: true }),
+      button(editor.t("preview.btn_delete"), { intent: "danger", key: "delete", disabled: true }),
     );
     const info: TextPropertyEntry[] = [
       styledRow([
-        { text: "On-disk worktree (not open)", style: { fg: "ui.menu_disabled_fg", bold: true } },
+        { text: editor.t("preview.on_disk_not_open"), style: { fg: "ui.menu_disabled_fg", bold: true } },
       ]),
       styledRow([{ text: "" }]),
-      styledRow([{ text: "branch  ", style: { fg: "ui.menu_disabled_fg" } }, { text: s.branch || "(detached)" }]),
-      styledRow([{ text: "path    ", style: { fg: "ui.menu_disabled_fg" } }, { text: s.root }]),
+      styledRow([{ text: editor.t("preview.field_branch"), style: { fg: "ui.menu_disabled_fg" } }, { text: s.branch || editor.t("pill.branch_detached") }]),
+      styledRow([{ text: editor.t("preview.field_path"), style: { fg: "ui.menu_disabled_fg" } }, { text: s.root }]),
       styledRow([{ text: "" }]),
       styledRow([
         {
-          text: "Click it (or press Enter) to open this worktree as a workspace.",
+          text: editor.t("preview.click_to_open"),
           style: { fg: "ui.help_key_fg", italic: true },
         },
       ]),
     ];
     return labeledSection({
-      label: `${s.label}  —  on-disk worktree`,
+      label: editor.t("preview.label_on_disk", { name: s.label }),
       child: col(
         openButtonRow,
         spacer(0),
@@ -1730,15 +1734,15 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // fixed `spacer(4)` separates the primary "Visit" from the rest while
   // still wrapping cleanly.
   const buttonRow = wrappingRow(
-    button("Visit", { intent: "primary", key: "visit" }),
+    button(editor.t("preview.btn_visit"), { intent: "primary", key: "visit" }),
     spacer(4),
     button(detailsToggleLabel, { key: "toggle-details" }),
     spacer(2),
-    button("Stop", { key: "stop", disabled: stopDisabled }),
+    button(editor.t("preview.btn_stop"), { key: "stop", disabled: stopDisabled }),
     spacer(2),
-    button("Archive", { key: "archive", disabled: archiveDisabled }),
+    button(editor.t("preview.btn_archive"), { key: "archive", disabled: archiveDisabled }),
     spacer(2),
-    button("Delete", {
+    button(editor.t("preview.btn_delete"), {
       intent: "danger",
       key: "delete",
       disabled: deleteDisabled,
@@ -1763,7 +1767,7 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // It's the dir the editor was started in — informational only; it's
   // deletable like any other session once another window exists.
   const sectionLabel = s.id === 1
-    ? `${s.label}  —  launch workspace`
+    ? editor.t("preview.label_launch", { name: s.label })
     : s.label;
   return labeledSection({
     label: sectionLabel,
@@ -1778,25 +1782,51 @@ function confirmActionLines(action: BulkAction): string[] {
   switch (action) {
     case "stop":
       return [
-        "  • send SIGTERM to all workspace processes",
-        "  • SIGKILL after a short grace period",
+        editor.t("confirm.stop_line1"),
+        editor.t("confirm.stop_line2"),
         "",
-        "The worktree and workspace record remain.",
+        editor.t("confirm.stop_note"),
       ];
     case "archive":
       return [
-        "  • SIGKILL all workspace processes",
-        "  • close the editor workspace",
-        "  • move the worktree to .archived/",
+        editor.t("confirm.archive_line1"),
+        editor.t("confirm.archive_line2"),
+        editor.t("confirm.archive_line3"),
         "",
-        "Reversible via Unarchive.",
+        editor.t("confirm.archive_note"),
       ];
     case "delete":
       return [
-        "  • stop all workspace processes",
-        "  • run `git worktree remove`",
-        "  • drop the workspace record",
+        editor.t("confirm.delete_line1"),
+        editor.t("confirm.delete_line2"),
+        editor.t("confirm.delete_line3"),
       ];
+  }
+}
+
+// Localized, capitalized verb for an action (Stop / Archive / Delete),
+// used in confirmation headers and button labels.
+function capAction(action: BulkAction): string {
+  switch (action) {
+    case "stop":
+      return editor.t("confirm.cap_stop");
+    case "archive":
+      return editor.t("confirm.cap_archive");
+    case "delete":
+      return editor.t("confirm.cap_delete");
+  }
+}
+
+// Localized gerund for an action (Stopping / Archiving / Deleting),
+// used in the bulk progress line.
+function gerundAction(action: BulkAction): string {
+  switch (action) {
+    case "stop":
+      return editor.t("confirm.ger_stop");
+    case "archive":
+      return editor.t("confirm.ger_archive");
+    case "delete":
+      return editor.t("confirm.ger_delete");
   }
 }
 
@@ -1810,16 +1840,16 @@ function buildConfirmPane(
   confirm: { action: BulkAction; ids: number[] },
 ): WidgetSpec {
   const { action, ids } = confirm;
-  const cap = action[0].toUpperCase() + action.slice(1);
+  const cap = capAction(action);
   const existing = ids.filter((id) => orchestratorSessions.has(id));
   const bulk = existing.length > 1;
   const diskNote = (id: number): string =>
-    orchestratorSessions.get(id)?.discovered ? "  · on-disk" : "";
+    orchestratorSessions.get(id)?.discovered ? editor.t("confirm.disk_note") : "";
   const entries: TextPropertyEntry[] = [];
   if (bulk) {
     entries.push(
       styledRow([
-        { text: `${cap} these ${existing.length} workspaces?`, style: { bold: true } },
+        { text: editor.t("confirm.bulk_header", { cap, count: String(existing.length) }), style: { bold: true } },
       ]),
       styledRow([{ text: "" }]),
     );
@@ -1836,7 +1866,7 @@ function buildConfirmPane(
       entries.push(
         styledRow([
           {
-            text: `  … and ${existing.length - 8} more`,
+            text: editor.t("confirm.and_more", { count: String(existing.length - 8) }),
             style: { fg: "ui.menu_disabled_fg", italic: true },
           },
         ]),
@@ -1847,13 +1877,13 @@ function buildConfirmPane(
     const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
     entries.push(
       styledRow([
-        { text: `${cap} workspace ${ss?.label ?? ""}?`, style: { bold: true } },
+        { text: editor.t("confirm.single_header", { cap, name: ss?.label ?? "" }), style: { bold: true } },
       ]),
     );
   }
   entries.push(
     styledRow([{ text: "" }]),
-    styledRow([{ text: bulk ? "For each workspace this will:" : "This will:" }]),
+    styledRow([{ text: bulk ? editor.t("confirm.for_each") : editor.t("confirm.this_will") }]),
   );
   for (const line of confirmActionLines(action)) {
     entries.push(styledRow([{ text: line }]));
@@ -1863,14 +1893,16 @@ function buildConfirmPane(
       styledRow([{ text: "" }]),
       styledRow([
         {
-          text: "Uncommitted changes will be lost.",
+          text: editor.t("confirm.uncommitted_lost"),
           style: { fg: "ui.status_error_indicator_fg", bold: true },
         },
       ]),
     );
   }
   return labeledSection({
-    label: bulk ? `Confirm ${cap} — ${existing.length} workspaces` : `Confirm ${cap}`,
+    label: bulk
+      ? editor.t("confirm.label_bulk", { cap, count: String(existing.length) })
+      : editor.t("confirm.label_single", { cap }),
     child: col(
       { kind: "raw", entries },
       spacer(0),
@@ -1879,9 +1911,9 @@ function buildConfirmPane(
       // leading flex spacer is dropped (the wrap path ignores flex and
       // trims a blank that would lead a line), so the pair left-packs.
       wrappingRow(
-        button("Cancel", { key: "confirm-cancel" }),
+        button(editor.t("confirm.btn_cancel"), { key: "confirm-cancel" }),
         spacer(2),
-        button(`Confirm ${cap}`, { intent: "danger", key: `confirm-${action}` }),
+        button(editor.t("confirm.btn_confirm", { cap }), { intent: "danger", key: `confirm-${action}` }),
       ),
     ),
   });
@@ -1909,7 +1941,11 @@ function buildBulkPane(): WidgetSpec {
           entries: [
             styledRow([
               {
-                text: `${inflight.action[0].toUpperCase()}${inflight.action.slice(1)}ing ${inflight.done}/${inflight.total}…`,
+                text: editor.t("confirm.bulk_progress", {
+                  verb: gerundAction(inflight.action),
+                  done: String(inflight.done),
+                  total: String(inflight.total),
+                }),
                 style: { fg: "ui.menu_disabled_fg", italic: true },
               },
             ]),
@@ -1924,20 +1960,20 @@ function buildBulkPane(): WidgetSpec {
       // gap between the destructive actions and the non-destructive
       // "Clear" while still wrapping cleanly.
       wrappingRow(
-        button(`Stop (${stopN})`, { key: "bulk-stop", disabled: stopN === 0 }),
+        button(editor.t("confirm.bulk_btn_stop", { count: String(stopN) }), { key: "bulk-stop", disabled: stopN === 0 }),
         spacer(2),
-        button(`Archive (${archiveN})`, {
+        button(editor.t("confirm.bulk_btn_archive", { count: String(archiveN) }), {
           key: "bulk-archive",
           disabled: archiveN === 0,
         }),
         spacer(2),
-        button(`Delete (${deleteN})`, {
+        button(editor.t("confirm.bulk_btn_delete", { count: String(deleteN) }), {
           intent: "danger",
           key: "bulk-delete",
           disabled: deleteN === 0,
         }),
         spacer(4),
-        button("Clear", { key: "bulk-clear" }),
+        button(editor.t("confirm.bulk_btn_clear"), { key: "bulk-clear" }),
       );
 
   // Affected-sessions list. Flag the rows a destructive action will
@@ -1947,12 +1983,12 @@ function buildBulkPane(): WidgetSpec {
     const rowParts: StyledSegment[] = [{ text: `  ${ss.label}` }];
     if (!ss.discovered && !ownsWorktree(ss)) {
       rowParts.push({
-        text: "  · in-place (forgotten, not removed)",
+        text: editor.t("confirm.row_in_place"),
         style: { fg: "ui.menu_disabled_fg", italic: true },
       });
     } else if (ss.discovered) {
       rowParts.push({
-        text: "  · on-disk worktree",
+        text: editor.t("confirm.row_on_disk"),
         style: { fg: "ui.menu_disabled_fg", italic: true },
       });
     }
@@ -1966,7 +2002,7 @@ function buildBulkPane(): WidgetSpec {
   const listRows = Math.max(3, (openDialog?.listVisibleRows ?? MIN_LIST_ROWS) + 4);
 
   return labeledSection({
-    label: `Bulk actions — ${sel.length} selected`,
+    label: editor.t("confirm.bulk_label", { count: String(sel.length) }),
     child: col(
       actionRow,
       spacer(0),
@@ -2024,7 +2060,7 @@ function buildOpenSpec(): WidgetSpec {
     "orchestrator_open_new_from_picker",
     OPEN_MODE,
   );
-  const newLabel = newKey ? `+ New  ${newKey}` : "+ New";
+  const newLabel = newKey ? editor.t("list.new_btn_key", { key: newKey }) : editor.t("list.new_btn");
   const inConfirm = openDialog.pendingConfirm !== null;
   // While a confirmation prompt is up the filter is rendered
   // without a `key`. The host's `collect_tabbable` only adds
@@ -2037,8 +2073,8 @@ function buildOpenSpec(): WidgetSpec {
   const filterInput = text({
     value: openDialog.filter.value,
     cursorByte: openDialog.filter.cursor,
-    label: "Filter",
-    placeholder: "type to search… ( / )",
+    label: editor.t("list.filter_label"),
+    placeholder: editor.t("list.filter_placeholder"),
     fullWidth: true,
     key: inConfirm ? undefined : "filter",
   });
@@ -2048,7 +2084,7 @@ function buildOpenSpec(): WidgetSpec {
         entries: [
           styledRow([
             {
-              text: "⚠ ",
+              text: editor.t("list.warn_prefix"),
               style: { fg: "ui.status_error_indicator_fg", bold: true },
             },
             {
@@ -2066,14 +2102,18 @@ function buildOpenSpec(): WidgetSpec {
   const curKey = currentProjectKey();
   const curName = projectLabel(curKey);
   const scopeKey = editor.getKeybindingLabel("orchestrator_toggle_scope", OPEN_MODE);
-  const titleSuffix = scope === "current" ? `  —  ${curName}` : "  —  all projects";
-  const sectionLabel = "Workspaces";
+  const titleSuffix = scope === "current"
+    ? editor.t("list.title_suffix_current", { project: curName })
+    : editor.t("list.title_suffix_all");
+  const sectionLabel = editor.t("list.section_label");
   // `Project:` control — a visible, clickable scope switch with the
   // Alt+P hint baked into the button label. Shows the current
   // project's name when scoped, "All" when showing every project.
   // Inert while a confirm prompt is up so it can't steal focus.
-  const scopeWord = scope === "current" ? editor.pathBasename(curKey) : "All";
-  const scopeButtonLabel = scopeKey ? `${scopeWord} ▾   (${scopeKey})` : `${scopeWord} ▾`;
+  const scopeWord = scope === "current" ? editor.pathBasename(curKey) : editor.t("list.scope_all");
+  const scopeButtonLabel = scopeKey
+    ? editor.t("list.scope_btn_key", { word: scopeWord, key: scopeKey })
+    : editor.t("list.scope_btn", { word: scopeWord });
   const scopeButton = button(scopeButtonLabel, {
     key: openDialog.pendingConfirm !== null ? undefined : "scope-toggle",
   });
@@ -2081,7 +2121,7 @@ function buildOpenSpec(): WidgetSpec {
     {
       kind: "raw",
       entries: [
-        styledRow([{ text: "Project: ", style: { fg: "ui.menu_disabled_fg" } }]),
+        styledRow([{ text: editor.t("list.project_prefix"), style: { fg: "ui.menu_disabled_fg" } }]),
       ],
     },
     scopeButton,
@@ -2099,8 +2139,8 @@ function buildOpenSpec(): WidgetSpec {
     OPEN_MODE,
   );
   const worktreeLabel = worktreeKey
-    ? `Show all worktrees   (${worktreeKey})`
-    : "Show all worktrees";
+    ? editor.t("list.show_worktrees_key", { key: worktreeKey })
+    : editor.t("list.show_worktrees");
   const worktreeFilterRow = row(
     toggle(openDialog.showWorktrees, worktreeLabel, {
       key: openDialog.pendingConfirm !== null ? undefined : "worktree-show",
@@ -2116,8 +2156,8 @@ function buildOpenSpec(): WidgetSpec {
     OPEN_MODE,
   );
   const trivialLabel = trivialKey
-    ? `Show empty/1-file workspaces   (${trivialKey})`
-    : "Show empty/1-file workspaces";
+    ? editor.t("list.show_trivial_key", { key: trivialKey })
+    : editor.t("list.show_trivial");
   const trivialFilterRow = row(
     toggle(!openDialog.hideTrivial, trivialLabel, {
       key: openDialog.pendingConfirm !== null ? undefined : "hide-trivial",
@@ -2131,7 +2171,7 @@ function buildOpenSpec(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: "ORCHESTRATOR :: Workspaces",
+            text: editor.t("list.title"),
             style: { fg: "ui.popup_border_fg", bold: true },
           },
           {
@@ -2218,19 +2258,19 @@ function buildOpenSpec(): WidgetSpec {
     row(
       flexSpacer(),
       hintBar([
-        { keys: "↑↓", label: "nav" },
-        { keys: "Enter", label: "dive" },
+        { keys: "↑↓", label: editor.t("hint.nav") },
+        { keys: "Enter", label: editor.t("hint.dive") },
         {
           keys: editor.getKeybindingLabel("orchestrator_toggle_select", OPEN_MODE) ||
             "Space",
-          label: "select",
+          label: editor.t("hint.select"),
         },
         {
           keys: scopeKey || "⌥P",
-          label: scope === "current" ? "all projects" : "current only",
+          label: scope === "current" ? editor.t("hint.all_projects") : editor.t("hint.current_only"),
         },
-        { keys: "Tab", label: "focus" },
-        { keys: "Esc", label: "close" },
+        { keys: "Tab", label: editor.t("hint.focus") },
+        { keys: "Esc", label: editor.t("hint.close") },
       ]),
       flexSpacer(),
       syncIndicator(),
@@ -2274,7 +2314,7 @@ function setDialogError(msg: string): void {
   if (openDialog) {
     openDialog.lastError = msg;
   }
-  editor.setStatus(`Orchestrator: ${msg}`);
+  editor.setStatus(editor.t("status.prefix", { msg }));
 }
 
 function clearDialogError(): void {
@@ -2773,7 +2813,7 @@ function mnemonicLetter(label: string | null): string {
 // only when the binding really is a single letter that appears in the
 // title, never a hardcoded "O".
 function dockTitleRow(): WidgetSpec {
-  const title = "Orchestrator";
+  const title = editor.t("dock.title");
   const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
   const mnem = mnemonicLetter(
     editor.getKeybindingLabel("toggle_dock_focus", "normal"),
@@ -2837,7 +2877,7 @@ function dockProjectMenu(): WidgetSpec {
   const cursor = clampMenuIndex(openDialog?.projectMenuIndex ?? 0, keys.length);
   const rows: WidgetSpec[] = keys.map((key, i) => {
     const applied = key === "" ? cur === null : key === cur;
-    const label = key === "" ? "All projects" : projectLabel(key);
+    const label = key === "" ? editor.t("dock.all_projects") : projectLabel(key);
     return row(
       button((applied ? "● " : "  ") + label, {
         key: projectPickKey(key),
@@ -2846,7 +2886,7 @@ function dockProjectMenu(): WidgetSpec {
       flexSpacer(),
     );
   });
-  return overlay(labeledSection({ label: "project", child: col(...rows) }));
+  return overlay(labeledSection({ label: editor.t("dock.menu_label"), child: col(...rows) }));
 }
 
 // Clamp a menu cursor into `[0, len)`, tolerating an empty list.
@@ -2945,11 +2985,11 @@ function buildDockSpec(): WidgetSpec {
     "orchestrator_open_new_from_picker",
     OPEN_MODE,
   );
-  const newLabel = newKey ? `+ New ${newKey}` : "+ New";
-  const worktreeLabel = "all worktrees";
-  const trivialLabel = "show empty";
+  const newLabel = newKey ? editor.t("dock.new_btn_key", { key: newKey }) : editor.t("list.new_btn");
+  const worktreeLabel = editor.t("dock.all_worktrees");
+  const trivialLabel = editor.t("dock.show_empty");
   const projWord = openDialog.projectFilter === null
-    ? "All"
+    ? editor.t("list.scope_all")
     : editor.pathBasename(openDialog.projectFilter);
 
   // The hints belong to the dock only while it has keyboard focus
@@ -2964,14 +3004,14 @@ function buildDockSpec(): WidgetSpec {
     hintBar(
       openDialog.projectMenuOpen
         ? [
-          { keys: "↑↓", label: "choose" },
-          { keys: "Enter", label: "select" },
-          { keys: "Esc", label: "cancel" },
+          { keys: "↑↓", label: editor.t("dock.hint_choose") },
+          { keys: "Enter", label: editor.t("dock.hint_select") },
+          { keys: "Esc", label: editor.t("dock.hint_cancel") },
         ]
         : [
-          { keys: "↑↓", label: "switch" },
-          { keys: "Enter", label: "edit" },
-          { keys: "Esc", label: "editor" },
+          { keys: "↑↓", label: editor.t("dock.hint_switch") },
+          { keys: "Enter", label: editor.t("dock.hint_edit") },
+          { keys: "Esc", label: editor.t("dock.hint_editor") },
         ],
     ),
     flexSpacer(),
@@ -2994,12 +3034,12 @@ function buildDockSpec(): WidgetSpec {
     row(
       button(newLabel, { intent: "primary", key: "new-session" }),
       flexSpacer(),
-      button("Manage", { key: "manage" }),
+      button(editor.t("dock.manage"), { key: "manage" }),
     ),
     row(
-      button(`view: ${dockView}`, { key: "view-toggle" }),
+      button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
       flexSpacer(),
-      button(`${projWord} ▾`, { key: "project-menu" }),
+      button(editor.t("dock.project_btn", { word: projWord }), { key: "project-menu" }),
     ),
     // The project dropdown floats just under its toolbar button.
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
@@ -3014,8 +3054,8 @@ function buildDockSpec(): WidgetSpec {
     text({
       value: openDialog.filter.value,
       cursorByte: openDialog.filter.cursor,
-      label: "Filter",
-      placeholder: "/ to search",
+      label: editor.t("list.filter_label"),
+      placeholder: editor.t("dock.filter_placeholder"),
       fullWidth: true,
       key: "filter",
     }),
@@ -3098,11 +3138,11 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     { kind: "raw", entries: [
       styledRow([{ text: `${label}`, style: { bold: true } }]),
     ] },
-    button("Visit…", { intent: "primary", key: "ctx-visit" }),
-    button("Archive", { key: "ctx-archive", disabled: !canArchive }),
-    button("Delete", { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
+    button(editor.t("dock.ctx_visit"), { intent: "primary", key: "ctx-visit" }),
+    button(editor.t("dock.ctx_archive"), { key: "ctx-archive", disabled: !canArchive }),
+    button(editor.t("dock.ctx_delete"), { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
     { kind: "raw", entries: [
-      styledRow([{ text: "Esc to close", style: { fg: "ui.menu_disabled_fg" } }]),
+      styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }]),
     ] },
   );
 }
@@ -3391,9 +3431,9 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
     return true;
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: could not open a replacement workspace — ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      editor.t("status.replacement_failed", {
+        error: e instanceof Error ? e.message : String(e),
+      }),
     );
     return false;
   }
@@ -3434,7 +3474,7 @@ interface LifecycleResult {
 // the whole run.
 async function archiveOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
-  if (!s) return { ok: false, err: "workspace gone" };
+  if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
 
   // Live session: the editor must always host a window. If this is the
@@ -3457,7 +3497,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     // Owns a worktree: move it to the `.archived/` graveyard so git's
     // bookkeeping stays consistent and Unarchive can move it back.
     const repoRoot = await worktreeRepoRoot(s);
-    if (!repoRoot) return { ok: false, err: "not a git repository" };
+    if (!repoRoot) return { ok: false, err: editor.t("err.not_git_repo") };
     const archivedRoot = editor.pathJoin(
       editor.getDataDir(),
       "orchestrator",
@@ -3467,7 +3507,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     );
     const parent = editor.pathDirname(archivedRoot);
     if (!editor.createDir(parent)) {
-      return { ok: false, err: `could not create ${parent}`, repoRoot };
+      return { ok: false, err: editor.t("err.could_not_create", { path: parent }), repoRoot };
     }
     const moveRes = await spawnCollect(
       "git",
@@ -3477,7 +3517,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     if (moveRes.exit_code !== 0) {
       return {
         ok: false,
-        err: lastNonEmptyLine(moveRes.stderr) || "worktree move failed",
+        err: lastNonEmptyLine(moveRes.stderr) || editor.t("err.worktree_move_failed"),
         repoRoot,
       };
     }
@@ -3728,7 +3768,7 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 // batches it.
 async function deleteOne(id: number): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
-  if (!s) return { ok: false, err: "workspace gone" };
+  if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
 
   if (!s.discovered && id > 0) {
@@ -3750,7 +3790,7 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   let repoRoot: string | undefined;
   if (removable) {
     const rr = await worktreeRepoRoot(s);
-    if (!rr) return { ok: false, err: "not a git repository" };
+    if (!rr) return { ok: false, err: editor.t("err.not_git_repo") };
     repoRoot = rr;
     // `--force` because the worktree may have unstaged changes the user
     // explicitly chose to discard via the confirm step.
@@ -3762,7 +3802,7 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
     if (removeRes.exit_code !== 0) {
       return {
         ok: false,
-        err: lastNonEmptyLine(removeRes.stderr) || "worktree remove failed",
+        err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
         repoRoot,
       };
     }
@@ -3803,7 +3843,7 @@ async function runConfirmedAction(
   if (!openDialog) return;
   const targets = ids.filter((id) => bulkEligible(action, id));
   if (targets.length === 0) {
-    setDialogError(`nothing eligible to ${action} in the selection`);
+    setDialogError(editor.t("err.nothing_eligible", { action }));
     refreshOpenDialog();
     return;
   }
@@ -3811,7 +3851,7 @@ async function runConfirmedAction(
   if (action === "stop") {
     let n = 0;
     for (const id of targets) if (stopOne(id)) n += 1;
-    editor.setStatus(`Orchestrator: stop signal sent to ${n} workspace(s)`);
+    editor.setStatus(editor.t("status.stop_sent", { count: String(n) }));
     // Stop leaves sessions in place; drop them from the selection so
     // the bulk bar reflects that the action ran.
     for (const id of targets) openDialog.selectedIds.delete(id);
@@ -3837,7 +3877,7 @@ async function runConfirmedAction(
       okCount += 1;
       if (res.repoRoot) touchedRepos.add(res.repoRoot);
     } else {
-      lastErr = res.err ?? "failed";
+      lastErr = res.err ?? editor.t("err.failed");
     }
     openDialog?.selectedIds.delete(id);
     if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
@@ -3848,13 +3888,13 @@ async function runConfirmedAction(
     openDialog.bulkInFlight = null;
   }
 
-  const verb = action === "archive" ? "archived" : "deleted";
+  const verb = action === "archive" ? editor.t("status.verb_archived") : editor.t("status.verb_deleted");
   if (okCount === 0) {
-    setDialogError(`${action} failed: ${lastErr || "unknown error"}`);
+    setDialogError(editor.t("err.action_failed", { action, error: lastErr || editor.t("err.unknown_error") }));
   } else if (lastErr) {
-    setDialogError(`${verb} ${okCount}/${targets.length}; last error: ${lastErr}`);
+    setDialogError(editor.t("err.partial_done", { verb, ok: String(okCount), total: String(targets.length), error: lastErr }));
   } else {
-    editor.setStatus(`Orchestrator: ${verb} ${okCount} workspace(s)`);
+    editor.setStatus(editor.t("status.bulk_done", { verb, count: String(okCount) }));
   }
   for (const repo of touchedRepos) triggerSyncAsync(repo);
   refreshOpenDialog();
@@ -4366,7 +4406,7 @@ interface AgentPreset {
 }
 function agentPresets(): AgentPreset[] {
   const presets: AgentPreset[] = [
-    { label: "terminal", cmd: "", key: "agent-preset-terminal", resumes: false },
+    { label: editor.t("form.agent_terminal"), cmd: "", key: "agent-preset-terminal", resumes: false },
   ];
   for (const e of AGENT_REGISTRY) {
     presets.push({
@@ -4377,7 +4417,7 @@ function agentPresets(): AgentPreset[] {
     });
   }
   presets.push({
-    label: "custom…",
+    label: editor.t("form.agent_custom"),
     cmd: "",
     key: "agent-preset-custom",
     resumes: false,
@@ -4822,7 +4862,7 @@ function backendTabsRow(): WidgetSpec {
   const parts: WidgetSpec[] = [
     {
       kind: "raw",
-      entries: [styledRow([{ text: "Run in:", style: { fg: "ui.menu_disabled_fg" } }])],
+      entries: [styledRow([{ text: editor.t("form.run_in"), style: { fg: "ui.menu_disabled_fg" } }])],
     },
   ];
   for (const b of SESSION_BACKENDS) {
@@ -4839,7 +4879,7 @@ function backendTabsRow(): WidgetSpec {
   parts.push(flexSpacer());
   parts.push({
     kind: "raw",
-    entries: [styledRow([{ text: "←/→ switch type", style: { fg: "ui.menu_disabled_fg", italic: true } }])],
+    entries: [styledRow([{ text: editor.t("form.switch_type"), style: { fg: "ui.menu_disabled_fg", italic: true } }])],
   });
   return row(...parts);
 }
@@ -4856,12 +4896,12 @@ function agentPresetRow(): WidgetSpec {
   const parts: WidgetSpec[] = [
     {
       kind: "raw",
-      entries: [styledRow([{ text: "Agent:", style: { fg: "ui.menu_disabled_fg" } }])],
+      entries: [styledRow([{ text: editor.t("form.agent"), style: { fg: "ui.menu_disabled_fg" } }])],
     },
   ];
   for (const p of agentPresets()) {
     parts.push(spacer(1));
-    const label = p.resumes && showsResume ? `${p.label} ↻` : p.label;
+    const label = p.resumes && showsResume ? editor.t("form.agent_resume_tag", { label: p.label }) : p.label;
     // Only the active preset is a Tab stop; ←/→ chooses within the
     // group (matches the "Run in:" tabs).
     parts.push(button(label, {
@@ -4871,7 +4911,7 @@ function agentPresetRow(): WidgetSpec {
     }));
   }
   parts.push(flexSpacer());
-  const hint = showsResume ? "←/→ choose · ↻ resumes on restart" : "←/→ choose";
+  const hint = showsResume ? editor.t("form.agent_hint_resume") : editor.t("form.agent_hint");
   parts.push({
     kind: "raw",
     entries: [styledRow([{ text: hint, style: { fg: "ui.menu_disabled_fg", italic: true } }])],
@@ -4886,7 +4926,7 @@ function localBodyFields(): WidgetSpec[] {
   const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
   const fields: WidgetSpec[] = [
     labeledSection({
-      label: "Project Path",
+      label: editor.t("form.project_path"),
       child: text({
         value: form.projectPath.value,
         cursorByte: form.projectPath.cursor,
@@ -4895,14 +4935,14 @@ function localBodyFields(): WidgetSpec[] {
         // rendered dim-italic, but that's invisible in a plain
         // capture). Submitting with the field empty uses this path.
         placeholder: form.defaultProjectPath
-          ? `default (leave blank to use): ${form.defaultProjectPath}`
-          : "detecting project root…",
+          ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
+          : editor.t("form.detecting_project_root"),
         fullWidth: true,
         key: "project_path",
       }),
     }),
     worktreeEnabled
-      ? toggle(effectiveCreateWorktree, "Create a new git worktree for this workspace", {
+      ? toggle(effectiveCreateWorktree, editor.t("form.create_worktree"), {
           key: "worktree",
         })
       : {
@@ -4910,11 +4950,11 @@ function localBodyFields(): WidgetSpec[] {
           entries: [
             styledRow([
               {
-                text: "[ ] Create a new git worktree for this workspace",
+                text: editor.t("form.create_worktree_disabled"),
                 style: { fg: "editor.whitespace_indicator_fg" },
               },
               {
-                text: "  (disabled — non-git)",
+                text: editor.t("form.disabled_non_git"),
                 style: { fg: "editor.whitespace_indicator_fg", italic: true },
               },
             ]),
@@ -4928,8 +4968,8 @@ function localBodyFields(): WidgetSpec[] {
         styledRow([
           {
             text: form.createWorktree
-              ? "  ↳ existing worktree here — uncheck to attach instead of forking a new one"
-              : "  ↳ existing worktree — this workspace will attach to it",
+              ? editor.t("form.linked_worktree_uncheck")
+              : editor.t("form.linked_worktree_attach"),
             style: { fg: "ui.help_key_fg", italic: true },
           },
         ]),
@@ -4949,19 +4989,19 @@ function localBranchSection(): WidgetSpec {
     branchPlaceholder = "";
   } else if (branchInert) {
     branchPlaceholder = !worktreeEnabled
-      ? "no git — N/A"
+      ? editor.t("form.branch_no_git")
       : form.projectPathIsLinkedWorktree === true
-      ? "existing worktree — N/A"
-      : "shared worktree — N/A";
+      ? editor.t("form.branch_existing_worktree")
+      : editor.t("form.branch_shared_worktree");
   } else if (!form.defaultBranch) {
-    branchPlaceholder = "detecting default branch…";
+    branchPlaceholder = editor.t("form.detecting_default_branch");
   } else if (form.defaultBranchIsHeadFallback) {
-    branchPlaceholder = "HEAD  (no origin configured)";
+    branchPlaceholder = editor.t("form.branch_head_fallback");
   } else {
     branchPlaceholder = form.defaultBranch;
   }
   return labeledSection({
-    label: "Branch",
+    label: editor.t("form.branch"),
     child: text({
       value: form ? form.branch.value : "",
       cursorByte: form ? form.branch.cursor : 0,
@@ -4977,13 +5017,13 @@ function devcontainerBodyFields(): WidgetSpec[] {
   if (!form) return [];
   return [
     labeledSection({
-      label: "Project Path",
+      label: editor.t("form.project_path"),
       child: text({
         value: form.projectPath.value,
         cursorByte: form.projectPath.cursor,
         placeholder: form.defaultProjectPath
-          ? `default (leave blank to use): ${form.defaultProjectPath}`
-          : "path containing .devcontainer/…",
+          ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
+          : editor.t("form.devcontainer_path_placeholder"),
         fullWidth: true,
         key: "project_path",
       }),
@@ -4993,7 +5033,7 @@ function devcontainerBodyFields(): WidgetSpec[] {
       entries: [
         styledRow([
           {
-            text: "  ⓘ runs `devcontainer up`, then attaches (docker exec)",
+            text: editor.t("form.devcontainer_hint"),
             style: { fg: "ui.menu_disabled_fg", italic: true },
           },
         ]),
@@ -5008,41 +5048,41 @@ function sshBodyFields(): WidgetSpec[] {
   if (!form) return [];
   return [
     labeledSection({
-      label: "Host  ([user@]host[:port])",
+      label: editor.t("form.ssh_host_label"),
       child: text({
         value: form.sshHost.value,
         cursorByte: form.sshHost.cursor,
-        placeholder: "build-01  ·  deploy@build-01:22  ·  or paste ssh://host/path",
+        placeholder: editor.t("form.ssh_host_placeholder"),
         fullWidth: true,
         key: "ssh_host",
       }),
     }),
     labeledSection({
-      label: "Remote Path",
+      label: editor.t("form.ssh_remote_path_label"),
       child: text({
         value: form.sshPath.value,
         cursorByte: form.sshPath.cursor,
-        placeholder: "/srv/project  (blank = remote home)",
+        placeholder: editor.t("form.ssh_remote_path_placeholder"),
         fullWidth: true,
         key: "ssh_path",
       }),
     }),
     labeledSection({
-      label: "Identity file (optional)",
+      label: editor.t("form.ssh_identity_label"),
       child: text({
         value: form.sshIdentity.value,
         cursorByte: form.sshIdentity.cursor,
-        placeholder: "~/.ssh/id_ed25519",
+        placeholder: editor.t("form.ssh_identity_placeholder"),
         fullWidth: true,
         key: "ssh_identity",
       }),
     }),
     labeledSection({
-      label: "SSH options (optional)",
+      label: editor.t("form.ssh_options_label"),
       child: text({
         value: form.sshOptions.value,
         cursorByte: form.sshOptions.cursor,
-        placeholder: "-J jump-host  ·  -o ProxyCommand=…  (passed to every ssh call)",
+        placeholder: editor.t("form.ssh_options_placeholder"),
         fullWidth: true,
         key: "ssh_options",
       }),
@@ -5056,11 +5096,11 @@ function k8sBodyFields(): WidgetSpec[] {
   const hasTarget = form.k8sTarget.value.trim().length > 0;
   const fields: WidgetSpec[] = [
     labeledSection({
-      label: "Target  (.fresh/k8s.json — optional)",
+      label: editor.t("form.k8s_target_label"),
       child: text({
         value: form.k8sTarget.value,
         cursorByte: form.k8sTarget.cursor,
-        placeholder: "named target, or leave blank to attach explicitly ↓",
+        placeholder: editor.t("form.k8s_target_placeholder"),
         fullWidth: true,
         key: "k8s_target",
       }),
@@ -5069,41 +5109,41 @@ function k8sBodyFields(): WidgetSpec[] {
   if (!hasTarget) {
     fields.push(
       labeledSection({
-        label: "Context  (kubeconfig — optional)",
+        label: editor.t("form.k8s_context_label"),
         child: text({
           value: form.k8sContext.value,
           cursorByte: form.k8sContext.cursor,
-          placeholder: "current-context",
+          placeholder: editor.t("form.k8s_context_placeholder"),
           fullWidth: true,
           key: "k8s_context",
         }),
       }),
       labeledSection({
-        label: "Namespace",
+        label: editor.t("form.k8s_namespace_label"),
         child: text({
           value: form.k8sNamespace.value,
           cursorByte: form.k8sNamespace.cursor,
-          placeholder: "default",
+          placeholder: editor.t("form.k8s_namespace_placeholder"),
           fullWidth: true,
           key: "k8s_namespace",
         }),
       }),
       labeledSection({
-        label: "Pod",
+        label: editor.t("form.k8s_pod_label"),
         child: text({
           value: form.k8sPod.value,
           cursorByte: form.k8sPod.cursor,
-          placeholder: "pod name (kubectl get pods)",
+          placeholder: editor.t("form.k8s_pod_placeholder"),
           fullWidth: true,
           key: "k8s_pod",
         }),
       }),
       labeledSection({
-        label: "Workspace path",
+        label: editor.t("form.k8s_workspace_label"),
         child: text({
           value: form.k8sWorkspace.value,
           cursorByte: form.k8sWorkspace.cursor,
-          placeholder: "/workspace",
+          placeholder: editor.t("form.k8s_workspace_placeholder"),
           fullWidth: true,
           key: "k8s_workspace",
         }),
@@ -5115,7 +5155,7 @@ function k8sBodyFields(): WidgetSpec[] {
     entries: [
       styledRow([
         {
-          text: "  ⓘ kubectl exec into the pod — any cluster (EKS/GKE/AKS/k3d)",
+          text: editor.t("form.k8s_hint"),
           style: { fg: "ui.menu_disabled_fg", italic: true },
         },
       ]),
@@ -5158,20 +5198,20 @@ function buildConnectingView(): WidgetSpec {
   });
   const rows: WidgetSpec[] = [];
   if (form.backend === "ssh") {
-    rows.push(roRow("Run in", "SSH"));
-    rows.push(roRow("Host", form.sshHost.value.trim()));
-    if (form.sshPath.value.trim()) rows.push(roRow("Remote path", form.sshPath.value.trim()));
+    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.ssh")));
+    rows.push(roRow(editor.t("form.ro_host"), form.sshHost.value.trim()));
+    if (form.sshPath.value.trim()) rows.push(roRow(editor.t("form.ro_remote_path"), form.sshPath.value.trim()));
   } else if (form.backend === "kubernetes") {
-    rows.push(roRow("Run in", "Kubernetes"));
+    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.kubernetes")));
     const ns = form.k8sNamespace.value.trim();
     const pod = form.k8sPod.value.trim();
-    rows.push(roRow("Pod", form.k8sTarget.value.trim() || `${ns}/${pod}`));
+    rows.push(roRow(editor.t("form.ro_pod"), form.k8sTarget.value.trim() || `${ns}/${pod}`));
   } else {
-    rows.push(roRow("Run in", form.backend === "devcontainer" ? "Devcontainer" : "Local"));
-    rows.push(roRow("Project", form.projectPath.value.trim() || form.defaultProjectPath));
+    rows.push(roRow(editor.t("form.ro_run_in"), form.backend === "devcontainer" ? editor.t("backend.devcontainer") : editor.t("backend.local")));
+    rows.push(roRow(editor.t("form.ro_project"), form.projectPath.value.trim() || form.defaultProjectPath));
   }
   const name = form.name.value.trim();
-  if (name) rows.push(roRow("Workspace", name));
+  if (name) rows.push(roRow(editor.t("form.ro_workspace"), name));
 
   const remote = form.backend === "ssh" || form.backend === "kubernetes";
   return col(
@@ -5181,9 +5221,9 @@ function buildConnectingView(): WidgetSpec {
         kind: "raw",
         entries: [
           styledRow([
-            { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
+            { text: editor.t("form.header_keyword"), style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "New Workspace", style: HEADER_LABEL_STYLE },
+            { text: editor.t("form.header_label"), style: HEADER_LABEL_STYLE },
           ]),
         ],
       },
@@ -5197,11 +5237,11 @@ function buildConnectingView(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: remote ? "Connecting… " : "Creating workspace… ",
+            text: remote ? editor.t("form.connecting") : editor.t("form.creating_workspace"),
             style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
           },
           {
-            text: "press Cancel to abort.",
+            text: editor.t("form.press_cancel_abort"),
             style: { fg: "ui.menu_disabled_fg", italic: true },
           },
         ]),
@@ -5209,9 +5249,9 @@ function buildConnectingView(): WidgetSpec {
     },
     spacer(0),
     wrappingRow(
-      button("Cancel", { intent: "danger", key: "cancel" }),
+      button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
       spacer(2),
-      button("Create Workspace", { intent: "primary", key: "create", disabled: true }),
+      button(editor.t("form.btn_create"), { intent: "primary", key: "create", disabled: true }),
     ),
   );
 }
@@ -5229,9 +5269,9 @@ function buildFormSpec(): WidgetSpec {
         kind: "raw",
         entries: [
           styledRow([
-            { text: "ORCHESTRATOR", style: HEADER_KEYWORD_STYLE },
+            { text: editor.t("form.header_keyword"), style: HEADER_KEYWORD_STYLE },
             { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: "New Workspace", style: HEADER_LABEL_STYLE },
+            { text: editor.t("form.header_label"), style: HEADER_LABEL_STYLE },
           ]),
         ],
       },
@@ -5248,7 +5288,7 @@ function buildFormSpec(): WidgetSpec {
     // the host based on the panel's focus_key) is the authoritative
     // focus cue.
     labeledSection({
-      label: "Workspace Name",
+      label: editor.t("form.workspace_name"),
       child: text({
         value: form.name.value,
         cursorByte: form.name.cursor,
@@ -5256,14 +5296,14 @@ function buildFormSpec(): WidgetSpec {
         // literal `(auto-generated)` — the user sees the exact
         // name an empty submit would create. Empty while the
         // ref probe runs.
-        placeholder: form.defaultSessionName || "auto-generating…",
+        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
         fullWidth: true,
         key: "name",
       }),
     }),
     agentPresetRow(),
     labeledSection({
-      label: "Agent Command",
+      label: editor.t("form.agent_command"),
       child: text({
         value: form.cmd.value,
         cursorByte: form.cmd.cursor,
@@ -5271,8 +5311,8 @@ function buildFormSpec(): WidgetSpec {
         // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
         // spawn the remote login shell. The placeholder names that default.
         placeholder: form.backend === "ssh"
-          ? "remote login shell  (clear to reset)"
-          : "terminal",
+          ? editor.t("form.cmd_placeholder_ssh")
+          : editor.t("form.agent_terminal"),
         fullWidth: true,
         key: "cmd",
       }),
@@ -5293,7 +5333,7 @@ function buildFormSpec(): WidgetSpec {
       entries: [
         styledRow([
           {
-            text: "Error: ",
+            text: editor.t("form.error_prefix"),
             style: { fg: "ui.status_error_indicator_fg", bold: true },
           },
           { text: form.lastError },
@@ -5309,23 +5349,23 @@ function buildFormSpec(): WidgetSpec {
     // right edge. The wrap path ignores the leading flex spacer (and
     // trims a blank that would lead a line), so the pair left-packs.
     wrappingRow(
-      button("Cancel", { intent: "danger", key: "cancel" }),
+      button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
       spacer(2),
-      button("Create Workspace", { intent: "primary", key: "create" }),
+      button(editor.t("form.btn_create"), { intent: "primary", key: "create" }),
     ),
     spacer(0),
     // === Footer: keybinding helper, centered. ====================
     row(
       flexSpacer(),
       hintBar([
-        { keys: "Tab", label: "next / accept" },
-        { keys: "S-Tab", label: "prev" },
-        { keys: "←→", label: "change option" },
-        { keys: "↑↓", label: "suggest / history" },
-        { keys: "Space", label: "toggle" },
-        { keys: "Enter", label: "advance / act" },
-        { keys: "^Enter", label: "create" },
-        { keys: "Esc", label: "close / cancel" },
+        { keys: "Tab", label: editor.t("hint.form_next") },
+        { keys: "S-Tab", label: editor.t("hint.form_prev") },
+        { keys: "←→", label: editor.t("hint.form_change") },
+        { keys: "↑↓", label: editor.t("hint.form_suggest") },
+        { keys: "Space", label: editor.t("hint.form_toggle") },
+        { keys: "Enter", label: editor.t("hint.form_advance") },
+        { keys: "^Enter", label: editor.t("hint.form_create") },
+        { keys: "Esc", label: editor.t("hint.form_close") },
       ]),
       flexSpacer(),
     ),
@@ -5868,7 +5908,7 @@ async function runRemoteAttach(
 // reason (ssh diagnostic, a window-creation failure, a bad spec, …).
 function remoteAttachErrorText(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e ?? "");
-  return msg.trim() || "connection failed";
+  return msg.trim() || editor.t("err.connection_failed");
 }
 
 async function submitRemoteForm(backend: SessionBackend): Promise<void> {
@@ -5877,7 +5917,7 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
     if (!form) return;
     form.submitting = false;
     form.lastError = msg;
-    editor.setStatus(`Orchestrator: ${msg}`);
+    editor.setStatus(editor.t("status.prefix", { msg }));
     renderForm();
   };
   const sessionName = form.name.value.trim();
@@ -5890,13 +5930,11 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
     const namespace = form.k8sNamespace.value.trim();
     const pod = form.k8sPod.value.trim();
     if (target && !pod) {
-      fail(
-        "Named .fresh/k8s.json targets — use “K8s: Connect Workspace” (full provider support). Inline attach needs an explicit Pod.",
-      );
+      fail(editor.t("err.k8s_named_target"));
       return;
     }
     if (!namespace || !pod) {
-      fail("Kubernetes: Namespace and Pod are required (or use “K8s: Connect Workspace”).");
+      fail(editor.t("err.k8s_ns_pod_required"));
       return;
     }
     const agentArgv = splitAgentCmd(cmd);
@@ -5941,7 +5979,7 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
     const user = at > 0 ? hostPart.slice(0, at) : undefined;
     const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
     if (!host) {
-      fail("SSH: a host is required (host, user@host, or ssh://host).");
+      fail(editor.t("err.ssh_host_required"));
       return;
     }
     const identity = form.sshIdentity.value.trim();
@@ -5979,9 +6017,7 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
   // devcontainer — no runtime plugin-to-plugin attach yet; point at the
   // dedicated command (the devcontainer plugin owns `devcontainer up` + the
   // docker-exec authority).
-  fail(
-    "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)",
-  );
+  fail(editor.t("err.devcontainer_unsupported"));
 }
 
 async function submitForm(): Promise<void> {
@@ -6058,8 +6094,8 @@ async function submitForm(): Promise<void> {
     if (!editor.createDir(parent)) {
       if (!form) return;
       form.submitting = false;
-      form.lastError = `mkdir failed: ${parent}`;
-      editor.setStatus(`Orchestrator: ${form.lastError}`);
+      form.lastError = editor.t("err.mkdir_failed", { path: parent });
+      editor.setStatus(editor.t("status.prefix", { msg: form.lastError }));
       renderForm();
       return;
     }
@@ -6090,8 +6126,8 @@ async function submitForm(): Promise<void> {
         // informative one.
         form.lastError = lastNonEmptyLine(fallback.stderr) ||
           lastNonEmptyLine(addRes.stderr) ||
-          "git worktree add failed";
-        editor.setStatus(`Orchestrator: ${form.lastError}`);
+          editor.t("err.worktree_add_failed");
+        editor.setStatus(editor.t("status.prefix", { msg: form.lastError }));
         renderForm();
         return;
       }
@@ -6203,9 +6239,9 @@ async function submitForm(): Promise<void> {
     }
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: failed to start workspace — ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      editor.t("status.start_failed", {
+        error: e instanceof Error ? e.message : String(e),
+      }),
     );
   }
 }
@@ -6281,9 +6317,9 @@ async function attachToWorktree(opts: {
     }
   } catch (e) {
     editor.setStatus(
-      `Orchestrator: failed to attach workspace — ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      editor.t("status.attach_failed", {
+        error: e instanceof Error ? e.message : String(e),
+      }),
     );
   }
 }
@@ -6535,7 +6571,13 @@ function enterBulkConfirm(action: BulkAction): void {
   if (!openDialog || !openPanel) return;
   const targets = eligibleSelected(action);
   if (targets.length === 0) {
-    setDialogError(`no selected workspace can be ${action === "stop" ? "stopped" : action + "d"}`);
+    setDialogError(editor.t("err.no_eligible_selected", {
+      verb: action === "stop"
+        ? editor.t("status.verb_stopped")
+        : action === "archive"
+        ? editor.t("status.verb_archived")
+        : editor.t("status.verb_deleted"),
+    }));
     refreshOpenDialog();
     return;
   }
@@ -7192,25 +7234,21 @@ editor.on("widget_event", (e) => {
 // with guidance.
 function killSelected(): void {
   if (!openDialog) {
-    editor.setStatus(
-      "Orchestrator: open the workspace list (Ctrl+P → Orchestrator: Open) first",
-    );
+    editor.setStatus(editor.t("status.kill_open_list_first"));
     return;
   }
   const ids = openDialog.filteredIds;
   if (ids.length === 0) {
-    editor.setStatus("Orchestrator: no workspace selected");
+    editor.setStatus(editor.t("status.kill_no_selected"));
     return;
   }
   const id = ids[Math.max(0, Math.min(openDialog.selectedIndex, ids.length - 1))];
   if (id <= 0) {
-    editor.setStatus("Orchestrator: select a workspace row first");
+    editor.setStatus(editor.t("status.kill_select_row"));
     return;
   }
   if (id === editor.activeWindow()) {
-    editor.setStatus(
-      "Orchestrator: dive elsewhere first, then kill this workspace",
-    );
+    editor.setStatus(editor.t("status.kill_dive_elsewhere"));
     return;
   }
   const s = orchestratorSessions.get(id);
@@ -7367,29 +7405,29 @@ registerHandler("orchestrator_kill", killSelected);
 // forward it to the PTY child) and dispatches the action
 // directly.
 editor.registerCommand(
-  "Orchestrator: Open",
-  "Show all editor workspaces in a floating selector",
+  "%cmd.open",
+  "%cmd.open_desc",
   "orchestrator_open",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
-  "Orchestrator: New Workspace",
-  "Spawn a new editor workspace in a worktree",
+  "%cmd.new",
+  "%cmd.new_desc",
   "orchestrator_new",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
-  "Orchestrator: Kill Selected",
-  "Close the workspace highlighted in the open Orchestrator prompt",
+  "%cmd.kill",
+  "%cmd.kill_desc",
   "orchestrator_kill",
   null,
   { terminalBypass: true },
 );
 editor.registerCommand(
-  "Orchestrator: Toggle Dock",
-  "Show/hide the persistent left workspace dock (↑↓ switches windows live)",
+  "%cmd.dock_toggle",
+  "%cmd.dock_toggle_desc",
   "orchestrator_dock_toggle",
   null,
   { terminalBypass: true },
