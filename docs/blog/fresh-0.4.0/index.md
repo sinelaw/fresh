@@ -7,8 +7,6 @@ outline: false
 
 # What's New in Fresh (0.4.0)
 
-*June 9, 2026 — rolling up everything since the [0.3.0 release](../fresh-0.3.0/).*
-
 A dozen point releases since 0.3.0, and the through-line is **working across many workspaces and machines from one Fresh daemon**: a multi-window Orchestrator with a persistent dock, remote workspaces you start from the UI, and a universal search that spans files, buffers, and terminals. Plus a reimagined review diff, live diff, terminal path links, and the usual long tail of editor, LSP, and language work.
 
 > **A note on vocabulary (new in 0.4.1).** Fresh has sharpened the overloaded word *session*. A **workspace** is the editor's per-project unit — what the Orchestrator lists, opens, and manages. A **daemon** is the persistent background process you attach to and detach from. A **backend** is where a workspace runs: local, SSH, dev container, or Kubernetes. The screenshots below use the new names; the CLI still accepts the now-deprecated `--cmd session` as an alias for `--cmd daemon`.
