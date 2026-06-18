@@ -4434,10 +4434,11 @@ fn blog_showcase_fresh_0_4_0_agent_sessions() {
     copy_plugin_lib(&plugins_dir);
     copy_plugin(&plugins_dir, "orchestrator");
 
-    // 160 wide so the dialog is roomy enough to show the full "↻ resumes on
-    // restart" legend (it truncates off a narrower dialog).
+    // The form panel is 60% of the terminal width; 184 wide makes that ~110
+    // cols so the agent row shows the full "↻ resumes on restart" legend
+    // (it clips off a narrower dialog — e.g. ~94 cols at 160 wide).
     let mut h = EditorTestHarness::with_config_and_working_dir(
-        160,
+        184,
         36,
         fresh::config::Config::default(),
         repo.path.clone(),

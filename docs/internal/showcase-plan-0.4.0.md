@@ -43,8 +43,9 @@ scripts/frames-to-gif.sh docs/blog/fresh-0.4.0/<name>
   `c` landing in the COMMENTS panel.
 - [x] **agent-sessions** — the New Session dialog's **Agent:** dropdown
   (terminal / claude ↻ / aider ↻ / custom…); picking an agent fills the
-  Agent Command, and the `↻ resumes on restart` legend is shown. 160-wide
-  so the legend isn't truncated.
+  Agent Command, and the `↻ resumes on restart` legend is shown. 184-wide
+  (the form panel is 60% of the terminal) so the legend isn't truncated —
+  in 0.4.1 the hint shares the presets' row, so 160 clipped it.
 - [x] **workspace-trust** — open an untrusted Rust crate with a `build.rs`;
   Fresh raises the full-screen "⚠ SECURITY WARNING" prompt naming the markers
   (Cargo.toml), with Trust / Keep Restricted / Block. ↑ selects "Trust folder &
