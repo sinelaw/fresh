@@ -157,7 +157,7 @@ function discoverSubRepos(dir: string, maxDepth: number = 3): string[] {
   const repos: string[] = [];
   const entries = editor.readDir(dir);
   for (const entry of entries) {
-    if (entry.name.startsWith(".") || !entry.is_dir) continue;
+    if (entry.name.startsWith(".") || entry.name === "node_modules" || !entry.is_dir) continue;
     const subDir = editor.pathJoin(dir, entry.name);
     if (editor.fileExists(editor.pathJoin(subDir, ".git"))) {
       repos.push(subDir);

@@ -958,6 +958,7 @@ impl Editor {
         // Working dir is not a git repo — recursively scan subdirectories
         // (up to 3 levels) to find a sub-repo's .git/index (monorepo support).
         let working_dir = self.working_dir().to_path_buf();
+        let fs = self.authority().filesystem.clone();
 
         use std::collections::VecDeque;
         let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
@@ -965,27 +966,22 @@ impl Editor {
         const MAX_DEPTH: u32 = 3;
 
         while let Some((dir, depth)) = queue.pop_front() {
-            let entries = match std::fs::read_dir(&dir) {
+            let entries = match fs.read_dir(&dir) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
 
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if !path.is_dir() {
+            for entry in entries {
+                if !entry.is_dir() {
                     continue;
                 }
-                if path.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with('.'))
-                    .unwrap_or(false)
-                {
+                if entry.name.starts_with('.') || entry.name == "node_modules" {
                     continue;
                 }
 
-                let dot_git = path.join(".git");
-                if dot_git.exists() {
-                    let sub_cwd = path.to_string_lossy().to_string();
+                let dot_git = entry.path.join(".git");
+                if fs.exists(&dot_git) {
+                    let sub_cwd = entry.path.to_string_lossy().to_string();
                     let sub_result = rt.block_on(spawner.spawn(
                         "git".to_string(),
                         vec!["rev-parse".to_string(), "--git-dir".to_string()],
@@ -997,13 +993,13 @@ impl Editor {
                             let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
                                 PathBuf::from(git_dir)
                             } else {
-                                path.join(git_dir)
+                                entry.path.join(git_dir)
                             };
                             return Some(git_dir_path.join("index"));
                         }
                     }
                 } else if depth < MAX_DEPTH {
-                    queue.push_back((path, depth + 1));
+                    queue.push_back((entry.path.clone(), depth + 1));
                 }
             }
         }

@@ -4134,3 +4134,97 @@ fn test_file_explorer_shows_placeholder_during_slow_build() {
         harness.screen_to_string()
     );
 }
+
+/// Test that git status decorations appear for sub-repos when the workspace root
+/// is NOT a git repository (monorepo / multi-repo layout).
+///
+/// Layout:
+///   /tmp/workspace/          (not a git repo)
+///     project-a/             (git repo with modified file)
+///     project-b/             (git repo with untracked file)
+///
+/// The git_explorer plugin should discover both sub-repos and show decorations.
+#[test]
+#[cfg_attr(windows, ignore)] // Git plugin tests are flaky on Windows CI
+fn test_file_explorer_git_decorations_monorepo_subrepos() {
+    use crate::common::git_test_helper::git_command;
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use tempfile::TempDir;
+
+    let workspace_dir = TempDir::new().expect("Failed to create workspace dir");
+    let ws = workspace_dir.path();
+
+    // Create project-a as a git sub-repo with a modified tracked file
+    let project_a = ws.join("project-a");
+    fs::create_dir_all(&project_a).unwrap();
+    let output = git_command(&project_a).arg("init").output().unwrap();
+    assert!(output.status.success(), "git init project-a failed");
+    fs::write(project_a.join("file-a.txt"), "original").unwrap();
+    git_command(&project_a)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    git_command(&project_a)
+        .args(["commit", "-m", "init-a"])
+        .output()
+        .unwrap();
+    fs::write(project_a.join("file-a.txt"), "modified").unwrap();
+
+    // Create project-b as a git sub-repo with an untracked file
+    let project_b = ws.join("project-b");
+    fs::create_dir_all(&project_b).unwrap();
+    let output = git_command(&project_b).arg("init").output().unwrap();
+    assert!(output.status.success(), "git init project-b failed");
+    fs::write(project_b.join("file-b.txt"), "tracked").unwrap();
+    git_command(&project_b)
+        .args(["add", "."])
+        .output()
+        .unwrap();
+    git_command(&project_b)
+        .args(["commit", "-m", "init-b"])
+        .output()
+        .unwrap();
+    fs::write(project_b.join("new-file.txt"), "untracked content").unwrap();
+
+    // Install the git_explorer plugin into the workspace
+    let plugins_dir = ws.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "git_explorer");
+    copy_plugin_lib(&plugins_dir);
+
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, ws.to_path_buf()).unwrap();
+
+    harness.editor_mut().toggle_file_explorer();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
+        .unwrap();
+
+    // Wait for git_explorer to discover sub-repos and apply decorations.
+    // project-a/file-a.txt should show M (modified), project-b/new-file.txt should show U (untracked).
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen
+                .lines()
+                .any(|line| line.contains("project-a") && line.contains("●"))
+                || screen
+                    .lines()
+                    .any(|line| line.contains("file-a.txt") && line.contains("M"))
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Monorepo file explorer:\n{screen}");
+
+    // Verify project-b also has a decoration (● on directory or U on new-file.txt)
+    let has_project_b_decoration = screen
+        .lines()
+        .any(|line| line.contains("project-b") && line.contains("●"))
+        || screen
+            .lines()
+            .any(|line| line.contains("new-file") && line.contains("U"));
+    assert!(
+        has_project_b_decoration,
+        "project-b should show git status decorations in monorepo layout.\nScreen:\n{screen}"
+    );
+}
