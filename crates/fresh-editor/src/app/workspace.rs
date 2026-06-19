@@ -1269,6 +1269,17 @@ impl crate::app::window::Window {
                         SerializedViewMode::PageView => ViewMode::PageView,
                     };
                     buf_state.compose_width = file_state.compose_width;
+                    // Re-apply explicit per-buffer view overrides (line numbers /
+                    // line wrap). Only Some(_) values were persisted, so buffers
+                    // the user never pinned keep following the global default.
+                    if let Some(line_numbers) = file_state.line_numbers {
+                        buf_state.line_numbers_override = Some(line_numbers);
+                        buf_state.show_line_numbers = line_numbers;
+                    }
+                    if let Some(line_wrap) = file_state.line_wrap {
+                        buf_state.line_wrap_override = Some(line_wrap);
+                        buf_state.viewport.line_wrap_enabled = line_wrap;
+                    }
                     buf_state.plugin_state = file_state.plugin_state.clone();
                     if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                         buf_state.folds.clear(&mut state.marker_list);
@@ -1594,6 +1605,10 @@ impl crate::app::window::Window {
             },
             view_mode: Default::default(),
             compose_width: None,
+            // Per-buffer overrides are workspace-scoped, not part of the
+            // cross-project global per-file state.
+            line_numbers: None,
+            line_wrap: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -2626,6 +2641,8 @@ fn serialize_split_view_state(
                     ViewMode::PageView => SerializedViewMode::PageView,
                 },
                 compose_width: buf_state.compose_width,
+                line_numbers: buf_state.line_numbers_override,
+                line_wrap: buf_state.line_wrap_override,
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },

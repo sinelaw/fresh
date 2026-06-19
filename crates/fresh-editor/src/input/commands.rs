@@ -616,6 +616,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_line_numbers_current_buffer",
+        desc_key: "cmd.toggle_line_numbers_current_buffer_desc",
+        action: || Action::ToggleLineNumbersCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_line_wrap_current_buffer",
+        desc_key: "cmd.toggle_line_wrap_current_buffer_desc",
+        action: || Action::ToggleLineWrapCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.wave_animation",
         desc_key: "cmd.wave_animation_desc",
         action: || Action::TriggerWaveAnimation,

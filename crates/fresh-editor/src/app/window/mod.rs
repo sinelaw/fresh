@@ -2428,6 +2428,10 @@ impl Window {
             },
             view_mode: Default::default(),
             compose_width: None,
+            // Per-buffer line-number / line-wrap overrides are workspace-scoped,
+            // not part of the cross-project global per-file state.
+            line_numbers: None,
+            line_wrap: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };

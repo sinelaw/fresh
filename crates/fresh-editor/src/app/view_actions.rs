@@ -57,7 +57,9 @@ impl Window {
             // In Source mode, respect the user's default_wrap preference.
             vs.viewport.line_wrap_enabled = match view_mode {
                 ViewMode::PageView => false,
-                ViewMode::Source => default_wrap,
+                // A per-buffer override wins over the global/language default
+                // when returning to Source mode.
+                ViewMode::Source => vs.line_wrap_override.unwrap_or(default_wrap),
             };
             match view_mode {
                 ViewMode::PageView => {
@@ -71,7 +73,8 @@ impl Window {
                     // Clear compose width to remove margins
                     vs.compose_width = None;
                     vs.view_transform = None;
-                    vs.show_line_numbers = default_line_numbers;
+                    // A per-buffer override wins over the global default.
+                    vs.show_line_numbers = vs.line_numbers_override.unwrap_or(default_line_numbers);
                 }
             }
         }

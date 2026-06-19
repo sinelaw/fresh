@@ -43,6 +43,10 @@ impl Editor {
             .map(|vs| {
                 let new_value = !vs.show_line_numbers;
                 vs.show_line_numbers = new_value;
+                // The user is expressing a global intent on this view, so drop
+                // any per-buffer pin here — otherwise the override would revert
+                // this change on the next view-mode switch / restart.
+                vs.line_numbers_override = None;
                 new_value
             })
         else {
@@ -61,6 +65,92 @@ impl Editor {
             t!("toggle.line_numbers_hidden")
         };
         self.set_status_message(status.to_string());
+    }
+
+    /// Toggle line numbers for the current buffer only.
+    ///
+    /// Unlike [`toggle_line_numbers`](Self::toggle_line_numbers), this does not
+    /// touch the global `editor.line_numbers` default and does not affect other
+    /// buffers. It records an explicit per-buffer override on the active buffer's
+    /// view state, which is persisted in the per-file workspace state so the
+    /// choice survives a restart (issue #474 follow-up).
+    pub fn toggle_line_numbers_current_buffer(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                // Deref reaches the active buffer's BufferViewState, so this
+                // scopes the override to the current buffer in this split only.
+                let new_value = !vs.show_line_numbers;
+                vs.show_line_numbers = new_value;
+                vs.line_numbers_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let status = if new_value {
+            t!("toggle.line_numbers_shown")
+        } else {
+            t!("toggle.line_numbers_hidden")
+        };
+        self.set_status_message(status.to_string());
+    }
+
+    /// Toggle line wrap for the current buffer only.
+    ///
+    /// Per-buffer counterpart of [`Action::ToggleLineWrap`](crate::input::keybindings::Action::ToggleLineWrap):
+    /// it does not touch the global `editor.line_wrap` default and does not affect
+    /// other buffers. Records an explicit per-buffer override, persisted in the
+    /// per-file workspace state.
+    pub fn toggle_line_wrap_current_buffer(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let buffer_id = self.active_buffer();
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
+        let wrap_indent = self.config.editor.wrap_indent;
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                let new_value = !vs.viewport.line_wrap_enabled;
+                vs.viewport.line_wrap_enabled = new_value;
+                vs.viewport.wrap_indent = wrap_indent;
+                vs.viewport.wrap_column = wrap_column;
+                vs.line_wrap_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let state = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
     }
 
     /// Kick off the full-screen wave animation: a crest of wave glyphs

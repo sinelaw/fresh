@@ -165,6 +165,20 @@ pub struct BufferViewState {
     /// Initialized from config when the split is created.
     pub highlight_current_line: bool,
 
+    /// Explicit per-buffer override for line-number visibility.
+    /// `None` = follow the global `editor.line_numbers` default; `Some(v)` =
+    /// the user pinned this buffer via "Toggle Line Numbers (Current Buffer)".
+    /// Persisted per-file so the choice survives a restart without freezing
+    /// untouched buffers at a stale global value (cf. issue #474). `show_line_numbers`
+    /// remains the rendered source of truth; this only records intent + drives
+    /// persistence and re-application when the global default changes underneath.
+    pub line_numbers_override: Option<bool>,
+
+    /// Explicit per-buffer override for line wrap (analogue of
+    /// `line_numbers_override`). `viewport.line_wrap_enabled` stays the rendered
+    /// source of truth.
+    pub line_wrap_override: Option<bool>,
+
     /// Optional view transform payload
     pub view_transform: Option<ViewTransformPayload>,
 
@@ -210,6 +224,8 @@ impl BufferViewState {
             rulers: Vec::new(),
             show_line_numbers: true,
             highlight_current_line: true,
+            line_numbers_override: None,
+            line_wrap_override: None,
             view_transform: None,
             view_transform_stale: false,
             plugin_state: std::collections::HashMap::new(),
@@ -268,6 +284,8 @@ impl Clone for BufferViewState {
             rulers: self.rulers.clone(),
             show_line_numbers: self.show_line_numbers,
             highlight_current_line: self.highlight_current_line,
+            line_numbers_override: self.line_numbers_override,
+            line_wrap_override: self.line_wrap_override,
             view_transform: self.view_transform.clone(),
             view_transform_stale: self.view_transform_stale,
             plugin_state: self.plugin_state.clone(),

@@ -244,6 +244,16 @@ pub struct SerializedFileState {
     #[serde(default)]
     pub compose_width: Option<u16>,
 
+    /// Explicit per-buffer line-number override (`None` = follow global default).
+    /// Persists the "Toggle Line Numbers (Current Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_numbers: Option<bool>,
+
+    /// Explicit per-buffer line-wrap override (`None` = follow global default).
+    /// Persists the "Toggle Line Wrap (Current Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_wrap: Option<bool>,
+
     /// Plugin-managed state (arbitrary key-value pairs, persisted across sessions)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugin_state: HashMap<String, serde_json::Value>,
@@ -1176,6 +1186,8 @@ mod tests {
             },
             view_mode: SerializedViewMode::Source,
             compose_width: None,
+            line_numbers: None,
+            line_wrap: None,
             plugin_state: HashMap::new(),
             folds: Vec::new(),
         };

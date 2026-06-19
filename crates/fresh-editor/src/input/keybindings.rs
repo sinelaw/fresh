@@ -705,6 +705,14 @@ pub enum Action {
 
     // View toggles
     ToggleLineNumbers,
+    /// Toggle line-number visibility for the current buffer only (per-buffer
+    /// override that persists across restart, without touching the global
+    /// default or other buffers).
+    ToggleLineNumbersCurrentBuffer,
+    /// Toggle line wrap for the current buffer only (per-buffer override that
+    /// persists across restart, without touching the global default or other
+    /// buffers).
+    ToggleLineWrapCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -1170,6 +1178,8 @@ impl Action {
             "toggle_mouse_hover" => ToggleMouseHover,
 
             "toggle_line_numbers" => ToggleLineNumbers,
+            "toggle_line_numbers_current_buffer" => ToggleLineNumbersCurrentBuffer,
+            "toggle_line_wrap_current_buffer" => ToggleLineWrapCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -2597,6 +2607,10 @@ impl KeybindingResolver {
             Action::ToggleInlayHints => t!("action.toggle_inlay_hints"),
             Action::ToggleMouseHover => t!("action.toggle_mouse_hover"),
             Action::ToggleLineNumbers => t!("action.toggle_line_numbers"),
+            Action::ToggleLineNumbersCurrentBuffer => {
+                t!("action.toggle_line_numbers_current_buffer")
+            }
+            Action::ToggleLineWrapCurrentBuffer => t!("action.toggle_line_wrap_current_buffer"),
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),

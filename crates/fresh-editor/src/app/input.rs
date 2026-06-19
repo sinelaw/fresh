@@ -1408,6 +1408,9 @@ impl Editor {
                         view_state.viewport.line_wrap_enabled = effective_wrap;
                         view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
                         view_state.viewport.wrap_column = wrap_column;
+                        // Global toggle expresses global intent; drop the
+                        // per-buffer pin so it doesn't revert this change.
+                        view_state.line_wrap_override = None;
                     }
                 }
 
@@ -1734,6 +1737,8 @@ impl Editor {
             Action::ToggleVerticalScrollbar => self.toggle_vertical_scrollbar(),
             Action::ToggleHorizontalScrollbar => self.toggle_horizontal_scrollbar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
+            Action::ToggleLineNumbersCurrentBuffer => self.toggle_line_numbers_current_buffer(),
+            Action::ToggleLineWrapCurrentBuffer => self.toggle_line_wrap_current_buffer(),
             Action::TriggerWaveAnimation => self.trigger_wave_animation(),
             Action::ToggleScrollSync => self.active_window_mut().toggle_scroll_sync(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
