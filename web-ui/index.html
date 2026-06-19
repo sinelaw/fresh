@@ -485,6 +485,12 @@
   .m-icon{flex:0 0 auto;width:30px;height:28px;display:flex;align-items:center;justify-content:center;
     border-radius:var(--r-sm);color:var(--fg);font-size:15px}
   .m-icon:active{background:var(--hover)}
+  .m-icon.on{color:var(--on-accent);background:var(--accent)}
+  /* Invisible capture input that raises/dismisses the native soft keyboard.
+     Kept inside the viewport (not off-screen) so focusing it doesn't scroll;
+     16px font avoids iOS zoom-on-focus. */
+  #m-kbinput{position:fixed;left:0;bottom:var(--m-bottom,124px);width:1px;height:1px;
+    opacity:0;border:0;padding:0;margin:0;font-size:16px;z-index:-1}
 
   /* Overflow (kebab) sheet, anchored under the header on the right. */
   .m-sheet{position:fixed;top:40px;right:6px;z-index:92;min-width:210px;background:var(--surface);
@@ -507,6 +513,19 @@
   .m-sym:active{background:var(--hover)}
   .m-sym.m-save{margin-left:auto;color:var(--on-accent);background:var(--accent);
     border-color:var(--accent);font-weight:700;font-family:inherit;padding:0 16px}
+
+  /* Termux-style modifier / navigation row (optional; toggled from overflow). */
+  .m-mods{display:flex;gap:6px;overflow-x:auto;padding:6px 8px;
+    border-bottom:1px solid var(--hairline);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .m-mods::-webkit-scrollbar{display:none}
+  .m-mod{flex:0 0 auto;min-width:34px;height:32px;padding:0 11px;display:flex;align-items:center;
+    justify-content:center;font-size:12.5px;color:var(--fg);background:var(--surface);
+    border:1px solid var(--hairline);border-radius:var(--r-sm)}
+  .m-mod:active{background:var(--hover)}
+  /* armed sticky modifier (Ctrl/Alt/Shift held for the next key) */
+  .m-mod.m-modkey{font-weight:600}
+  .m-mod.on{color:var(--on-accent);background:var(--accent);border-color:var(--accent);
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 45%,transparent)}
 
   .m-nav{display:flex;align-items:stretch}
   .m-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -1435,13 +1454,64 @@ function borderDragHandle(bx, by, h){
 // rows (36px); the bottom stack's height (M_BOTTOM) is subtracted from the grid
 // in resize() so no code hides behind it. Every control routes to the REAL
 // editor (sendKey / sendAction), exactly like the desktop chrome.
-const M_BOTTOM = 124;                  // px: symbol row + nav + status
+const M_BASE = 124;                     // px: symbol row + nav + status
+const M_MODS_H = 44;                    // px: the optional modifier-key row
 const mqMobile = window.matchMedia("(max-width: 640px)");
 function isMobile(){ return mqMobile.matches; }
 let mSheetOpen = false;                 // overflow (kebab) sheet visibility
+let mShowMods = true;                    // show the Termux-style modifier row
+// Sticky one-shot modifiers: armed by tapping Ctrl/Alt/Shift, merged into the
+// NEXT key (from the symbol row, an arrow, or the device's native keyboard),
+// then cleared — like Termux's extra-keys row.
+let mMods = { ctrl:false, alt:false, shift:false };
+function mBottom(){ return M_BASE + (isMobile() && mShowMods ? M_MODS_H : 0); }
+
+// Native soft-keyboard control. The page can't toggle the OS keyboard directly,
+// but focusing a hidden input summons it and blurring dismisses it. Keystrokes
+// still flow through the global keydown handler (which preventDefaults), so the
+// input never accumulates text — it's purely the focus target that raises the
+// keyboard. The header ⌨ button toggles focus.
+let mKbInput=null, mKbWanted=false;
+function ensureKbInput(){
+  if(mKbInput) return mKbInput;
+  const i=document.createElement("input");
+  i.id="m-kbinput"; i.type="text";
+  i.setAttribute("autocapitalize","off"); i.setAttribute("autocomplete","off");
+  i.setAttribute("autocorrect","off"); i.setAttribute("spellcheck","false");
+  i.setAttribute("aria-hidden","true");
+  i.addEventListener("input",()=>{ i.value=""; });   // never keep typed text
+  document.body.appendChild(i); mKbInput=i; return i;
+}
+function kbVisible(){ return mKbWanted; }
+// Toggle driven by an explicit intent flag (not activeElement) so a tap that
+// transiently blurs the input can't flip the toggle into re-showing it.
+function toggleKeyboard(){
+  const i=ensureKbInput();
+  mKbWanted=!mKbWanted;
+  if(mKbWanted) i.focus({preventScroll:true}); else i.blur();
+  render();   // refresh the ⌨ button's active state
+}
+
+// Send a key with the armed sticky modifiers folded in, then disarm them.
+function mobileSendKey(d){
+  const k={ key:d.key,
+    ctrl:!!d.ctrl||mMods.ctrl, alt:!!d.alt||mMods.alt,
+    shift:!!d.shift||mMods.shift, meta:!!d.meta };
+  const wasArmed = mMods.ctrl||mMods.alt||mMods.shift;
+  mMods={ ctrl:false, alt:false, shift:false };
+  sendKey(k);
+  if(wasArmed) render();                // clear the armed-key highlight at once
+}
 
 // Coding-symbol accessory keys (sent as real key events) + Tab; Save = Ctrl+S.
 const M_SYMS = ["Tab","{","}","[","]","(",")","<",">",";",":","=","!","&","|","/","\"","'"];
+// Termux-style modifier / navigation row. Ctrl/Alt/Shift are sticky toggles
+// (key:null); the rest are sent immediately (with any armed modifiers).
+const M_MODSKEYS = [
+  {lb:"Esc", key:"Escape"}, {lb:"Ctrl", mod:"ctrl"}, {lb:"Alt", mod:"alt"}, {lb:"Shift", mod:"shift"},
+  {lb:"←", key:"ArrowLeft"}, {lb:"↑", key:"ArrowUp"}, {lb:"↓", key:"ArrowDown"}, {lb:"→", key:"ArrowRight"},
+  {lb:"Home", key:"Home"}, {lb:"End", key:"End"},
+];
 // Bottom-nav destinations → real editor actions.
 const M_NAV = [
   {ic:"🗀", lb:"Files",   act:"toggle_file_explorer"},
@@ -1462,7 +1532,7 @@ const M_MENU = [
 function renderMobileChrome(reg){
   const host=document.getElementById("mobile");
   if(!isMobile()){ if(host.childElementCount) host.innerHTML=""; return; }
-  document.documentElement.style.setProperty("--m-bottom", M_BOTTOM+"px");
+  document.documentElement.style.setProperty("--m-bottom", mBottom()+"px");
   host.innerHTML="";
 
   // header: ⚡ Fresh · filename · 🔍 ▶ ⋮
@@ -1474,6 +1544,9 @@ function renderMobileChrome(reg){
     b.onclick=e=>{ e.stopPropagation(); fn(); }; return b; };
   hd.appendChild(icon("🔍",()=>{ mSheetOpen=false; sendAction("search"); }));
   hd.appendChild(icon("▶",()=>{ mSheetOpen=false; sendAction("command_palette"); }));
+  const kb=icon("⌨",()=>{ mSheetOpen=false; toggleKeyboard(); });
+  if(kbVisible()) kb.classList.add("on");
+  hd.appendChild(kb);
   hd.appendChild(icon("⋮",()=>{ mSheetOpen=!mSheetOpen; render(); }));
   host.appendChild(hd);
 
@@ -1482,16 +1555,31 @@ function renderMobileChrome(reg){
     for(const m of M_MENU){ const it=div("m-sheet-item");
       it.innerHTML='<span class="m-sheet-ic">'+esc(m.ic)+'</span>'+esc(m.lb);
       it.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; sendAction(m.act); }; sh.appendChild(it); }
+    // show/hide the Termux-style modifier row (local view preference)
+    const tog=div("m-sheet-item"); tog.innerHTML='<span class="m-sheet-ic">'+(mShowMods?"☑":"☐")+'</span>Modifier keys';
+    tog.onclick=e=>{ e.stopPropagation(); mShowMods=!mShowMods; mSheetOpen=false; resize(); }; sh.appendChild(tog);
     host.appendChild(sh);
   }
 
-  // bottom stack: symbols · nav · status
+  // bottom stack: [modifier row] · symbols · nav · status
   const bot=div("m-bottom");
+  if(mShowMods){
+    const mods=div("m-mods");
+    for(const m of M_MODSKEYS){
+      const armed = m.mod && mMods[m.mod];
+      const k=div("m-mod"+(m.mod?" m-modkey":"")+(armed?" on":"")); k.textContent=m.lb;
+      k.onclick=e=>{ e.stopPropagation();
+        if(m.mod){ mMods[m.mod]=!mMods[m.mod]; render(); }   // sticky toggle
+        else mobileSendKey({key:m.key}); };                  // immediate (with armed mods)
+      mods.appendChild(k);
+    }
+    bot.appendChild(mods);
+  }
   const syms=div("m-syms");
   for(const s of M_SYMS){ const k=div("m-sym"); k.textContent=s==="Tab"?"⇥":s;
-    k.onclick=e=>{ e.stopPropagation(); sendKey({key:s}); }; syms.appendChild(k); }
+    k.onclick=e=>{ e.stopPropagation(); mobileSendKey({key:s}); }; syms.appendChild(k); }
   const save=div("m-sym m-save"); save.textContent="Save";
-  save.onclick=e=>{ e.stopPropagation(); sendKey({key:"s",ctrl:true}); }; syms.appendChild(save);
+  save.onclick=e=>{ e.stopPropagation(); mobileSendKey({key:"s",ctrl:true}); }; syms.appendChild(save);
   bot.appendChild(syms);
 
   const nav=div("m-nav");
@@ -1517,7 +1605,7 @@ async function sendKey(d){ try{ applyScene(await (await fetch("/key",{method:"PO
 async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW));
   // On mobile, leave room for the fixed bottom stack so no code hides behind it
   // (the header reuses the two hidden top chrome rows, so it needs no reserve).
-  const availH=window.innerHeight - (isMobile()?M_BOTTOM:0);
+  const availH=window.innerHeight - (isMobile()?mBottom():0);
   const rows=Math.max(8,Math.floor(availH/CH));
   try{ applyScene(await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json()); }catch(e){} }
 async function sendAction(name){ mSheetOpen=false;
@@ -1540,7 +1628,12 @@ document.addEventListener("keydown",e=>{
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
   // shortcuts reach the editor) and the named navigation/edit keys.
   const single=e.key.length===1;
-  if(single||NAMED.has(e.key)){ e.preventDefault(); sendKey({key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey}); }
+  if(single||NAMED.has(e.key)){ e.preventDefault();
+    const d={key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
+    // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
+    // native-keyboard letter sends Ctrl+<letter>.
+    if(isMobile()) mobileSendKey(d); else sendKey(d);
+  }
 });
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
