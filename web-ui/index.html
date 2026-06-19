@@ -422,6 +422,41 @@
   /* Focus as a soft ring rather than a hard 1px outline. */
   .w-toggle.focus,.w-button.focus,.kbedit .kb-search.focus,.w-text.focus{outline:none;
     box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent)}
+
+  /* ----------------------------------------------------------------------
+     Selection pills. The old edge-to-edge highlight blocks become inset,
+     rounded "pills" with a faint top-down sheen: each scrolling list gets a
+     small side gutter and every row a matching radius, so only the selected
+     row paints — floating clear of the panel edge. Rows keep the same box
+     whether selected or not, so the text never shifts as selection moves.
+     ---------------------------------------------------------------------- */
+  :root{--sel:linear-gradient(180deg, color-mix(in srgb,var(--menuhi) 86%, var(--fg)), var(--menuhi))}
+  .fileexplorer .fx-list{padding:4px 6px}
+  .palette .plist{padding:6px 6px}
+  .popup .popup-body{padding:4px 6px}
+  .ctxmenu{padding:5px 6px}
+  .settings-modal .set-cats{padding:6px 6px}
+  .settings-modal .set-items{padding:6px 8px}
+  .kbedit .kb-table{padding:0 6px}
+  .settings-modal .set-dual-list{padding:2px 4px}
+  .w-list{padding:0 2px}
+
+  .fileexplorer .fx-row,.palette .prow,.popup .popup-row,.ctxmenu .ctxitem,
+  .settings-modal .set-cat,.settings-modal .set-cat-sec,.kbedit .kb-row:not(.kb-head),
+  .settings-modal .set-dual-row,.w-list-row{border-radius:7px}
+  .fileexplorer .fx-row{margin:1px 0}
+  /* Settings rows: drop the per-row hairline divider in favour of spacing and a
+     rounded selection, the way modern settings panes read. */
+  .settings-modal .set-item{border-bottom:0;border-radius:9px;margin:1px 0}
+
+  /* The sheen + rounded fill for every selected/highlighted row. */
+  .fileexplorer .fx-row.sel,.palette .prow.sel,.popup .popup-row.sel,
+  .ctxmenu .ctxitem.sel,.settings-modal .set-cat.sel,.settings-modal .set-item.sel,
+  .kbedit .kb-row.sel,.settings-modal .set-dual-row.sel,.w-list-row.sel,
+  .auxmodal .am-line.sel{background:var(--sel)}
+  /* Menu dropdown highlight: gently rounded to match (items stay cell-pinned). */
+  .mitem{border-radius:7px}
+  .mitem.hi{background:var(--sel)}
 </style>
 </head>
 <body>
