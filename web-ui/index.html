@@ -22,7 +22,22 @@
 <style>
   :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#333;--fg:#d4d4d4;--muted:#9aa0a6;
     --accent:#0a84ff;--border:#3a3a3a;--menuhi:#0a64c8;
-    --status-bg:#0a84ff;--status-fg:#fff}
+    --status-bg:#0a84ff;--status-fg:#fff;
+    /* Readable text/fill for anything painted ON the accent colour. Recomputed
+       per theme in applyTheme() so e.g. high-contrast's white accent gets dark
+       text instead of the white-on-white it used to render. */
+    --on-accent:#fff}
+  /* Theme-derived design tokens: elevated surfaces and soft hairlines mixed from
+     the live --bg/--fg, so chrome reads as depth on ANY theme instead of piping
+     the terminal palette's hard borders (e.g. high-contrast's cyan) into the UI.
+     color-mix re-evaluates when applyTheme() updates --bg/--fg. */
+  :root{
+    --surface:color-mix(in srgb, var(--bg) 92%, var(--fg));
+    --surface-2:color-mix(in srgb, var(--bg) 84%, var(--fg));
+    --hairline:color-mix(in srgb, var(--fg) 14%, transparent);
+    --hairline-strong:color-mix(in srgb, var(--fg) 26%, transparent);
+    --hover:color-mix(in srgb, var(--fg) 9%, transparent);
+    --shadow:0 16px 50px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35)}
   *{box-sizing:border-box}
   :focus{outline:none}
   html,body{height:100%;margin:0}
@@ -297,6 +312,116 @@
   svg.cells{display:block;width:100%;height:100%;
     font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
+
+  /* ======================================================================
+     Visual polish pass — subtle craft, not a recolor. A single radius scale,
+     true hairline dividers, considered padding/gaps, and depth-from-surface
+     instead of hard outlines. Class names and geometry (cell-pinned rects)
+     are untouched; this only refines borders, corners, dividers and spacing.
+     ====================================================================== */
+  :root{--r-sm:6px;--r-md:9px;--r-lg:12px}
+
+  /* Floating surfaces: one elevation language — soft hairline edge + real
+     shadow + a consistent large radius, so menus/popups/palette/modals feel
+     like the same family of cards. */
+  .dropdown,.popup,.ctxmenu,.palette,.settings-modal .set-dd{
+    border:1px solid var(--hairline);border-radius:var(--r-md);box-shadow:var(--shadow)}
+  .settings-modal,.kbedit,.auxmodal.centered,.trustdialog,.widget-surface.w-floatingModal{
+    border:1px solid var(--hairline);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  .popup{border-radius:var(--r-md)}
+  .palette{border-radius:var(--r-lg)}
+  .set-overlay,.kb-overlay{border:1px solid var(--hairline);border-radius:var(--r-md)!important}
+
+  /* Hairline dividers everywhere a structural line is drawn — replaces the
+     assorted hard greys and the theme border (often a harsh cyan) with one
+     low-contrast 1px rule, the single most "off" detail in the old UI. */
+  .menubar,.tabbar{border-bottom:1px solid var(--hairline)}
+  .tab{border-right:1px solid var(--hairline)}
+  .fileexplorer{border-right:1px solid var(--hairline)}
+  .separator{background:var(--hairline)}
+  .msep{background:var(--hairline);margin:5px 10px}
+  .popup .popup-title,.popup .popup-desc{border-bottom:1px solid var(--hairline)}
+  .palette .pinput,.palette .ptitle,.palette .ptoolbar,.palette .pbody .plist{border-color:var(--hairline)}
+  .w-section,.w-text,.w-list-card,.w-button,.w-divider{border-color:var(--hairline)}
+  .ptoolbar{border-bottom:1px solid var(--hairline)}
+  .settings-modal .set-title,.settings-modal .set-cats,.settings-modal .set-items.focus,
+  .settings-modal .set-section,.settings-modal .set-item,.settings-modal .set-footer,
+  .settings-modal .set-item-block .set-list,.settings-modal .set-list-row,
+  .settings-modal .set-list-add,.settings-modal .set-dual-col,.settings-modal .set-dual-coltitle,
+  .settings-modal .set-field,.settings-modal .set-pill,.settings-modal .set-step,
+  .settings-modal .set-dd-row,.settings-modal .btn{border-color:var(--hairline)}
+  .kbedit .kb-title,.kbedit .kb-header,.kbedit .kb-footer,.kbedit .kb-table .kb-row.kb-head,
+  .kbedit .kb-btn,.kbedit .kb-field,.kbedit .kb-autocomplete{border-color:var(--hairline)}
+  .auxmodal .am-title,.auxmodal .am-footer{border-color:var(--hairline)}
+  .trustdialog{border-color:var(--hairline)}
+
+  /* Header / footer strips get a faintly raised surface so they read as
+     distinct bands without a heavy rule. */
+  .settings-modal .set-title,.kbedit .kb-title,.auxmodal .am-title{background:var(--surface-2)}
+  .settings-modal .set-footer{background:var(--surface-2)}
+  .kbedit .kb-table .kb-row.kb-head{background:var(--surface)}
+  .set-overlay,.kb-overlay,.trustdialog{background:var(--surface-2)!important}
+
+  /* Consistent inner radii for the small controls — pills, fields, steppers,
+     buttons, cards — all share the small radius. */
+  .settings-modal .set-pill,.settings-modal .set-field,.settings-modal .set-step,
+  .settings-modal .btn,.kbedit .kb-btn,.w-button,.td-btn,.w-toggle,.pkey,.tab .x{border-radius:var(--r-sm)}
+  .settings-modal .set-item-block .set-list,.settings-modal .set-dual-col,
+  .w-section,.w-list-card,.settings-modal .set-dd{border-radius:var(--r-md)}
+
+  /* Readable text/fills ON accent-coloured backgrounds (fixes the white-on-white
+     primary button under high-contrast). */
+  .settings-modal .btn.primary,.w-button.primary,.trustdialog .td-btn.primary{color:var(--on-accent)}
+  .settings-modal .set-switch.on::after{background:var(--on-accent)}
+  .settings-modal .set-dd-row.sel,.kbedit .kb-btn.focus{color:var(--on-accent)}
+
+  /* Quiet, uniform hover affordance. */
+  .menu:hover{background:var(--hover)}
+  .tab .x:hover{background:var(--hover)}
+  .statusbar .seg:hover{background:var(--hover)}
+  .settings-modal .set-dual-row:hover{background:var(--hover)}
+  .prow:not(.sel):hover,.popup-row:not(.sel):not(.disabled):hover,
+  .fx-row:not(.sel):hover,.ctxitem:not(.sel):hover,
+  .settings-modal .set-cat:not(.sel):hover,
+  .kbedit .kb-row:not(.sel):not(.kb-head):hover{background:var(--hover)}
+
+  /* Tabs: a quiet recessed bar with the active tab lifted and marked by a thin
+     accent rule on top — a clear indicator even when active/inactive share a bg
+     (as high-contrast does). */
+  .tabbar{background:var(--surface)}
+  .tab{background:transparent}
+  .tab.active{background:var(--surface-2);box-shadow:inset 0 2px 0 var(--accent)}
+
+  /* Breathing room: a touch more horizontal padding and even gaps in the
+     natively-flowed lists (kept near one cell tall so the editor's row window
+     still lines up). */
+  .palette .prow{padding:4px 14px}
+  .palette .plist{padding:6px 0}
+  .popup .popup-body{padding:3px 0}
+  .popup .popup-row{padding:2px 12px}
+  .ctxmenu{padding:5px 0}
+  .ctxmenu .ctxitem{padding:3px 14px}
+  .fileexplorer .fx-title{padding:6px 10px 4px}
+  .settings-modal .set-cat{padding:3px 12px}
+  .settings-modal .set-item{padding:6px 16px}
+
+  /* Keep long composite-list values (e.g. the Languages JSON) on one tidy line
+     instead of overflowing the row. */
+  .settings-modal .set-list-row{min-width:0;gap:10px}
+  .settings-modal .set-list-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* Slim, rounded, low-contrast scrollbars that match the hairline language. */
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-thumb{background:var(--hairline-strong);border-radius:8px;
+    border:3px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent);background-clip:padding-box}
+  *::-webkit-scrollbar-track{background:transparent}
+  .scrollbar .thumb{background:var(--hairline-strong);border-radius:8px}
+  .scrollbar .thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent)}
+
+  /* Focus as a soft ring rather than a hard 1px outline. */
+  .w-toggle.focus,.w-button.focus,.kbedit .kb-search.focus,.w-text.focus{outline:none;
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent)}
 </style>
 </head>
 <body>
@@ -390,6 +515,14 @@ function applyTheme(t){
   set("--muted",t.muted); set("--bg2",t.popupBg); set("--bg3",t.menuBg);
   set("--menuhi",t.menuHi); set("--border",t.border);
   set("--status-bg",t.statusBg); set("--status-fg",t.statusFg);
+  // Pick black/white text for fills painted in the accent / menu-highlight color
+  // by luminance, so a control filled with a light accent (e.g. high-contrast's
+  // white cursor) still shows its label instead of white-on-white.
+  const onColor=hex=>{ const m=/^#?([0-9a-fA-F]{6})$/.exec((hex||"").trim()); if(!m) return null;
+    const n=parseInt(m[1],16), lin=c=>{c/=255; return c<=.03928?c/12.92:Math.pow((c+.055)/1.055,2.4);};
+    const L=.2126*lin((n>>16)&255)+.7152*lin((n>>8)&255)+.0722*lin(n&255);
+    return L>.45?"#10131a":"#ffffff"; };
+  set("--on-accent", onColor(t.accent));
 }
 
 // Selectors for natively-scrolled chrome whose scrollTop must survive a full
@@ -642,10 +775,23 @@ function paletteEl(p){
   const el=div("palette"+(hasPreview?" with-preview":""));
   // Position the card on the outer rect, with the input bar stacked above it so
   // it reads as one palette. (Clicks use the list cell rect below.)
-  const inputH=34, w=outer?Math.max(360,px(outer.w,CW)):420;
-  const left = outer?px(outer.x,CW):(window.innerWidth-w)/2;
-  const top  = outer?Math.max(4, px(outer.y,CH)-inputH):80;
-  el.style.left=left+"px"; el.style.top=top+"px"; el.style.width=w+"px";
+  if(hasPreview){
+    // Preview overlays (quick-open / live-grep) keep the editor's geometry so the
+    // results column lines up with the framed preview cells beside it.
+    const inputH=34, w=Math.max(360,px(outer.w,CW));
+    el.style.left=px(outer.x,CW)+"px";
+    el.style.top=Math.max(4, px(outer.y,CH)-inputH)+"px";
+    el.style.width=w+"px";
+  } else {
+    // The plain command palette is a centered floating card (VSCode-style). Its
+    // pixel position is purely cosmetic — row clicks route through the editor's
+    // list cell rect and keys go through handle_key, both independent of where
+    // the card sits — so we place it where it reads best.
+    const w=Math.min(640, Math.round(window.innerWidth*0.62));
+    el.style.width=w+"px";
+    el.style.left=Math.round((window.innerWidth-w)/2)+"px";
+    el.style.top=Math.round(window.innerHeight*0.12)+"px";
+  }
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
   // plugin-built toolbar (real WidgetSpec widgets, e.g. live-grep scope toggles)
