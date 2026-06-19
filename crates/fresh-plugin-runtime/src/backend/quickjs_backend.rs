@@ -3540,6 +3540,27 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    // === Text measurement ===
+
+    /// Display width of a single Unicode code point, in terminal columns
+    /// (0 for control/zero-width, 2 for CJK/fullwidth and most emoji, else 1).
+    ///
+    /// Backed by the editor's own width logic (`fresh_core::display_width`), so
+    /// plugins measure width exactly as the editor lays out cells — no
+    /// per-plugin width tables. An invalid code point returns 0.
+    pub fn char_width(&self, code_point: u32) -> u32 {
+        char::from_u32(code_point)
+            .map(fresh_core::display_width::char_width)
+            .unwrap_or(0) as u32
+    }
+
+    /// Display width of a string, in terminal columns (the sum of its
+    /// characters' widths). Prefer this over per-character `charWidth` calls
+    /// when measuring whole cells — one boundary crossing instead of many.
+    pub fn string_width(&self, text: String) -> u32 {
+        fresh_core::display_width::str_width(&text) as u32
+    }
+
     // === Folds ===
 
     /// Add a collapsed fold range. Hides bytes [start, end) from

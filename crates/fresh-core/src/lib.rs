@@ -123,6 +123,7 @@ impl std::fmt::Display for WindowTerminalId {
 }
 
 pub mod config;
+pub mod display_width;
 pub mod file_explorer;
 pub mod file_uri;
 pub mod menu;

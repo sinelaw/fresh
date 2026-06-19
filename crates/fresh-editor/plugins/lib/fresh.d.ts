@@ -2523,6 +2523,21 @@ interface EditorAPI {
 	*/
 	clearConcealsInRange(bufferId: number, start: number, end: number): boolean;
 	/**
+	* Display width of a single Unicode code point, in terminal columns
+	* (0 for control/zero-width, 2 for CJK/fullwidth and most emoji, else 1).
+	*
+	* Backed by the editor's own width logic (`fresh_core::display_width`), so
+	* plugins measure width exactly as the editor lays out cells — no
+	* per-plugin width tables. An invalid code point returns 0.
+	*/
+	charWidth(codePoint: number): number;
+	/**
+	* Display width of a string, in terminal columns (the sum of its
+	* characters' widths). Prefer this over per-character `charWidth` calls
+	* when measuring whole cells — one boundary crossing instead of many.
+	*/
+	stringWidth(text: string): number;
+	/**
 	* Add a collapsed fold range. Hides bytes [start, end) from
 	* rendering — the line containing `start - 1` (the fold "header")
 	* stays visible, while subsequent lines covered by the range are

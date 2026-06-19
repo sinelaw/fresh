@@ -15,6 +15,7 @@ schemars.workspace = true
 anyhow.workspace = true
 lsp-types.workspace = true
 ts-rs.workspace = true
+unicode-width = "0.2"
 rquickjs = { workspace = true, optional = true }
 rquickjs-serde = { workspace = true, optional = true }
 

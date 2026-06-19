@@ -1355,6 +1355,8 @@ mod tests {
             "addConceal",
             "clearConcealNamespace",
             "clearConcealsInRange",
+            "charWidth",
+            "stringWidth",
             "addSoftBreak",
             "clearSoftBreakNamespace",
             "clearSoftBreaksInRange",

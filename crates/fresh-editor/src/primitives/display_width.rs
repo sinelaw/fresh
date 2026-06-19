@@ -5,27 +5,11 @@
 //! cursor positioning, line wrapping, and UI layout with CJK characters,
 //! emoji, and other double-width or zero-width characters.
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-/// Calculate the display width of a single character.
-///
-/// Returns 0 for control characters and zero-width characters,
-/// 2 for CJK/fullwidth characters and emoji,
-/// 1 for most other characters.
-#[inline]
-pub fn char_width(c: char) -> usize {
-    // unicode_width returns None for control characters
-    c.width().unwrap_or(0)
-}
-
-/// Calculate the display width of a string.
-///
-/// This is the sum of display widths of all characters in the string.
-/// Use this instead of `.chars().count()` when calculating visual layout.
-#[inline]
-pub fn str_width(s: &str) -> usize {
-    s.width()
-}
+// `char_width` / `str_width` are the single source of truth in `fresh-core`,
+// shared with the plugin runtime's `charWidth` / `stringWidth` APIs so plugins
+// measure width exactly the way the editor lays out cells. The editor-specific
+// byte/column helpers below build on them.
+pub use fresh_core::display_width::{char_width, str_width};
 
 /// Extension trait for convenient width calculation on string types.
 pub trait DisplayWidth {
