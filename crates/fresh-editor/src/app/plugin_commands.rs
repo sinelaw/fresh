@@ -542,6 +542,30 @@ impl Editor {
         }
     }
 
+    /// Handle ClearConcealsInRangeForNamespace command — remove only this
+    /// namespace's conceal ranges overlapping `[start, end)`, leaving other
+    /// plugins' conceals in that range intact.
+    pub(super) fn handle_clear_conceals_in_range_for_namespace(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: OverlayNamespace,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            state.conceals.remove_in_range_for_namespace(
+                &namespace,
+                &(start..end),
+                &mut state.marker_list,
+            );
+        }
+    }
+
     // ==================== Fold Commands ====================
 
     /// Handle AddFold command — register a collapsed fold range for the

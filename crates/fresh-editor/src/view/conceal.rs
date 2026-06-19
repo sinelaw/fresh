@@ -170,6 +170,52 @@ impl ConcealManager {
         self.version = self.version.wrapping_add(1);
     }
 
+    /// Like [`remove_in_range`], but only removes ranges belonging to
+    /// `namespace`. Lets one plugin rebuild its conceals for a line without
+    /// destroying another plugin's ranges there (same motivation as
+    /// `clear_overlays_in_range_for_namespace`, issue #2146).
+    pub fn remove_in_range_for_namespace(
+        &mut self,
+        namespace: &OverlayNamespace,
+        range: &Range<usize>,
+        marker_list: &mut MarkerList,
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+        let hits = marker_list.query_range(range.start, range.end);
+        if hits.is_empty() {
+            return;
+        }
+        let mut candidates: Vec<usize> = hits
+            .iter()
+            .filter_map(|(mid, _, _)| self.marker_to_idx.get(mid).copied())
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut to_remove: Vec<usize> = candidates
+            .into_iter()
+            .filter(|&idx| {
+                let r = &self.ranges[idx];
+                if &r.namespace != namespace {
+                    return false;
+                }
+                let start = marker_list.get_position(r.start_marker).unwrap_or(0);
+                let end = marker_list.get_position(r.end_marker).unwrap_or(0);
+                start < range.end && range.start < end
+            })
+            .collect();
+        if to_remove.is_empty() {
+            return;
+        }
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            self.swap_remove_at(idx, marker_list);
+        }
+        self.version = self.version.wrapping_add(1);
+    }
+
     /// Clear all conceal ranges and their markers
     pub fn clear(&mut self, marker_list: &mut MarkerList) {
         let had_any = !self.ranges.is_empty();
@@ -365,6 +411,59 @@ mod tests {
         assert!(!manager.is_empty());
         manager.remove_in_range(&(19..21), &mut marker_list);
         assert!(manager.is_empty());
+    }
+
+    fn ns_named(name: &str) -> OverlayNamespace {
+        OverlayNamespace::from_string(name.to_string())
+    }
+
+    #[test]
+    fn test_remove_in_range_for_namespace_only_touches_that_namespace() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(200);
+        let mut manager = ConcealManager::new();
+
+        // Two plugins conceal overlapping bytes in the same range, plus an
+        // out-of-range entry in the target namespace that must survive.
+        manager.add(&mut marker_list, ns_named("md"), 10..20, None);
+        manager.add(&mut marker_list, ns_named("other"), 12..18, None);
+        manager.add(&mut marker_list, ns_named("md"), 100..110, None);
+
+        manager.remove_in_range_for_namespace(&ns_named("md"), &(0..50), &mut marker_list);
+
+        // Only "md"'s in-range range is gone; "other" and the out-of-range
+        // "md" entry remain.
+        let kept: Vec<_> = manager
+            .query_viewport(0, 1000, &marker_list)
+            .into_iter()
+            .map(|(r, _)| r)
+            .collect();
+        assert_eq!(kept, vec![12..18, 100..110]);
+    }
+
+    #[test]
+    fn test_remove_in_range_for_namespace_version_and_endpoints() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = ConcealManager::new();
+
+        manager.add(&mut marker_list, ns_named("md"), 10..20, None);
+        let v0 = manager.version();
+
+        // No overlap with this namespace's range → no-op, version unchanged.
+        manager.remove_in_range_for_namespace(&ns_named("md"), &(20..30), &mut marker_list);
+        assert_eq!(manager.version(), v0);
+        assert!(!manager.is_empty());
+
+        // Wrong namespace over an overlapping range → no-op.
+        manager.remove_in_range_for_namespace(&ns_named("other"), &(0..50), &mut marker_list);
+        assert_eq!(manager.version(), v0);
+        assert!(!manager.is_empty());
+
+        // Right namespace, overlapping range → removed, version bumped.
+        manager.remove_in_range_for_namespace(&ns_named("md"), &(15..25), &mut marker_list);
+        assert!(manager.is_empty());
+        assert_ne!(manager.version(), v0);
     }
 
     /// Mirrors the production cycle in `markdown_compose.ts`: for each line

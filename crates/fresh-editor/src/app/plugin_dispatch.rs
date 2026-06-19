@@ -439,6 +439,14 @@ impl Editor {
             } => {
                 self.handle_clear_conceals_in_range(buffer_id, start, end);
             }
+            PluginCommand::ClearConcealsInRangeForNamespace {
+                buffer_id,
+                namespace,
+                start,
+                end,
+            } => {
+                self.handle_clear_conceals_in_range_for_namespace(buffer_id, namespace, start, end);
+            }
 
             PluginCommand::AddFold {
                 buffer_id,

@@ -138,8 +138,9 @@ impl VirtualText {
     }
 }
 
-/// Unique identifier for a virtual text entry
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Unique identifier for a virtual text entry. Ids come from a monotonic
+/// counter, so ordering by id is ordering by insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VirtualTextId(pub u64);
 
 /// Manages virtual text entries for a buffer
@@ -623,23 +624,32 @@ impl VirtualTextManager {
         start: usize,
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
-        let mut results: Vec<(usize, &VirtualText)> = self
+        let mut results: Vec<(usize, VirtualTextId, &VirtualText)> = self
             .texts
-            .values()
-            .filter_map(|vtext| {
+            .iter()
+            .filter_map(|(id, vtext)| {
                 let pos = marker_list.get_position(vtext.marker_id)?;
                 if pos >= start && pos < end {
-                    Some((pos, vtext))
+                    Some((pos, *id, vtext))
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Sort by position, then by priority
-        results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.priority.cmp(&b.1.priority)));
+        // Sort by position, then priority, then insertion order — the map's
+        // iteration order is arbitrary, so equal (position, priority) entries
+        // need the id tiebreak to render deterministically.
+        results.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.2.priority.cmp(&b.2.priority))
+                .then_with(|| a.1.cmp(&b.1))
+        });
 
         results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Build a lookup map for efficient per-character access during rendering
@@ -704,31 +714,42 @@ impl VirtualTextManager {
     /// Query only virtual LINES (LineAbove/LineBelow) in a byte range
     ///
     /// Used by the render pipeline to inject header/footer lines.
-    /// Returns (byte_position, &VirtualText) pairs sorted by position then priority.
+    /// Returns (byte_position, &VirtualText) pairs sorted by position, then
+    /// priority, then insertion order. The insertion-order tiebreak matters:
+    /// entries live in a HashMap whose iteration order is arbitrary, so
+    /// without it, equal-priority lines at one anchor (e.g. several stacked
+    /// virtual continuation lines of one wrapped table row) would come back
+    /// shuffled.
     pub fn query_lines_in_range(
         &self,
         marker_list: &MarkerList,
         start: usize,
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
-        let mut results: Vec<(usize, &VirtualText)> = self
+        let mut results: Vec<(usize, VirtualTextId, &VirtualText)> = self
             .texts
-            .values()
-            .filter(|vtext| vtext.position.is_line())
-            .filter_map(|vtext| {
+            .iter()
+            .filter(|(_, vtext)| vtext.position.is_line())
+            .filter_map(|(id, vtext)| {
                 let pos = marker_list.get_position(vtext.marker_id)?;
                 if pos >= start && pos < end {
-                    Some((pos, vtext))
+                    Some((pos, *id, vtext))
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Sort by position, then by priority
-        results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.priority.cmp(&b.1.priority)));
+        results.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.2.priority.cmp(&b.2.priority))
+                .then_with(|| a.1.cmp(&b.1))
+        });
 
         results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Query only INLINE virtual texts (BeforeChar/AfterChar) in a byte range
@@ -740,24 +761,32 @@ impl VirtualTextManager {
         start: usize,
         end: usize,
     ) -> Vec<(usize, &VirtualText)> {
-        let mut results: Vec<(usize, &VirtualText)> = self
+        let mut results: Vec<(usize, VirtualTextId, &VirtualText)> = self
             .texts
-            .values()
-            .filter(|vtext| vtext.position.is_inline())
-            .filter_map(|vtext| {
+            .iter()
+            .filter(|(_, vtext)| vtext.position.is_inline())
+            .filter_map(|(id, vtext)| {
                 let pos = marker_list.get_position(vtext.marker_id)?;
                 if pos >= start && pos < end {
-                    Some((pos, vtext))
+                    Some((pos, *id, vtext))
                 } else {
                     None
                 }
             })
             .collect();
 
-        // Sort by position, then by priority
-        results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.priority.cmp(&b.1.priority)));
+        // Sort by position, then priority, then insertion order (see
+        // `query_range` for why the id tiebreak is load-bearing).
+        results.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.2.priority.cmp(&b.2.priority))
+                .then_with(|| a.1.cmp(&b.1))
+        });
 
         results
+            .into_iter()
+            .map(|(pos, _, vtext)| (pos, vtext))
+            .collect()
     }
 
     /// Build a lookup map for virtual LINES, keyed by the line's anchor byte position
@@ -1129,5 +1158,37 @@ mod tests {
         assert!(after.is_some());
         assert_eq!(before.unwrap().text, "/*param=*/");
         assert_eq!(after.unwrap().text, ": Type");
+    }
+
+    /// Several LineBelow entries anchored at the same byte with the same
+    /// priority must come back in insertion order. The entries live in a
+    /// HashMap (arbitrary iteration order), so this only holds because the
+    /// sort breaks ties on the monotonic VirtualTextId. Regression guard for
+    /// shuffled continuation rows (e.g. a wrapped markdown table row).
+    #[test]
+    fn test_query_lines_same_anchor_priority_keeps_insertion_order() {
+        let mut marker_list = MarkerList::new();
+        let mut manager = VirtualTextManager::new();
+        let ns = VirtualTextNamespace("test".to_string());
+
+        for i in 0..8 {
+            manager.add_line(
+                &mut marker_list,
+                10,
+                i.to_string(),
+                hint_style(),
+                VirtualTextPosition::LineBelow,
+                ns.clone(),
+                0, // identical priority — only the id tiebreak orders these
+            );
+        }
+
+        let order: Vec<&str> = manager
+            .query_lines_in_range(&marker_list, 0, 100)
+            .into_iter()
+            .map(|(_, vt)| vt.text.as_str())
+            .collect();
+
+        assert_eq!(order, ["0", "1", "2", "3", "4", "5", "6", "7"]);
     }
 }

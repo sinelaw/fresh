@@ -3561,6 +3561,25 @@ impl JsEditorApi {
         fresh_core::display_width::str_width(&text) as u32
     }
 
+    /// Clear conceal ranges overlapping a byte range, restricted to one
+    /// namespace — other plugins' conceals in the range are untouched.
+    pub fn clear_conceals_in_range_for_namespace(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearConcealsInRangeForNamespace {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace: OverlayNamespace::from_string(namespace),
+                start: start as usize,
+                end: end as usize,
+            })
+            .is_ok()
+    }
+
     // === Folds ===
 
     /// Add a collapsed fold range. Hides bytes [start, end) from
