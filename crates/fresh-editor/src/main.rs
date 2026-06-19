@@ -4351,6 +4351,14 @@ where
     let mut last_render = Instant::now();
     let mut needs_render = true;
     let mut pending_event: Option<CrosstermEvent> = None;
+    // Synchronized-update markers (DEC private mode 2026) are emitted around
+    // each frame to avoid tearing. Inside tmux they are passed through to the
+    // outer terminal unwrapped, and tmux's handling can drop individual
+    // cell-clear updates from a frame diff — leaving stale cells (e.g. a
+    // leftover box-drawing border glyph) on otherwise-blank lines until a
+    // full redraw. tmux already batches its own pane refreshes, so the markers
+    // buy nothing there. Skip them when running inside tmux.
+    let synchronized_update = std::env::var_os("TMUX").is_none();
     // Time of the last real input event, used to start the wave-animation
     // screensaver after the configured idle period. Read from the editor's
     // injected time source so tests can drive idle time deterministically.
@@ -4447,9 +4455,13 @@ where
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
-                stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
+                if synchronized_update {
+                    stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
+                }
                 terminal.draw(|frame| editor.render(frame))?;
-                stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
+                if synchronized_update {
+                    stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
+                }
             }
             tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
