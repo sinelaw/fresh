@@ -1471,7 +1471,7 @@ function mBottom(){ return M_BASE + (isMobile() && mShowMods ? M_MODS_H : 0); }
 // still flow through the global keydown handler (which preventDefaults), so the
 // input never accumulates text — it's purely the focus target that raises the
 // keyboard. The header ⌨ button toggles focus.
-let mKbInput=null, mKbWanted=false;
+let mKbInput=null, mKbWanted=false, kdHandledAt=0;
 function ensureKbInput(){
   if(mKbInput) return mKbInput;
   const i=document.createElement("input");
@@ -1479,6 +1479,21 @@ function ensureKbInput(){
   i.setAttribute("autocapitalize","off"); i.setAttribute("autocomplete","off");
   i.setAttribute("autocorrect","off"); i.setAttribute("spellcheck","false");
   i.setAttribute("aria-hidden","true");
+  // Android fallback: many soft keyboards report key="Unidentified" on keydown
+  // and only deliver the real text via beforeinput. iOS/desktop fire a usable
+  // keydown (which cancels its default, normally suppressing this) — so if a
+  // keydown was just handled, skip here to avoid double-inserting.
+  i.addEventListener("beforeinput",ev=>{
+    if(Date.now()-kdHandledAt < 120) return;
+    const t=ev.inputType||""; let handled=true;
+    if(t==="insertText" && ev.data){ for(const ch of ev.data) mobileSendKey({key:ch}); }
+    else if(t==="insertLineBreak" || t==="insertParagraph") mobileSendKey({key:"Enter"});
+    else if(t==="deleteContentBackward") mobileSendKey({key:"Backspace"});
+    else if(t==="deleteContentForward") mobileSendKey({key:"Delete"});
+    else handled=false;
+    if(handled) ev.preventDefault();
+    i.value="";
+  });
   i.addEventListener("input",()=>{ i.value=""; });   // never keep typed text
   document.body.appendChild(i); mKbInput=i; return i;
 }
@@ -1631,8 +1646,9 @@ document.addEventListener("keydown",e=>{
   if(single||NAMED.has(e.key)){ e.preventDefault();
     const d={key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
     // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
-    // native-keyboard letter sends Ctrl+<letter>.
-    if(isMobile()) mobileSendKey(d); else sendKey(d);
+    // native-keyboard letter sends Ctrl+<letter>. Record the time so the
+    // beforeinput fallback (Android) knows this key was already handled.
+    if(isMobile()){ kdHandledAt=Date.now(); mobileSendKey(d); } else sendKey(d);
   }
 });
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
