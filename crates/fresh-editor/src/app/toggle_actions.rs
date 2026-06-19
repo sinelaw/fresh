@@ -21,6 +21,11 @@ impl Editor {
     /// Line number visibility is stored per-split in `BufferViewState` so that
     /// different splits of the same buffer can independently show/hide line numbers
     /// (e.g., source mode shows them, compose mode hides them).
+    ///
+    /// The new value is also written to the global `editor.line_numbers`
+    /// preference and persisted to the user config layer, so the choice
+    /// survives a restart (issue #474). Per-split overrides (e.g. compose mode
+    /// forcing them off) still apply on top of this default.
     pub fn toggle_line_numbers(&mut self) {
         let active_split = self
             .windows
@@ -29,21 +34,33 @@ impl Editor {
             .map(|(mgr, _)| mgr)
             .expect("active window must have a populated split layout")
             .active_split();
-        if let Some(vs) = self
+        let Some(new_value) = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_view_states_mut())
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
-        {
-            let currently_shown = vs.show_line_numbers;
-            vs.show_line_numbers = !currently_shown;
-            if currently_shown {
-                self.set_status_message(t!("toggle.line_numbers_hidden").to_string());
-            } else {
-                self.set_status_message(t!("toggle.line_numbers_shown").to_string());
-            }
-        }
+            .map(|vs| {
+                let new_value = !vs.show_line_numbers;
+                vs.show_line_numbers = new_value;
+                new_value
+            })
+        else {
+            return;
+        };
+
+        // `editor.line_numbers` is a global preference, so persist the toggle
+        // to the user config layer (issue #474). Without this the change lives
+        // only in the per-split runtime state and is forgotten on next launch.
+        self.config_mut().editor.line_numbers = new_value;
+        self.persist_config_change("/editor/line_numbers", serde_json::Value::Bool(new_value));
+
+        let status = if new_value {
+            t!("toggle.line_numbers_shown")
+        } else {
+            t!("toggle.line_numbers_hidden")
+        };
+        self.set_status_message(status.to_string());
     }
 
     /// Kick off the full-screen wave animation: a crest of wave glyphs
@@ -178,7 +195,13 @@ impl Editor {
     pub fn toggle_vertical_scrollbar(&mut self) {
         let new_value = !self.config.editor.show_vertical_scrollbar;
         self.config_mut().editor.show_vertical_scrollbar = new_value;
-        let status = if self.config.editor.show_vertical_scrollbar {
+        // Persist to the user config layer so the choice survives restart
+        // (issue #474), matching the other global View-menu toggles.
+        self.persist_config_change(
+            "/editor/show_vertical_scrollbar",
+            serde_json::Value::Bool(new_value),
+        );
+        let status = if new_value {
             t!("toggle.vertical_scrollbar_shown")
         } else {
             t!("toggle.vertical_scrollbar_hidden")
@@ -190,7 +213,13 @@ impl Editor {
     pub fn toggle_horizontal_scrollbar(&mut self) {
         let new_value = !self.config.editor.show_horizontal_scrollbar;
         self.config_mut().editor.show_horizontal_scrollbar = new_value;
-        let status = if self.config.editor.show_horizontal_scrollbar {
+        // Persist to the user config layer so the choice survives restart
+        // (issue #474), matching the other global View-menu toggles.
+        self.persist_config_change(
+            "/editor/show_horizontal_scrollbar",
+            serde_json::Value::Bool(new_value),
+        );
+        let status = if new_value {
             t!("toggle.horizontal_scrollbar_shown")
         } else {
             t!("toggle.horizontal_scrollbar_hidden")

@@ -630,3 +630,159 @@ fn test_workspace_override_does_not_shadow_global_show_menu_bar() {
         menu_bar_row
     );
 }
+
+/// Regression test for issue #474: toggling Line Numbers via the View menu
+/// must persist to the global user config so it survives a restart. Before the
+/// fix, `toggle_line_numbers` only flipped the per-split runtime flag and never
+/// touched `editor.line_numbers` or wrote to disk, so line numbers reappeared
+/// on the next launch.
+#[test]
+fn test_toggle_line_numbers_persists_to_global_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Session 1: toggle line numbers off via the runtime action (the same code
+    // path the View menu's "Line Numbers" item invokes).
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.render().unwrap();
+
+        // Sanity: the global default shows line numbers.
+        assert!(harness.editor().config().editor.line_numbers);
+
+        harness.editor_mut().toggle_line_numbers();
+
+        assert!(
+            !harness.editor().config().editor.line_numbers,
+            "toggle_line_numbers should update editor.line_numbers in the global config"
+        );
+    }
+
+    // Session 2: a different working directory using the same user config dir.
+    // The persisted change must be visible when the layers are reloaded.
+    let other_project = temp_dir.path().join("other_project");
+    std::fs::create_dir(&other_project).unwrap();
+    let loaded = Config::load_with_layers(&dir_context, &other_project);
+    assert!(
+        !loaded.editor.line_numbers,
+        "Toggling line numbers off must persist to user config (issue #474)"
+    );
+}
+
+/// Regression test for issue #474: toggling the Horizontal Scrollbar via the
+/// View menu must persist to the global user config. Before the fix,
+/// `toggle_horizontal_scrollbar` updated only the in-memory config and never
+/// wrote to disk, so the setting reverted on the next launch.
+#[test]
+fn test_toggle_horizontal_scrollbar_persists_to_global_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    {
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.render().unwrap();
+
+        // Sanity: the horizontal scrollbar is off by default.
+        assert!(!harness.editor().config().editor.show_horizontal_scrollbar);
+
+        harness.editor_mut().toggle_horizontal_scrollbar();
+
+        assert!(
+            harness.editor().config().editor.show_horizontal_scrollbar,
+            "toggle_horizontal_scrollbar should update the global config"
+        );
+    }
+
+    let other_project = temp_dir.path().join("other_project");
+    std::fs::create_dir(&other_project).unwrap();
+    let loaded = Config::load_with_layers(&dir_context, &other_project);
+    assert!(
+        loaded.editor.show_horizontal_scrollbar,
+        "Turning the horizontal scrollbar on must persist to user config (issue #474)"
+    );
+}
+
+/// Regression test for issue #474: switching the keybinding style via the
+/// View menu (the `SwitchKeybindingMap` action) must persist to the global
+/// user config. Before the fix, the menu handler duplicated the switch logic
+/// but skipped persistence (unlike the command-palette path), so the style
+/// reset to the default on the next launch.
+///
+/// Drives the real action handler by binding a key to
+/// `switch_keybinding_map:vscode` and pressing it.
+#[test]
+fn test_switch_keybinding_map_via_action_persists() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    {
+        let mut config = Config::default();
+        config.active_keybinding_map = fresh::config::KeybindingMapName("default".to_string());
+        config.keybindings.push(fresh::config::Keybinding {
+            key: "F9".to_string(),
+            modifiers: vec![],
+            keys: vec![],
+            action: "switch_keybinding_map".to_string(),
+            args: std::collections::HashMap::from([(
+                "map".to_string(),
+                serde_json::Value::String("vscode".to_string()),
+            )]),
+            when: None,
+        });
+
+        let mut harness = EditorTestHarness::create(
+            80,
+            24,
+            HarnessOptions::new()
+                .with_config(config)
+                .with_preserved_keybinding_map()
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.render().unwrap();
+
+        // Press the bound key, which dispatches Action::SwitchKeybindingMap
+        // ("vscode") — the same action the View menu's Keybinding Style
+        // submenu emits.
+        harness.send_key(KeyCode::F(9), KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        assert_eq!(
+            harness.editor().config().active_keybinding_map.0,
+            "vscode",
+            "SwitchKeybindingMap should update the active keybinding map at runtime"
+        );
+    }
+
+    let loaded = Config::load_with_layers(&dir_context, &project_dir);
+    assert_eq!(
+        loaded.active_keybinding_map.0, "vscode",
+        "Switching the keybinding style via the menu action must persist (issue #474)"
+    );
+}

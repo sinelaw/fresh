@@ -1923,27 +1923,12 @@ impl Editor {
             }
 
             Action::SwitchKeybindingMap(map_name) => {
-                // Check if the map exists (either built-in or user-defined)
-                let is_builtin =
-                    matches!(map_name.as_str(), "default" | "emacs" | "vscode" | "macos");
-                let is_user_defined = self.config.keybinding_maps.contains_key(&map_name);
-
-                if is_builtin || is_user_defined {
-                    // Update the active keybinding map in config
-                    self.config_mut().active_keybinding_map = map_name.clone().into();
-
-                    // Reload the keybinding resolver with the new map
-                    *self.keybindings.write().unwrap() =
-                        crate::input::keybindings::KeybindingResolver::new(&self.config);
-
-                    self.set_status_message(
-                        t!("view.keybindings_switched", map = map_name).to_string(),
-                    );
-                } else {
-                    self.set_status_message(
-                        t!("view.keybindings_unknown", map = map_name).to_string(),
-                    );
-                }
+                // Delegate to the shared helper so the menu path persists the
+                // choice to the user config (issue #474), matching the
+                // command-palette path. This handler previously duplicated the
+                // switch logic but skipped persistence, so the keybinding style
+                // reset to the default on the next launch.
+                self.apply_keybinding_map(&map_name);
             }
 
             Action::SmartHome => {
