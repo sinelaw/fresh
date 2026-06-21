@@ -241,24 +241,42 @@ fn discover_sessions(
             continue;
         };
         let root = PathBuf::from(root);
-        // GC only on a *definitive* answer that the root is unusable:
-        // `NotFound` (the directory is gone) or `Ok(false)` (the path
-        // was replaced by a non-dir). Drop the stale cache file then —
-        // best-effort, a failed delete just leaves a harmless file to
-        // retry next boot. Any *other* `Err` (permission, IO, an
-        // unreachable remote/unmounted FS) is ambiguous but recoverable,
-        // so keep the file rather than irreversibly losing the session.
-        match filesystem.is_dir(&root) {
-            Ok(true) => {}
-            Ok(false) => {
-                let _ = filesystem.remove_file(p).ok();
-                continue;
+        // The session's backend spec (how to reconnect on restore). Absent /
+        // unparseable → `Local`, so a malformed entry degrades safely. Read
+        // *before* the GC check: a remote session's `root` lives on the
+        // remote host, so it can't be validated against the local filesystem.
+        let authority_spec: crate::services::authority::SessionAuthoritySpec = val
+            .get("authority_spec")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        // GC only local sessions, and only on a *definitive* answer that the
+        // root is unusable: `NotFound` (the directory is gone) or `Ok(false)`
+        // (the path was replaced by a non-dir). Drop the stale cache file then
+        // — best-effort, a failed delete just leaves a harmless file to retry
+        // next boot. Any *other* `Err` (permission, IO, an unreachable
+        // remote/unmounted FS) is ambiguous but recoverable, so keep the file
+        // rather than irreversibly losing the session.
+        //
+        // Remote sessions (SSH / kube) are *never* GC'd against the local
+        // filesystem: their `root` is a path on the remote host that the local
+        // `filesystem` here can't see, so `is_dir` would answer `Ok(false)`
+        // and silently delete every remote session's workspace file on the
+        // next boot — the session would vanish from the Orchestrator dock
+        // after a restart. Whether the remote dir still exists is only knowable
+        // after reconnecting, so we keep the entry and let restore decide.
+        if !authority_spec.is_remote() {
+            match filesystem.is_dir(&root) {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = filesystem.remove_file(p).ok();
+                    continue;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let _ = filesystem.remove_file(p).ok();
+                    continue;
+                }
+                Err(_) => continue,
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let _ = filesystem.remove_file(p).ok();
-                continue;
-            }
-            Err(_) => continue,
         }
         let label = val
             .get("label")
@@ -267,12 +285,6 @@ fn discover_sessions(
             .unwrap_or_else(|| basename_label(&root));
         let plugin_state: SessionState = val
             .get("session_plugin_state")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        // The session's backend spec (how to reconnect on restore). Absent /
-        // unparseable → `Local`, so a malformed entry degrades safely.
-        let authority_spec: crate::services::authority::SessionAuthoritySpec = val
-            .get("authority_spec")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
         found.push((root, label, plugin_state, authority_spec));
@@ -1103,6 +1115,68 @@ mod tests {
             local.authority_spec,
             SessionAuthoritySpec::Local,
             "a session with no persisted spec reads back as Local"
+        );
+    }
+
+    #[test]
+    fn discover_keeps_remote_session_whose_root_is_absent_locally() {
+        // Regression: a running SSH session persists a `working_dir` that is a
+        // path on the *remote* host — it does not (and need not) exist on the
+        // local filesystem. Discovery runs the GC check against the local
+        // filesystem, so before the fix `is_dir` answered `Ok(false)` and the
+        // remote session's workspace file was deleted on the next boot,
+        // dropping it from the Orchestrator dock. A remote session must survive
+        // discovery even though its root is absent locally.
+        use crate::model::filesystem::StdFileSystem;
+        use crate::services::authority::{RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec};
+        let data = tempfile::tempdir().unwrap();
+        let data_dir = data.path();
+        let ws_dir = workspaces_dir(data_dir);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+
+        // A path that does not exist on the local filesystem — it lives on the
+        // remote host the SSH session is rooted at.
+        let remote_only_root = "/home/remote-user/project-on-remote-host";
+        assert!(
+            !Path::new(remote_only_root).exists(),
+            "test precondition: the remote root must not exist locally"
+        );
+        let spec = SessionAuthoritySpec::RemoteAgent(RemoteAgentSpec {
+            transport: RemoteTransportSpec::Ssh {
+                user: Some("remote-user".into()),
+                host: "example.com".into(),
+                port: None,
+                identity_file: None,
+                remote_path: Some(remote_only_root.into()),
+                extra_args: Vec::new(),
+            },
+            base_env: Vec::new(),
+            window: true,
+            label: Some("ssh-session".into()),
+            command: None,
+        });
+        std::fs::write(
+            ws_dir.join("ssh.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "working_dir": remote_only_root,
+                "label": "ssh-session",
+                "authority_spec": spec,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let fs = StdFileSystem;
+        let sessions = discover_sessions(&fs, data_dir);
+
+        let ssh = sessions
+            .iter()
+            .find(|s| s.label == "ssh-session")
+            .expect("the SSH session survives discovery despite a remote-only root");
+        assert_eq!(ssh.authority_spec, spec);
+        assert!(
+            ws_dir.join("ssh.json").exists(),
+            "the remote session's workspace file must not be GC'd"
         );
     }
 
