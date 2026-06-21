@@ -829,6 +829,16 @@ impl Editor {
                         continue;
                     }
                     tracing::warn!("Remote attach failed: {}", error);
+                    // Surface the failure on the status line. The connect set a
+                    // "Connecting to …" status; without replacing it the line
+                    // would keep claiming a connection is in progress forever.
+                    // This is the only user-visible signal for a *dive-triggered*
+                    // reconnect (`reconnect_dormant_session_if_needed`), whose
+                    // synthetic request id has no awaiting JS callback for
+                    // `reject_remote_attach` to reject — mirrors how the cancel
+                    // path clears the same status with "Connection cancelled".
+                    let reason = error.lines().next().unwrap_or(&error).to_string();
+                    self.set_status_message(format!("Connection failed: {reason}"));
                     self.reject_remote_attach(request_id, error);
                 }
                 AsyncMessage::PluginProcessOutput {
@@ -1035,5 +1045,72 @@ impl Editor {
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::config_io::DirectoryContext;
+    use std::sync::Arc;
+
+    fn test_editor() -> Editor {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        // Plugins disabled: an enabled plugin can set its own status on its
+        // first tick (the bundled i18n test plugin does), which would clobber
+        // the status this test asserts on. The handler under test is core, not
+        // plugin-gated, so this isolates it cleanly.
+        Editor::for_test(
+            Config::default(),
+            80,
+            24,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn remote_attach_failure_replaces_connecting_status() {
+        // Regression: a failed remote (re)connect must replace the lingering
+        // "Connecting to …" status the connect set. For a *dive-triggered*
+        // reconnect the synthetic request id has no awaiting JS callback, so
+        // the status line is the only user-visible signal — without this the
+        // line would claim a connection is still in progress forever.
+        let mut editor = test_editor();
+        editor.set_status_message("Connecting to ssh:root@host…".to_string());
+
+        let sender = editor.async_bridge.as_ref().unwrap().sender();
+        sender
+            .send(AsyncMessage::RemoteAttachFailed {
+                error: "Agent failed to start: SSH could not connect\nsecond line".to_string(),
+                request_id: 4242,
+            })
+            .unwrap();
+        editor.process_async_messages();
+
+        let status = editor.get_status_message().cloned().unwrap_or_default();
+        assert!(
+            status.starts_with("Connection failed:"),
+            "failure must surface on the status line, got: {status:?}"
+        );
+        assert!(
+            status.contains("SSH could not connect"),
+            "the reason is included, got: {status:?}"
+        );
+        assert!(
+            !status.contains("second line"),
+            "only the first line of a multi-line error is shown, got: {status:?}"
+        );
     }
 }
