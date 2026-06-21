@@ -1031,6 +1031,31 @@ fn test_block_selection_copy_paste_roundtrip() {
         .assert_buffer_content("Line 4Line 1\nLine 5Line 2\nLine 6Line 3\nLine 4\nLine 5\nLine 6");
 }
 
+/// The plain copy command must not carry ANSI escape codes. ANSI-aware
+/// buffers render escape sequences as zero-width styling, so what the user
+/// sees is the colored text — the default copy should yield that visible text,
+/// not the raw control codes. (Copy-with-formatting is the styled variant.)
+#[test]
+fn test_copy_strips_ansi_escape_codes() {
+    use fresh::input::keybindings::Action;
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Insert text with SGR color escape sequences directly: typing ESC through
+    // the key path would be intercepted rather than inserted as content.
+    harness
+        .editor_mut()
+        .paste_text("\x1b[31mRed\x1b[0m and \x1b[32mGreen\x1b[0m".to_string());
+    harness.render().unwrap();
+
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SelectAll);
+    harness.editor_mut().copy_selection();
+
+    let copied = harness.editor().clipboard_content_for_test();
+    assert_eq!(copied, "Red and Green");
+}
+
 /// Column-mode paste must remain atomic for undo: a single Ctrl+Z reverts
 /// every per-cursor insertion.
 #[test]

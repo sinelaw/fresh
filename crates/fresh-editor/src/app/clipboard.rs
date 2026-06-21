@@ -17,6 +17,7 @@ use crate::input::multi_cursor::{
 use crate::model::buffer_position::byte_to_2d;
 use crate::model::cursor::Cursor;
 use crate::model::event::{BufferId, CursorId, Event};
+use crate::primitives::ansi::strip_ansi_codes;
 use crate::primitives::word_navigation::{
     find_vi_word_end, find_word_start_left, find_word_start_right,
 };
@@ -133,8 +134,11 @@ impl Editor {
             .any(|(_, cursor)| cursor.has_block_selection());
 
         if has_block_selection {
-            // Block selection: copy rectangular region
-            let text = self.copy_block_selection_text();
+            // Block selection: copy rectangular region. Strip ANSI escape
+            // codes so the plain copy matches the styled text the user sees
+            // rather than the raw escape sequences (see `copy_selection_with_theme`
+            // for the formatting-preserving variant).
+            let text = strip_ansi_codes(&self.copy_block_selection_text());
             if !text.is_empty() {
                 self.clipboard.copy(text);
                 self.active_window_mut().status_message = Some(t!("clipboard.copied").to_string());
@@ -166,6 +170,10 @@ impl Editor {
                 text.push_str(&range_text);
             }
 
+            // Strip ANSI escape codes: ANSI-aware buffers render escapes as
+            // zero-width styling, so the user sees colored text — the plain
+            // copy should carry that visible text, not the control codes.
+            let text = strip_ansi_codes(&text);
             if !text.is_empty() {
                 self.clipboard.copy(text);
                 self.active_window_mut().status_message = Some(t!("clipboard.copied").to_string());
@@ -193,6 +201,7 @@ impl Editor {
                 }
             }
 
+            let text = strip_ansi_codes(&text);
             if !text.is_empty() {
                 self.clipboard.copy(text);
                 self.active_window_mut().status_message =

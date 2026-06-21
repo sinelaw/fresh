@@ -1209,6 +1209,9 @@ impl Editor {
             text
         };
 
+        // Strip ANSI escape codes so the plain copy carries the visible text
+        // rather than the raw control codes that ANSI-aware panes render as styling.
+        let text = crate::primitives::ansi::strip_ansi_codes(&text);
         if !text.is_empty() {
             self.clipboard.copy(text);
         }
