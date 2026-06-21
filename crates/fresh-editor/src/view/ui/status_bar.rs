@@ -1192,7 +1192,10 @@ impl StatusBarRenderer {
                     // over the connection-derived state (which would read
                     // "Local", since the live authority is still the local
                     // placeholder until a reconnect lands).
-                    (format!("Reconnect failed: {err}"), RemoteIndicatorState::FailedAttach)
+                    (
+                        format!("Reconnect failed: {err}"),
+                        RemoteIndicatorState::FailedAttach,
+                    )
                 } else {
                     match ctx.remote_connection {
                         None => ("Local".to_string(), RemoteIndicatorState::Local),

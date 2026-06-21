@@ -1128,7 +1128,9 @@ mod tests {
         // dropping it from the Orchestrator dock. A remote session must survive
         // discovery even though its root is absent locally.
         use crate::model::filesystem::StdFileSystem;
-        use crate::services::authority::{RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec};
+        use crate::services::authority::{
+            RemoteAgentSpec, RemoteTransportSpec, SessionAuthoritySpec,
+        };
         let data = tempfile::tempdir().unwrap();
         let data_dir = data.path();
         let ws_dir = workspaces_dir(data_dir);

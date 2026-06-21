@@ -984,7 +984,10 @@ impl Editor {
             // Re-run the core reconnect for the active dormant remote workspace.
             // `reconnect_dormant_session_if_needed` clears the recorded error up
             // front (so the indicator flips to "Connecting") and is a no-op for
-            // a non-remote / already-connected workspace.
+            // a non-remote / already-connected workspace. The reconnect path is
+            // plugins-gated (dormant remote sessions are created through the
+            // orchestrator plugin), so this is a no-op in a plugins-less build.
+            #[cfg(feature = "plugins")]
             self.reconnect_dormant_session_if_needed(self.active_window);
             return;
         }
