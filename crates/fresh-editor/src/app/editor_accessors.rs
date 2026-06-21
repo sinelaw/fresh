@@ -842,6 +842,19 @@ impl Editor {
         self.windows.get(&id)
     }
 
+    /// `(id, label)` for every remote session discovered at boot but not yet
+    /// connected — the authority-less `dormant_remote` descriptors that have no
+    /// `Window` (so they don't show up in [`Self::session`]). Diagnostic / test
+    /// accessor: a dive (`SetActiveWindow`) connects one and promotes it to a
+    /// real window. See `bring_dormant_remote_online`.
+    #[doc(hidden)]
+    pub fn dormant_remote_sessions_for_test(&self) -> Vec<(fresh_core::WindowId, String)> {
+        self.dormant_remote
+            .iter()
+            .map(|(id, d)| (*id, d.label.clone()))
+            .collect()
+    }
+
     /// Active session's utility-dock panel-id → buffer-id map.
     /// Used by tests to assert that the active window's dock
     /// occupancy is what was set on it. (Pre-0b this asserted
