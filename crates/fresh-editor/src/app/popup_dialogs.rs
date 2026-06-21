@@ -842,6 +842,22 @@ impl Editor {
                 // Disconnected — warn and offer fallbacks.
                 (Some(_), true) => {
                     title = "Remote: Disconnected".to_string();
+                    // Offer Reconnect for a live remote-agent (SSH/kube) window:
+                    // its backend can be rebuilt from the stored
+                    // `RemoteAgentSpec`, re-pointing this window's authority and
+                    // respawning its dead terminal over the new link. Container
+                    // (`Plugin`) windows reconnect through their owning plugin
+                    // (`devcontainer up`), not here, so they don't get this row.
+                    let is_remote_agent = matches!(
+                        self.active_window().authority_spec,
+                        crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
+                    );
+                    if is_remote_agent {
+                        items.push(
+                            PopupListItem::new("    Reconnect".to_string())
+                                .with_data("reconnect".to_string()),
+                        );
+                    }
                     items.push(
                         PopupListItem::new("    Go Local".to_string())
                             .with_data("detach".to_string()),
@@ -980,15 +996,18 @@ impl Editor {
             self.remote_indicator_override = None;
             return;
         }
-        if action_key == "retry_reconnect" {
-            // Re-run the core reconnect for the active dormant remote workspace.
-            // `reconnect_dormant_session_if_needed` clears the recorded error up
-            // front (so the indicator flips to "Connecting") and is a no-op for
-            // a non-remote / already-connected workspace. The reconnect path is
-            // plugins-gated (dormant remote sessions are created through the
-            // orchestrator plugin), so this is a no-op in a plugins-less build.
+        if action_key == "reconnect" || action_key == "retry_reconnect" {
+            // Reconnect the active window's remote backend on explicit request:
+            // the Disconnected popup's "Reconnect" row and the FailedAttach
+            // "Retry" row both land here. `force_reconnect_remote_session`
+            // clears any recorded error up front (so the indicator flips to
+            // "Connecting"), forces the connect even for a *live* window whose
+            // stale keepalive is still parked, and is a no-op for a non-remote
+            // workspace. The reconnect path is plugins-gated (remote sessions
+            // are created through the orchestrator plugin), so this is a no-op
+            // in a plugins-less build.
             #[cfg(feature = "plugins")]
-            self.reconnect_dormant_session_if_needed(self.active_window);
+            self.force_reconnect_remote_session(self.active_window);
             return;
         }
         if action_key == "clear_reconnect_error" {

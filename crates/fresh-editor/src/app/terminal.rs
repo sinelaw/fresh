@@ -767,6 +767,124 @@ impl Window {
         }
         self.terminal_buffers.values().copied().max_by_key(|t| t.0)
     }
+
+    /// Respawn this window's dead embedded terminals through its *current*
+    /// authority, reusing each terminal's backing/log files so scrollback
+    /// continues across the gap.
+    ///
+    /// Called after a live remote reconnect re-points the window's authority
+    /// (`Editor::set_session_authority`): the embedded `ssh -t` PTYs died with
+    /// the carrier (a separate channel from the agent connection, which has its
+    /// own auto-reconnect), so without this they'd sit dead until manually
+    /// reopened. Each respawn re-runs the terminal's stored launch/resume argv
+    /// through `Authority::terminal_command`, so the new PTY runs on the remote
+    /// backend by construction — never the local host.
+    ///
+    /// Only terminals whose handle is missing or no longer alive are respawned;
+    /// a still-live terminal is left untouched (respawning it would orphan its
+    /// PTY). Terminal ids change on respawn — the manager allocates fresh ones —
+    /// so every terminal-id-keyed entry (buffer→terminal binding, backing/log
+    /// files, launch/resume commands, ephemeral marker) is remapped to the new
+    /// id and the dead handle is torn down.
+    pub(crate) fn respawn_terminals_through_authority(&mut self) {
+        // Snapshot the (buffer, old terminal id) pairs up front — the loop
+        // mutates `terminal_buffers` as it remaps ids.
+        let bindings: Vec<(BufferId, TerminalId)> = self
+            .terminal_buffers
+            .iter()
+            .map(|(b, t)| (*b, *t))
+            .collect();
+
+        for (buffer_id, old_id) in bindings {
+            // Leave a still-live terminal alone; only revive the dead ones.
+            let handle = self.terminal_manager.get(old_id);
+            if handle.is_some_and(|h| h.is_alive()) {
+                continue;
+            }
+
+            // Size + cwd carry over from the dead handle (so the reborn PTY
+            // matches the split), falling back to the window's dimensions.
+            let (cols, rows) = handle
+                .map(|h| h.size())
+                .unwrap_or_else(|| self.get_terminal_dimensions());
+            let cwd = handle.and_then(|h| h.cwd());
+
+            // Reuse the same backing/log files so the new PTY appends to the
+            // existing scrollback rather than starting blank.
+            let backing_path = self.terminal_backing_files.get(&old_id).cloned();
+            let log_path = self.terminal_log_files.get(&old_id).cloned();
+
+            // Same argv precedence as workspace restore: an agent-resume argv
+            // first (rejoin the conversation), then the launch command, else
+            // the plain interactive shell.
+            let resume_argv = self
+                .terminal_resume_commands
+                .get(&old_id)
+                .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents)
+                .cloned();
+            let launch_argv = self
+                .terminal_commands
+                .get(&old_id)
+                .filter(|argv| !argv.is_empty())
+                .cloned();
+            let spawn_argv = resume_argv.or(launch_argv);
+            let wrapper = match spawn_argv.as_deref() {
+                Some(argv) => self.authority().terminal_command(argv),
+                None => self.resolved_terminal_wrapper(),
+            };
+            let wrapper = self.apply_remote_terminal_env(wrapper);
+            let env_delta = self.terminal_env_delta(&wrapper);
+
+            let new_id = match self.terminal_manager.spawn(
+                cols,
+                rows,
+                cwd,
+                log_path,
+                backing_path,
+                wrapper,
+                env_delta,
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!("reconnect: failed to respawn terminal {:?}: {}", old_id, e);
+                    continue;
+                }
+            };
+
+            // The dead PTY's handle is now superseded — tear it down.
+            self.terminal_manager.close(old_id);
+
+            // Remap every terminal-id-keyed entry from old_id → new_id.
+            if new_id != old_id {
+                self.terminal_buffers.insert(buffer_id, new_id);
+                if let Some(p) = self.terminal_backing_files.remove(&old_id) {
+                    self.terminal_backing_files.insert(new_id, p);
+                }
+                if let Some(p) = self.terminal_log_files.remove(&old_id) {
+                    self.terminal_log_files.insert(new_id, p);
+                }
+                if let Some(c) = self.terminal_commands.remove(&old_id) {
+                    self.terminal_commands.insert(new_id, c);
+                }
+                if let Some(c) = self.terminal_resume_commands.remove(&old_id) {
+                    self.terminal_resume_commands.insert(new_id, c);
+                }
+                if self.ephemeral_terminals.remove(&old_id) {
+                    self.ephemeral_terminals.insert(new_id);
+                }
+            }
+
+            // Register the reborn leader pid so window-level signal operations
+            // (Stop / Archive / Delete) reach the new process group.
+            if let Some(pid) = self.terminal_manager.get(new_id).and_then(|h| h.pid()) {
+                self.process_groups
+                    .register(pid, format!("terminal #{}", new_id.0));
+            }
+        }
+
+        // Size the freshly-spawned PTYs to their splits' content areas.
+        self.resize_visible_terminals();
+    }
 }
 
 impl Editor {

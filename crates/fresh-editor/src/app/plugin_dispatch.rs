@@ -3671,11 +3671,34 @@ impl Editor {
     /// the devcontainer plugin can run `devcontainer up`), left to a follow-up.
     /// Idempotent: a reconnect already in flight for this window is a no-op.
     pub(crate) fn reconnect_dormant_session_if_needed(&mut self, window_id: fresh_core::WindowId) {
-        // A live session already holds its connection (keepalive); a local
-        // session has nothing to reconnect.
+        // The *activate* path (diving into a session). A live session already
+        // holds its connection (keepalive), so leave it alone here — switching
+        // to an already-connected window must not tear down and rebuild it. A
+        // local session has nothing to reconnect.
         if self.session_keepalives.contains_key(&window_id) {
             return;
         }
+        self.start_remote_reconnect(window_id);
+    }
+
+    /// Reconnect a session's remote backend on *explicit user request* — the
+    /// remote status indicator's Reconnect / Retry action.
+    ///
+    /// Unlike [`Self::reconnect_dormant_session_if_needed`] (the activate path,
+    /// which no-ops while a keepalive is parked) this forces the connect even
+    /// for a *live* remote `Window` that lost its carrier: such a window keeps
+    /// its now-stale keepalive and `Window`, so the activate-path guard would
+    /// wrongly skip it. On success the `RemoteAttachReady::Reconnect` handler
+    /// re-points the window's authority, replaces the stale keepalive, and
+    /// respawns its dead embedded terminals (see `async_dispatch.rs`).
+    pub(crate) fn force_reconnect_remote_session(&mut self, window_id: fresh_core::WindowId) {
+        self.start_remote_reconnect(window_id);
+    }
+
+    /// Shared body of the two reconnect entry points: read the window's backend
+    /// spec and, for a remote-agent session, kick off the async connect tagged
+    /// with this window so its result re-points *this* window.
+    fn start_remote_reconnect(&mut self, window_id: fresh_core::WindowId) {
         let Some(spec) = self
             .windows
             .get(&window_id)
@@ -3704,9 +3727,7 @@ impl Editor {
                 // Container: only the owning plugin can rebuild the backend
                 // (`devcontainer up`). TODO(per-session): fire a
                 // `session_reattach_requested` hook so it can.
-                tracing::debug!(
-                    "dormant container session {window_id}: reattach is plugin-driven (TODO)"
-                );
+                tracing::debug!("remote session {window_id}: reattach is plugin-driven (TODO)");
             }
         }
     }

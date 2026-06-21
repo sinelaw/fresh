@@ -596,6 +596,24 @@ impl Editor {
                     let terminal_id = terminal.terminal;
                     let exited_window_id = terminal.window;
                     tracing::info!("Terminal {} exited", terminal);
+                    // A remote-agent window whose carrier just dropped: its
+                    // embedded PTY (a separate `ssh -t` from the agent channel)
+                    // died with the link, not because the user exited the shell.
+                    // Keep the buffer↔terminal binding (and the backing/command
+                    // maps, which this handler already leaves intact) so a later
+                    // reconnect can respawn it in place over the new authority
+                    // (`respawn_terminals_through_authority`). Removing it here
+                    // would strand the buffer as a dead read-only tab with no way
+                    // back. A normal exit (remote still connected, or any local
+                    // terminal) falls through to the usual permanent teardown.
+                    let preserve_for_reconnect = matches!(
+                        self.active_window().authority_spec,
+                        crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
+                    ) && !self
+                        .active_window()
+                        .authority()
+                        .filesystem
+                        .is_remote_connected();
                     // Find the buffer associated with this terminal
                     if let Some((&buffer_id, _)) = self
                         .active_window()
@@ -683,8 +701,12 @@ impl Editor {
                             state.buffer.set_modified(false);
                         }
 
-                        // Remove from terminal_buffers so it's no longer treated as a terminal
-                        self.active_window_mut().terminal_buffers.remove(&buffer_id);
+                        // Remove from terminal_buffers so it's no longer treated
+                        // as a terminal — unless we're holding it for a remote
+                        // reconnect to respawn in place (see above).
+                        if !preserve_for_reconnect {
+                            self.active_window_mut().terminal_buffers.remove(&buffer_id);
+                        }
 
                         self.set_status_message(
                             t!("terminal.exited", id = terminal_id.0).to_string(),
@@ -823,6 +845,16 @@ impl Editor {
                                 }
                                 self.set_session_authority(window_id, authority);
                                 self.session_keepalives.insert(window_id, keepalive);
+                                // The window's embedded terminal(s) ran over the
+                                // old `ssh -t` carrier, which died with the link
+                                // — the agent-channel reconnect doesn't revive
+                                // them. Respawn each dead PTY through the
+                                // freshly-installed authority so it runs on the
+                                // remote backend again, reusing its backing file
+                                // so scrollback continues.
+                                if let Some(w) = self.windows.get_mut(&window_id) {
+                                    w.respawn_terminals_through_authority();
+                                }
                                 self.set_status_message(format!(
                                     "Reconnected: {}",
                                     self.windows
