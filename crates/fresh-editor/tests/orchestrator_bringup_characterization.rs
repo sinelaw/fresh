@@ -84,6 +84,43 @@ impl Scenario {
         .unwrap();
     }
 
+    /// Seed a per-dir workspace file for a **remote (SSH)** session — one whose
+    /// persisted `authority_spec` is a `RemoteAgent`, as a prior connected SSH
+    /// session would have left on disk. At boot these must come back as
+    /// authority-less dormant descriptors, never placeholder-authority windows.
+    fn place_remote_workspace(&self, root: &Path, label: &str) {
+        let ws_dir = self.data_dir().join("workspaces");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut ws = fresh::workspace::Workspace::new(canonical.clone());
+        ws.label = Some(label.to_string());
+        ws.authority_spec = fresh::services::authority::SessionAuthoritySpec::RemoteAgent(
+            fresh::services::authority::RemoteAgentSpec {
+                transport: fresh::services::authority::RemoteTransportSpec::Ssh {
+                    user: Some("root".to_string()),
+                    host: "example.com".to_string(),
+                    port: Some(2222),
+                    identity_file: None,
+                    remote_path: Some(canonical.to_string_lossy().into_owned()),
+                    extra_args: Vec::new(),
+                },
+                base_env: Vec::new(),
+                window: true,
+                label: Some(label.to_string()),
+                command: None,
+            },
+        );
+        let filename = format!(
+            "{}.json",
+            fresh::workspace::encode_path_for_filename(&canonical)
+        );
+        std::fs::write(
+            ws_dir.join(filename),
+            serde_json::to_vec_pretty(&ws).unwrap(),
+        )
+        .unwrap();
+    }
+
     /// Construct the editor exactly as a `fresh <project>` launch would
     /// (read persistence, discover sessions, pick the foreground window,
     /// build the windows map).
@@ -147,6 +184,44 @@ fn no_persistence_boots_clean_base_at_cwd() {
     assert_eq!(editor.working_dir(), s.project_canon.as_path());
     assert_eq!(editor.session_count(), 1, "only the base window exists");
     assert_eq!(editor.session_name(), None);
+}
+
+// ---------------------------------------------------------------------------
+// A persisted remote (SSH) session must NOT be rebuilt as a window at boot:
+// a window always owns its session's real authority, and a remote backend
+// doesn't exist until it connects. Building one now would require a dummy
+// local-placeholder authority (the old "shell"), which silently ran restored
+// terminals on the local host. So remote sessions come back as authority-less
+// dormant descriptors (promoted to a real window on dive, after connect), and
+// no window is ever created for them at boot. Local sessions keep their
+// (correct) local windows.
+// ---------------------------------------------------------------------------
+#[test]
+fn remote_session_does_not_boot_as_a_placeholder_window() {
+    let s = Scenario::new();
+    s.place_workspace(&s.other_canon, "local-other");
+    s.place_remote_workspace(&s.worktree_canon, "ssh-remote");
+    let editor = s.bring_up(); // launches at the (local) project dir
+
+    let roots = window_roots(&editor);
+    assert!(
+        !roots.contains(&s.worktree_canon),
+        "remote session must not be built as a window at boot (no placeholder \
+         authority); window roots were {roots:?}"
+    );
+    assert!(
+        roots.contains(&s.project_canon),
+        "the launched project still gets its window"
+    );
+    assert!(
+        roots.contains(&s.other_canon),
+        "a local background session still gets its (correct local) window"
+    );
+    assert_eq!(
+        editor.session_count(),
+        2,
+        "only the two local sessions are windows; the remote one is dormant"
+    );
 }
 
 // ---------------------------------------------------------------------------

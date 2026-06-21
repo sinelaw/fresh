@@ -141,6 +141,11 @@ pub(super) struct EditorParts {
     // (from disk persistence or a single seed window), the constructor
     // just installs them.
     pub(super) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
+    /// Persisted remote (SSH / kube) sessions discovered at boot, kept as
+    /// authority-less descriptors rather than placeholder-authority shell
+    /// windows. Promoted to real windows on first dive (after connect).
+    pub(super) dormant_remote:
+        HashMap<fresh_core::WindowId, crate::app::orchestrator_persistence::PersistedWindow>,
     pub(super) active_window: fresh_core::WindowId,
     pub(super) next_window_id: u64,
 
@@ -211,6 +216,7 @@ impl Editor {
             local_filesystem: parts.local_filesystem,
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
+            dormant_remote: parts.dormant_remote,
             session_keepalives: HashMap::new(),
             remote_attach_inflight: std::collections::HashSet::new(),
             remote_attach_cancelled: std::collections::HashSet::new(),
@@ -1168,6 +1174,10 @@ impl Editor {
             crate::model::filesystem::StdFileSystem,
         )));
         let mut windows = HashMap::new();
+        let mut dormant_remote: HashMap<
+            fresh_core::WindowId,
+            crate::app::orchestrator_persistence::PersistedWindow,
+        > = HashMap::new();
         if let Some(ref env) = persisted_env {
             // The active window came from a real pick when `picked_active`
             // is `Some` — its persisted entry must NOT also become a shell.
@@ -1203,6 +1213,25 @@ impl Editor {
                 } else {
                     fresh_core::WindowId(ps.id)
                 };
+                // Remote (SSH / kube) sessions are NOT built as windows here.
+                // A `Window` must own its session's real authority, and a remote
+                // backend doesn't exist until it connects — building one now
+                // would require a dummy local-placeholder authority (the old
+                // shell), the "local before, remote later" pattern that ran
+                // restored terminals on the local host. Keep them as
+                // authority-less dormant descriptors instead: listed in the dock
+                // (via the `WindowInfo` snapshot) and promoted to a real window,
+                // born with the connected authority, on first dive (see
+                // `bring_dormant_remote_online`).
+                if matches!(
+                    ps.authority_spec,
+                    crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
+                ) {
+                    let mut descriptor = ps.clone();
+                    descriptor.id = id.0;
+                    dormant_remote.insert(id, descriptor);
+                    continue;
+                }
                 // This shell's own local authority, gated by its own
                 // per-session trust + env (scoped to its root + project store)
                 // — never a clone of the active session's handles.
@@ -1256,7 +1285,12 @@ impl Editor {
         // collides with an id the user might still see in plugin
         // state. Falls back to 2 (the post-base-window default)
         // when there's no persistence.
-        let max_existing = windows.keys().map(|k| k.0).max().unwrap_or(0);
+        let max_existing = windows
+            .keys()
+            .chain(dormant_remote.keys())
+            .map(|k| k.0)
+            .max()
+            .unwrap_or(0);
         let next_window_id = persisted_env
             .as_ref()
             .map(|env| env.next_id.max(max_existing + 1))
@@ -1299,6 +1333,7 @@ impl Editor {
             async_bridge,
             local_filesystem: Arc::clone(&local_filesystem),
             windows,
+            dormant_remote,
             active_window: active_window_id,
             next_window_id,
             command_registry,

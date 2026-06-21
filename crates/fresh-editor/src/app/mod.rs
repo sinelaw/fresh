@@ -702,6 +702,23 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Persisted **remote** sessions (SSH / kube) discovered at boot but not
+    /// yet connected — there is deliberately **no `Window`** for them, because a
+    /// `Window` must always own its session's *real* authority and a remote
+    /// session's authority does not exist until it connects. Representing them
+    /// as `Window`s would force a dummy local-placeholder authority (the old
+    /// "shell"), which is exactly the "local before, remote later" pattern that
+    /// silently ran restored terminals on the local host. Instead they live
+    /// here as authority-less descriptors: listed in the dock via the
+    /// `WindowInfo` snapshot, and promoted to a real `Window` (born with the
+    /// connected SSH/kube authority, restoring their workspace through it) only
+    /// when the user dives in — see `bring_dormant_remote_online`. Keyed by the
+    /// id they will adopt as a `Window`.
+    pub(crate) dormant_remote: std::collections::HashMap<
+        fresh_core::WindowId,
+        crate::app::orchestrator_persistence::PersistedWindow,
+    >,
+
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
     /// not free its id (per design, ids are stable within a process).

@@ -179,6 +179,29 @@ impl Editor {
         // a separate notification path. Sorted by id for
         // deterministic order — `next_window_id` is monotonic
         // so this is "creation order".
+        // Dormant remote sessions (SSH / kube discovered at boot, not yet
+        // connected) have no `Window` — they live in `dormant_remote` as
+        // authority-less descriptors. They must still appear in the dock, so
+        // fold them into the snapshot alongside the live windows. A dive
+        // promotes one to a real window (removing it from `dormant_remote`), so
+        // the two collections are disjoint and never double-list a session.
+        let dormant_infos = self.dormant_remote.values().map(|d| {
+            let slot = d.plugin_state.get("orchestrator");
+            let project_path = slot
+                .and_then(|m| m.get("project_path"))
+                .and_then(|v| v.as_str())
+                .filter(|p| !p.is_empty())
+                .map(std::path::PathBuf::from)
+                .or_else(|| d.project_path.clone())
+                .unwrap_or_else(|| d.root.clone());
+            fresh_core::api::WindowInfo {
+                id: fresh_core::WindowId(d.id),
+                label: d.label.clone(),
+                root: normalize_plugin_path(d.root.clone()),
+                project_path: normalize_plugin_path(project_path),
+                shared_worktree: d.shared_worktree,
+            }
+        });
         let mut session_infos: Vec<fresh_core::api::WindowInfo> = self
             .windows
             .values()
@@ -209,6 +232,7 @@ impl Editor {
                 }
             })
             .collect();
+        session_infos.extend(dormant_infos);
         session_infos.sort_by_key(|s| s.id.0);
         snapshot.windows = session_infos;
         snapshot.active_window_id = self.active_window;
@@ -761,10 +785,21 @@ impl Editor {
                 );
             }
             PluginCommand::SetActiveWindow { id } => {
-                self.set_active_window(id);
+                // Diving into a dormant remote session connects its backend and
+                // promotes it to a real window (born with that authority) rather
+                // than activating a placeholder — see `bring_dormant_remote_online`.
+                if self.dormant_remote.contains_key(&id) {
+                    self.bring_dormant_remote_online(id);
+                } else {
+                    self.set_active_window(id);
+                }
             }
             PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
-                self.set_active_window_animated(id, &from_edge);
+                if self.dormant_remote.contains_key(&id) {
+                    self.bring_dormant_remote_online(id);
+                } else {
+                    self.set_active_window_animated(id, &from_edge);
+                }
             }
             PluginCommand::SetWindowCycleOrder { ids } => {
                 self.window_cycle_order = if ids.is_empty() { None } else { Some(ids) };

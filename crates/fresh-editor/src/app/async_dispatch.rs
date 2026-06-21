@@ -789,13 +789,20 @@ impl Editor {
                         crate::services::async_bridge::RemoteAttachMode::Reconnect {
                             window_id,
                         } => {
-                            // A dormant session the user switched to finished
-                            // reconnecting: re-point *that window's* authority at
-                            // the live backend and park the keepalive so the
-                            // connection survives. No new window, no restart, no
-                            // re-root (the window keeps its own root). The spec is
-                            // already on the window from restore.
-                            if self.windows.contains_key(&window_id) {
+                            // The common case: a dormant remote session the user
+                            // dived into finished connecting. It has no `Window`
+                            // yet (it lived in `dormant_remote` as an
+                            // authority-less descriptor) — promote it now, born
+                            // with this connected authority, restoring its
+                            // workspace through it so its terminals run on the
+                            // remote backend, not the local host.
+                            if self.dormant_remote.contains_key(&window_id) {
+                                tracing::info!(
+                                    "Promoting dormant remote session {window_id} ({})",
+                                    authority.display_label
+                                );
+                                self.promote_dormant_remote(window_id, authority, keepalive);
+                            } else if self.windows.contains_key(&window_id) {
                                 tracing::info!(
                                     "Reconnected dormant session {window_id} ({})",
                                     authority.display_label
@@ -852,7 +859,16 @@ impl Editor {
                     if let Some(window_id) = reconnect_window {
                         let reason = error.lines().next().unwrap_or(&error).to_string();
                         if let Some(w) = self.windows.get_mut(&window_id) {
+                            // An already-live remote window whose reconnect
+                            // failed: record on the window so its status-bar
+                            // indicator shows FailedAttach.
                             w.remote_reconnect_error = Some(reason);
+                        } else {
+                            // A dormant session's connect failed: it has no
+                            // window (we never built one without the backend), so
+                            // surface the reason on the status line. The session
+                            // stays dormant in the dock; diving again retries.
+                            self.set_status_message(format!("Connection failed: {reason}"));
                         }
                     }
                     self.reject_remote_attach(request_id, error);
