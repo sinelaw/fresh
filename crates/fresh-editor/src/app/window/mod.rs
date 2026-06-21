@@ -345,6 +345,17 @@ pub struct Window {
     /// `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
     pub authority_spec: crate::services::authority::SessionAuthoritySpec,
 
+    /// Error from the most recent failed *reconnect* of this dormant remote
+    /// workspace (the dive-triggered `reconnect_dormant_session_if_needed`
+    /// path). `Some` drives the status-bar remote indicator into `FailedAttach`
+    /// for this window — a persistent, per-window signal that survives until the
+    /// next successful reconnect (cleared on success / on a fresh reconnect
+    /// attempt) or the user dismisses it. Per-window rather than the editor-wide
+    /// `remote_indicator_override` (which the devcontainer plugin owns) so a
+    /// failed SSH/kube reconnect on one workspace can't bleed its error onto
+    /// another window's indicator.
+    pub remote_reconnect_error: Option<String>,
+
     /// Window-scoped layout hit-test cache: split-leaf rects, tab
     /// rects, the file-explorer rect, separators, scrollbars, and
     /// per-leaf `view_line_mappings` that mouse positioning and
@@ -1739,6 +1750,7 @@ impl Window {
             file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,
+            remote_reconnect_error: None,
             lsp,
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),

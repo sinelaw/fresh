@@ -92,8 +92,17 @@ pub enum AsyncMessage {
 
     /// An async `attachRemoteAgent` connect failed — reject the plugin's
     /// promise with `error` (the plugin shows it and creates no window); the
-    /// editor stays on its current authority.
-    RemoteAttachFailed { error: String, request_id: u64 },
+    /// editor stays on its current authority. `reconnect_window` is `Some(id)`
+    /// only when the failed connect was a *dive-triggered reconnect* of an
+    /// existing dormant session (`RemoteAttachMode::Reconnect`); the handler
+    /// records the error on that window so the status-bar remote indicator can
+    /// show `FailedAttach` for it. `None` for born-attached / restart attaches,
+    /// whose failure the launching plugin surfaces via the rejected promise.
+    RemoteAttachFailed {
+        error: String,
+        request_id: u64,
+        reconnect_window: Option<fresh_core::WindowId>,
+    },
 
     /// LSP diagnostics received for a file
     LspDiagnostics {

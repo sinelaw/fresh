@@ -800,6 +800,12 @@ impl Editor {
                                     "Reconnected dormant session {window_id} ({})",
                                     authority.display_label
                                 );
+                                // Clear any prior FailedAttach now the reconnect
+                                // succeeded, so the indicator drops back to
+                                // Connected for this workspace.
+                                if let Some(w) = self.windows.get_mut(&window_id) {
+                                    w.remote_reconnect_error = None;
+                                }
                                 self.set_session_authority(window_id, authority);
                                 self.session_keepalives.insert(window_id, keepalive);
                                 self.set_status_message(format!(
@@ -818,7 +824,11 @@ impl Editor {
                         }
                     }
                 }
-                AsyncMessage::RemoteAttachFailed { error, request_id } => {
+                AsyncMessage::RemoteAttachFailed {
+                    error,
+                    request_id,
+                    reconnect_window,
+                } => {
                     // A cancelled connect was already rejected at cancel time;
                     // swallow the late failure rather than rejecting twice.
                     if self.remote_attach_was_cancelled(request_id) {
@@ -829,16 +839,22 @@ impl Editor {
                         continue;
                     }
                     tracing::warn!("Remote attach failed: {}", error);
-                    // Surface the failure on the status line. The connect set a
-                    // "Connecting to …" status; without replacing it the line
-                    // would keep claiming a connection is in progress forever.
-                    // This is the only user-visible signal for a *dive-triggered*
-                    // reconnect (`reconnect_dormant_session_if_needed`), whose
-                    // synthetic request id has no awaiting JS callback for
-                    // `reject_remote_attach` to reject — mirrors how the cancel
-                    // path clears the same status with "Connection cancelled".
-                    let reason = error.lines().next().unwrap_or(&error).to_string();
-                    self.set_status_message(format!("Connection failed: {reason}"));
+                    // A *dive-triggered* reconnect of a dormant workspace has no
+                    // awaiting JS callback for `reject_remote_attach` to reject
+                    // and no plugin dialog open, so its only user-visible signal
+                    // is the status-bar remote indicator. Record the reason on
+                    // the workspace's window so the indicator renders
+                    // `FailedAttach` (persistent, error-styled, with a Retry /
+                    // Reopen Locally popup) until the next reconnect attempt.
+                    // Born-attached / restart attaches carry `None` here; their
+                    // failure is surfaced by the launching plugin's rejected
+                    // promise (e.g. the New-Session dialog's inline error).
+                    if let Some(window_id) = reconnect_window {
+                        let reason = error.lines().next().unwrap_or(&error).to_string();
+                        if let Some(w) = self.windows.get_mut(&window_id) {
+                            w.remote_reconnect_error = Some(reason);
+                        }
+                    }
                     self.reject_remote_attach(request_id, error);
                 }
                 AsyncMessage::PluginProcessOutput {
@@ -1081,36 +1097,62 @@ mod tests {
     }
 
     #[test]
-    fn remote_attach_failure_replaces_connecting_status() {
-        // Regression: a failed remote (re)connect must replace the lingering
-        // "Connecting to …" status the connect set. For a *dive-triggered*
-        // reconnect the synthetic request id has no awaiting JS callback, so
-        // the status line is the only user-visible signal — without this the
-        // line would claim a connection is still in progress forever.
+    fn dive_reconnect_failure_records_error_on_its_window() {
+        // A failed dive-triggered reconnect records the (first line of the)
+        // error on its own window, which drives the status-bar remote indicator
+        // into FailedAttach for that workspace.
         let mut editor = test_editor();
-        editor.set_status_message("Connecting to ssh:root@host…".to_string());
+        let win = editor.active_window;
 
         let sender = editor.async_bridge.as_ref().unwrap().sender();
         sender
             .send(AsyncMessage::RemoteAttachFailed {
                 error: "Agent failed to start: SSH could not connect\nsecond line".to_string(),
-                request_id: 4242,
+                request_id: u64::MAX - win.0,
+                reconnect_window: Some(win),
             })
             .unwrap();
         editor.process_async_messages();
 
-        let status = editor.get_status_message().cloned().unwrap_or_default();
-        assert!(
-            status.starts_with("Connection failed:"),
-            "failure must surface on the status line, got: {status:?}"
+        let err = editor
+            .windows
+            .get(&win)
+            .unwrap()
+            .remote_reconnect_error
+            .clone();
+        assert_eq!(
+            err.as_deref(),
+            Some("Agent failed to start: SSH could not connect"),
+            "only the first line of a multi-line error is recorded"
         );
+    }
+
+    #[test]
+    fn non_reconnect_attach_failure_sets_no_window_error() {
+        // Born-attached / restart attaches (reconnect_window = None) surface
+        // their failure via the launching plugin's rejected promise, not the
+        // per-window indicator — so no window error is recorded.
+        let mut editor = test_editor();
+        let win = editor.active_window;
+
+        let sender = editor.async_bridge.as_ref().unwrap().sender();
+        sender
+            .send(AsyncMessage::RemoteAttachFailed {
+                error: "boom".to_string(),
+                request_id: 7,
+                reconnect_window: None,
+            })
+            .unwrap();
+        editor.process_async_messages();
+
         assert!(
-            status.contains("SSH could not connect"),
-            "the reason is included, got: {status:?}"
-        );
-        assert!(
-            !status.contains("second line"),
-            "only the first line of a multi-line error is shown, got: {status:?}"
+            editor
+                .windows
+                .get(&win)
+                .unwrap()
+                .remote_reconnect_error
+                .is_none(),
+            "a non-reconnect failure must not set a window error"
         );
     }
 }

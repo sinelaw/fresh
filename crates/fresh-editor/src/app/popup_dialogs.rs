@@ -766,7 +766,39 @@ impl Editor {
             }
         }
 
-        if !override_handled {
+        // Core-driven FailedAttach: a dormant remote workspace whose
+        // dive-triggered reconnect failed (recorded on the window, not via the
+        // plugin override). Offer a generic Retry (re-run the core reconnect)
+        // and a Dismiss that clears the error — independent of the
+        // devcontainer-specific override path above.
+        let core_failed_attach = !override_handled
+            && self
+                .active_window()
+                .remote_reconnect_error
+                .as_deref()
+                .is_some();
+        if core_failed_attach {
+            let err = self
+                .active_window()
+                .remote_reconnect_error
+                .clone()
+                .unwrap_or_default();
+            title = if err.is_empty() {
+                "Remote: Reconnect failed".to_string()
+            } else {
+                format!("Remote: Reconnect failed — {err}")
+            };
+            items.push(
+                PopupListItem::new("    Retry".to_string())
+                    .with_data("retry_reconnect".to_string()),
+            );
+            items.push(
+                PopupListItem::new("    Reopen Locally".to_string())
+                    .with_data("clear_reconnect_error".to_string()),
+            );
+        }
+
+        if !override_handled && !core_failed_attach {
             match (connection.as_deref(), is_disconnected) {
                 // Connected authority (container or SSH), not disconnected.
                 (Some(label), false) => {
@@ -946,6 +978,23 @@ impl Editor {
         }
         if action_key == "clear_override" {
             self.remote_indicator_override = None;
+            return;
+        }
+        if action_key == "retry_reconnect" {
+            // Re-run the core reconnect for the active dormant remote workspace.
+            // `reconnect_dormant_session_if_needed` clears the recorded error up
+            // front (so the indicator flips to "Connecting") and is a no-op for
+            // a non-remote / already-connected workspace.
+            self.reconnect_dormant_session_if_needed(self.active_window);
+            return;
+        }
+        if action_key == "clear_reconnect_error" {
+            // "Reopen Locally" / dismiss: drop the failed-reconnect error so the
+            // indicator stops showing FailedAttach. The workspace keeps its
+            // remote `authority_spec`, so a later dive still retries the connect.
+            if let Some(w) = self.windows.get_mut(&self.active_window) {
+                w.remote_reconnect_error = None;
+            }
             return;
         }
         if action_key == "cancel_popup" {

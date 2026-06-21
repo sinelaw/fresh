@@ -237,6 +237,13 @@ pub struct StatusBarContext<'a> {
     /// `ClearRemoteIndicatorState` or by a `None` pass at the call
     /// site.
     pub remote_state_override: Option<&'a RemoteIndicatorOverride>,
+    /// Error from the active window's most recent failed *reconnect* of a
+    /// dormant remote workspace. When `Some` (and no plugin override is set),
+    /// the `{remote}` indicator renders `FailedAttach` with this text instead
+    /// of the connection-derived state — the core counterpart to the plugin
+    /// override, but scoped to the active window so a failed SSH/kube reconnect
+    /// can't bleed onto another window's indicator.
+    pub remote_reconnect_error: Option<&'a str>,
     /// True when the active buffer is the synthesized placeholder kept
     /// alive by the close path with `auto_create_empty_buffer_on_last_buffer_close`
     /// disabled. Buffer-specific elements (filename, cursor, line ending,
@@ -1179,6 +1186,13 @@ impl StatusBarRenderer {
                 // derived states synthesize one from `remote_connection`.
                 let (text, state) = if let Some(over) = ctx.remote_state_override {
                     (over.label(), over.state())
+                } else if let Some(err) = ctx.remote_reconnect_error {
+                    // Core-driven FailedAttach for the active window's dormant
+                    // remote workspace whose reconnect failed. Takes precedence
+                    // over the connection-derived state (which would read
+                    // "Local", since the live authority is still the local
+                    // placeholder until a reconnect lands).
+                    (format!("Reconnect failed: {err}"), RemoteIndicatorState::FailedAttach)
                 } else {
                     match ctx.remote_connection {
                         None => ("Local".to_string(), RemoteIndicatorState::Local),

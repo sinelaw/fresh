@@ -3658,6 +3658,11 @@ impl Editor {
                 if self.remote_attach_inflight.contains(&request_id) {
                     return;
                 }
+                // Clear any prior FailedAttach so the indicator shows
+                // "Connecting" (not a stale error) while this retry runs.
+                if let Some(w) = self.windows.get_mut(&window_id) {
+                    w.remote_reconnect_error = None;
+                }
                 self.start_remote_connect(agent_spec, Some(window_id), request_id);
             }
             crate::services::authority::SessionAuthoritySpec::Plugin(_) => {
@@ -3791,6 +3796,7 @@ impl Editor {
                         Err(e) => AsyncMessage::RemoteAttachFailed {
                             error: e.to_string(),
                             request_id,
+                            reconnect_window,
                         },
                     };
                     #[allow(clippy::let_underscore_must_use)]
@@ -3845,6 +3851,7 @@ impl Editor {
                         Err(e) => AsyncMessage::RemoteAttachFailed {
                             error: e.to_string(),
                             request_id,
+                            reconnect_window,
                         },
                     };
                     #[allow(clippy::let_underscore_must_use)]
