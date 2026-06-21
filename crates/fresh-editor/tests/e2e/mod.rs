@@ -166,6 +166,7 @@ pub mod prompt_editing;
 pub mod recovery;
 pub mod remote_fs_test;
 pub mod remote_indicator_popup;
+pub mod remote_reconnect_terminal;
 pub mod rendering;
 pub mod restored_agent_terminal;
 pub mod restored_terminal_focus;

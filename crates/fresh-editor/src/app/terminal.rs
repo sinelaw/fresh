@@ -786,7 +786,7 @@ impl Window {
     /// so every terminal-id-keyed entry (buffer→terminal binding, backing/log
     /// files, launch/resume commands, ephemeral marker) is remapped to the new
     /// id and the dead handle is torn down.
-    pub(crate) fn respawn_terminals_through_authority(&mut self) {
+    pub fn respawn_terminals_through_authority(&mut self) {
         // Snapshot the (buffer, old terminal id) pairs up front — the loop
         // mutates `terminal_buffers` as it remaps ids.
         let bindings: Vec<(BufferId, TerminalId)> = self
