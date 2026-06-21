@@ -78,15 +78,17 @@ agent-resume feature landed assuming a local backend:
    instead of bypassing it. (This also fixes a born-attached remote agent's
    *seed* terminal, which has the same bypass today.)
 
-   > **Status: shipped for local + containers** (`docker exec -it [-u][-w][-e
-   > env] <id> <argv>`), the argv staying intact (no shell string). SSH and
-   > Kubernetes are stubbed (TODO): the agent must run **in the workspace
-   > dir**, and `docker exec` expresses that argv-pure via `-w <dir>`, but
-   > `kubectl exec` and `ssh` have **no cwd flag** — doing it there needs a
-   > shell hop (`sh -lc 'cd <dir> && exec <argv>'`), which trades away the
-   > argv-slot purity (acceptable for a UUID, but a real decision). Until that
-   > lands, ssh/kube command terminals fall back to running on the host
-   > (today's behaviour), no regression.
+   > **Status: shipped for local, containers, SSH, and Kubernetes.** Local
+   > runs the argv directly; containers prepend `docker exec -it [-u][-w][-e
+   > env] <id>`, the argv staying intact (no shell string, cwd pinned via
+   > `-w`). `kubectl exec` and `ssh` have **no cwd flag**, so they pin cwd with
+   > a shell hop (`… 'cd <dir>; exec ${SHELL:-/bin/sh} -lc <argv>'`): the argv
+   > is POSIX-quoted and handed to a remote **login** shell so its `PATH`
+   > resolves the agent binary, exactly as the bare remote terminal does. This
+   > trades away argv-slot purity for ssh/kube (the quoting carries the argv
+   > intact instead), the deliberate decision flagged here. Before this landed,
+   > ssh/kube command terminals ran the agent on the **local** host, ignoring
+   > the session's remote path — see `CommandWrap` in `services/authority`.
 
 2. **Backend first, then agent.** A restored remote session is **Dormant**
    (local placeholder) until reconnect, so its agent must **not** re-run on

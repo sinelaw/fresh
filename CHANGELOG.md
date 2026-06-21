@@ -56,6 +56,7 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * Fixed a crash on a stale soft-wrap position in multi-byte text (#2320).
 * Trusting a workspace with a shell or virtualenv environment (`.envrc` / `mise` / `.venv`) no longer restarts the whole editor: other windows keep their running terminals, language servers, and Orchestrator dock; only the active window refreshes to pick up the new environment.
 * A file opened while a split is maximized — for example via an embedded `fresh <file>` forwarded from a maximized terminal dock — is now revealed instead of rendering hidden behind the maximized split (which previously looked like the terminal had hung).
+* Launching an agent (e.g. `claude`) in an SSH or Kubernetes workspace now runs it **on the remote host / in the pod**, rooted at the workspace's remote path, instead of silently running it on the local machine. The agent's launch and resume commands compose with the session's backend via a `cd <dir>; exec <argv>` shell hop (the argv is shell-quoted and handed to a remote login shell so its `PATH` resolves the agent).
 
 ### Internals
 

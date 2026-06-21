@@ -918,6 +918,37 @@ pub fn build_ssh_terminal_args(
     params: &crate::services::remote::ConnectionParams,
     remote_dir: Option<&str>,
 ) -> Vec<String> {
+    build_ssh_remote_args(params, remote_dir, SSH_EXEC_LOGIN_SHELL)
+}
+
+/// Build the `ssh` argv that runs an interactive *agent* `argv` on the remote
+/// host, rooted at the workspace dir — the agent analogue of
+/// [`build_ssh_terminal_args`]. `ssh` has no cwd flag, so cwd is pinned through
+/// the same `cd <dir>` shell hop the bare terminal uses; the agent argv is then
+/// handed to a remote **login** shell (`exec $SHELL -lc 'exec <argv>'`) so its
+/// profile-derived `PATH` resolves the agent binary exactly as the bare
+/// terminal would. The argv is POSIX-quoted, so paths/args with spaces survive
+/// the remote shell's re-parse intact. Without this an agent command under an
+/// SSH session ran on the **local** host instead of the remote.
+pub fn build_ssh_agent_terminal_args(
+    params: &crate::services::remote::ConnectionParams,
+    remote_dir: Option<&str>,
+    argv: &[String],
+) -> Vec<String> {
+    build_ssh_remote_args(params, remote_dir, &agent_login_exec_tail(argv))
+}
+
+/// Shared body of the SSH integrated-terminal argv: the `ssh` flags + target,
+/// then a remote command that lands in the workspace and runs `exec_tail`. The
+/// bare terminal passes [`SSH_EXEC_LOGIN_SHELL`]; the agent terminal passes
+/// [`agent_login_exec_tail`]. Kept as one function so the cwd-landing logic
+/// (and the `-t` / StrictHostKeyChecking / `-p` / `-i` / extra-args assembly)
+/// stays identical between the two.
+fn build_ssh_remote_args(
+    params: &crate::services::remote::ConnectionParams,
+    remote_dir: Option<&str>,
+    exec_tail: &str,
+) -> Vec<String> {
     let mut a = vec![
         "-t".to_string(),
         "-o".to_string(),
@@ -934,12 +965,12 @@ pub fn build_ssh_terminal_args(
     a.extend(params.extra_args.iter().cloned());
     a.push(params.ssh_target());
 
-    // Land in the workspace (when known), then hand control to the user's
-    // login shell. `remote_dir` is whatever path the URL pointed at, which
-    // may be a *file* (`fresh ssh://host/proj/main.rs`) — so fall back to
-    // its parent dir, and treat a failed `cd` as non-fatal so the shell
-    // always starts. `exec` replaces the ssh-side shell so closing the
-    // terminal tears the session down cleanly.
+    // Land in the workspace (when known), then run `exec_tail`. `remote_dir`
+    // is whatever path the URL pointed at, which may be a *file* (`fresh
+    // ssh://host/proj/main.rs`) — so fall back to its parent dir, and treat a
+    // failed `cd` as non-fatal so the command always starts. `exec` replaces
+    // the ssh-side shell so closing the terminal tears the session down
+    // cleanly.
     let mut remote_cmd = String::new();
     if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
         let quoted = shell_quote(dir);
@@ -947,9 +978,29 @@ pub fn build_ssh_terminal_args(
             "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
         ));
     }
-    remote_cmd.push_str(SSH_EXEC_LOGIN_SHELL);
+    remote_cmd.push_str(exec_tail);
     a.push(remote_cmd);
     a
+}
+
+/// The `exec ${SHELL:-/bin/sh} -lc '<exec argv…>'` tail shared by the SSH and
+/// K8s **agent** terminals: hand the agent argv to a remote **login** shell (so
+/// its profile-derived `PATH` resolves the agent binary), which `exec`s it as
+/// the session leader (so closing the terminal tears it down). Each argv token
+/// is POSIX-quoted, then the whole `exec …` string is quoted again as the
+/// single `-c` argument, so the argv survives the remote shell's re-parse with
+/// spaces/metacharacters intact. `argv` is always non-empty here (the empty
+/// case falls back to the bare-shell wrapper before reaching this).
+fn agent_login_exec_tail(argv: &[String]) -> String {
+    let joined = argv
+        .iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "exec ${{SHELL:-/bin/sh}} -lc {}",
+        shell_quote(&format!("exec {joined}"))
+    )
 }
 
 /// The tail of the SSH terminal's remote command: hand control to the user's
@@ -1032,6 +1083,34 @@ pub fn build_kube_terminal_args(
     target: &crate::services::remote::KubeTarget,
     base_env: &[(String, String)],
 ) -> Vec<String> {
+    build_kube_remote_args(target, base_env, "exec ${SHELL:-/bin/sh} -l")
+}
+
+/// Build the `kubectl` argv that runs an interactive *agent* `argv` inside the
+/// pod, rooted at the workspace dir — the agent analogue of
+/// [`build_kube_terminal_args`]. `kubectl exec` has no cwd flag, so cwd is
+/// pinned through the same `cd <ws>` shell hop the bare terminal uses, and the
+/// agent argv is handed to a pod-side **login** shell (`exec $SHELL -lc 'exec
+/// <argv>'`) so its `PATH` resolves the agent binary. Without this an agent
+/// command under a K8s session ran on the **local** host instead of the pod.
+pub fn build_kube_agent_terminal_args(
+    target: &crate::services::remote::KubeTarget,
+    base_env: &[(String, String)],
+    argv: &[String],
+) -> Vec<String> {
+    build_kube_remote_args(target, base_env, &agent_login_exec_tail(argv))
+}
+
+/// Shared body of the K8s integrated-terminal argv: export the in-pod env
+/// probe, land in the workspace, then run `exec_tail` inside a `sh -lc`
+/// wrapper. The bare terminal passes `exec ${SHELL:-/bin/sh} -l`; the agent
+/// terminal passes [`agent_login_exec_tail`]. Kept as one function so the
+/// env-export + cwd-landing logic stays identical between the two.
+fn build_kube_remote_args(
+    target: &crate::services::remote::KubeTarget,
+    base_env: &[(String, String)],
+    exec_tail: &str,
+) -> Vec<String> {
     let mut remote_cmd = String::new();
     // Apply the captured in-pod env probe to the integrated terminal so it
     // matches what LSP / spawnProcess get in the pod (issue #2355; see
@@ -1051,7 +1130,7 @@ pub fn build_kube_terminal_args(
             "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
         ));
     }
-    remote_cmd.push_str("exec ${SHELL:-/bin/sh} -l");
+    remote_cmd.push_str(exec_tail);
     crate::services::remote::transport::kubectl_exec_argv(
         target,
         &["-it"],
@@ -1568,6 +1647,95 @@ mod tests {
         );
         // Empty dir is treated the same as no dir.
         assert_eq!(build_ssh_terminal_args(&params, Some("")), a);
+    }
+
+    #[test]
+    fn build_ssh_agent_terminal_args_runs_agent_in_remote_workspace() {
+        let params = crate::services::remote::ConnectionParams {
+            user: Some("u".into()),
+            host: "h".into(),
+            port: Some(2222),
+            identity_file: Some(std::path::PathBuf::from("/k")),
+            extra_args: Vec::new(),
+        };
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "u-1".to_string(),
+        ];
+        let a = build_ssh_agent_terminal_args(&params, Some("/srv/proj"), &argv);
+
+        // Same ssh head as the bare terminal: -t, StrictHostKeyChecking, port,
+        // identity, then the target.
+        assert_eq!(
+            &a[..8],
+            &[
+                "-t",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-p",
+                "2222",
+                "-i",
+                "/k",
+                "u@h",
+            ]
+        );
+        let remote_cmd = a.last().unwrap();
+        // Lands in the workspace before exec'ing the agent.
+        assert!(remote_cmd.contains("cd \"$d\"") && remote_cmd.contains("'/srv/proj'"));
+        // Hands the agent to a remote *login* shell so its PATH resolves it,
+        // then execs the (quoted) agent argv.
+        assert!(remote_cmd.contains("exec ${SHELL:-/bin/sh} -lc "));
+        assert!(
+            remote_cmd.contains("claude")
+                && remote_cmd.contains("--resume")
+                && remote_cmd.contains("u-1")
+        );
+    }
+
+    #[test]
+    fn build_ssh_agent_terminal_args_quotes_args_with_spaces() {
+        // An argv token containing a space (or shell metacharacter) must be
+        // POSIX-quoted so the remote shell parses it as a single argument
+        // rather than splitting it.
+        let params = crate::services::remote::ConnectionParams {
+            user: None,
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        let argv = vec!["agent".to_string(), "a b".to_string()];
+        let remote_cmd = build_ssh_agent_terminal_args(&params, None, &argv)
+            .pop()
+            .unwrap();
+        // The space-containing token appears single-quoted, never bare.
+        assert!(remote_cmd.contains("'a b'"));
+    }
+
+    #[test]
+    fn build_kube_agent_terminal_args_runs_agent_in_pod_workspace() {
+        let target = crate::services::remote::KubeTarget {
+            context: None,
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: Some("/workspace".into()),
+        };
+        let argv = vec![
+            "claude".to_string(),
+            "--resume".to_string(),
+            "u-1".to_string(),
+        ];
+        let a = build_kube_agent_terminal_args(&target, &[], &argv);
+        // `kubectl exec -it … -- sh -lc '<remote_cmd>'`.
+        assert_eq!(a[0], "exec");
+        assert!(a.contains(&"-it".to_string()));
+        assert!(a.contains(&"sh".to_string()) && a.contains(&"-lc".to_string()));
+        let remote_cmd = a.last().unwrap();
+        assert!(remote_cmd.contains("cd \"$d\"") && remote_cmd.contains("'/workspace'"));
+        assert!(remote_cmd.contains("exec ${SHELL:-/bin/sh} -lc "));
+        assert!(remote_cmd.contains("claude"));
     }
 
     #[test]

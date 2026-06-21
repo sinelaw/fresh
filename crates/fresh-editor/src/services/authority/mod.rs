@@ -39,10 +39,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 use crate::services::remote::{
-    build_kube_terminal_args, build_ssh_terminal_args, spawn_kube_reconnect_task,
-    spawn_reconnect_task, ConnectionParams, KubeConnection, KubeTarget, LocalLongRunningSpawner,
-    LocalProcessSpawner, LongRunningSpawner, ProcessSpawner, RemoteFileSystem,
-    RemoteLongRunningSpawner, RemoteProcessSpawner, SshConnection, SshError, TransportError,
+    build_kube_agent_terminal_args, build_kube_terminal_args, build_ssh_agent_terminal_args,
+    build_ssh_terminal_args, spawn_kube_reconnect_task, spawn_reconnect_task, ConnectionParams,
+    KubeConnection, KubeTarget, LocalLongRunningSpawner, LocalProcessSpawner, LongRunningSpawner,
+    ProcessSpawner, RemoteFileSystem, RemoteLongRunningSpawner, RemoteProcessSpawner,
+    SshConnection, SshError, TransportError,
 };
 use crate::services::workspace_trust::WorkspaceTrust;
 
@@ -311,14 +312,43 @@ pub struct Authority {
     /// `setEnv`/`clearEnv` plugin ops, never a stored snapshot. Same `Arc` the
     /// server owns; born in `main.rs` alongside trust.
     pub env_provider: Arc<crate::services::env_provider::EnvProvider>,
-    /// Argv **prefix** that runs an arbitrary *interactive* command inside
-    /// this backend, used by [`Self::terminal_command`]. Empty for a local
-    /// authority (the command is the PTY child directly); for a container it
-    /// is `docker exec -it … <id>`, so an agent argv (`claude --resume <id>`)
-    /// runs *in the container* rather than on the host. This is the seam
-    /// where the per-session backend and the agent-resume terminal command
-    /// compose — see `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
-    pub command_prefix: Vec<String>,
+    /// How an arbitrary *interactive* argv (an agent like `claude --resume
+    /// <id>`, or a plain command) is turned into a PTY command that runs
+    /// **inside** this backend, rooted at the session's workspace dir. Used by
+    /// [`Self::terminal_command`]. This is the seam where the per-session
+    /// backend and the agent-resume terminal command compose — see
+    /// `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
+    pub command_wrap: CommandWrap,
+}
+
+/// How [`Authority::terminal_command`] composes an interactive argv with the
+/// authority's backend. Each backend pins the argv's working directory in the
+/// way that backend supports: a `-w` flag for `docker exec`, or a `cd <dir>`
+/// shell hop for `ssh` / `kubectl` (which have no cwd flag).
+#[derive(Debug, Clone)]
+pub enum CommandWrap {
+    /// Local: the argv is the PTY child directly; the terminal sets cwd.
+    Direct,
+    /// Argv-pure exec prefix (`docker exec -it [-u][-w][-e] <id>`): the agent
+    /// argv is appended verbatim — never a shell string — and cwd is pinned by
+    /// the prefix's own `-w` flag. The prefix is non-empty (`prefix[0]` is the
+    /// program, e.g. `docker`).
+    Prefix(Vec<String>),
+    /// SSH: re-exec the argv on the remote host rooted at `remote_dir`. `ssh`
+    /// has no cwd flag, so cwd is pinned via a `cd <dir>` shell hop and the
+    /// argv is shell-quoted (not appended raw). Without this an agent argv ran
+    /// on the **local** host instead of the remote.
+    Ssh {
+        params: ConnectionParams,
+        remote_dir: Option<String>,
+    },
+    /// Kubernetes: re-exec the argv inside the pod rooted at the target's
+    /// workspace, same shell-hop contract as SSH. `base_env` is the captured
+    /// in-pod env probe, exported before the agent so its `PATH` resolves.
+    Kube {
+        target: KubeTarget,
+        base_env: Vec<(String, String)>,
+    },
 }
 
 /// A session's **execution scope**: the trust gate (*may it run?*) and env
@@ -367,35 +397,61 @@ impl Authority {
     }
 
     /// Build a [`TerminalWrapper`] that runs `argv` as an interactive PTY
-    /// child **inside this authority's backend**. Local runs it directly;
-    /// container/remote authorities prepend their exec prefix
-    /// ([`Self::command_prefix`]) so the command runs in the backend with its
-    /// argv intact (no shell-string interpolation). An empty `argv` falls
-    /// back to the authority's interactive shell wrapper.
+    /// child **inside this authority's backend**, rooted at the session's
+    /// workspace dir. Local runs it directly; container/remote authorities wrap
+    /// it per [`CommandWrap`] so it runs in the backend (a container exec, an
+    /// `ssh`/`kubectl` shell hop) rather than on the host. An empty `argv`
+    /// falls back to the authority's interactive shell wrapper.
     ///
     /// This is what the Orchestrator agent-resume path spawns through, so a
     /// `claude --resume <id>` restored in a devcontainer session runs as
-    /// `docker exec -it … <id> claude --resume <id>` rather than on the host.
+    /// `docker exec -it … <id> claude --resume <id>`, and an SSH session runs
+    /// it as `ssh -t … 'cd <dir>; exec <argv>'` on the remote host — never on
+    /// the local machine.
     pub fn terminal_command(&self, argv: &[String]) -> TerminalWrapper {
         let Some((cmd, rest)) = argv.split_first() else {
             return self.terminal_wrapper.clone();
         };
-        if self.command_prefix.is_empty() {
-            // Local: the command is the PTY child; cwd is the terminal's.
-            TerminalWrapper {
-                command: cmd.clone(),
-                args: rest.to_vec(),
-                manages_cwd: false,
+        match &self.command_wrap {
+            CommandWrap::Direct => {
+                // Local: the command is the PTY child; cwd is the terminal's.
+                TerminalWrapper {
+                    command: cmd.clone(),
+                    args: rest.to_vec(),
+                    manages_cwd: false,
+                }
             }
-        } else {
-            // Remote: `<exec-prefix> <argv>`. The prefix pins the backend
-            // (and its cwd), so cwd is managed by the wrapper's own args.
-            let mut args = self.command_prefix[1..].to_vec();
-            args.extend(argv.iter().cloned());
-            TerminalWrapper {
-                command: self.command_prefix[0].clone(),
-                args,
-                manages_cwd: true,
+            CommandWrap::Prefix(prefix) => {
+                // Container: `<exec-prefix> <argv>`, argv-pure. The prefix pins
+                // the backend (and its cwd via `-w`), so cwd is managed by the
+                // wrapper's own args.
+                let mut args = prefix[1..].to_vec();
+                args.extend(argv.iter().cloned());
+                TerminalWrapper {
+                    command: prefix[0].clone(),
+                    args,
+                    manages_cwd: true,
+                }
+            }
+            CommandWrap::Ssh { params, remote_dir } => {
+                // SSH: run the argv on the remote host rooted at `remote_dir`
+                // via a `cd <dir>; exec <argv>` shell hop. cwd is pinned by the
+                // wrapper's own args.
+                TerminalWrapper {
+                    command: "ssh".to_string(),
+                    args: build_ssh_agent_terminal_args(params, remote_dir.as_deref(), argv),
+                    manages_cwd: true,
+                }
+            }
+            CommandWrap::Kube { target, base_env } => {
+                // Kubernetes: run the argv inside the pod rooted at the target's
+                // workspace via the same shell hop. cwd is pinned by the
+                // wrapper's own args.
+                TerminalWrapper {
+                    command: "kubectl".to_string(),
+                    args: build_kube_agent_terminal_args(target, base_env, argv),
+                    manages_cwd: true,
+                }
             }
         }
     }
@@ -423,8 +479,8 @@ impl Authority {
             path_translation: None,
             workspace_trust: trust,
             env_provider: env,
-            // Local: commands run directly as the PTY child, no exec prefix.
-            command_prefix: Vec::new(),
+            // Local: commands run directly as the PTY child, no backend wrap.
+            command_wrap: CommandWrap::Direct,
         }
     }
 
@@ -461,11 +517,13 @@ impl Authority {
             path_translation: None,
             workspace_trust: trust,
             env_provider: env,
-            // TODO(per-session): build an `ssh -t … <target> --` exec prefix
-            // so a restored agent runs on the remote host. Empty for now —
-            // an agent command falls back to running on the host (today's
-            // behaviour), no regression.
-            command_prefix: Vec::new(),
+            // An agent argv (`claude --resume <id>`) runs on the *remote* host
+            // rooted at `remote_dir` via a `cd <dir>; exec <argv>` shell hop —
+            // not on the local machine. See [`CommandWrap::Ssh`].
+            command_wrap: CommandWrap::Ssh {
+                params: params.clone(),
+                remote_dir: remote_dir.map(str::to_string),
+            },
         }
     }
 
@@ -498,10 +556,13 @@ impl Authority {
             path_translation: None,
             workspace_trust: trust,
             env_provider: env,
-            // TODO(per-session): build a `kubectl exec -it … -- ` exec prefix
-            // (argv-pure via `kubectl_exec_argv`) so a restored agent runs in
-            // the pod. Empty for now — falls back to host, no regression.
-            command_prefix: Vec::new(),
+            // An agent argv runs *inside the pod* rooted at the target's
+            // workspace via a `cd <ws>; exec <argv>` shell hop — not on the
+            // local machine. See [`CommandWrap::Kube`].
+            command_wrap: CommandWrap::Kube {
+                target: target.clone(),
+                base_env: base_env.to_vec(),
+            },
         }
     }
 
@@ -567,10 +628,10 @@ impl Authority {
 
         // Both spawner traits need the docker-exec params when the
         // payload is a container, so destructure once and reuse.
-        let (process_spawner, long_running_spawner, command_prefix): (
+        let (process_spawner, long_running_spawner, command_wrap): (
             Arc<dyn ProcessSpawner>,
             Arc<dyn LongRunningSpawner>,
-            Vec<String>,
+            CommandWrap,
         ) = match payload.spawner {
             SpawnerSpec::Local => (
                 Arc::new(LocalProcessSpawner::new(
@@ -581,8 +642,8 @@ impl Authority {
                     Arc::clone(&env),
                     Arc::clone(&trust),
                 )),
-                // Host-local spawner: commands run directly, no exec prefix.
-                Vec::new(),
+                // Host-local spawner: commands run directly, no backend wrap.
+                CommandWrap::Direct,
             ),
             SpawnerSpec::DockerExec {
                 container_id,
@@ -620,7 +681,7 @@ impl Authority {
                             Arc::clone(&trust),
                         ),
                     ),
-                    command_prefix,
+                    CommandWrap::Prefix(command_prefix),
                 )
             }
         };
@@ -652,7 +713,7 @@ impl Authority {
             path_translation,
             workspace_trust: trust,
             env_provider: env,
-            command_prefix,
+            command_wrap,
         })
     }
 }
@@ -1442,6 +1503,127 @@ mod tests {
                 "--resume",
                 "u-1",
             ]
+        );
+    }
+
+    /// Build a minimal SSH authority for the terminal_command tests. The
+    /// spawners are local stubs — `terminal_command` only consults
+    /// `command_wrap` (built from `params` + `remote_dir`), never the spawners.
+    fn ssh_authority(params: &ConnectionParams, remote_dir: Option<&str>) -> Authority {
+        let trust = Arc::new(WorkspaceTrust::permissive());
+        let env = Arc::new(crate::services::env_provider::EnvProvider::inactive());
+        Authority::ssh(
+            Arc::new(StdFileSystem),
+            Arc::new(LocalProcessSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
+            Arc::new(LocalLongRunningSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
+            params,
+            remote_dir,
+            trust,
+            env,
+        )
+    }
+
+    #[test]
+    fn ssh_terminal_command_runs_agent_on_remote_in_workspace() {
+        // Regression: launching an agent (e.g. `claude`) in an SSH session ran
+        // it on the *local* host (command == "claude", manages_cwd == false),
+        // ignoring the session's remote path. It must run through `ssh` on the
+        // remote host, rooted at the provided remote workspace dir.
+        let params = ConnectionParams {
+            user: Some("u".into()),
+            host: "h".into(),
+            port: Some(2222),
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        let auth = ssh_authority(&params, Some("/srv/proj"));
+
+        let w = auth.terminal_command(&["claude".into(), "--resume".into(), "u-1".into()]);
+        assert_eq!(
+            w.command, "ssh",
+            "agent must launch through ssh, not locally"
+        );
+        assert!(
+            w.manages_cwd,
+            "ssh re-parents the agent, so it manages its own cwd"
+        );
+        // Target precedes the single remote-command argument.
+        assert!(w.args.contains(&"u@h".to_string()));
+        let remote_cmd = w.args.last().expect("ssh passes a remote command");
+        assert!(
+            remote_cmd.contains("/srv/proj") && remote_cmd.contains("cd "),
+            "agent must be rooted at the remote workspace dir: {remote_cmd}"
+        );
+        assert!(
+            remote_cmd.contains("claude"),
+            "agent argv must be present in the remote command: {remote_cmd}"
+        );
+    }
+
+    #[test]
+    fn ssh_terminal_command_empty_argv_falls_back_to_shell_wrapper() {
+        // Empty argv = "spawn a bare remote shell": still the ssh login-shell
+        // wrapper, not an empty/garbage command.
+        let params = ConnectionParams {
+            user: None,
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        let auth = ssh_authority(&params, Some("/srv/proj"));
+        let w = auth.terminal_command(&[]);
+        assert_eq!(w.command, auth.terminal_wrapper.command);
+        assert_eq!(w.args, auth.terminal_wrapper.args);
+    }
+
+    #[test]
+    fn kube_terminal_command_runs_agent_in_pod_workspace() {
+        // Same regression as SSH, but for a Kubernetes-backed session: the
+        // agent must run inside the pod (`kubectl exec … -- sh -lc 'cd <ws>;
+        // exec <argv>'`), rooted at the pod-side workspace, not on the host.
+        let target = KubeTarget {
+            context: None,
+            namespace: "dev".into(),
+            pod: "pod-1".into(),
+            container: None,
+            workspace: Some("/workspace".into()),
+        };
+        let trust = Arc::new(WorkspaceTrust::permissive());
+        let env = Arc::new(crate::services::env_provider::EnvProvider::inactive());
+        let auth = Authority::kube(
+            Arc::new(StdFileSystem),
+            Arc::new(LocalProcessSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
+            Arc::new(LocalLongRunningSpawner::new(
+                Arc::clone(&env),
+                Arc::clone(&trust),
+            )),
+            &target,
+            &[],
+            trust,
+            env,
+        );
+
+        let w = auth.terminal_command(&["claude".into(), "--resume".into(), "u-1".into()]);
+        assert_eq!(w.command, "kubectl", "agent must launch through kubectl");
+        assert!(w.manages_cwd);
+        let remote_cmd = w.args.last().expect("kubectl passes a remote command");
+        assert!(
+            remote_cmd.contains("/workspace") && remote_cmd.contains("cd "),
+            "agent must be rooted at the pod workspace dir: {remote_cmd}"
+        );
+        assert!(
+            remote_cmd.contains("claude"),
+            "agent argv must be present in the pod command: {remote_cmd}"
         );
     }
 
