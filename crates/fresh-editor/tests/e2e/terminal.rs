@@ -3883,8 +3883,7 @@ fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
     // The live PTY was sized to the wider, scrollbar-free content area: one
     // column wider than the scrollback view reserves for its scrollbar.
     assert_eq!(
-        live_pty_cols,
-        scrollback_content_width,
+        live_pty_cols, scrollback_content_width,
         "live PTY width should span the scrollbar column the scrollback view reserves"
     );
 }
