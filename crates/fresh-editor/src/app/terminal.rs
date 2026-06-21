@@ -1331,11 +1331,21 @@ impl Window {
         };
         let visible_buffers = mgr.get_visible_buffers(editor_area);
 
+        let active_buffer = self.active_buffer();
         for (_split_id, buffer_id, split_area) in visible_buffers {
             if self.terminal_buffers.contains_key(&buffer_id) {
-                // Tab bar takes 1 row, scrollbar takes 1 column on the right.
+                // The active split's terminal hides its scrollbar while in
+                // terminal mode (live PTY grid), so the grid reclaims that
+                // column; the read-only scrollback view shown after exiting
+                // keeps its scrollbar. Mirror the renderer's
+                // `terminal_showing_live_grid` test so the PTY width matches
+                // the rendered `content_rect`.
+                let showing_live_grid = buffer_id == active_buffer && self.terminal_mode;
+                let scrollbar_cols = if showing_live_grid { 0 } else { 1 };
+                // Tab bar takes 1 row; reserve 1 row for chrome and the
+                // scrollbar column (when shown) on the right.
                 let content_height = split_area.height.saturating_sub(2);
-                let content_width = split_area.width.saturating_sub(2);
+                let content_width = split_area.width.saturating_sub(1 + scrollbar_cols);
 
                 if content_width > 0 && content_height > 0 {
                     self.resize_terminal(buffer_id, content_width, content_height);

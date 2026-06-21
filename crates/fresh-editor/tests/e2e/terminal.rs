@@ -3801,3 +3801,90 @@ fn test_send_selection_to_terminal_reaches_background_tab_terminal() {
     assert_eq!(harness.editor().active_buffer_id(), terminal_buffer);
     assert!(harness.editor().is_terminal_mode());
 }
+
+// --- Terminal-mode scrollbar visibility ---------------------------------
+
+/// In terminal mode the live PTY grid hides the vertical scrollbar and
+/// reclaims that column, so the terminal text uses the full split width.
+/// Exiting terminal mode (into the read-only scrollback view) brings the
+/// scrollbar back, and the content area shrinks by exactly that one column.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
+    let mut harness = harness_or_return!(80, 24);
+
+    // Opening a terminal enters terminal mode (live PTY grid).
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    let terminal_buffer = harness.editor().active_buffer_id();
+
+    // While in terminal mode the split shows no scrollbar column.
+    let (live_content_width, live_scrollbar_width) = {
+        let (_, _, content_rect, scrollbar_rect, _, _) = harness
+            .editor()
+            .get_split_areas()
+            .iter()
+            .find(|(_, buf, _, _, _, _)| *buf == terminal_buffer)
+            .copied()
+            .expect("terminal split should be present");
+        (content_rect.width, scrollbar_rect.width)
+    };
+    assert_eq!(
+        live_scrollbar_width, 0,
+        "scrollbar column should be suppressed in terminal mode"
+    );
+
+    // The live PTY grid should span that reclaimed column too.
+    let live_pty_cols = {
+        let terminal_id = harness
+            .editor()
+            .active_window()
+            .get_terminal_id(terminal_buffer)
+            .unwrap();
+        harness
+            .editor()
+            .terminal_manager()
+            .get(terminal_id)
+            .unwrap()
+            .size()
+            .0
+    };
+
+    // Exit terminal mode: the buffer flips to the read-only scrollback view,
+    // which restores the scrollbar.
+    harness
+        .editor_mut()
+        .handle_terminal_key(KeyCode::Char(']'), KeyModifiers::CONTROL);
+    assert!(!harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+
+    let (scrollback_content_width, scrollback_scrollbar_width) = {
+        let (_, _, content_rect, scrollbar_rect, _, _) = harness
+            .editor()
+            .get_split_areas()
+            .iter()
+            .find(|(_, buf, _, _, _, _)| *buf == terminal_buffer)
+            .copied()
+            .expect("terminal split should be present");
+        (content_rect.width, scrollbar_rect.width)
+    };
+    assert_eq!(
+        scrollback_scrollbar_width, 1,
+        "scrollbar column should reappear after exiting terminal mode"
+    );
+    assert_eq!(
+        live_content_width,
+        scrollback_content_width + 1,
+        "terminal-mode content should reclaim the scrollbar's column"
+    );
+
+    // The live PTY was sized to the wider, scrollbar-free content area: one
+    // column wider than the scrollback view reserves for its scrollbar.
+    assert_eq!(
+        live_pty_cols,
+        scrollback_content_width,
+        "live PTY width should span the scrollbar column the scrollback view reserves"
+    );
+}

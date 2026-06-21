@@ -90,6 +90,11 @@ pub(crate) fn render_content(
     software_cursor_only: bool,
     show_vertical_scrollbar: bool,
     show_horizontal_scrollbar: bool,
+    // Whether the window is in terminal mode. When set, the active split's
+    // terminal buffer is showing its live PTY grid (not the read-only
+    // scrollback view), so its vertical scrollbar is suppressed and the grid
+    // reclaims that column. Exiting terminal mode brings the scrollbar back.
+    terminal_mode: bool,
     diagnostics_inline_text: bool,
     show_tilde: bool,
     highlight_current_column: bool,
@@ -265,7 +270,15 @@ pub(crate) fn render_content(
         // or any panel created with `scrollable: false`) don't get a
         // scrollbar — their content is pinned to the panel size.
         let is_non_scrollable = buffers.get(&buffer_id).is_some_and(|s| !s.scrollable);
-        let panel_show_vscroll = show_vertical_scrollbar && !is_non_scrollable;
+
+        // A terminal showing its live PTY grid suppresses the scrollbar so the
+        // grid uses the full split width. The live grid is shown for the active
+        // split's terminal while in terminal mode (the read-only scrollback view
+        // shown after exiting terminal mode keeps its scrollbar). See
+        // `render_terminal_splits`, which overlays the grid into `content_rect`.
+        let terminal_showing_live_grid = active_buf_is_terminal && is_active && terminal_mode;
+        let panel_show_vscroll =
+            show_vertical_scrollbar && !is_non_scrollable && !terminal_showing_live_grid;
 
         let layout = if is_inner_group_leaf {
             // Inner leaf: split_area IS the content rect already.
@@ -291,7 +304,7 @@ pub(crate) fn render_content(
             split_layout(
                 split_area,
                 split_tab_bar_visible,
-                show_vertical_scrollbar && !is_non_scrollable,
+                panel_show_vscroll,
                 show_horizontal_scrollbar && !is_non_scrollable,
             )
         };
@@ -682,7 +695,7 @@ pub(crate) fn render_content(
             };
 
             // Render vertical scrollbar for this split and get thumb position
-            let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
+            let (thumb_start, thumb_end) = if panel_show_vscroll {
                 render_scrollbar(
                     frame,
                     state,

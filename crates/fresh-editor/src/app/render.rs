@@ -671,6 +671,7 @@ impl Editor {
         let __composite_view_states_mut = &mut __win.composite_view_states;
         let __cell_theme_map_mut = &mut __win.chrome_layout.cell_theme_map;
         let __tab_bar_visible = __win.tab_bar_visible;
+        let __terminal_mode = __win.terminal_mode;
         let (
             split_areas,
             tab_layouts,
@@ -714,6 +715,7 @@ impl Editor {
                     self.software_cursor_only,
                     self.config.editor.show_vertical_scrollbar,
                     self.config.editor.show_horizontal_scrollbar,
+                    __terminal_mode,
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
                     self.config.editor.highlight_current_column,
@@ -2362,6 +2364,7 @@ impl Editor {
                     // active session's chrome is the source of truth.
                     false,
                     false,
+                    false, // terminal_mode — scrollbars are off in the preview anyway
                     self.config.editor.diagnostics_inline_text,
                     false, // hide tilde markers in the preview
                     self.config.editor.highlight_current_column,
