@@ -14,6 +14,18 @@ Each bug entry:
 
 ---
 
+## BUG-016: vi mode — `cw` deletes the trailing whitespace instead of acting like `ce` (Vim special case)
+- **ID:** BUG-016
+- **Title:** In vi mode, `cw` behaves like `dw`+insert (eats the trailing space) instead of like `ce` (change to end of word, keep the space) as Vim does on a non-blank.
+- **Severity:** Medium (behavioral Vim-compat deviation a Vim user hits constantly; directly in scope of the new "align vi compatibility motions with Vim" commit).
+- **Status:** Open — GitHub #2437 filed (Run #42).
+- **GitHub Issue:** [#2437](https://github.com/sinelaw/fresh/issues/2437)
+- **Reproduction:** File with line `hello world foo bar`. `Ctrl+P`→"Toggle Vi mode"→Enter. `gg` `0` (cursor on col 1 `h`). Send `c` then `w` (separate send-keys, ~0.4s apart), then `X`, then `Escape`. Capture line 3 via `capture-pane -p | sed 's/.*│ //'`.
+- **Expected (Vim):** `X world foo bar` — `cw`==`ce` on a non-blank; trailing space preserved (`:help cw`).
+- **Actual:** `Xworld foo bar` — trailing space consumed. Contrast: `ce`+`X` → `X world foo bar` (correct). Reproduced 2/2 at word start; mid-word (`0` `l` `l`, col 3) `cw`+`X` → `heXworld foo bar` (Vim: `heX world foo bar`). Control: `dw` from col 1 → `world foo bar` (correctly eats space — only `cw` is wrong).
+- **First Seen:** Run #42, 2026-06-22 (v0.4.1, master @ eb3a349e6).
+- **tmux note:** Operator+motion is timing-sensitive over tmux — sending `de` as one combined arg was a NO-OP; sending `d` then `e` separately over-deleted. Verify motions via BUFFER-TEXT effect (operator + insert marker), NOT cursor-position polling (`display-message #{cursor_x}` lagged/duplicated readings). `cw`/`ce` results were the only fully stable ones (2/2) and are what the issue rests on.
+
 ## BUG-015: Review Diff — line-level discard shows raw i18n key `status.lines_discardd` (misspelled) instead of a localized message
 - **ID:** BUG-015
 - **Title:** After the #2317 fix, line-level **discard** works but its status-bar success message prints the literal lookup key `status.lines_discardd` (typo: "discardd", double-d). Sibling op **stage** shows proper `Lines staged`.

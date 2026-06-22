@@ -1501,3 +1501,26 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `ansi_copy_r41`; removed `/tmp/ansi41`; left build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
 
 **NEXT new-coverage (Run #42+, top-down, prefer freshest 0.4.1):** `6df567f04` LSP `textDocument/implementation` (needs clangd on a small C iface/impl project); `77360e6c6` Shift+letter binding when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims column; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
+## Run #42 — 2026-06-22 — vi mode `cw` eats trailing whitespace (Vim-compat) → BUG #2437 — v0.4.1 @ eb3a349e6
+
+**Preflight:** Synced state branch (clean). Master FORCE-UPDATED past Run #41's `33e2ed130` → **`eb3a349e6`** (still v0.4.1; 5 new commits from merge-base `33e2ed130`: `b82b9b8b4` feat add Vim compatibility options to vi mode, `471826514` fix align vi compatibility motions with Vim, `5418668b5`/`99dca87ce` render refactors no user-facing change, `eb3a349e6` terminal scrollback backing-file in remote mode). Per **R1**: version changed but NONE of the 5 commits fixes an OPEN agent issue → skipped open-issue rechecks; per **R2** advanced top NEW-coverage candidate = the two vi-mode commits (freshest user-facing feature). Playbook intact (all sections). Lessons continuity OK (topic format; recent #2405/clipboard-ANSI/Review-Diff present). GitHub MCP auth live (search_issues returned). 
+
+**Build:** rebuilt release `fresh` 0.4.1 from origin/master worktree `/tmp/fresh-master` @ `eb3a349e6` (container reclaimed; rebuilt from scratch, exit 0, 32 MB binary).
+
+**Fixture:** `/tmp/vitest/motions.txt` = `hello world foo bar` / `  indented second line` / `third` / `last line of file`. Session `vimr42`, 200×50. Vi mode via `Ctrl+P`→"Toggle Vi mode".
+
+**Black-box results:**
+- **Settings discovery:** Settings → "Plugin: vi_mode" exposes only `ArrowKeys`/`AutoStart`/`SearchWordUnderCursor` — NO "Vim compatibility" toggle; no palette "compat" command; docs §Vim Mode is 1 line. The new "compatibility options" are not user-discoverable → IMP-022 (low, doc/UX batch).
+- **Motions that PASS (Vim-correct):** `$` lands on the last char (col 19 of 19-char line, not col 20); `l` won't move past the last char; `dw` deletes word + trailing space (`hello world foo bar`→`world foo bar`); `gg`/`0`/`G` position correctly.
+- **BUG → #2437 (med, `bug`+`tui-agent-auto-bug`): `cw` eats the trailing whitespace** instead of acting like `ce`. Vim `:help cw` special case: on a non-blank `cw`==`ce`. Fresh: `cw`+`X` → `Xworld foo bar` (space gone) vs `ce`+`X` → `X world foo bar` (correct). Reproduced 2/2 at word start; mid-word (col 3) `cw`+`X` → `heXworld foo bar` (Vim: `heX world foo bar`). Control `dw` correctly keeps the space-eating behavior — only `cw` deviates. 3 dup-search variations (`cw vi mode change word`, `vi mode cw trailing whitespace`, `vim compatibility motion`), 0 hits. → confirmed_bugs BUG-016, github_issues row, registry Last-updated bump.
+
+**NOT filed (harness flakiness, see learning_db):** `de`/`d{motion}` sent over tmux gave inconsistent results — combined `de` arg = NO-OP; split `d`+`e` over-deleted. Cursor-position polling (`display-message #{cursor_x}`) lagged/duplicated. Only stable buffer-effect results were filed (`cw`/`ce`, 2/2). Did not chase the flaky operator timings into false positives (R4).
+
+**State updates:** run_log (this entry), learning_db (+"vi mode Vim compatibility options + motions (Run #42)"), confirmed_bugs (+BUG-016/#2437), github_issues (+#2437 row + Last-updated bump), potential_improvements (+IMP-022), test_plan (Run #42 note + advanced vi-compat candidate).
+
+**Cleanup:** killed tmux `vimr42`; removed nothing destructive; left `/tmp/vitest` + build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
+
+**NEXT new-coverage (Run #43+, top-down, prefer freshest 0.4.1):** finish vi-compat motion sweep with a more robust harness (text-objects `daw`/`diw`/`ci"`, `cc`, counts `3w`/`2dd`, `$`-sticky-column on `j`, `>>`/`<<` indent) — characterize whether other motions also deviate; `eb3a349e6` terminal scrollback backing-file (remote mode — hard to black-box); then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.

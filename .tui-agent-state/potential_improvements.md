@@ -207,3 +207,10 @@ change would make it self-evident without requiring users to read docs.
 - **Severity:** Low (workaround = select the full pair, which works). Stage (`v`+`s`) of a lone `+` succeeds because adding-the-line is unambiguous; discard is the asymmetric case.
 - **Reference:** VS Code "Revert Selected Ranges" / `git checkout -p`.
 - **Discovered:** Run #38, 2026-06-22
+
+### IMP-022 — vi mode "Vim compatibility options" feature is not discoverable (no Settings toggle, no palette command, no docs)
+- **Observed (Run #42, v0.4.1 @ eb3a349e6):** master added `b82b9b8b4` "feat: add Vim compatibility options to vi mode". As a black-box user there is no way to discover or configure these "options": the Settings → "Plugin: vi_mode" panel exposes only `ArrowKeys`, `AutoStart`, `SearchWordUnderCursor`; the command palette has no "compat"/"Vim compatibility" entry; and `docs/features/editing.md` §Vim Mode is a single sentence with no mention of compatibility behavior or options. The user-visible effect is purely a behavior change in motions (see #2437), with nothing to read or toggle.
+- **Suggested improvement:** Document the vi "Vim compatibility" behavior/options in `docs/features/editing.md` (and CHANGELOG), and — if they are meant to be configurable — surface them as toggles in the "Plugin: vi_mode" Settings panel so users can find/adjust them.
+- **Severity:** Low (discoverability/doc gap). Note batch candidate for the periodic "docs/UX polish" issue (R3).
+- **Reference:** Fresh's own Settings UI exposes other plugin options; new user-facing features are normally in CHANGELOG + docs.
+- **Discovered:** Run #42, 2026-06-22

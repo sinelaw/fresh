@@ -4,12 +4,13 @@ This is the canonical reference for every GitHub issue this agent has filed.
 **Check this file BEFORE searching GitHub or filing any new issue.**
 If a topic appears here — open or closed — do not file a duplicate.
 
-Last updated: Run #38, 2026-06-22 (#2317 CONFIRMED FIXED in v0.4.1 via UI — closed by maintainer; commented + marked resolved. Filed #2420: line-level discard shows raw i18n key `status.lines_discardd`.)
+Last updated: Run #42, 2026-06-22 (Filed #2437: vi mode `cw` eats the trailing whitespace instead of acting like `ce` — Vim-compat motion bug found while testing the new "Vim compatibility options" feature on master @ eb3a349e6.)
 
 ---
 
 ## Open Issues (agent-filed)
 
+| [#2437](https://github.com/sinelaw/fresh/issues/2437) | vi mode: `cw` deletes the trailing whitespace instead of acting like `ce`, unlike Vim | Run #42 | **Open** | Found testing the new vi "Vim compatibility options" / "align vi compatibility motions" commits (master @ eb3a349e6, v0.4.1). In Vim, `cw` on a non-blank acts like `ce` (changes to end of word, KEEPS the trailing space) — `:help cw`. Fresh's `cw` instead behaves like `dw`: on `hello world foo bar`, `cw`+`X` → `Xworld foo bar` (space eaten) while `ce`+`X` → `X world foo bar` (correct). Reproduced 2/2 at word start AND mid-word (`heXworld`). `dw` correctly keeps space-eating behavior (control). Med-sev: a Vim user hits this constantly. Workaround: use `ce`. Do NOT re-file. |
 | [#2420](https://github.com/sinelaw/fresh/issues/2420) | Review Diff: line-level discard shows raw i18n key `status.lines_discardd` instead of a localized message (key is misspelled) | Run #38 | **Open** | After the #2317 fix, line-level **discard** works but its status-bar success message prints the literal lookup key `status.lines_discardd` (typo "discardd", double-d — likely why the translation lookup misses). CONTRAST: line-level **stage** shows proper `Lines staged`. Deterministic across 2+ discards (modification pair `v`,`j`,`d`). Low-sev cosmetic; discard itself git-verified correct. Do NOT re-file. |
 
 | [#2317](https://github.com/sinelaw/fresh/issues/2317) | Review Diff: line-level visual staging/unstaging/discard (`v` then `s`/`u`/`d`) never works | Run #36 | **FIXED** (Run #38) | Closed by maintainer 2026-06-22 (fix commit `a1d3e4352` "resolve line-level stage/unstage/discard hunk by id"). CONFIRMED FIXED in v0.4.1 via UI: `v`+`s` stages a single line (git diff --cached shows only it); `v`+`u` unstages a single staged line; `v`+`d` discards a clean pure-addition, and a modification when the full `-`/`+` pair is selected (`v`,`j`,`d`). All git-verified, cursor ANSI-verified each op. Comment added. (Edge: `v`+`d` on the lone `+` of a modification → "patch does not apply" — likely expected; logged as potential_improvement, not re-filed.) Do NOT re-file. |
