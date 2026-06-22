@@ -14,6 +14,29 @@ Each bug entry:
 
 ---
 
+## BUG-017: vi mode — indent operators `>>`/`<<` and visual-mode `>`/`<` are no-ops
+- **ID:** BUG-017
+- **Title:** In vi mode, the indent/dedent operators `>>` and `<<` (NORMAL) and `>`/`<` (Visual) do nothing — no indentation change, no status feedback.
+- **Severity:** Medium (core Vim editing command silently unhandled; directly in scope of the "align vi compatibility motions with Vim" work).
+- **Status:** Open — GitHub #2438 filed (Run #43).
+- **GitHub Issue:** [#2438](https://github.com/sinelaw/fresh/issues/2438)
+- **Reproduction:** File with `hello world foo bar` and an indented line `    indented line here`. `Ctrl+P`→"Toggle Vi mode"→Enter. NORMAL: `gg` `0`, then `>` then `>` (separate send-keys ~0.4s apart) — line unchanged. On the indented line: `<` `<` — 4 leading spaces remain. Visual: `V` (status `-- VISUAL LINE --`) then `>` — line unchanged AND mode stays `-- VISUAL LINE --`.
+- **Expected (Vim):** `>>` indents the line one shiftwidth; `<<` dedents; Visual `>`/`<` indent/dedent selection and return to NORMAL.
+- **Actual:** All silent no-ops. `>` key transmits fine (typing `>` in INSERT inserts a literal `>`), so it's the operator handling, not input. No error/status message.
+- **First Seen:** Run #43, 2026-06-22 (v0.4.1, master @ 8ee2baf31).
+
+## BUG-018: vi mode — quote text-objects `i"`/`a"` don't search forward on the line
+- **ID:** BUG-018
+- **Title:** `di"`/`ci"` (and `a"`) only operate when the cursor is already INSIDE the quotes; from before the quote on the same line they are no-ops, unlike Vim which searches forward on the current line.
+- **Severity:** Medium (the common case — `ci"` from a line start — silently fails; in scope of the vi-compat motion work).
+- **Status:** Open — GitHub #2439 filed (Run #43).
+- **GitHub Issue:** [#2439](https://github.com/sinelaw/fresh/issues/2439)
+- **Reproduction:** File with `the "quick" brown fox`. Enable vi mode. `gg` `j` `0` (col 1, before the quote). Send `d` `i` `"` separately (~0.4s apart). Capture the line.
+- **Expected (Vim):** `the "" brown fox` — `i"` searches forward on the line; `ci"` enters INSERT.
+- **Actual:** Line unchanged (no-op, 2/2). WORKS only with cursor inside: on `q`, `di"` → `the "" brown fox`; `ci"` → INSERT `the "WXYZ" brown fox`. `"` key transmits fine (verified in INSERT).
+- **First Seen:** Run #43, 2026-06-22 (v0.4.1, master @ 8ee2baf31).
+- **tmux note:** Quote text-objects need keys sent separately; `"` transmits literally in INSERT (`one` → `one"`). diw/daw/3dw/2dd all PASS (Vim-correct) and are NOT bugs — only the forward-search rule for `i"`/`a"` is missing.
+
 ## BUG-016: vi mode — `cw` deletes the trailing whitespace instead of acting like `ce` (Vim special case)
 - **ID:** BUG-016
 - **Title:** In vi mode, `cw` behaves like `dw`+insert (eats the trailing space) instead of like `ce` (change to end of word, keep the space) as Vim does on a non-blank.

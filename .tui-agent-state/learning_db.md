@@ -951,3 +951,20 @@ Two NEW 0.4.1 palette commands (commit `93ac8d5ff`), both `builtin`, no default 
   - **Operator+motion is timing-sensitive:** sending `de` as ONE combined send-keys arg was a NO-OP; sending `d` then `e` as TWO sends ~0.4s apart over-deleted (`de`→` foo bar`, deleted two words). Inconclusive `d{motion}` results are usually HARNESS timing, not product bugs — only file when the buffer effect is STABLE across repeats. `cw`/`ce` were stable 2/2 (file-worthy); `de`/`dw`-via-split-send were flaky (NOT filed).
   - **Status-bar `Ln/Col` also lags one keypress** for vi motions (consistent with the known status-refresh staleness, #2301). Don't trust a single post-motion Col reading.
   - **Restore between tests** with a burst of `u` (6-8×) and re-verify the line is back to baseline before the next trial; over-undo is harmless and fully reverts.
+
+## vi mode motion sweep — text-objects, counts, indent ops (Run #43) — v0.4.1 @ 8ee2baf31
+- **Master @ 8ee2baf31** = Run #42's `eb3a349e6` + 1 commit `8ee2baf31` "refactor(editor): extract plugin loading out of with_options God constructor" (pure refactor, no user-facing change). Still v0.4.1. Continued the vi-compat motion sweep started in Run #42 (#2437 `cw`).
+- **PASS / Vim-correct motions (do NOT re-test idly per R1):**
+  - `diw` on a word → deletes the word, keeps surrounding spaces (`hello world foo bar` → `hello  foo bar`, 2 spaces).
+  - `daw` → deletes word + 1 trailing space (`hello foo bar`).
+  - `3dw` from line start → deletes 3 words (`bar`). Count + operator + motion works.
+  - `2dd` → deletes 2 lines (linewise count works).
+  - `ci"`/`di"` WHEN CURSOR INSIDE the quotes → works: `di"` → `the "" brown fox`; `ci"` → INSERT, replaces inner text.
+- **BUG-017 / #2438 (med): indent ops `>>`/`<<` + visual `>`/`<` are NO-OPS.** NORMAL `>>`/`<<` change nothing (status stays `-- NORMAL --`); visual `V` then `>` leaves the line unchanged AND stays `-- VISUAL LINE --` (Vim indents + returns to NORMAL). `>` key transmits fine (literal `>` inserts in INSERT). Whole indent operator family unhandled, no feedback.
+- **BUG-018 / #2439 (med): quote text-objects `i"`/`a"` don't search forward on the line.** `di"`/`ci"` from col 1 (before the quote, same line) = no-op (2/2); Vim searches forward on the current line. Only works cursor-inside. `"` transmits fine in INSERT.
+- **Harness reconfirmations (cost time again):**
+  - **Operator+motion MUST be sent as SEPARATE send-keys args ~0.4s apart.** Combined (`diw` as one arg) = NO-OP. This was the #1 false-no-op trap — always retry separated before concluding "no-op".
+  - **capture-pane lags ~1 render.** A per-line `sed -n 'Np'` right after an edit can show STALE text (saw `one/two/three` post-`2dd` that was actually deleted). Re-capture the FULL pane after a ~0.5–1s beat to confirm.
+  - **Status `Ln/Col` lags one keypress** (#2301) — don't trust a single post-motion reading; confirm cursor row by the edit's effect.
+  - **`"` (and `>`/`<`) shift chars transmit fine via `send-keys -l`** — prove key transmission in INSERT mode before blaming the feature for a no-op.
+  - Restore between trials with `u` bursts (over-undo is harmless); `ZZ` does NOT save-quit in Fresh's vi mode (typed `ZZZ` in NORMAL was a no-op, editor stayed open).

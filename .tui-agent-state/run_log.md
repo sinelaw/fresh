@@ -1524,3 +1524,30 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `vimr42`; removed nothing destructive; left `/tmp/vitest` + build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
 
 **NEXT new-coverage (Run #43+, top-down, prefer freshest 0.4.1):** finish vi-compat motion sweep with a more robust harness (text-objects `daw`/`diw`/`ci"`, `cc`, counts `3w`/`2dd`, `$`-sticky-column on `j`, `>>`/`<<` indent) — characterize whether other motions also deviate; `eb3a349e6` terminal scrollback backing-file (remote mode — hard to black-box); then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
+## Run #43 — 2026-06-22 — vi-mode motion sweep: 2 Vim-compat bugs → #2438 (indent ops) + #2439 (quote text-objects) — v0.4.1 @ 8ee2baf31
+
+**Preflight:** Synced state branch (clean). Master FORCE-UPDATED past Run #42's `eb3a349e6` → **`8ee2baf31`** (still v0.4.1; only 1 new commit: `8ee2baf31` "refactor(editor): extract plugin loading out of with_options God constructor" — pure refactor, no user-facing change). Per **R1**: that commit fixes no OPEN agent issue → skipped open-issue rechecks. Per **R2** advanced top NEW-coverage candidate from Run #42 NEXT = finish the vi-compat motion sweep (text-objects, counts, indent ops) with a more robust harness. Playbook intact (all sections). Lessons continuity OK (topic format; recent vi-mode #2437 / clipboard-ANSI / Review-Diff present). GitHub MCP auth live (search_issues returned).
+
+**Build:** rebuilt release `fresh` 0.4.1 from origin/master worktree `/tmp/fresh-master` @ `8ee2baf31` (container reclaimed; rebuilt from scratch ~8m, exit 0, 32 MB binary).
+
+**Fixture:** `/tmp/vitest43/motions.txt` = `hello world foo bar` / `the "quick" brown fox` / `alpha beta gamma delta epsilon` / `    indented line here` / `one`..`five`. Session `vimr43`, 200×50, ANSI-verified. Vi mode via `Ctrl+P`→"Toggle Vi mode".
+
+**Black-box results (verify by BUFFER-TEXT EFFECT per Run #42 lesson; send operator keys SEPARATELY with ~0.4s gaps — combined args no-op):**
+- **Text-objects `diw`/`daw` — PASS (Vim-correct).** `diw` on `world` → `hello  foo bar` (word removed, 2 spaces kept); `daw` → `hello foo bar` (word + 1 trailing space removed).
+- **Count motions `3dw` / `2dd` — PASS.** `3dw` from line start → `bar` (3 words deleted); `2dd` on `one`/`two` → those 2 lines removed, `three` becomes line 5. (Per-line capture lags one render — re-capture the full pane to confirm.)
+- **`ci"`/`di"` INSIDE quotes — PASS.** Cursor on `q` of `"quick"`: `di"` → `the "" brown fox`; `ci"` → enters INSERT, `the "WXYZ" brown fox`.
+- **BUG → #2439 (med, `bug`+`tui-agent-auto-bug`): quote text-objects don't search forward on the line.** `di"`/`ci"` from column 1 (before the quote, same line) = silent NO-OP (2/2). Vim's `i"`/`a"` search forward on the current line for the quoted string, so `ci"` from a line's start (the common case) should work. Implemented but missing the forward-search rule. `"` key transmits fine (verified in INSERT). Workaround: move inside quotes first. 5 dup-search variations, 0 hits.
+- **BUG → #2438 (med, `bug`+`tui-agent-auto-bug`): indent operators `>>`/`<<` + visual `>`/`<` are no-ops.** `>>` in NORMAL: line unchanged, no indent, status stays `-- NORMAL --`. `<<` on `    indented line here`: 4 leading spaces remain (cursor confirmed on Ln 4). Visual `V` then `>`: line unchanged AND editor stays `-- VISUAL LINE --` (Vim would indent + return to NORMAL). `>` key transmits fine (literal `>` inserts in INSERT mode) → indent operator family simply unhandled in vi mode, no feedback. Workaround: leave NORMAL and use editor indent (`Tab`). 5 dup-search variations, 0 hits.
+
+**Harness notes (reconfirm Run #42 lessons):** operator+motion combined into ONE send-keys arg = NO-OP; send each key separately ~0.4s apart and read the resulting line. capture-pane lags ~1 render — re-capture after a beat or read full pane. Status-bar `Ln/Col` lags one keypress (#2301). Restore between trials with `u` bursts.
+
+**Notification:** sent (2 new confirmed bugs filed) — a substantive find a maintainer would act on.
+
+**State updates:** run_log (this entry), learning_db (+"vi mode motion sweep (Run #43)" topic section), confirmed_bugs (+BUG-017/#2438, +BUG-018/#2439), github_issues (+2 rows + Last-updated bump), test_plan (Run #43 note + advanced vi-compat sweep candidate).
+
+**Cleanup:** killed tmux `vimr43`; removed `/tmp/vitest43`; left build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
+
+**NEXT new-coverage (Run #44+, top-down, prefer freshest 0.4.1):** finish remaining vi-compat motions NOT yet characterized — `$`-sticky/desired-column on `j`/`k`, `p`/`P` paste (charwise vs linewise), `r`/`R` replace, `>>`-with-count, `gU`/`gu`/`g~` case ops, `f`/`t`/`;`/`,` find-char, `%` match — to see if more deviate; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
