@@ -448,6 +448,59 @@ fn test_file_browser_hides_dotfiles() {
     );
 }
 
+/// Issue #2407: typing a leading "." in the Open File prompt reveals hidden
+/// files (without flipping the "Show Hidden" checkbox), and clearing the dot
+/// hides them again.
+#[test]
+fn test_file_browser_dot_reveals_hidden() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_root = temp_dir.path().to_path_buf();
+
+    fs::write(project_root.join("visible.txt"), "visible").unwrap();
+    fs::write(project_root.join(".secretrc"), "hidden").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('o'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // Wait for the visible file to load.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("visible.txt"))
+        .expect("Visible file should appear");
+
+    // Hidden file should not be shown by default.
+    harness.assert_screen_not_contains(".secretrc");
+
+    // Type "." to reveal hidden files.
+    harness.type_text(".").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".secretrc"))
+        .expect("Typing '.' should reveal hidden files");
+
+    // Deleting the "." hides them again.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains(".secretrc"))
+        .expect("Clearing the filter should hide dotfiles again");
+
+    // The file browser is still open and the visible file remains listed.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("visible.txt"),
+        "Visible file should remain listed"
+    );
+}
+
 /// Test backspace goes to parent directory when filter is empty
 #[test]
 fn test_file_browser_backspace_parent() {

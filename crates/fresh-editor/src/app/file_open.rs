@@ -60,7 +60,15 @@ pub struct FileOpenState {
     /// Current directory being browsed
     pub current_dir: PathBuf,
 
-    /// Directory entries with metadata
+    /// Raw, unfiltered directory entries as loaded from the filesystem
+    /// (excludes the synthesized ".." entry). Hidden files are kept here
+    /// even when not currently displayed, so the visible `entries` list can
+    /// be rebuilt — to reveal or hide dotfiles — without re-reading the
+    /// directory from disk.
+    raw_entries: Vec<DirEntry>,
+
+    /// Directory entries with metadata (the currently displayed subset of
+    /// `raw_entries`, with the synthesized ".." prepended).
     pub entries: Vec<FileOpenEntry>,
 
     /// Whether directory is currently loading
@@ -123,6 +131,7 @@ impl FileOpenState {
         let shortcuts = Self::build_shortcuts_sync(&dir, &*filesystem);
         Self {
             current_dir: dir,
+            raw_entries: Vec::new(),
             entries: Vec::new(),
             loading: true,
             error: None,
@@ -245,8 +254,28 @@ impl FileOpenState {
         self.selected_shortcut = 0;
     }
 
-    /// Set entries from filesystem and apply initial sort
+    /// Set entries from filesystem and apply initial sort.
+    ///
+    /// Stores the full listing in `raw_entries` and builds the displayed
+    /// `entries` from it via [`Self::rebuild_entries`], honoring the current
+    /// hidden-file visibility and filter.
     pub fn set_entries(&mut self, entries: Vec<DirEntry>) {
+        self.raw_entries = entries;
+        self.loading = false;
+        self.error = None;
+        self.rebuild_entries();
+        self.sort_entries();
+        // No selection by default - user must type or navigate to select
+        self.selected_index = None;
+        self.scroll_offset = 0;
+    }
+
+    /// Rebuild the displayed `entries` from `raw_entries`, prepending the
+    /// synthesized ".." entry and filtering out hidden files unless they are
+    /// currently revealed (see [`Self::effective_show_hidden`]). Re-evaluates
+    /// the active filter against the resulting set.
+    fn rebuild_entries(&mut self) {
+        let reveal_hidden = self.effective_show_hidden();
         let mut result: Vec<FileOpenEntry> = Vec::new();
 
         // Add ".." entry for parent directory navigation (unless at root)
@@ -260,11 +289,11 @@ impl FileOpenState {
             });
         }
 
-        // Add filtered entries
         result.extend(
-            entries
-                .into_iter()
-                .filter(|e| self.show_hidden || !Self::is_hidden(&e.name))
+            self.raw_entries
+                .iter()
+                .filter(|e| reveal_hidden || !Self::is_hidden(&e.name))
+                .cloned()
                 .map(|fs_entry| FileOpenEntry {
                     fs_entry,
                     matches_filter: true,
@@ -273,13 +302,25 @@ impl FileOpenState {
         );
 
         self.entries = result;
-        self.loading = false;
-        self.error = None;
         self.apply_filter_internal();
-        self.sort_entries();
-        // No selection by default - user must type or navigate to select
-        self.selected_index = None;
-        self.scroll_offset = 0;
+    }
+
+    /// Whether hidden (dotfile) entries should currently be displayed.
+    ///
+    /// True when the user has explicitly enabled "Show Hidden", or when the
+    /// active filter begins with "." — typing a leading dot temporarily
+    /// reveals hidden files matching the query (issue #2407), so they stay
+    /// out of the way until the user asks for them.
+    fn effective_show_hidden(&self) -> bool {
+        self.show_hidden || Self::filter_reveals_hidden(&self.filter)
+    }
+
+    /// A filter "reveals" hidden files when it starts with a dot. The filter
+    /// is just the filename component (directory parts are stripped upstream
+    /// in `update_file_open_filter`), so a leading dot unambiguously signals
+    /// intent to see dotfiles.
+    fn filter_reveals_hidden(filter: &str) -> bool {
+        filter.starts_with('.')
     }
 
     /// Set error state
@@ -299,7 +340,10 @@ impl FileOpenState {
     /// Non-matching entries are de-emphasized visually but stay at the bottom.
     pub fn apply_filter(&mut self, filter: &str) {
         self.filter = filter.to_string();
-        self.apply_filter_internal();
+        // Rebuild the displayed set so a leading-dot filter reveals hidden
+        // files (and clearing it hides them again). This also re-evaluates the
+        // fuzzy match state via `apply_filter_internal`.
+        self.rebuild_entries();
 
         // When filter is non-empty, sort by match score (best matches first)
         if !filter.is_empty() {
@@ -818,6 +862,67 @@ mod tests {
         // Hidden file should be filtered out
         assert_eq!(state.entries.len(), 1);
         assert_eq!(state.entries[0].fs_entry.name, "visible.txt");
+    }
+
+    /// Issue #2407: typing a leading "." in the filter reveals hidden files,
+    /// even though "Show Hidden" is off, and clearing the filter hides them
+    /// again. This mirrors the existing "raise matching files" mechanism.
+    #[test]
+    fn test_leading_dot_filter_reveals_hidden() {
+        // Use root path so no ".." entry is added
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
+        state.show_hidden = false;
+        state.set_entries(vec![
+            make_entry(".bashrc", false),
+            make_entry(".config", true),
+            make_entry("visible.txt", false),
+        ]);
+
+        // Hidden by default.
+        assert!(
+            !state.entries.iter().any(|e| e.fs_entry.name == ".bashrc"),
+            "hidden file should not be listed before typing a dot"
+        );
+
+        // Typing "." surfaces the hidden entries.
+        state.apply_filter(".");
+        assert!(
+            state.entries.iter().any(|e| e.fs_entry.name == ".bashrc"),
+            "leading-dot filter should reveal hidden files"
+        );
+        assert!(
+            state.entries.iter().any(|e| e.fs_entry.name == ".config"),
+            "leading-dot filter should reveal hidden directories"
+        );
+
+        // Clearing the filter hides them again.
+        state.apply_filter("");
+        assert!(
+            !state.entries.iter().any(|e| e.fs_entry.name == ".bashrc"),
+            "clearing the filter should hide dotfiles again"
+        );
+    }
+
+    /// A more specific leading-dot query (e.g. ".bash") reveals and matches
+    /// the corresponding hidden file.
+    #[test]
+    fn test_leading_dot_filter_matches_specific_hidden_file() {
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
+        state.show_hidden = false;
+        state.set_entries(vec![
+            make_entry(".bashrc", false),
+            make_entry(".gitignore", false),
+            make_entry("visible.txt", false),
+        ]);
+
+        state.apply_filter(".bash");
+
+        let bashrc = state
+            .entries
+            .iter()
+            .find(|e| e.fs_entry.name == ".bashrc")
+            .expect(".bashrc should be revealed by the '.bash' filter");
+        assert!(bashrc.matches_filter, ".bashrc should match '.bash'");
     }
 
     #[test]
