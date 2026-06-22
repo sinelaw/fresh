@@ -272,10 +272,9 @@ impl FileOpenState {
 
     /// Rebuild the displayed `entries` from `raw_entries`, prepending the
     /// synthesized ".." entry and filtering out hidden files unless they are
-    /// currently revealed (see [`Self::effective_show_hidden`]). Re-evaluates
-    /// the active filter against the resulting set.
+    /// currently revealed (see [`Self::is_revealed`]). Re-evaluates the active
+    /// filter against the resulting set.
     fn rebuild_entries(&mut self) {
-        let reveal_hidden = self.effective_show_hidden();
         let mut result: Vec<FileOpenEntry> = Vec::new();
 
         // Add ".." entry for parent directory navigation (unless at root)
@@ -289,10 +288,12 @@ impl FileOpenState {
             });
         }
 
+        let show_hidden = self.show_hidden;
+        let filter = self.filter.as_str();
         result.extend(
             self.raw_entries
                 .iter()
-                .filter(|e| reveal_hidden || !Self::is_hidden(&e.name))
+                .filter(|e| Self::is_revealed(&e.name, show_hidden, filter))
                 .cloned()
                 .map(|fs_entry| FileOpenEntry {
                     fs_entry,
@@ -305,22 +306,22 @@ impl FileOpenState {
         self.apply_filter_internal();
     }
 
-    /// Whether hidden (dotfile) entries should currently be displayed.
+    /// Whether an entry named `name` should be displayed in the list.
     ///
-    /// True when the user has explicitly enabled "Show Hidden", or when the
-    /// active filter begins with "." — typing a leading dot temporarily
-    /// reveals hidden files matching the query (issue #2407), so they stay
-    /// out of the way until the user asks for them.
-    fn effective_show_hidden(&self) -> bool {
-        self.show_hidden || Self::filter_reveals_hidden(&self.filter)
-    }
-
-    /// A filter "reveals" hidden files when it starts with a dot. The filter
-    /// is just the filename component (directory parts are stripped upstream
-    /// in `update_file_open_filter`), so a leading dot unambiguously signals
-    /// intent to see dotfiles.
-    fn filter_reveals_hidden(filter: &str) -> bool {
-        filter.starts_with('.')
+    /// Visible (non-dot) files are always shown. Hidden files are shown when
+    /// the user has explicitly enabled "Show Hidden", or when the active
+    /// filter is a prefix of the file's name (issue #2407). Using a prefix
+    /// rather than a special-cased "." means hidden files stay out of the way
+    /// until the query explicitly reaches for them: typing "." surfaces every
+    /// dotfile (it prefixes them all), while ".ba" narrows to just `.bashrc`,
+    /// and a non-dot query like "bash" never drags dotfiles in. The filter is
+    /// only the filename component (directory parts are stripped upstream in
+    /// `update_file_open_filter`), so the comparison is unambiguous.
+    fn is_revealed(name: &str, show_hidden: bool, filter: &str) -> bool {
+        if show_hidden || !Self::is_hidden(name) {
+            return true;
+        }
+        !filter.is_empty() && name.to_lowercase().starts_with(&filter.to_lowercase())
     }
 
     /// Set error state
@@ -340,9 +341,9 @@ impl FileOpenState {
     /// Non-matching entries are de-emphasized visually but stay at the bottom.
     pub fn apply_filter(&mut self, filter: &str) {
         self.filter = filter.to_string();
-        // Rebuild the displayed set so a leading-dot filter reveals hidden
-        // files (and clearing it hides them again). This also re-evaluates the
-        // fuzzy match state via `apply_filter_internal`.
+        // Rebuild the displayed set so a filter that prefixes a hidden file's
+        // name reveals it (and clearing the filter hides it again). This also
+        // re-evaluates the fuzzy match state via `apply_filter_internal`.
         self.rebuild_entries();
 
         // When filter is non-empty, sort by match score (best matches first)
@@ -864,11 +865,11 @@ mod tests {
         assert_eq!(state.entries[0].fs_entry.name, "visible.txt");
     }
 
-    /// Issue #2407: typing a leading "." in the filter reveals hidden files,
-    /// even though "Show Hidden" is off, and clearing the filter hides them
-    /// again. This mirrors the existing "raise matching files" mechanism.
+    /// Issue #2407: a filter that prefixes a hidden file's name reveals it,
+    /// even though "Show Hidden" is off, and clearing the filter hides it
+    /// again. Typing "." prefixes every dotfile, so it surfaces them all.
     #[test]
-    fn test_leading_dot_filter_reveals_hidden() {
+    fn test_prefix_filter_reveals_hidden() {
         // Use root path so no ".." entry is added
         let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.show_hidden = false;
@@ -884,15 +885,15 @@ mod tests {
             "hidden file should not be listed before typing a dot"
         );
 
-        // Typing "." surfaces the hidden entries.
+        // Typing "." prefixes every dotfile, surfacing the hidden entries.
         state.apply_filter(".");
         assert!(
             state.entries.iter().any(|e| e.fs_entry.name == ".bashrc"),
-            "leading-dot filter should reveal hidden files"
+            "'.' should reveal hidden files"
         );
         assert!(
             state.entries.iter().any(|e| e.fs_entry.name == ".config"),
-            "leading-dot filter should reveal hidden directories"
+            "'.' should reveal hidden directories"
         );
 
         // Clearing the filter hides them again.
@@ -903,10 +904,10 @@ mod tests {
         );
     }
 
-    /// A more specific leading-dot query (e.g. ".bash") reveals and matches
-    /// the corresponding hidden file.
+    /// A more specific prefix (e.g. ".bash") reveals only the hidden files it
+    /// prefixes — `.bashrc` shows, `.gitignore` stays hidden.
     #[test]
-    fn test_leading_dot_filter_matches_specific_hidden_file() {
+    fn test_prefix_filter_reveals_only_matching_hidden_files() {
         let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
         state.show_hidden = false;
         state.set_entries(vec![
@@ -921,8 +922,37 @@ mod tests {
             .entries
             .iter()
             .find(|e| e.fs_entry.name == ".bashrc")
-            .expect(".bashrc should be revealed by the '.bash' filter");
+            .expect(".bashrc should be revealed by the '.bash' prefix");
         assert!(bashrc.matches_filter, ".bashrc should match '.bash'");
+
+        // A hidden file the prefix does not reach stays out of the list.
+        assert!(
+            !state
+                .entries
+                .iter()
+                .any(|e| e.fs_entry.name == ".gitignore"),
+            ".gitignore is not prefixed by '.bash' and should stay hidden"
+        );
+    }
+
+    /// A query that does not start with a dot never drags hidden files in,
+    /// even if it would fuzzy-match them as a subsequence (e.g. "bash" is a
+    /// subsequence of ".bashrc"). The reveal is prefix-based, so the leading
+    /// dot must be typed explicitly.
+    #[test]
+    fn test_non_dot_filter_keeps_hidden_files_hidden() {
+        let mut state = FileOpenState::new(PathBuf::from("/"), false, test_filesystem());
+        state.show_hidden = false;
+        state.set_entries(vec![
+            make_entry(".bashrc", false),
+            make_entry("visible.txt", false),
+        ]);
+
+        state.apply_filter("bash");
+        assert!(
+            !state.entries.iter().any(|e| e.fs_entry.name == ".bashrc"),
+            "a non-dot query must not reveal dotfiles"
+        );
     }
 
     #[test]
