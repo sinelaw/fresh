@@ -7,7 +7,7 @@ use rust_i18n::t;
 use crate::primitives::display_width::{char_width, str_width};
 
 use super::entry_dialog::EntryDialogState;
-use super::items::SettingControl;
+use super::items::{ItemBox, ItemBoxStyle, SettingControl, SettingItem};
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
@@ -956,12 +956,255 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// The vertical clip window for one item's bands: the physical `area` it
+/// occupies, the count of logical rows scrolled off the top (`skip_top`), and
+/// the exclusive logical row where the viewport ends. Bundling these three
+/// keeps the band helpers from threading the same trio of arguments around.
+#[derive(Clone, Copy)]
+struct BandViewport {
+    area: Rect,
+    skip_top: u16,
+    viewport_end_logical: u16,
+}
+
+impl BandViewport {
+    fn new(area: Rect, skip_top: u16) -> Self {
+        Self {
+            area,
+            skip_top,
+            viewport_end_logical: skip_top.saturating_add(area.height), // exclusive
+        }
+    }
+
+    /// Translate a logical band `[logical_y, logical_y + rows)` to a physical
+    /// sub-rectangle of `area`, accounting for `skip_top` clipping. Returns
+    /// `None` when the band is entirely outside the visible viewport.
+    fn band_rect(&self, logical_y: u16, rows: u16) -> Option<Rect> {
+        if rows == 0 {
+            return None;
+        }
+        let band_end = logical_y.saturating_add(rows);
+        if band_end <= self.skip_top || logical_y >= self.viewport_end_logical {
+            return None;
+        }
+        let visible_top_logical = logical_y.max(self.skip_top);
+        let visible_bottom_logical = band_end.min(self.viewport_end_logical);
+        let physical_y = self.area.y + (visible_top_logical - self.skip_top);
+        let visible_h = visible_bottom_logical - visible_top_logical;
+        Some(Rect::new(
+            self.area.x,
+            physical_y,
+            self.area.width,
+            visible_h,
+        ))
+    }
+}
+
+/// Shrink `r` horizontally, trimming `left` columns from the start and
+/// `right` columns from the end. The y/height are left untouched.
+fn inset_horizontal(r: Rect, left: u16, right: u16) -> Rect {
+    Rect::new(
+        r.x.saturating_add(left),
+        r.y,
+        r.width.saturating_sub(left.saturating_add(right)),
+        r.height,
+    )
+}
+
+/// Inset a band by the card's left chrome (border + focus indicator gutter)
+/// and right chrome (border), matching the alignment used by the control and
+/// description text.
+fn inset_by_chrome(r: Rect, style: &ItemBoxStyle) -> Rect {
+    inset_horizontal(
+        r,
+        style.card_border_cols + style.focus_indicator_cols,
+        style.card_border_cols,
+    )
+}
+
+/// Decide which edges of the card box are visible given the viewport clip.
+/// LEFT/RIGHT follow the side-border setting; TOP/BOTTOM are only drawn when
+/// their logical row actually sits inside `[skip_top, viewport_end_logical)`.
+fn card_borders(
+    style: &ItemBoxStyle,
+    card_logical_top: u16,
+    card_logical_bottom: u16,
+    vp: BandViewport,
+) -> Borders {
+    let mut borders = Borders::NONE;
+    if style.card_border_cols > 0 {
+        borders |= Borders::LEFT | Borders::RIGHT;
+    }
+    if style.card_border_rows > 0 {
+        if card_logical_top >= vp.skip_top {
+            borders |= Borders::TOP;
+        }
+        let bottom_logical = card_logical_bottom.saturating_sub(1);
+        if bottom_logical >= vp.skip_top && bottom_logical < vp.viewport_end_logical {
+            borders |= Borders::BOTTOM;
+        }
+    }
+    borders
+}
+
+/// Paint the section heading band: a blank gap on the leading rows, with the
+/// title butted against the top of the card it labels. This puts the
+/// breathing room above the heading so the title reads as "belongs to what's
+/// below" rather than "belongs to what's above".
+fn render_section_header(
+    frame: &mut Frame,
+    vp: BandViewport,
+    plan: &ItemBox,
+    item: &SettingItem,
+    theme: &Theme,
+) {
+    let Some(section_name) = item.section.as_deref().filter(|_| item.is_section_start) else {
+        return;
+    };
+    if vp.band_rect(0, plan.section_header_rows).is_none() {
+        return;
+    }
+    let title_logical_y = plan.section_header_rows.saturating_sub(1);
+    let Some(title_rect) = vp.band_rect(title_logical_y, 1) else {
+        return;
+    };
+    let header_style = Style::default()
+        .fg(theme.editor_fg)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(section_name).style(header_style),
+        Rect::new(title_rect.x, title_rect.y, title_rect.width, 1),
+    );
+}
+
+/// Render the trailing "(Inherited)" badge or "[Inherit]" button on the
+/// control's first row. Returns the button's hit-test rect when a clickable
+/// button was drawn (the badge is decorative and returns `None`).
+fn render_inherit_affordance(
+    frame: &mut Frame,
+    control_rect: Rect,
+    item: &SettingItem,
+    idx: usize,
+    hover_hit: Option<SettingsHit>,
+    theme: &Theme,
+) -> Option<Rect> {
+    if !item.nullable || control_rect.width == 0 {
+        return None;
+    }
+    if item.is_null {
+        let badge_text = t!("settings.inherited_badge").to_string();
+        let badge_len = badge_text.len() as u16 + 1;
+        let badge_x = control_rect
+            .x
+            .saturating_add(control_rect.width)
+            .saturating_sub(badge_len);
+        if badge_x > control_rect.x {
+            frame.render_widget(
+                Paragraph::new(badge_text).style(
+                    Style::default()
+                        .fg(theme.line_number_fg)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Rect::new(badge_x, control_rect.y, badge_len, 1),
+            );
+        }
+        None
+    } else {
+        let btn_text = format!("[{}]", t!("settings.btn_inherit"));
+        let btn_len = btn_text.len() as u16 + 1;
+        let btn_x = control_rect
+            .x
+            .saturating_add(control_rect.width)
+            .saturating_sub(btn_len);
+        if btn_x <= control_rect.x {
+            return None;
+        }
+        let btn_area = Rect::new(btn_x, control_rect.y, btn_len, 1);
+        let is_hovered = matches!(hover_hit, Some(SettingsHit::ControlInherit(i)) if i == idx);
+        let btn_style = if is_hovered {
+            Style::default()
+                .fg(theme.menu_hover_fg)
+                .bg(theme.menu_hover_bg)
+        } else {
+            Style::default().fg(theme.line_number_fg)
+        };
+        frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
+        Some(btn_area)
+    }
+}
+
+/// Render the wrapped description text below the control, falling back to just
+/// the config-layer label when there's no description but the source layer
+/// still needs to be shown.
+fn render_description_band(
+    frame: &mut Frame,
+    vp: BandViewport,
+    plan: &ItemBox,
+    style: &ItemBoxStyle,
+    item: &SettingItem,
+    theme: &Theme,
+) {
+    let layer_label = match item.layer_source {
+        crate::config_io::ConfigLayer::System => None,
+        crate::config_io::ConfigLayer::User => Some("user"),
+        crate::config_io::ConfigLayer::Project => Some("project"),
+        crate::config_io::ConfigLayer::Session => Some("session"),
+    };
+
+    if plan.description_rows > 0 {
+        let Some(desc_rect) = vp
+            .band_rect(plan.description_y(), plan.description_rows)
+            .map(|r| inset_by_chrome(r, style))
+        else {
+            return;
+        };
+        let desc_skip = vp.skip_top.saturating_sub(plan.description_y());
+        let max_text_width = desc_rect
+            .width
+            .saturating_sub(style.description_right_padding_cols)
+            as usize;
+        let mut lines = match item.description.as_deref() {
+            Some(d) if !d.is_empty() => wrap_text(d, max_text_width),
+            _ => Vec::new(),
+        };
+        if let Some(layer) = layer_label {
+            if let Some(last) = lines.last_mut() {
+                last.push_str(&format!(" ({})", layer));
+            } else {
+                lines.push(format!("({})", layer));
+            }
+        }
+        let desc_style = Style::default().fg(theme.line_number_fg);
+        let take = desc_rect.height as usize;
+        for (i, line) in lines.iter().skip(desc_skip as usize).take(take).enumerate() {
+            frame.render_widget(
+                Paragraph::new(line.as_str()).style(desc_style),
+                Rect::new(desc_rect.x, desc_rect.y + i as u16, desc_rect.width, 1),
+            );
+        }
+    } else if let Some(layer) = layer_label {
+        // No description, just a layer label on the row immediately below the control.
+        let Some(layer_rect) = vp
+            .band_rect(plan.description_y(), 1)
+            .map(|r| inset_by_chrome(r, style))
+        else {
+            return;
+        };
+        frame.render_widget(
+            Paragraph::new(format!("({})", layer)).style(Style::default().fg(theme.line_number_fg)),
+            layer_rect,
+        );
+    }
+}
+
 /// Pure render function for a setting item (returns layout, doesn't modify external state)
 ///
 /// Driven by `item.layout_box(area.width, &item.style)` — every y-offset comes
 /// from the resulting `ItemBox`, so adjusting card chrome (border, padding,
 /// section header height) happens by changing `ItemBoxStyle`, not by editing
-/// renderer arithmetic.
+/// renderer arithmetic. Each visual band (section header, card box, control,
+/// description) is painted by a dedicated helper; this function only computes
+/// geometry and wires them together.
 ///
 /// # Arguments
 /// * `skip_top` - Number of rows to skip at top of item (for partial visibility when scrolling)
@@ -970,7 +1213,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 fn render_setting_item_pure(
     frame: &mut Frame,
     area: Rect,
-    item: &super::items::SettingItem,
+    item: &SettingItem,
     idx: usize,
     skip_top: u16,
     ctx: &RenderContext,
@@ -980,72 +1223,21 @@ fn render_setting_item_pure(
 ) -> SettingItemLayoutInfo {
     let plan = item.layout_box(area.width, &item.style);
     let style = item.style;
-    let viewport_end_logical = skip_top.saturating_add(area.height); // exclusive
-
-    // Translate a logical band [logical_y, logical_y + rows) to a physical
-    // sub-rectangle of `area`, accounting for `skip_top` clipping. Returns
-    // None when the band is entirely outside the visible viewport.
-    let band_rect = |logical_y: u16, rows: u16| -> Option<Rect> {
-        if rows == 0 {
-            return None;
-        }
-        let band_end = logical_y.saturating_add(rows);
-        if band_end <= skip_top || logical_y >= viewport_end_logical {
-            return None;
-        }
-        let visible_top_logical = logical_y.max(skip_top);
-        let visible_bottom_logical = band_end.min(viewport_end_logical);
-        let physical_y = area.y + (visible_top_logical - skip_top);
-        let visible_h = visible_bottom_logical - visible_top_logical;
-        Some(Rect::new(area.x, physical_y, area.width, visible_h))
-    };
+    let vp = BandViewport::new(area, skip_top);
 
     // ── Section header band ────────────────────────────────────────────────
-    // Layout: blank gap on the leading rows, title on the last row of the
-    // band. This puts the breathing room above the heading and butts the
-    // title against the card it labels, which reads as "title belongs to
-    // what's below" rather than "title belongs to what's above".
-    if let (Some(section_name), Some(_header_rect)) = (
-        item.section.as_deref().filter(|_| item.is_section_start),
-        band_rect(0, plan.section_header_rows),
-    ) {
-        let title_logical_y = plan.section_header_rows.saturating_sub(1);
-        if let Some(title_rect) = band_rect(title_logical_y, 1) {
-            let header_style = Style::default()
-                .fg(theme.editor_fg)
-                .add_modifier(Modifier::BOLD);
-            frame.render_widget(
-                Paragraph::new(section_name).style(header_style),
-                Rect::new(title_rect.x, title_rect.y, title_rect.width, 1),
-            );
-        }
-    }
+    render_section_header(frame, vp, &plan, item, theme);
 
     // ── Card box ───────────────────────────────────────────────────────────
     // The card spans logical rows [card_top_y, total_rows). Render it with a
-    // single Block, choosing which edges to draw based on which logical rows
-    // are inside the visible viewport.
+    // single Block, choosing which edges to draw based on the viewport clip.
     let card_logical_top = plan.card_top_y();
     let card_logical_bottom = plan.total_rows();
-    if let Some(card_rect) = band_rect(
+    if let Some(card_rect) = vp.band_rect(
         card_logical_top,
         card_logical_bottom.saturating_sub(card_logical_top),
     ) {
-        let mut borders = Borders::NONE;
-        if style.card_border_cols > 0 {
-            borders |= Borders::LEFT | Borders::RIGHT;
-        }
-        if style.card_border_rows > 0 {
-            // TOP edge is only visible when its logical row sits inside [skip_top, viewport_end).
-            if card_logical_top >= skip_top {
-                borders |= Borders::TOP;
-            }
-            // BOTTOM edge is the last logical row of the card.
-            let bottom_logical = card_logical_bottom.saturating_sub(1);
-            if bottom_logical >= skip_top && bottom_logical < viewport_end_logical {
-                borders |= Borders::BOTTOM;
-            }
-        }
+        let borders = card_borders(&style, card_logical_top, card_logical_bottom, vp);
         if !borders.is_empty() {
             // Subdued color for the card chrome — distinct from the
             // panel/popup border around the modal so the cards read as
@@ -1081,16 +1273,12 @@ fn render_setting_item_pure(
     let content_logical_bottom = plan.bottom_border_y();
     let mut control_layout = ControlLayoutInfo::default();
     let mut inherit_button_area: Option<Rect> = None;
-    if let Some(content_rect) = band_rect(
+    if let Some(content_rect) = vp.band_rect(
         content_logical_top,
         content_logical_bottom.saturating_sub(content_logical_top),
     ) {
-        // Trim left/right by the card side borders.
-        let inner_x = content_rect.x.saturating_add(style.card_border_cols);
-        let inner_width = content_rect
-            .width
-            .saturating_sub(2 * style.card_border_cols);
-        let inner_area = Rect::new(inner_x, content_rect.y, inner_width, content_rect.height);
+        let inner_area =
+            inset_horizontal(content_rect, style.card_border_cols, style.card_border_cols);
 
         // Highlight background for focused/hovered items. Limited to the
         // label row so chip / description text below stays on popup_bg
@@ -1099,8 +1287,8 @@ fn render_setting_item_pure(
         // `settings_selected_bg` (selected) and `menu_hover_bg` (hovered)
         // — each theme is responsible for picking values that contrast
         // with its own popup_bg AND don't collide with chip text colors.
-        let label_visible = skip_top <= content_logical_top;
-        if is_focused_or_hovered && inner_width > 0 && label_visible {
+        let label_visible = vp.skip_top <= content_logical_top;
+        if is_focused_or_hovered && inner_area.width > 0 && label_visible {
             let bg_style = if is_selected {
                 Style::default().bg(theme.settings_selected_bg)
             } else {
@@ -1113,7 +1301,7 @@ fn render_setting_item_pure(
         // skip_top relative to the start of the control band — used by
         // multi-row controls and by the description renderer to know how
         // many leading rows are off-screen.
-        let content_skip_top = skip_top.saturating_sub(content_logical_top);
+        let content_skip_top = vp.skip_top.saturating_sub(content_logical_top);
 
         // Focus indicator (`>`) at column 0 of inner area, modified marker
         // (`●`) at column 1. Only paint them when the control's first row is
@@ -1137,15 +1325,10 @@ fn render_setting_item_pure(
         }
 
         // Control occupies its own band at the top of the content rect.
-        let control_logical_rows = plan.control_rows;
-        if let Some(control_rect) = band_rect(content_logical_top, control_logical_rows).map(|r| {
-            let x =
-                r.x.saturating_add(style.card_border_cols + style.focus_indicator_cols);
-            let w = r
-                .width
-                .saturating_sub(2 * style.card_border_cols + style.focus_indicator_cols);
-            Rect::new(x, r.y, w, r.height)
-        }) {
+        if let Some(control_rect) = vp
+            .band_rect(content_logical_top, plan.control_rows)
+            .map(|r| inset_by_chrome(r, &style))
+        {
             control_layout = render_control(
                 frame,
                 control_rect,
@@ -1158,116 +1341,15 @@ fn render_setting_item_pure(
                 item.is_null,
             );
 
-            // (Inherited) badge / [Inherit] button: rendered on the same row
-            // as the control's first line, at its right edge.
-            if item.nullable && content_skip_top == 0 && control_rect.width > 0 {
-                if item.is_null {
-                    let badge_text = t!("settings.inherited_badge").to_string();
-                    let badge_len = badge_text.len() as u16 + 1;
-                    let badge_x = control_rect
-                        .x
-                        .saturating_add(control_rect.width)
-                        .saturating_sub(badge_len);
-                    if badge_x > control_rect.x {
-                        frame.render_widget(
-                            Paragraph::new(badge_text).style(
-                                Style::default()
-                                    .fg(theme.line_number_fg)
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                            Rect::new(badge_x, control_rect.y, badge_len, 1),
-                        );
-                    }
-                } else {
-                    let btn_text = format!("[{}]", t!("settings.btn_inherit"));
-                    let btn_len = btn_text.len() as u16 + 1;
-                    let btn_x = control_rect
-                        .x
-                        .saturating_add(control_rect.width)
-                        .saturating_sub(btn_len);
-                    if btn_x > control_rect.x {
-                        let btn_area = Rect::new(btn_x, control_rect.y, btn_len, 1);
-                        let is_hovered = matches!(
-                            ctx.hover_hit,
-                            Some(SettingsHit::ControlInherit(i)) if i == idx
-                        );
-                        let btn_style = if is_hovered {
-                            Style::default()
-                                .fg(theme.menu_hover_fg)
-                                .bg(theme.menu_hover_bg)
-                        } else {
-                            Style::default().fg(theme.line_number_fg)
-                        };
-                        frame.render_widget(Paragraph::new(btn_text).style(btn_style), btn_area);
-                        inherit_button_area = Some(btn_area);
-                    }
-                }
+            // (Inherited) badge / [Inherit] button, on the control's first row.
+            if content_skip_top == 0 {
+                inherit_button_area =
+                    render_inherit_affordance(frame, control_rect, item, idx, ctx.hover_hit, theme);
             }
         }
 
-        // Description band: below the control. Wraps to the inner text width
-        // computed by the style, falling back to a layer label when there's
-        // no description but we still need to show the source layer.
-        let desc_logical_rows = plan.description_rows;
-        let layer_label = match item.layer_source {
-            crate::config_io::ConfigLayer::System => None,
-            crate::config_io::ConfigLayer::User => Some("user"),
-            crate::config_io::ConfigLayer::Project => Some("project"),
-            crate::config_io::ConfigLayer::Session => Some("session"),
-        };
-
-        if desc_logical_rows > 0 {
-            if let Some(desc_rect) = band_rect(plan.description_y(), desc_logical_rows).map(|r| {
-                let x =
-                    r.x.saturating_add(style.card_border_cols + style.focus_indicator_cols);
-                let w = r
-                    .width
-                    .saturating_sub(2 * style.card_border_cols + style.focus_indicator_cols);
-                Rect::new(x, r.y, w, r.height)
-            }) {
-                let desc_skip = skip_top.saturating_sub(plan.description_y());
-                let max_text_width = desc_rect
-                    .width
-                    .saturating_sub(style.description_right_padding_cols)
-                    as usize;
-                let mut lines = match item.description.as_deref() {
-                    Some(d) if !d.is_empty() => wrap_text(d, max_text_width),
-                    _ => Vec::new(),
-                };
-                if let Some(layer) = layer_label {
-                    if let Some(last) = lines.last_mut() {
-                        last.push_str(&format!(" ({})", layer));
-                    } else {
-                        lines.push(format!("({})", layer));
-                    }
-                }
-                let desc_style = Style::default().fg(theme.line_number_fg);
-                let take = desc_rect.height as usize;
-                for (i, line) in lines.iter().skip(desc_skip as usize).take(take).enumerate() {
-                    frame.render_widget(
-                        Paragraph::new(line.as_str()).style(desc_style),
-                        Rect::new(desc_rect.x, desc_rect.y + i as u16, desc_rect.width, 1),
-                    );
-                }
-            }
-        } else if let Some(layer) = layer_label {
-            // No description, just a layer label on the row immediately
-            // below the control.
-            if let Some(layer_rect) = band_rect(plan.description_y(), 1).map(|r| {
-                let x =
-                    r.x.saturating_add(style.card_border_cols + style.focus_indicator_cols);
-                let w = r
-                    .width
-                    .saturating_sub(2 * style.card_border_cols + style.focus_indicator_cols);
-                Rect::new(x, r.y, w, r.height)
-            }) {
-                frame.render_widget(
-                    Paragraph::new(format!("({})", layer))
-                        .style(Style::default().fg(theme.line_number_fg)),
-                    layer_rect,
-                );
-            }
-        }
+        // Description band: below the control.
+        render_description_band(frame, vp, &plan, &style, item, theme);
     }
 
     SettingItemLayoutInfo {
