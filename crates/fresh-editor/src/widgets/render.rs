@@ -691,38 +691,7 @@ fn collect_row(
     // equally among blocks without an explicit width.
     // Inline children render at full `panel_width` (they
     // collapse to a single line so width is a soft cap).
-    let block_indices: Vec<usize> = children
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| predicts_block(c))
-        .map(|(i, _)| i)
-        .collect();
-    let block_count = block_indices.len();
-    // Per-child target width, aligned with `children`.
-    // For non-block children the value is unused; for
-    // blocks it's the panel_width passed to that child's
-    // render.
-    let mut per_child_width: Vec<u32> = children.iter().map(|_| panel_width).collect();
-    if block_count > 0 {
-        let mut explicit_total: u32 = 0;
-        let mut explicit_count: u32 = 0;
-        for &idx in &block_indices {
-            if let Some(pct) = labeled_section_width_pct(&children[idx]) {
-                let w = (panel_width as u64 * pct as u64 / 100) as u32;
-                per_child_width[idx] = w.max(1);
-                explicit_total = explicit_total.saturating_add(w);
-                explicit_count += 1;
-            }
-        }
-        let remaining = panel_width.saturating_sub(explicit_total);
-        let implicit_count = (block_count as u32).saturating_sub(explicit_count).max(1);
-        let each_implicit = (remaining / implicit_count).max(1);
-        for &idx in &block_indices {
-            if labeled_section_width_pct(&children[idx]).is_none() {
-                per_child_width[idx] = each_implicit;
-            }
-        }
-    }
+    let per_child_width = allocate_row_child_widths(children, panel_width);
     let mut row_pieces: Vec<RowPiece> = Vec::new();
     for (idx, child) in children.iter().enumerate() {
         if let WidgetSpec::Spacer { flex: true, .. } = child {
@@ -789,118 +758,15 @@ fn collect_row(
         // `buffer_row` set to the line index.
         assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits);
     } else {
-        // Compute flex sizing. Width is measured in display columns
-        // (`str_width`) to match `panel_width`; using the raw byte length
-        // would over-count multi-byte glyphs (▣ · ▸ ↑ − …) and under-size
-        // the flex spacer, leaving a right-aligned group floating short of
-        // the edge.
-        let inline_natural: usize = row_pieces
-            .iter()
-            .filter_map(|p| match p {
-                RowPiece::Inline { entry, .. } => {
-                    Some(crate::primitives::display_width::str_width(&entry.text))
-                }
-                _ => None,
-            })
-            .sum();
-        let flex_count = row_pieces
-            .iter()
-            .filter(|p| matches!(p, RowPiece::Flex))
-            .count();
-        let flex_total = (panel_width as usize).saturating_sub(inline_natural);
-        // Distribute leftover evenly. With multiple flex slots,
-        // the leftover bytes spread as evenly as possible (any
-        // remainder lands in the first slot).
-        let (flex_each, flex_extra) = match flex_total.checked_div(flex_count) {
-            Some(each) => (each, flex_total % flex_count),
-            None => (0, 0),
-        };
-
-        // Pass 2: assemble. Accumulate inline pieces (with
-        // collapsed flex spacers) into one entry; flush block
-        // pieces. Track byte-shift so child hits' offsets stay
-        // correct.
-        let mut acc: Option<TextPropertyEntry> = None;
-        let mut flex_seen = 0usize;
-        for piece in row_pieces {
-            match piece {
-                RowPiece::Inline {
-                    mut entry,
-                    hits: child_hits,
-                    focus_cursor: child_focus,
-                    embeds: child_embeds,
-                    scroll_regions: child_scroll,
-                } => {
-                    let inline_shift = match acc.as_ref() {
-                        Some(e) => e.text.len(),
-                        None => 0,
-                    };
-                    for mut h in child_hits {
-                        h.byte_start += inline_shift;
-                        h.byte_end += inline_shift;
-                        hits.push(h);
-                    }
-                    if let Some(mut fc) = child_focus {
-                        // buffer_row stays 0 — caller shifts.
-                        fc.byte_in_row += inline_shift as u32;
-                        focus_cursor = Some(fc);
-                    }
-                    for mut emb in child_embeds {
-                        // Inline shift is in bytes; for ASCII
-                        // inline content this matches columns,
-                        // which is the only case that lands here
-                        // in practice (single-row embeds are
-                        // rare).
-                        emb.col_in_row += inline_shift as u32;
-                        embeds.push(emb);
-                    }
-                    for mut sr in child_scroll {
-                        sr.col_in_row += inline_shift as u32;
-                        scroll_regions.push(sr);
-                    }
-                    match acc.as_mut() {
-                        Some(merged) => merge_inline(merged, &mut entry),
-                        None => acc = Some(entry),
-                    }
-                }
-                RowPiece::Flex => {
-                    // Materialize the flex spacer as N spaces.
-                    let n = flex_each + if flex_seen < flex_extra { 1 } else { 0 };
-                    flex_seen += 1;
-                    if n > 0 {
-                        let mut text = String::with_capacity(n);
-                        for _ in 0..n {
-                            text.push(' ');
-                        }
-                        let entry = TextPropertyEntry {
-                            text,
-                            properties: Default::default(),
-                            style: None,
-                            inline_overlays: Vec::new(),
-                            segments: Vec::new(),
-                            pad_to_chars: None,
-                            truncate_to_chars: None,
-                        };
-                        match acc.as_mut() {
-                            Some(merged) => {
-                                let mut e = entry;
-                                merge_inline(merged, &mut e);
-                            }
-                            None => acc = Some(entry),
-                        }
-                    }
-                }
-                RowPiece::Block { .. } => {
-                    // Unreachable in the inline-only path —
-                    // `has_blocks` was false here.
-                    debug_assert!(false, "block piece in inline-only Row path");
-                }
-            }
-        }
-        if let Some(mut merged) = acc {
-            ensure_trailing_newline(&mut merged);
-            entries.push(merged);
-        }
+        assemble_inline_row(
+            row_pieces,
+            panel_width,
+            &mut entries,
+            &mut hits,
+            &mut focus_cursor,
+            &mut embeds,
+            &mut scroll_regions,
+        );
     }
 
     CollectedOutput {
@@ -910,6 +776,176 @@ fn collect_row(
         embeds,
         overlays,
         scroll_regions,
+    }
+}
+
+/// Allocate a per-child column budget for a `Row`, aligned index-for-
+/// index with `children`. Block children (those that render multi-line,
+/// e.g. a `LabeledSection`) share `panel_width`: a child with an
+/// explicit `width_pct` takes its declared share first, and the
+/// remainder splits equally among the blocks without one. Non-block
+/// children get the full `panel_width` (a soft cap — they collapse to a
+/// single line, so width doesn't truncate them).
+fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> Vec<u32> {
+    let block_indices: Vec<usize> = children
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| predicts_block(c))
+        .map(|(i, _)| i)
+        .collect();
+    let block_count = block_indices.len();
+    let mut per_child_width: Vec<u32> = children.iter().map(|_| panel_width).collect();
+    if block_count == 0 {
+        return per_child_width;
+    }
+    let mut explicit_total: u32 = 0;
+    let mut explicit_count: u32 = 0;
+    for &idx in &block_indices {
+        if let Some(pct) = labeled_section_width_pct(&children[idx]) {
+            let w = (panel_width as u64 * pct as u64 / 100) as u32;
+            per_child_width[idx] = w.max(1);
+            explicit_total = explicit_total.saturating_add(w);
+            explicit_count += 1;
+        }
+    }
+    let remaining = panel_width.saturating_sub(explicit_total);
+    let implicit_count = (block_count as u32).saturating_sub(explicit_count).max(1);
+    let each_implicit = (remaining / implicit_count).max(1);
+    for &idx in &block_indices {
+        if labeled_section_width_pct(&children[idx]).is_none() {
+            per_child_width[idx] = each_implicit;
+        }
+    }
+    per_child_width
+}
+
+/// Assemble a `Row` of purely inline pieces (no multi-line `Block`s)
+/// into a single merged entry. Flex spacers expand to fill the leftover
+/// width (`panel_width` minus the natural inline width, measured in
+/// display columns); child hits / focus / embeds / scroll regions are
+/// shifted by the running byte offset so they stay aligned in the
+/// merged row. The inline-only counterpart to [`zip_row_blocks`] and
+/// [`assemble_wrapped_row`].
+fn assemble_inline_row(
+    pieces: Vec<RowPiece>,
+    panel_width: u32,
+    entries: &mut Vec<TextPropertyEntry>,
+    hits: &mut Vec<HitArea>,
+    focus_cursor: &mut Option<FocusCursor>,
+    embeds: &mut Vec<EmbedRect>,
+    scroll_regions: &mut Vec<ScrollRegion>,
+) {
+    // Compute flex sizing. Width is measured in display columns
+    // (`str_width`) to match `panel_width`; using the raw byte length
+    // would over-count multi-byte glyphs (▣ · ▸ ↑ − …) and under-size
+    // the flex spacer, leaving a right-aligned group floating short of
+    // the edge.
+    let inline_natural: usize = pieces
+        .iter()
+        .filter_map(|p| match p {
+            RowPiece::Inline { entry, .. } => {
+                Some(crate::primitives::display_width::str_width(&entry.text))
+            }
+            _ => None,
+        })
+        .sum();
+    let flex_count = pieces
+        .iter()
+        .filter(|p| matches!(p, RowPiece::Flex))
+        .count();
+    let flex_total = (panel_width as usize).saturating_sub(inline_natural);
+    // Distribute leftover evenly. With multiple flex slots,
+    // the leftover bytes spread as evenly as possible (any
+    // remainder lands in the first slot).
+    let (flex_each, flex_extra) = match flex_total.checked_div(flex_count) {
+        Some(each) => (each, flex_total % flex_count),
+        None => (0, 0),
+    };
+
+    // Pass 2: assemble. Accumulate inline pieces (with
+    // collapsed flex spacers) into one entry; flush block
+    // pieces. Track byte-shift so child hits' offsets stay
+    // correct.
+    let mut acc: Option<TextPropertyEntry> = None;
+    let mut flex_seen = 0usize;
+    for piece in pieces {
+        match piece {
+            RowPiece::Inline {
+                mut entry,
+                hits: child_hits,
+                focus_cursor: child_focus,
+                embeds: child_embeds,
+                scroll_regions: child_scroll,
+            } => {
+                let inline_shift = match acc.as_ref() {
+                    Some(e) => e.text.len(),
+                    None => 0,
+                };
+                for mut h in child_hits {
+                    h.byte_start += inline_shift;
+                    h.byte_end += inline_shift;
+                    hits.push(h);
+                }
+                if let Some(mut fc) = child_focus {
+                    // buffer_row stays 0 — caller shifts.
+                    fc.byte_in_row += inline_shift as u32;
+                    *focus_cursor = Some(fc);
+                }
+                for mut emb in child_embeds {
+                    // Inline shift is in bytes; for ASCII
+                    // inline content this matches columns,
+                    // which is the only case that lands here
+                    // in practice (single-row embeds are
+                    // rare).
+                    emb.col_in_row += inline_shift as u32;
+                    embeds.push(emb);
+                }
+                for mut sr in child_scroll {
+                    sr.col_in_row += inline_shift as u32;
+                    scroll_regions.push(sr);
+                }
+                match acc.as_mut() {
+                    Some(merged) => merge_inline(merged, &mut entry),
+                    None => acc = Some(entry),
+                }
+            }
+            RowPiece::Flex => {
+                // Materialize the flex spacer as N spaces.
+                let n = flex_each + if flex_seen < flex_extra { 1 } else { 0 };
+                flex_seen += 1;
+                if n > 0 {
+                    let mut text = String::with_capacity(n);
+                    for _ in 0..n {
+                        text.push(' ');
+                    }
+                    let entry = TextPropertyEntry {
+                        text,
+                        properties: Default::default(),
+                        style: None,
+                        inline_overlays: Vec::new(),
+                        segments: Vec::new(),
+                        pad_to_chars: None,
+                        truncate_to_chars: None,
+                    };
+                    match acc.as_mut() {
+                        Some(merged) => {
+                            let mut e = entry;
+                            merge_inline(merged, &mut e);
+                        }
+                        None => acc = Some(entry),
+                    }
+                }
+            }
+            RowPiece::Block { .. } => {
+                // Unreachable in the inline-only path —
+                // `has_blocks` was false here.
+                debug_assert!(false, "block piece in inline-only Row path");
+            }
+        }
+    }
+    if let Some(mut merged) = acc {
+        ensure_trailing_newline(&mut merged);
+        entries.push(merged);
     }
 }
 
@@ -1151,6 +1187,28 @@ fn collect_divider(ch: &str, style: Option<&OverlayOptions>, panel_width: u32) -
     out
 }
 
+/// Pre-render every card item-spec into its own block of entries at the
+/// given column width. Returns the rendered cards alongside the uniform
+/// card height (the tallest card, minimum 1) that the list's selection
+/// and scroll math are expressed in.
+fn render_list_cards(
+    item_specs: &[WidgetSpec],
+    prev: &HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+    width: u32,
+) -> (Vec<Vec<TextPropertyEntry>>, u32) {
+    let mut rendered_cards: Vec<Vec<TextPropertyEntry>> = Vec::with_capacity(item_specs.len());
+    let mut item_height: u32 = 1;
+    for item_spec in item_specs.iter() {
+        let mut scratch = HashMap::new();
+        let card_entries =
+            render_collected(item_spec, prev, &mut scratch, focus_key, width).entries;
+        item_height = item_height.max((card_entries.len() as u32).max(1));
+        rendered_cards.push(card_entries);
+    }
+    (rendered_cards, item_height)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_list(
     items: &[TextPropertyEntry],
@@ -1220,14 +1278,7 @@ fn collect_list(
     let mut rendered_cards: Vec<Vec<TextPropertyEntry>> = Vec::new();
     let mut item_height: u32 = 1;
     if use_specs {
-        rendered_cards.reserve(item_specs.len());
-        for item_spec in item_specs.iter() {
-            let mut scratch = HashMap::new();
-            let card_entries =
-                render_collected(item_spec, prev, &mut scratch, focus_key, panel_width).entries;
-            item_height = item_height.max((card_entries.len() as u32).max(1));
-            rendered_cards.push(card_entries);
-        }
+        (rendered_cards, item_height) = render_list_cards(item_specs, prev, focus_key, panel_width);
     }
     // How many items fit, and the per-item scroll window.
     let visible_items = if use_specs {
@@ -1242,14 +1293,9 @@ fn collect_list(
     // narrower so they leave that column free. (Row count is
     // width-independent, so `item_height` stays valid.)
     if use_specs && total > visible_items && panel_width > 1 {
-        let card_width = panel_width - 1;
-        rendered_cards.clear();
-        for item_spec in item_specs.iter() {
-            let mut scratch = HashMap::new();
-            let card_entries =
-                render_collected(item_spec, prev, &mut scratch, focus_key, card_width).entries;
-            rendered_cards.push(card_entries);
-        }
+        // Row count is width-independent, so the re-rendered cards keep
+        // the `item_height` computed above — only their width changes.
+        (rendered_cards, _) = render_list_cards(item_specs, prev, focus_key, panel_width - 1);
     }
 
     // Compute scroll. Normally we auto-clamp to keep the
@@ -1656,6 +1702,118 @@ fn collect_overlay(
     }
 }
 
+/// Resolve the column width a single-line `full_width` text field's
+/// bracketed region should occupy: `panel_width` minus the label prefix,
+/// the two surrounding `[` / `]` brackets plus the trailing cursor-park
+/// column (3), and the focus-marker gutter when the panel opted in.
+/// Reserving these unconditionally keeps the rendered width stable
+/// across the focus transition so the box never reflows or overflows the
+/// enclosing section. Multi-line fields and non-`full_width` fields use
+/// the plugin-supplied `field_width` verbatim (`render_text_area`
+/// already fills the panel width by default).
+fn effective_text_field_width(
+    full_width: bool,
+    multiline: bool,
+    label: &str,
+    panel_width: u32,
+    field_width: u32,
+) -> u32 {
+    if !full_width || multiline {
+        return field_width;
+    }
+    let label_overhead = if label.is_empty() {
+        0u32
+    } else {
+        label.chars().count() as u32 + 1
+    };
+    let marker_reserve = if marker_gutter_enabled() { 2 } else { 0 };
+    panel_width
+        .saturating_sub(label_overhead)
+        .saturating_sub(3)
+        .saturating_sub(marker_reserve)
+        .max(1)
+}
+
+/// Emit a focused Text widget's completion popup as floating overlay
+/// rows on `out`, returning the scroll offset to persist for the next
+/// render (0 when there are no completions).
+///
+/// `panel_width` is the inner width the wrapping `LabeledSection` handed
+/// us (already minus its 4 columns of `│ … │` chrome); the popup widens
+/// by 4 so the side borders it paints line up with the section's.
+///
+/// Scroll is *forward-only*: when the selection walks past the bottom of
+/// the window the view pulls forward to keep it visible, but it is never
+/// pulled back if the selection sits above the window — the mouse-wheel
+/// handler deliberately diverges scroll from selection, and a back-pull
+/// would undo the wheel on the next render.
+///
+/// Overlay anchors: 1 = the `LabeledSection`'s bottom border (the dim
+/// separator paints over it), 2..N+1 = item rows, N+2 = the popup's own
+/// bottom border.
+fn emit_completion_overlays(
+    out: &mut CollectedOutput,
+    completions: &[fresh_core::api::CompletionItem],
+    visible_rows: u32,
+    panel_width: u32,
+    selected_idx: usize,
+    navigated: bool,
+    prev_scroll: u32,
+) -> u32 {
+    if completions.is_empty() {
+        return 0;
+    }
+    let popup_total = (panel_width as usize).saturating_add(4); // re-add section chrome
+    let total = completions.len() as u32;
+    let visible = visible_rows.max(1).min(total);
+    let sel = selected_idx as u32;
+    let mut scroll = prev_scroll;
+    if sel >= scroll + visible {
+        scroll = sel + 1 - visible;
+    }
+    let max_scroll = total.saturating_sub(visible);
+    if scroll > max_scroll {
+        scroll = max_scroll;
+    }
+
+    let mut anchor: u32 = 1;
+    out.overlays.push(OverlayRow {
+        buffer_row: anchor,
+        entry: render_completion_dim_separator_overlay(popup_total),
+    });
+    anchor += 1;
+    let needs_scrollbar = total > visible;
+    let end = (scroll + visible).min(total) as usize;
+    for (visible_row, i) in (scroll as usize..end).enumerate() {
+        let item = &completions[i];
+        let thumb = if needs_scrollbar {
+            completion_scrollbar_glyph(visible_row as u32, visible, scroll, total)
+        } else {
+            None
+        };
+        out.overlays.push(OverlayRow {
+            buffer_row: anchor,
+            entry: render_completion_item_overlay(
+                &item.value,
+                item.kind.as_deref(),
+                // Only paint a selected-row highlight once the user
+                // has stepped into the dropdown (↓/↑). A freshly
+                // surfaced popup shows plain suggestions so it's
+                // clear Enter acts on the form, not the list.
+                navigated && i == selected_idx,
+                popup_total,
+                thumb,
+            ),
+        });
+        anchor += 1;
+    }
+    out.overlays.push(OverlayRow {
+        buffer_row: anchor,
+        entry: render_completion_bottom_border(popup_total),
+    });
+    scroll
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_widget_text(
     value: &str,
@@ -1753,40 +1911,8 @@ fn render_widget_text(
     } else {
         -1
     };
-    // When `full_width` is requested, override the
-    // plugin-supplied `field_width` with the slice of
-    // `panel_width` remaining after the label prefix,
-    // the two surrounding `[` / `]` brackets, and one
-    // trailing column reserved for the cursor-park space
-    // `render_text_input` appends when focused. Reserving
-    // unconditionally costs an unfocused field one
-    // trailing space but keeps the rendered width stable
-    // across the focus transition — without it the field
-    // would overflow the parent on focus. For multi-line
-    // we don't need the focus reservation but keep the
-    // same calculation for symmetry; `render_text_area`
-    // already fills the panel width by default.
-    let effective_field_width = if full_width && !multiline {
-        let label_overhead = if label.is_empty() {
-            0u32
-        } else {
-            label.chars().count() as u32 + 1
-        };
-        // Reserve the two columns the focus-marker gutter occupies
-        // (when the panel opted in), so the bracketed region shrinks
-        // by the gutter width instead of overflowing the enclosing
-        // section's right border. Reserved unconditionally — focused
-        // and unfocused alike — so the closing bracket sits at the
-        // same column regardless of focus and the box never reflows.
-        let marker_reserve = if marker_gutter_enabled() { 2 } else { 0 };
-        panel_width
-            .saturating_sub(label_overhead)
-            .saturating_sub(3)
-            .saturating_sub(marker_reserve)
-            .max(1)
-    } else {
-        field_width
-    };
+    let effective_field_width =
+        effective_text_field_width(full_width, multiline, label, panel_width, field_width);
     // Selection overlay is only meaningful for the focused
     // widget — passing `None` otherwise keeps the no-selection
     // rendering paths unchanged.
@@ -1896,109 +2022,23 @@ fn render_widget_text(
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
     }
+    // Emit the completion popup (if any) as floating overlay rows so
+    // the rest of the form below the input keeps its position and the
+    // popup paints on top; persists the forward-only auto-scroll offset.
+    prev_completion_scroll = emit_completion_overlays(
+        &mut out,
+        &prev_completions,
+        effective_visible_rows,
+        panel_width,
+        prev_completion_idx,
+        prev_completion_navigated,
+        prev_completion_scroll,
+    );
     // Persist instance state for next render. `editor`
     // already carries the canonical cursor (row/col +
     // selection); `scroll` carries the renderer's
     // auto-clamped first-visible-row for multi-line, or `0`
     // for single-line.
-    //
-    // Emit the completion popup as *overlay rows* rather
-    // than regular entries so it floats — the rest of the
-    // form below the input keeps its layout position and
-    // the popup paints on top. The overlay anchors are
-    // chosen so the dim separator lands on top of the
-    // wrapping `LabeledSection`'s bottom border (visually
-    // replacing it), and the side borders + bottom
-    // border that follow paint over whatever sits below
-    // the section. See `render_completion_*` helpers for
-    // the chrome detail.
-    if !prev_completions.is_empty() {
-        // `panel_width` here is the inner-area width the
-        // wrapping `LabeledSection` handed us (it has
-        // already subtracted its own 4 columns of chrome
-        // — `│ ` on the left + ` │` on the right). The
-        // overlay rows need to paint into the full panel
-        // width (including those `│ ... │` columns), so
-        // we widen by 4 here so the side borders the
-        // popup paints line up with the section's.
-        let popup_inner = panel_width as usize;
-        let popup_total = popup_inner.saturating_add(4); // re-add section chrome
-        let total = prev_completions.len() as u32;
-        let visible = effective_visible_rows.max(1).min(total);
-        // Forward-only auto-scroll: when the selection
-        // walks past the bottom of the visible window
-        // (Down past the last visible row), pull the
-        // scroll forward to keep selection in view. We
-        // deliberately do NOT pull the scroll *back* if
-        // the selection is above the window — the
-        // mouse-wheel scroll handler explicitly diverges
-        // scroll from selection (the user is scrolling
-        // the view, not the selection), and a back-pull
-        // here would undo the wheel's scroll on the very
-        // next render. The keyboard Up handler updates
-        // scroll itself when needed, so it doesn't rely
-        // on a back-pull from the renderer either.
-        let sel = prev_completion_idx as u32;
-        let mut scroll = prev_completion_scroll;
-        if sel >= scroll + visible {
-            scroll = sel + 1 - visible;
-        }
-        let max_scroll = total.saturating_sub(visible);
-        if scroll > max_scroll {
-            scroll = max_scroll;
-        }
-        prev_completion_scroll = scroll;
-
-        // Overlay anchors:
-        //   anchor 0 = the text widget's own row (input)
-        //   anchor 1 = labeledSection's bottom border row
-        //              (the dim separator paints here,
-        //              replacing the section's `╰─...─╯`
-        //              visually)
-        //   anchor 2..N+1 = item rows
-        //   anchor N+2 = popup's own bottom border
-        //              `╰─...─╯` (a `LabeledSection`
-        //              passes child overlays through
-        //              unchanged, see widgets/render.rs
-        //              `LabeledSection` branch).
-        let mut anchor: u32 = 1;
-        out.overlays.push(OverlayRow {
-            buffer_row: anchor,
-            entry: render_completion_dim_separator_overlay(popup_total),
-        });
-        anchor += 1;
-        let needs_scrollbar = total > visible;
-        let end = (scroll + visible).min(total) as usize;
-        for (visible_row, i) in (scroll as usize..end).enumerate() {
-            let item = &prev_completions[i];
-            let thumb = if needs_scrollbar {
-                completion_scrollbar_glyph(visible_row as u32, visible, scroll, total)
-            } else {
-                None
-            };
-            out.overlays.push(OverlayRow {
-                buffer_row: anchor,
-                entry: render_completion_item_overlay(
-                    &item.value,
-                    item.kind.as_deref(),
-                    // Only paint a selected-row highlight once the user
-                    // has stepped into the dropdown (↓/↑). A freshly
-                    // surfaced popup shows plain suggestions so it's
-                    // clear Enter acts on the form, not the list.
-                    prev_completion_navigated && i == prev_completion_idx,
-                    popup_total,
-                    thumb,
-                ),
-            });
-            anchor += 1;
-        }
-        out.overlays.push(OverlayRow {
-            buffer_row: anchor,
-            entry: render_completion_bottom_border(popup_total),
-        });
-    } else {
-        prev_completion_scroll = 0;
-    }
     if let Some(k) = key.filter(|k| !k.is_empty()) {
         next_state.insert(
             k.to_string(),
