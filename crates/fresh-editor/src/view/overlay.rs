@@ -424,7 +424,23 @@ impl OverlayManager {
                     }
                     let start = marker_list.get_position(o.start_marker).unwrap_or(0);
                     let end = marker_list.get_position(o.end_marker).unwrap_or(0);
-                    start < range.end && range.start < end
+                    if start < end {
+                        // Healthy overlay: remove on genuine half-open overlap.
+                        start < range.end && range.start < end
+                    } else {
+                        // Collapsed (start == end) or inverted (start > end)
+                        // overlay. These arise when an edit erases the overlay's
+                        // anchored text — the markers clamp to the edit point and
+                        // a later insert can even push them past each other
+                        // (issue #2414). A strict overlap test never matches a
+                        // zero-length span, so the dead overlay would linger and
+                        // surface as a phantom search match. Treat it as a point
+                        // and remove it whenever it lands inside the replaced
+                        // range, so it is dropped rather than recreated.
+                        let lo = start.min(end);
+                        let hi = start.max(end);
+                        lo <= range.end && range.start <= hi
+                    }
                 })
                 .collect();
             to_remove.sort_unstable_by(|a, b| b.cmp(a));

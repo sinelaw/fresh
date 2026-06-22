@@ -1084,6 +1084,8 @@ impl Editor {
                 view_state.cursors.adjust_for_edit(position, 0, text_len);
             }
         }
+        // Keep search-match highlights consistent with the edit (issue #2414).
+        self.reevaluate_plugin_edit_search_overlays(buffer_id, position, text_len);
     }
 
     /// Handle DeleteRange command
@@ -1133,6 +1135,48 @@ impl Editor {
                     .adjust_for_edit(delete_start, delete_len, 0);
             }
         }
+        // Keep search-match highlights consistent with the edit (issue #2414).
+        self.reevaluate_plugin_edit_search_overlays(buffer_id, delete_start, 0);
+    }
+
+    /// Re-evaluate the active window's search-match overlays around a region a
+    /// plugin just edited.
+    ///
+    /// Plugin text edits (`InsertText` / `DeleteRange`) apply straight to the
+    /// buffer state and bypass `apply_event_to_active_buffer`, so they miss the
+    /// search-overlay reevaluation that normal edits get. Without this, a delete
+    /// that erased a highlighted match would leave the match's overlay clamped to
+    /// the deletion point; a following insert then pushes that collapsed overlay
+    /// forward, producing a phantom match position that "find next" jumps to
+    /// (issue #2414). Re-scanning the edited line(s) clears the stale overlay and
+    /// re-anchors highlights to the text that actually matches.
+    ///
+    /// Scoped to the active buffer: search overlays for the current search live
+    /// in the active buffer's state, so editing a background buffer has no search
+    /// highlights to refresh.
+    fn reevaluate_plugin_edit_search_overlays(
+        &mut self,
+        buffer_id: BufferId,
+        edit_start: usize,
+        edit_new_len: usize,
+    ) {
+        if buffer_id != self.active_buffer() {
+            return;
+        }
+        if self.active_window().interactive_replace_state.is_some() {
+            // Interactive replace manages its own highlight lifecycle.
+            return;
+        }
+        let (search_fg, search_bg) = {
+            let theme = self.theme.read().unwrap();
+            (theme.search_match_fg, theme.search_match_bg)
+        };
+        self.active_window_mut().reevaluate_search_overlays_around(
+            edit_start,
+            edit_new_len,
+            search_fg,
+            search_bg,
+        );
     }
 
     /// Handle InsertAtCursor command

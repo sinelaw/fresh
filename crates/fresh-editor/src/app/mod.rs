@@ -2876,6 +2876,81 @@ mod tests {
     }
 
     #[test]
+    fn repro_2414_plugin_edit_same_line_next_match() {
+        // Issue #2414: after a plugin replaces the first of two matches on the
+        // SAME line (delete range + insert, net length change), navigating to
+        // the next match lands a few bytes short of the real position.
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        // Line 0 has TWO occurrences of "<i>"; line 1 has one.
+        // "<i>a</i> mid <i>b</i>\n<i>c</i>"
+        let cursor_id = editor.active_cursors().primary_id();
+        editor.apply_event_to_active_buffer(&Event::Insert {
+            position: 0,
+            text: "<i>a</i> mid <i>b</i>\n<i>c</i>".to_string(),
+            cursor_id,
+        });
+
+        editor.active_window_mut().search_case_sensitive = true;
+        editor.perform_search("<i>");
+
+        // Sanity: three matches at 0, 13, 22.
+        let m = editor
+            .active_window()
+            .search_state
+            .as_ref()
+            .unwrap()
+            .matches
+            .clone();
+        assert_eq!(m, vec![0, 13, 22], "initial match offsets");
+
+        // Plugin replaces the first element "<i>a</i>" (bytes 0..8) with the
+        // longer "<em>a</em>" (10 bytes, net +2) via the plugin edit path.
+        let buf = editor.active_buffer();
+        editor.handle_delete_range(buf, 0..8);
+        editor.handle_insert_text(buf, 0, "<em>a</em>".to_string());
+
+        // The second "<i>" on line 0 is now at byte 15 (13 + 2).
+        // Move cursor to the start of line 0 and ask for the next match.
+        // Buffer is now "<em>a</em> mid <i>b</i>\n<i>c</i>"; the surviving
+        // "<i>" occurrences sit at bytes 15 (same line) and 24 (next line).
+        assert_eq!(
+            editor.active_state().buffer.to_string().unwrap(),
+            "<em>a</em> mid <i>b</i>\n<i>c</i>"
+        );
+
+        // From the start of line 0, the next match must be the real second
+        // "<i>" at byte 15 — not the phantom overlay (byte 10) left behind when
+        // the plugin's delete collapsed the first match's highlight and the
+        // following insert pushed it forward.
+        editor.active_cursors_mut().primary_mut().move_to(0, false);
+        editor.find_next();
+        assert_eq!(
+            editor.active_cursors().primary().position,
+            15,
+            "next match should land on the shifted same-line '<i>' (byte 15)"
+        );
+
+        // And the following match is the next-line occurrence at byte 24.
+        editor.find_next();
+        assert_eq!(
+            editor.active_cursors().primary().position,
+            24,
+            "subsequent match should land on the next-line '<i>' (byte 24)"
+        );
+    }
+
+    #[test]
     fn test_search_scan_completes_when_capped() {
         // Regression test: when the incremental search scan hits MAX_MATCHES
         // early (e.g. at 15% of the file), the scan's `capped` flag is set to
