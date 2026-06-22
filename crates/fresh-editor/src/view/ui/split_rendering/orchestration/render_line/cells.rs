@@ -91,11 +91,23 @@ pub(super) fn render_line_cells<'a>(
     overlay_sweep: &mut OverlayActiveSet<'a>,
     span_cursors: &mut SpanCursors,
     cursor: &mut CursorTracker,
+    ansi_parser: &mut Option<AnsiParser>,
     cell_theme_map: &mut [CellThemeInfo],
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
 ) -> CellPassOutput {
     let line_content: &'a str = &input.view_line.text;
+
+    // The ANSI parser is threaded across the soft-wrapped rows of one
+    // logical line (the caller resets it to `None` at each new logical
+    // line). Create it lazily the first time a row carries ESC so that
+    // colors — and a multi-byte SGR sequence split across a wrap
+    // boundary — continue onto the wrapped continuation rows instead of
+    // resetting to the default style at every row. Rows whose logical
+    // line never contains ESC keep the `None` fast path.
+    if ansi_parser.is_none() && line_content.contains('\x1b') {
+        *ansi_parser = Some(AnsiParser::new());
+    }
 
     // Reset the per-row touched set. Wrap continuations inherit overlays
     // still active from the previous row of the same source line; new
@@ -103,9 +115,8 @@ pub(super) fn render_line_cells<'a>(
     overlay_sweep.enter_row(matches!(input.view_line.line_start, LineStart::AfterBreak));
 
     let mut pass = CellPass {
-        // ANSI parser for this line to handle escape sequences.
-        // Optimization: only create parser if line contains ESC byte.
-        ansi_parser: line_content.contains('\x1b').then(AnsiParser::new),
+        // ANSI parser threaded from the caller across wrapped rows.
+        ansi_parser,
         // Debug mode: track active highlight/overlay spans for
         // WordPerfect-style reveal codes.
         debug_tracker: input
@@ -157,7 +168,7 @@ struct CellPass<'a, 'b> {
     /// Merges consecutive characters with the same style — critical for
     /// proper rendering of combining characters (Thai, etc.)
     span_acc: SpanAccumulator,
-    ansi_parser: Option<AnsiParser>,
+    ansi_parser: &'b mut Option<AnsiParser>,
     debug_tracker: Option<DebugSpanTracker>,
     /// First/last non-whitespace char indices (whitespace indicators).
     non_ws: (Option<usize>, Option<usize>),
@@ -595,8 +606,8 @@ impl CellPass<'_, '_> {
     /// Run `ch` through the line's ANSI parser; `None` means the char is
     /// part of an escape sequence. Lines without ESC use the fast path.
     fn parse_ansi(&mut self, ch: char) -> Option<Style> {
-        match self.ansi_parser {
-            Some(ref mut parser) => parser.parse_char(ch),
+        match self.ansi_parser.as_mut() {
+            Some(parser) => parser.parse_char(ch),
             None => Some(Style::default()),
         }
     }

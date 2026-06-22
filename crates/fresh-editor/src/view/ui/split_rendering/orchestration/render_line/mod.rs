@@ -188,6 +188,14 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     let mut lines_rendered = 0usize;
     let mut view_iter_idx = view_anchor.start_line_idx;
     let mut cursor = CursorTracker::default();
+    // ANSI parser state threaded across the soft-wrapped continuation rows
+    // of a single logical line. Terminal scrollback stores each terminal
+    // line as one *unwrapped* logical line, so a long colored line wraps
+    // into several view rows here; without carrying the parser, every row
+    // after the first reset to the default style (colors vanished, and an
+    // SGR sequence split across the wrap showed up as literal text). Reset
+    // at each new logical line below.
+    let mut ansi_parser: Option<crate::primitives::ansi::AnsiParser> = None;
     let mut last_line_end: Option<LastLineEnd> = None;
     let mut last_gutter_num: Option<usize> = None;
     let mut trailing_empty_line_rendered = false;
@@ -345,6 +353,13 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         };
         let max_chars_to_process = left_col.saturating_add(max_visible_chars);
 
+        // A soft-wrap continuation (`AfterBreak`) keeps the running ANSI
+        // state so colors persist across the wrap; any other line start
+        // begins a fresh logical line, so reset to the default style.
+        if line_start_type != LineStart::AfterBreak {
+            ansi_parser = None;
+        }
+
         // Per-cell pass: walk the line's characters and emit styled spans
         let cells = render_line_cells(
             CellPassInput {
@@ -370,6 +385,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             &mut overlay_sweep,
             &mut span_cursors,
             &mut cursor,
+            &mut ansi_parser,
             cell_theme_map.as_mut_slice(),
             &mut line_spans,
             &mut line_view_map,
