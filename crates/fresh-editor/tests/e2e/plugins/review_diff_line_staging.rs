@@ -265,6 +265,78 @@ fn test_review_visual_discard_single_added_line() {
     );
 }
 
+/// #2420 — after a line-level discard, the status bar must show the
+/// *localized* confirmation ("Lines discarded"), not the raw i18n lookup
+/// key. The emitter built the key by naively appending `d` to the action
+/// name (`status.lines_${action}d`), which yields `status.lines_staged`
+/// (correct) but `status.lines_discardd` (a typo with no translation), so
+/// the untranslated key leaked verbatim into the status bar.
+#[test]
+fn test_review_visual_discard_status_is_localized() {
+    init_tracing_from_env();
+    let repo = repo_with_one_added_line();
+    let mut harness = harness_for(&repo);
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    let target = diff_line_of(&mut harness, "+extra line");
+    move_cursor_to_line(&mut harness, target);
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+
+    // The confirmation is shown transiently: applyLineSelection sets it,
+    // then refreshMagitData's updateReviewStatus overwrites it with the
+    // hunk-count summary. Poll every tick and record what the status bar
+    // ever showed, so we deterministically catch the frame regardless of
+    // timing. (This is exactly the window the bug report screenshotted.)
+    let mut saw_localized = false;
+    let mut saw_raw_key = false;
+    let mut reverted = false;
+    for _ in 0..120 {
+        harness.tick_and_render().unwrap();
+        let s = harness.screen_to_string();
+        if s.contains("Lines discarded") {
+            saw_localized = true;
+        }
+        // The buggy emitter leaked `status.lines_discardd` verbatim; guard
+        // against any untranslated `status.lines_*` key reaching the screen.
+        if s.contains("status.lines_") {
+            saw_raw_key = true;
+        }
+        let content = fs::read_to_string(repo.path.join("README.md")).unwrap_or_default();
+        if !content.contains("extra line") {
+            reverted = true;
+        }
+        // Stop once the discard landed *and* we observed its confirmation.
+        if reverted && saw_localized {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.advance_time(std::time::Duration::from_millis(20));
+    }
+
+    assert!(reverted, "line-level discard never reverted the working tree");
+    assert!(
+        !saw_raw_key,
+        "line-level discard must not leak a raw i18n key (e.g. \
+         `status.lines_discardd`) into the status bar; last screen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        saw_localized,
+        "line-level discard should show the localized confirmation \
+         \"Lines discarded\"; last screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// A repo whose single hunk contains two *separate* added lines, so a
 /// line-level selection of one is observably different from staging the
 /// whole hunk.

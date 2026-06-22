@@ -2823,7 +2823,16 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
     const ok = await applyHunkPatch(patch, flags);
     if (!ok) return;
     review_visual_cancel();
-    editor.setStatus(editor.t(`status.lines_${action}d`) || `Lines ${action}d`);
+    // Past tense per action — don't synthesize it by appending `d`, which
+    // works for "stage"/"unstage" but yields "discardd" for "discard" and
+    // leaks the untranslated i18n key into the status bar (#2420).
+    const pastTense: Record<typeof action, string> = {
+        stage: "staged",
+        unstage: "unstaged",
+        discard: "discarded",
+    };
+    const past = pastTense[action];
+    editor.setStatus(editor.t(`status.lines_${past}`) || `Lines ${past}`);
     await refreshMagitData();
 }
 
