@@ -289,6 +289,11 @@ async function maybeOfferConfig(bufferId: number, path: string) {
   const alternates = ASSEMBLERS.filter((a) => a !== assembler);
   editor.showActionPopup({
     id: "asm-lsp-config-offer",
+    // Scope the offer to the buffer that triggered it: this is a reaction to
+    // opening one assembly file, not a global notification, so it should only
+    // show while that buffer is active (and vanish when it closes) rather than
+    // floating over every other buffer.
+    buffer_id: bufferId,
     title: "Assembly LSP: no .asm-lsp.toml found",
     message:
       `Without a config, asm-lsp assumes GAS syntax on x86/x86-64 — other dialects get wrong diagnostics and docs.\n\n` +

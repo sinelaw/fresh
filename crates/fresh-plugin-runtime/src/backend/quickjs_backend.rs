@@ -5138,6 +5138,7 @@ impl JsEditorApi {
                 title: opts.title,
                 message: opts.message,
                 actions: opts.actions,
+                buffer_id: opts.buffer_id,
             })
             .is_ok()
     }

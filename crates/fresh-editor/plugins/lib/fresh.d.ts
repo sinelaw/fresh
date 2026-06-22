@@ -577,6 +577,13 @@ type ActionPopupOptions = {
 	* Action buttons to display
 	*/
 	actions: Array<TsActionPopupAction>;
+	/**
+	* Optional buffer to scope the popup to. When set, the popup only
+	* renders while that buffer is active (and is dismissed when the buffer
+	* closes), rather than floating over every buffer. Omit for global
+	* notifications like install help raised from a status-bar click.
+	*/
+	buffer_id?: number;
 };
 type TsLspMenuItem = {
 	/**

@@ -47,6 +47,7 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * Shebang language detection now covers interpreters whose grammars ship no first-line regex — `#!/usr/bin/fish`, Lua, PowerShell, Tcl, Groovy, Elixir, R, Julia, Nushell, Dart, Deno, … — so extensionless scripts highlight from the shebang instead of falling through to plain text (#2357, reported by @shemgp). `env` indirection (`env -S`, `env VAR=val`) and versioned interpreters (`python3.11`) are handled; an existing extension match still wins.
 * Java (jdtls) and other Eclipse LSP4J servers: features registered via `client/registerCapability` now work — their string JSON-RPC ids were misparsed as notifications and dropped (#2340, reported by @maxandersen).
 * LSP/plugin popups follow the active theme's `popup_*` colors instead of a hard-wired dark background (#2379, by @peanball).
+* The asm-lsp "no `.asm-lsp.toml` found" offer is now scoped to the assembly buffer that triggered it — it renders only while that buffer is active instead of floating over every other buffer. Plugins can opt into this with the new `buffer_id` field on `showActionPopup`.
 * Paste falls back to the internal clipboard and works again on Termux (#2343, reported by @nightshade427).
 * npm `.cmd`/`.bat` shims resolve on Windows, so npm-installed language servers spawn (#2324, reported by @SupertigerDev).
 * Occurrence highlighting uses a theme-appropriate background in every shipped theme (#2312).

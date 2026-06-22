@@ -204,6 +204,7 @@ fn push_plugin_action_popup(
                 id: "dismiss".to_string(),
                 label: "Dismiss".to_string(),
             }],
+            buffer_id: None,
         })?;
     Ok(())
 }

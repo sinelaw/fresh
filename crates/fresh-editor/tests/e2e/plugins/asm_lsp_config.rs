@@ -122,6 +122,51 @@ fn test_asm_lsp_config_offer_detects_gas() {
 }
 
 #[test]
+fn test_asm_lsp_config_offer_is_scoped_to_triggering_buffer() {
+    // The offer is raised in response to opening one assembly file, so it
+    // must be scoped to that buffer: switching to an unrelated buffer should
+    // hide it (it isn't a global notification floating over every buffer),
+    // and switching back should reveal it again since it's still unanswered.
+    let temp = tempfile::TempDir::new().unwrap();
+    let project_root = setup_project(temp.path(), "hello.asm", NASM_SOURCE);
+    let other_path = project_root.join("notes.txt");
+    fs::write(&other_path, "just some prose, not assembly\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+
+    harness.open_file(&project_root.join("hello.asm")).unwrap();
+    harness
+        .wait_for_screen_contains("Assembly LSP: no .asm-lsp.toml found")
+        .unwrap();
+
+    // Switch to the unrelated buffer — the offer must not follow us there.
+    harness.open_file(&other_path).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("just some prose"))
+        .unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Assembly LSP: no .asm-lsp.toml found"),
+        "config offer must not render over an unrelated buffer:\n{screen}"
+    );
+
+    // Back to the assembly buffer — the still-unanswered offer reappears.
+    harness.open_file(&project_root.join("hello.asm")).unwrap();
+    harness
+        .wait_for_screen_contains("Assembly LSP: no .asm-lsp.toml found")
+        .unwrap();
+}
+
+#[test]
 fn test_asm_lsp_config_offer_skipped_when_config_exists() {
     let temp = tempfile::TempDir::new().unwrap();
     let project_root = setup_project(temp.path(), "hello.asm", NASM_SOURCE);

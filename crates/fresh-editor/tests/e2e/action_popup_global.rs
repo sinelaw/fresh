@@ -30,6 +30,7 @@ fn show_devcontainer_attach_popup(harness: &mut EditorTestHarness) {
                     label: "Not now".to_string(),
                 },
             ],
+            buffer_id: None,
         })
         .unwrap();
 }
@@ -212,6 +213,7 @@ fn show_devcontainer_attach_popup_named(
                     label: "Not now".to_string(),
                 },
             ],
+            buffer_id: None,
         })
         .unwrap();
 }
@@ -236,6 +238,7 @@ fn show_generic_popup(
                     label: label.to_string(),
                 })
                 .collect(),
+            buffer_id: None,
         })
         .unwrap();
 }

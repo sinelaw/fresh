@@ -101,6 +101,7 @@ fn show_failed_attach_popup(harness: &mut EditorTestHarness) {
                     label: "Dismiss (ESC)".to_string(),
                 },
             ],
+            buffer_id: None,
         })
         .unwrap();
 }

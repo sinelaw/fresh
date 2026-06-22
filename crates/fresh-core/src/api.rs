@@ -3424,6 +3424,12 @@ pub enum PluginCommand {
         message: String,
         /// Action buttons to display
         actions: Vec<ActionPopupAction>,
+        /// When `Some`, the popup is scoped to that buffer: it renders only
+        /// while that buffer is active and is torn down when the buffer
+        /// closes, instead of floating over every buffer on the editor-level
+        /// stack. Use for popups raised in response to a specific buffer (an
+        /// `after_file_open` config offer) rather than global notifications.
+        buffer_id: Option<usize>,
     },
 
     /// Contribute (or replace, or clear) a set of menu rows for the
@@ -4114,6 +4120,13 @@ pub struct ActionPopupOptions {
     pub message: String,
     /// Action buttons to display
     pub actions: Vec<ActionPopupAction>,
+    /// Optional buffer to scope the popup to. When set, the popup only
+    /// renders while that buffer is active (and is dismissed when the buffer
+    /// closes), rather than floating over every buffer. Omit for global
+    /// notifications like install help raised from a status-bar click.
+    #[serde(default)]
+    #[ts(optional)]
+    pub buffer_id: Option<usize>,
 }
 
 /// Syntax highlight span for a buffer range

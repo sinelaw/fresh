@@ -1228,8 +1228,9 @@ impl Editor {
                 title,
                 message,
                 actions,
+                buffer_id,
             } => {
-                self.handle_show_action_popup(popup_id, title, message, actions);
+                self.handle_show_action_popup(popup_id, title, message, actions, buffer_id);
             }
 
             PluginCommand::SetLspMenuContributions {
@@ -3307,12 +3308,14 @@ impl Editor {
         title: String,
         message: String,
         actions: Vec<fresh_core::api::ActionPopupAction>,
+        buffer_id: Option<usize>,
     ) {
         tracing::info!(
-            "Action popup requested: id={}, title={}, actions={}",
+            "Action popup requested: id={}, title={}, actions={}, buffer_id={:?}",
             popup_id,
             title,
-            actions.len()
+            actions.len(),
+            buffer_id,
         );
 
         // Build popup list items from actions
@@ -3363,6 +3366,43 @@ impl Editor {
         popup_obj.resolver = crate::view::popup::PopupResolver::PluginAction {
             popup_id: popup_id.clone(),
         };
+
+        // Buffer-scoped popup: a plugin raised this for one specific buffer
+        // (e.g. asm-lsp's `.asm-lsp.toml` offer on `after_file_open`), so it
+        // belongs on that buffer's popup stack — it then renders only while
+        // that buffer is active and is dropped when the buffer closes,
+        // instead of floating over every buffer like a global notification.
+        // Fall back to the global stack if the buffer has since closed, so
+        // the popup is never silently lost.
+        if let Some(bid) = buffer_id {
+            let bid = BufferId(bid);
+            let stack = self
+                .windows
+                .values_mut()
+                .find_map(|w| w.buffers.get_mut(&bid))
+                .map(|state| &mut state.popups);
+            if let Some(stack) = stack {
+                // Dedup by `popup_id` within this buffer's stack — repeated
+                // file-open hooks shouldn't pile up duplicate offers.
+                let existing_idx = stack.all().iter().position(|p| {
+                    matches!(
+                        &p.resolver,
+                        crate::view::popup::PopupResolver::PluginAction { popup_id: id } if id == &popup_id,
+                    )
+                });
+                match existing_idx.and_then(|idx| stack.get_mut(idx)) {
+                    Some(slot) => *slot = popup_obj,
+                    None => stack.show(popup_obj),
+                }
+                tracing::info!("Action popup shown on buffer {:?}: id={}", bid, popup_id,);
+                return;
+            }
+            tracing::warn!(
+                "Action popup id={} requested for missing buffer {:?}; showing globally",
+                popup_id,
+                bid,
+            );
+        }
 
         // Dismiss any built-in LSP-status popup that the editor put
         // on `active_state().popups` in response to the same click —
