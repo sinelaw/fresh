@@ -328,9 +328,24 @@ Each bug entry:
 - **Control (works):** `$` direct on `short` → col 5 → `x` = `shor`; `l` stops at last char. Only vertical clamp is off-by-one.
 - **First Seen:** 2026-06-22 (Run #44), fresh 0.4.1 @ 3b8c2eca1.
 
+## BUG-021: vi mode — dot-repeat (`.`) of `o`/`O`/`a`/`A` corrupts the buffer
+- **ID:** BUG-021
+- **Title:** `.` (repeat last change) of cursor-repositioning insert commands (`o`/`O`/`a`/`A`) injects unrelated line content instead of replaying the typed text — silent buffer corruption. `i`/`x` dot-repeat are correct.
+- **Severity:** Medium (data corruption from a very common `o`/`a` + `.` Vim workflow).
+- **Status:** Open — GitHub #2443 filed (Run #45).
+- **GitHub Issue:** [#2443](https://github.com/sinelaw/fresh/issues/2443)
+- **Reproduction:** vi mode, file `hello world foo bar baz` / `short`.
+  1. Cursor on line 1, press `o` then type `abc` then `Esc` → line 2 = `abc` (correct).
+  2. Press `.` → buffer corrupts: line 2 = `abhello world foo bar baz`, line 3 = `abcc` (expected line 3 = `abc`). Line 1's content was injected.
+  - Also: `A`+`X`+`Esc` on `short` = `shortX`; `.` → `shortshortXX` (expected `shortXX`). `A`+`QZQ`+`Esc` → `shortQZQ`; `.` → `shortQZshortQZQQ` (expected `shortQZQQZQ`). `a`+`Y`+`Esc` at col1 = `sYhort`; `.` → `ssYYhort` (expected `sYYhort`).
+- **Control (works):** `i`+`AB`+`Esc` → `ABalpha...`; `.` → `AABBalpha...` (correct). `x`,`.`,`.` deletes successive chars (correct). So defect is specific to the cursor-repositioning insert commands.
+- **Expected (Vim, `:help .`):** `.` replays exactly the keystrokes of the last change.
+- **First Seen:** 2026-06-22 (Run #45), fresh 0.4.1 @ 1c6bd8ce9.
+
 ---
 
 ## PENDING (not filed) — vi mode missing standard commands (→ IMP-023)
 - `R` (Replace/overtype mode): unrecognized — stays `-- NORMAL --`, next key runs as a normal command (`R`+`A` fired append-at-EOL).
 - `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.
 - Candidate for one consolidated "vi missing standard commands" issue once more are characterized (count them with `;`/`,` from #2441). Logged here + potential_improvements; NOT individually filed (missing-feature, lower sev than the broken-behavior bugs above).
+- **Run #45 update:** swept the rest of the common command set — the gap list is SMALL. CONFIRMED WORKING (Vim-correct, do NOT re-test): `o`/`O` (open line), `s`/`S` (substitute char/line), `D`/`C`/`Y` (operate to EOL; `Y` is linewise like Vim), `3G`/count+`G`, `*`/`#` (search word under cursor), `n`/`N` (repeat search), `i`/`x` dot-repeat. So the ONLY still-missing commands are `R` and `gU`/`gu`/`g~` (above) — too few to warrant a consolidated issue right now; keep in IMP-023.
