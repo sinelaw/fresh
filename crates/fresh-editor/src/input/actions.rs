@@ -1824,6 +1824,287 @@ fn handle_delete_backward(
     apply_deletions(state, deletions, events);
 }
 
+/// `Action::DeleteForward` — delete the selection, or the grapheme to the
+/// right of each cursor when there is none.
+fn handle_delete_forward(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    // Sort cursors by position (reverse order) to avoid position shifts
+    let mut cursor_vec: Vec<_> = cursors.iter().collect();
+    cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
+
+    let buffer_len = state.buffer.len();
+
+    let deletions: Vec<_> = cursor_vec
+        .iter()
+        .filter_map(|(cursor_id, cursor)| {
+            if let Some(range) = cursor.selection_range() {
+                Some((*cursor_id, range))
+            } else if cursor.position < buffer_len {
+                // Use next_position_for_crlf to properly handle multi-byte UTF-8
+                // characters; in CRLF files this deletes \r\n as a unit.
+                let delete_to = next_position_for_crlf(&state.buffer, cursor.position, buffer_len);
+                Some((*cursor_id, cursor.position..delete_to))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    apply_deletions(state, deletions, events);
+}
+
+/// `Action::DeleteLine` — delete the whole line (including its newline)
+/// under each cursor.
+fn handle_delete_line(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    estimated_line_length: usize,
+) {
+    let deletions: Vec<_> = cursors
+        .iter()
+        .filter_map(|(cursor_id, cursor)| {
+            let mut iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            iter.next_line().map(|(_start, content)| {
+                let line_end = line_start + content.len();
+                (cursor_id, line_start..line_end)
+            })
+        })
+        .collect();
+
+    apply_deletions(state, deletions, events);
+}
+
+/// `Action::DeleteToLineEnd` — delete from each cursor to the end of its
+/// line (Ctrl+K). When the cursor already sits at the line content end,
+/// delete the trailing newline instead.
+fn handle_delete_to_line_end(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    estimated_line_length: usize,
+) {
+    let deletions: Vec<_> = cursors
+        .iter()
+        .filter_map(|(cursor_id, cursor)| {
+            let mut iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            iter.next_line().map(|(_start, content)| {
+                let line_end = line_start + content_len_without_line_ending(&content);
+                if cursor.position < line_end {
+                    Some((cursor_id, cursor.position..line_end))
+                } else {
+                    // Cursor is at the end of the line content: delete the newline.
+                    let full_line_end = line_start + content.len();
+                    if cursor.position < full_line_end {
+                        Some((cursor_id, cursor.position..full_line_end))
+                    } else {
+                        None
+                    }
+                }
+            })?
+        })
+        .collect();
+
+    apply_deletions(state, deletions, events);
+}
+
+/// `Action::DeleteToLineStart` — delete from the start of each cursor's
+/// line up to the cursor (Ctrl+U).
+fn handle_delete_to_line_start(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    estimated_line_length: usize,
+) {
+    let deletions: Vec<_> = cursors
+        .iter()
+        .filter_map(|(cursor_id, cursor)| {
+            let iter = state
+                .buffer
+                .line_iterator(cursor.position, estimated_line_length);
+            let line_start = iter.current_position();
+            (cursor.position > line_start).then_some((cursor_id, line_start..cursor.position))
+        })
+        .collect();
+
+    apply_deletions(state, deletions, events);
+}
+
+/// `Action::TransposeChars` — swap the character before each cursor with the
+/// one at it (Emacs C-t).
+fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    // Collect cursor positions first to avoid borrow issues.
+    let cursor_positions: Vec<_> = cursors.iter().map(|(id, c)| (id, c.position)).collect();
+
+    for (cursor_id, pos) in cursor_positions {
+        // Need at least 2 characters: one before and one at the cursor.
+        if pos > 0 && pos < state.buffer.len() {
+            let text = state.get_text_range(pos - 1, pos + 1);
+            let chars: Vec<char> = text.chars().collect();
+            if chars.len() >= 2 {
+                events.push(Event::Delete {
+                    range: (pos - 1)..(pos + 1),
+                    deleted_text: text,
+                    cursor_id,
+                });
+                let swapped = format!("{}{}", chars[1], chars[0]);
+                events.push(Event::Insert {
+                    position: pos - 1,
+                    text: swapped,
+                    cursor_id,
+                });
+            }
+        }
+    }
+}
+
+/// `Action::OpenLine` — insert a newline at each cursor without advancing it
+/// (Emacs C-o: "open a blank line after the cursor"). The follow-up
+/// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
+/// which is what distinguishes OpenLine from Enter.
+fn handle_open_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    let line_ending = state.buffer.line_ending().as_str();
+    let len = line_ending.len();
+    for (cursor_id, cursor) in cursors.iter() {
+        events.push(Event::Insert {
+            position: cursor.position,
+            text: line_ending.to_string(),
+            cursor_id,
+        });
+        events.push(Event::MoveCursor {
+            cursor_id,
+            old_position: cursor.position + len,
+            new_position: cursor.position,
+            old_anchor: cursor.anchor,
+            new_anchor: cursor.anchor,
+            old_sticky_column: cursor.sticky_column,
+            new_sticky_column: cursor.sticky_column,
+        });
+    }
+}
+
+/// `Action::RemoveSecondaryCursors` — drop every cursor except the original
+/// (lowest id) and clear all anchors, cancelling Emacs mark mode.
+fn remove_secondary_cursors(cursors: &Cursors, events: &mut Vec<Event>) {
+    let first_id = cursors
+        .iter()
+        .map(|(id, _)| id)
+        .min_by_key(|id| id.0)
+        .expect("Should have at least one cursor");
+
+    for (cursor_id, cursor) in cursors.iter() {
+        if cursor_id != first_id {
+            events.push(Event::RemoveCursor {
+                cursor_id,
+                position: cursor.position,
+                anchor: cursor.anchor,
+            });
+        }
+        // Clear the anchor (and reset deselect_on_move) for every cursor.
+        events.push(Event::ClearAnchor { cursor_id });
+    }
+}
+
+/// `Action::SelectWord` — select the word each cursor is in or adjacent to.
+fn select_word(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    for (cursor_id, cursor) in cursors.iter() {
+        // Find the start of the current word, then its end from that start
+        // (not from the cursor) so the whole word is selected.
+        let word_start = find_word_start(&state.buffer, cursor.position);
+        let word_end = find_word_end(&state.buffer, word_start);
+
+        if word_start < word_end {
+            add_move_cursor_event(
+                events,
+                cursor_id,
+                cursor.position,
+                word_end,
+                cursor.anchor,
+                Some(word_start),
+                cursor.sticky_column,
+            );
+        }
+    }
+}
+
+/// `Action::SelectLine` — select the entire line (including its newline)
+/// under each cursor.
+fn select_line(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    estimated_line_length: usize,
+) {
+    for (cursor_id, cursor) in cursors.iter() {
+        let mut iter = state
+            .buffer
+            .line_iterator(cursor.position, estimated_line_length);
+        if let Some((line_start, line_content)) = iter.next_line() {
+            let line_end = line_start + line_content.len();
+            add_move_cursor_event(
+                events,
+                cursor_id,
+                cursor.position,
+                line_end,
+                cursor.anchor,
+                Some(line_start),
+                cursor.sticky_column,
+            );
+        }
+    }
+}
+
+/// `Action::ExpandSelection` — grow each cursor's selection by a word. With an
+/// existing selection, extend one word to the right; otherwise select from the
+/// cursor to the end of the current (or next) word.
+fn expand_selection(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
+    for (cursor_id, cursor) in cursors.iter() {
+        if let Some(anchor) = cursor.anchor {
+            // Already selecting — expand by one word to the right.
+            let next_word_start = find_word_start_right(&state.buffer, cursor.position);
+            let new_end = find_word_end(&state.buffer, next_word_start);
+            add_move_cursor_event(
+                events,
+                cursor_id,
+                cursor.position,
+                new_end,
+                cursor.anchor,
+                Some(anchor),
+                cursor.sticky_column,
+            );
+        } else {
+            // No selection — select from the cursor to the end of the word.
+            let word_start = find_word_start(&state.buffer, cursor.position);
+            let word_end = find_word_end(&state.buffer, cursor.position);
+
+            // On a non-word char, or at a word end, jump to the next word's end.
+            let (final_start, final_end) = if word_start == word_end || cursor.position == word_end
+            {
+                let next_start = find_word_start_right(&state.buffer, cursor.position);
+                let next_end = find_word_end(&state.buffer, next_start);
+                (cursor.position, next_end)
+            } else {
+                (cursor.position, word_end)
+            };
+
+            add_move_cursor_event(
+                events,
+                cursor_id,
+                cursor.position,
+                final_end,
+                cursor.anchor,
+                Some(final_start),
+                cursor.sticky_column,
+            );
+        }
+    }
+}
+
 fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     // Toggle case of char under cursor (vim ~ behavior) and advance cursor
     for (cursor_id, cursor) in cursors.iter() {
@@ -2374,24 +2655,7 @@ pub fn action_to_events(
         }
 
         Action::SelectWord => {
-            for (cursor_id, cursor) in cursors.iter() {
-                // First find the start of the word we're in/adjacent to,
-                // then the end from that start (not from cursor) to select the current word.
-                let word_start = find_word_start(&state.buffer, cursor.position);
-                let word_end = find_word_end(&state.buffer, word_start);
-
-                if word_start < word_end {
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        word_end,
-                        cursor.anchor,
-                        Some(word_start),
-                        cursor.sticky_column,
-                    );
-                }
-            }
+            select_word(state, cursors, &mut events);
         }
 
         Action::DeleteBackward => {
@@ -2406,33 +2670,7 @@ pub fn action_to_events(
         }
 
         Action::DeleteForward => {
-            // Sort cursors by position (reverse order) to avoid position shifts
-            let mut cursor_vec: Vec<_> = cursors.iter().collect();
-            cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
-
-            let buffer_len = state.buffer.len();
-
-            // Collect all deletions first
-            let deletions: Vec<_> = cursor_vec
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    if let Some(range) = cursor.selection_range() {
-                        Some((*cursor_id, range))
-                    } else if cursor.position < buffer_len {
-                        // Use next_char_boundary to properly handle multi-byte UTF-8 characters
-                        // In CRLF files, this also ensures we delete \r\n as a unit
-                        let delete_to =
-                            next_position_for_crlf(&state.buffer, cursor.position, buffer_len);
-
-                        Some((*cursor_id, cursor.position..delete_to))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Get text and create delete events
-            apply_deletions(state, deletions, &mut events);
+            handle_delete_forward(state, cursors, &mut events);
         }
 
         Action::DeleteWordBackward => {
@@ -2458,72 +2696,15 @@ pub fn action_to_events(
         }
 
         Action::DeleteLine => {
-            // Collect line ranges first to avoid borrow checker issues
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    let mut iter = state
-                        .buffer
-                        .line_iterator(cursor.position, estimated_line_length);
-                    let line_start = iter.current_position();
-                    iter.next_line().map(|(_start, content)| {
-                        let line_end = line_start + content.len();
-                        (cursor_id, line_start..line_end)
-                    })
-                })
-                .collect();
-
-            // Now get text and create events
-            apply_deletions(state, deletions, &mut events);
+            handle_delete_line(state, cursors, &mut events, estimated_line_length);
         }
 
         Action::DeleteToLineEnd => {
-            // Delete from cursor to end of line (like Ctrl+K in emacs/bash)
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    let mut iter = state
-                        .buffer
-                        .line_iterator(cursor.position, estimated_line_length);
-                    let line_start = iter.current_position();
-                    iter.next_line().map(|(_start, content)| {
-                        let line_end = line_start + content_len_without_line_ending(&content);
-                        if cursor.position < line_end {
-                            Some((cursor_id, cursor.position..line_end))
-                        } else {
-                            // If cursor is at end of line content, delete the newline instead
-                            let full_line_end = line_start + content.len();
-                            if cursor.position < full_line_end {
-                                Some((cursor_id, cursor.position..full_line_end))
-                            } else {
-                                None
-                            }
-                        }
-                    })?
-                })
-                .collect();
-
-            apply_deletions(state, deletions, &mut events);
+            handle_delete_to_line_end(state, cursors, &mut events, estimated_line_length);
         }
 
         Action::DeleteToLineStart => {
-            // Delete from start of line to cursor (like Ctrl+U in bash)
-            let deletions: Vec<_> = cursors
-                .iter()
-                .filter_map(|(cursor_id, cursor)| {
-                    let iter = state
-                        .buffer
-                        .line_iterator(cursor.position, estimated_line_length);
-                    let line_start = iter.current_position();
-                    if cursor.position > line_start {
-                        Some((cursor_id, line_start..cursor.position))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            apply_deletions(state, deletions, &mut events);
+            handle_delete_to_line_start(state, cursors, &mut events, estimated_line_length);
         }
 
         Action::MoveLineUp => {
@@ -2547,32 +2728,7 @@ pub fn action_to_events(
         }
 
         Action::TransposeChars => {
-            // Transpose the character before the cursor with the one at the cursor
-            // Collect cursor positions first to avoid borrow issues
-            let cursor_positions: Vec<_> = cursors.iter().map(|(id, c)| (id, c.position)).collect();
-
-            for (cursor_id, pos) in cursor_positions {
-                // Need at least 2 characters: one before and one at cursor
-                if pos > 0 && pos < state.buffer.len() {
-                    // Get the two characters as a string
-                    let text = state.get_text_range(pos - 1, pos + 1);
-                    let chars: Vec<char> = text.chars().collect();
-                    if chars.len() >= 2 {
-                        // Delete both characters and insert them swapped
-                        events.push(Event::Delete {
-                            range: (pos - 1)..(pos + 1),
-                            deleted_text: text,
-                            cursor_id,
-                        });
-                        let swapped = format!("{}{}", chars[1], chars[0]);
-                        events.push(Event::Insert {
-                            position: pos - 1,
-                            text: swapped,
-                            cursor_id,
-                        });
-                    }
-                }
-            }
+            handle_transpose_chars(state, cursors, &mut events);
         }
 
         Action::ToUpperCase => {
@@ -2592,30 +2748,7 @@ pub fn action_to_events(
         }
 
         Action::OpenLine => {
-            // Insert a newline at the cursor position and immediately
-            // move the cursor back — Emacs C-o semantics ("open a
-            // blank line after the cursor without advancing it").
-            // Without the follow-up MoveCursor, `apply_insert`
-            // advances the cursor by `text.len()` and OpenLine becomes
-            // indistinguishable from Enter.
-            let line_ending = state.buffer.line_ending().as_str();
-            let len = line_ending.len();
-            for (cursor_id, cursor) in cursors.iter() {
-                events.push(Event::Insert {
-                    position: cursor.position,
-                    text: line_ending.to_string(),
-                    cursor_id,
-                });
-                events.push(Event::MoveCursor {
-                    cursor_id,
-                    old_position: cursor.position + len,
-                    new_position: cursor.position,
-                    old_anchor: cursor.anchor,
-                    new_anchor: cursor.anchor,
-                    old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: cursor.sticky_column,
-                });
-            }
+            handle_open_line(state, cursors, &mut events);
         }
 
         Action::DuplicateLine => {
@@ -2655,26 +2788,7 @@ pub fn action_to_events(
         }
 
         Action::RemoveSecondaryCursors => {
-            // Generate RemoveCursor events for all cursors except the first (original) one
-            // Also clear anchor and reset deselect_on_move on all cursors (cancels Emacs mark mode)
-            // Find the first cursor ID (lowest ID = original cursor)
-            let first_id = cursors
-                .iter()
-                .map(|(id, _)| id)
-                .min_by_key(|id| id.0)
-                .expect("Should have at least one cursor");
-
-            for (cursor_id, cursor) in cursors.iter() {
-                if cursor_id != first_id {
-                    events.push(Event::RemoveCursor {
-                        cursor_id,
-                        position: cursor.position,
-                        anchor: cursor.anchor,
-                    });
-                }
-                // Clear anchor and reset deselect_on_move for all cursors (including the first one)
-                events.push(Event::ClearAnchor { cursor_id });
-            }
+            remove_secondary_cursors(cursors, &mut events);
         }
 
         Action::ScrollUp => {
@@ -2976,70 +3090,11 @@ pub fn action_to_events(
         }
 
         Action::SelectLine => {
-            // Select the entire line for each cursor
-            for (cursor_id, cursor) in cursors.iter() {
-                // Use iterator to get line bounds
-                let mut iter = state
-                    .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                if let Some((line_start, line_content)) = iter.next_line() {
-                    let line_end = line_start + line_content.len();
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        line_end,
-                        cursor.anchor,
-                        Some(line_start),
-                        cursor.sticky_column,
-                    );
-                }
-            }
+            select_line(state, cursors, &mut events, estimated_line_length);
         }
 
         Action::ExpandSelection => {
-            // Expand selection for each cursor
-            for (cursor_id, cursor) in cursors.iter() {
-                if let Some(anchor) = cursor.anchor {
-                    // Already have a selection - expand by one word to the right
-                    let next_word_start = find_word_start_right(&state.buffer, cursor.position);
-                    let new_end = find_word_end(&state.buffer, next_word_start);
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        new_end,
-                        cursor.anchor,
-                        Some(anchor),
-                        cursor.sticky_column,
-                    );
-                } else {
-                    // No selection - select from cursor to end of current word
-                    let word_start = find_word_start(&state.buffer, cursor.position);
-                    let word_end = find_word_end(&state.buffer, cursor.position);
-
-                    // If cursor is on non-word char OR at the end of a word,
-                    // select from current position to end of next word
-                    let (final_start, final_end) =
-                        if word_start == word_end || cursor.position == word_end {
-                            let next_start = find_word_start_right(&state.buffer, cursor.position);
-                            let next_end = find_word_end(&state.buffer, next_start);
-                            (cursor.position, next_end)
-                        } else {
-                            (cursor.position, word_end)
-                        };
-
-                    add_move_cursor_event(
-                        &mut events,
-                        cursor_id,
-                        cursor.position,
-                        final_end,
-                        cursor.anchor,
-                        Some(final_start),
-                        cursor.sticky_column,
-                    );
-                }
-            }
+            expand_selection(state, cursors, &mut events);
         }
     }
 
