@@ -1245,8 +1245,21 @@ impl GrammarRegistry {
         // catalog entry by name — every syntect syntax has a catalog entry,
         // so this round-trip preserves tree-sitter attachment.
         let line = first_line?;
-        let syntax = self.syntax_set.find_syntax_by_first_line(line)?;
-        self.find_by_name(&syntax.name)
+        if let Some(syntax) = self.syntax_set.find_syntax_by_first_line(line) {
+            if let Some(entry) = self.find_by_name(&syntax.name) {
+                return Some(entry);
+            }
+        }
+
+        // Final fallback: map the shebang interpreter directly to a known
+        // grammar. Syntect's `find_syntax_by_first_line` only recognises the
+        // interpreters that ship a `first_line_match` regex (sh/bash, python,
+        // ruby, perl, php, …); many languages Fresh *does* have grammars for
+        // — fish, lua, PowerShell, Tcl, Groovy, Elixir, R, … — define none, so
+        // a `#!/usr/bin/fish` script would otherwise fall through to plain
+        // text (#2357). Parsing the interpreter ourselves closes that gap.
+        let lang = shebang_language(line)?;
+        self.find_by_name(lang)
     }
 
     /// Look up a grammar entry by file extension (case-insensitive, without dot).
@@ -1579,6 +1592,84 @@ impl Default for GrammarRegistry {
     }
 }
 
+/// Resolve a shebang line to a catalog language id, if its interpreter maps to
+/// a grammar Fresh ships.
+///
+/// Used as the final fallback in [`GrammarRegistry::find_by_path`] when neither
+/// the filename/extension nor syntect's first-line regexes match. Handles:
+/// - direct interpreters: `#!/bin/sh`, `#! /bin/sh` (leading space)
+/// - `env` indirection: `#!/usr/bin/env python3`, including `env -S deno run`
+///   and `env VAR=val interp`
+/// - version suffixes: `python3.11` → python, `lua5.4` → lua, `ruby2.7` → ruby
+///
+/// Returns `None` for shebangs whose interpreter has no Fresh grammar (e.g.
+/// `awk`), leaving the buffer as plain text exactly as before.
+fn shebang_language(first_line: &str) -> Option<&'static str> {
+    let rest = first_line.strip_prefix("#!")?;
+    let mut tokens = rest.split_whitespace();
+    let mut base = interpreter_basename(tokens.next()?);
+
+    // `env` runs the first non-option, non-assignment argument as the real
+    // interpreter (`env -S`, `env -i`, `env FOO=bar python` all land here).
+    if base == "env" {
+        base = loop {
+            let tok = tokens.next()?;
+            if tok.starts_with('-') || tok.contains('=') {
+                continue;
+            }
+            break interpreter_basename(tok);
+        };
+    }
+
+    interpreter_language(base)
+}
+
+/// The final path component of an interpreter token (`/usr/bin/env` → `env`).
+fn interpreter_basename(token: &str) -> &str {
+    token.rsplit(['/', '\\']).next().unwrap_or(token)
+}
+
+/// Map an interpreter basename to a catalog language id, tolerating version
+/// suffixes (`python3`, `lua5.4`). The mapping only references grammars that
+/// exist in the catalog, so the returned id always resolves via `find_by_name`.
+fn interpreter_language(base: &str) -> Option<&'static str> {
+    let lower = base.to_ascii_lowercase();
+    if let Some(lang) = interpreter_table(&lower) {
+        return Some(lang);
+    }
+    // `python3.11` → `python`, `ruby2.7` → `ruby`, `php8` → `php`.
+    let stem = lower.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    if stem.len() != lower.len() && !stem.is_empty() {
+        return interpreter_table(stem);
+    }
+    None
+}
+
+/// Interpreter basename → catalog language id. Every target id is present in the
+/// built-in grammar catalog (verified by `test_shebang_interpreter_targets_resolve`).
+fn interpreter_table(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "sh" | "bash" | "dash" | "ash" | "ksh" | "mksh" | "pdksh" | "zsh" => "bash",
+        "fish" => "fish",
+        "python" | "pypy" => "python",
+        "ruby" | "jruby" => "ruby",
+        "perl" => "perl",
+        "php" => "php",
+        "node" | "nodejs" => "javascript",
+        "deno" | "bun" | "ts-node" | "tsx" => "typescript",
+        "lua" | "luajit" => "lua",
+        "pwsh" | "powershell" => "powershell",
+        "tcl" | "tclsh" | "wish" => "tcl",
+        "groovy" => "groovy",
+        "elixir" => "elixir",
+        "r" | "rscript" => "r",
+        "julia" => "julia",
+        "nu" => "nushell",
+        "dart" => "dart",
+        _ => return None,
+    })
+}
+
 // VSCode package.json structures for parsing grammar manifests
 
 #[derive(Debug, Deserialize)]
@@ -1712,6 +1803,109 @@ mod tests {
                 syntax.name
             );
         }
+    }
+
+    #[test]
+    fn test_shebang_language_parsing() {
+        // Direct interpreters, with and without the space-after-#! form (#2357).
+        assert_eq!(shebang_language("#!/bin/sh\n"), Some("bash"));
+        assert_eq!(shebang_language("#! /bin/sh\n"), Some("bash"));
+        assert_eq!(shebang_language("#!/usr/bin/fish\n"), Some("fish"));
+        assert_eq!(shebang_language("#!/usr/bin/lua\n"), Some("lua"));
+        assert_eq!(shebang_language("#!/usr/bin/pwsh\n"), Some("powershell"));
+        // `env` indirection, options, version suffixes, and assignments.
+        assert_eq!(shebang_language("#!/usr/bin/env python3\n"), Some("python"));
+        assert_eq!(
+            shebang_language("#!/usr/bin/env -S deno run\n"),
+            Some("typescript")
+        );
+        assert_eq!(
+            shebang_language("#!/usr/bin/env FOO=bar ruby\n"),
+            Some("ruby")
+        );
+        assert_eq!(shebang_language("#!/usr/bin/python3.11\n"), Some("python"));
+        assert_eq!(shebang_language("#!/usr/bin/env Rscript\n"), Some("r"));
+        assert_eq!(
+            shebang_language("#!/usr/bin/env node\n"),
+            Some("javascript")
+        );
+        assert_eq!(shebang_language("#!/usr/bin/env elixir\n"), Some("elixir"));
+        // Non-shebangs and unknown interpreters stay None (→ plain text).
+        assert_eq!(shebang_language("not a shebang\n"), None);
+        assert_eq!(shebang_language("#!/usr/bin/awk -f\n"), None);
+        assert_eq!(shebang_language("#!/usr/bin/env\n"), None);
+    }
+
+    #[test]
+    fn test_shebang_interpreter_targets_resolve() {
+        // Every language id produced by the interpreter table must exist in the
+        // built-in catalog, otherwise the fallback would silently no-op.
+        let registry = GrammarRegistry::default();
+        for name in [
+            "/bin/sh",
+            "/usr/bin/fish",
+            "/usr/bin/env python3",
+            "/usr/bin/env ruby",
+            "/usr/bin/perl",
+            "/usr/bin/env php",
+            "/usr/bin/env node",
+            "/usr/bin/env deno",
+            "/usr/bin/lua",
+            "/usr/bin/pwsh",
+            "/usr/bin/tclsh",
+            "/usr/bin/env groovy",
+            "/usr/bin/env elixir",
+            "/usr/bin/env Rscript",
+            "/usr/bin/env julia",
+            "/usr/bin/nu",
+            "/usr/bin/dart",
+        ] {
+            let line = format!("#!{name}\n");
+            let lang = shebang_language(&line)
+                .unwrap_or_else(|| panic!("expected an interpreter mapping for {line:?}"));
+            assert!(
+                registry.find_by_name(lang).is_some(),
+                "interpreter mapping {line:?} → {lang:?} must resolve to a catalog grammar",
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_by_path_detects_shebang_only_interpreters() {
+        // These interpreters have no syntect first-line regex; before the
+        // interpreter-table fallback an extensionless script fell through to
+        // plain text. Now `find_by_path` resolves them from the shebang alone.
+        let registry = GrammarRegistry::default();
+        let cases = [
+            ("#!/usr/bin/fish\n", "fish"),
+            ("#!/usr/bin/lua\n", "lua"),
+            ("#!/usr/bin/pwsh\n", "powershell"),
+            ("#!/usr/bin/tclsh\n", "tcl"),
+            ("#!/usr/bin/env groovy\n", "groovy"),
+            ("#!/usr/bin/env elixir\n", "elixir"),
+            ("#!/usr/bin/env Rscript\n", "r"),
+        ];
+        for (first_line, expected_id) in cases {
+            let entry = registry
+                .find_by_path(Path::new("scriptfile"), Some(first_line))
+                .unwrap_or_else(|| panic!("no grammar for {first_line:?}"));
+            assert_eq!(
+                entry.language_id, expected_id,
+                "shebang {first_line:?} should detect {expected_id:?}, got {:?}",
+                entry.language_id,
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_by_path_extension_still_wins_over_shebang() {
+        // The interpreter fallback must not override an explicit extension
+        // match — a `.py` file stays Python even with a shell shebang.
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("script.py"), Some("#!/bin/sh\n"))
+            .unwrap();
+        assert_eq!(entry.language_id, "python");
     }
 
     #[test]

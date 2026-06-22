@@ -44,6 +44,7 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
   * Opening the theme editor no longer breaks Orchestrator dock clicks/scrolling — plugin panels are scoped to their owning plugin.
   * Ctrl+Right-Click reports accurate theme keys for the status bar, tab bar, scrollbar, file explorer, menus, and dock, drawing above the dock.
   * The plugin bridge no longer corrupts integers larger than 32 bits (timestamps, byte offsets).
+* Shebang language detection now covers interpreters whose grammars ship no first-line regex — `#!/usr/bin/fish`, Lua, PowerShell, Tcl, Groovy, Elixir, R, Julia, Nushell, Dart, Deno, … — so extensionless scripts highlight from the shebang instead of falling through to plain text (#2357, reported by @shemgp). `env` indirection (`env -S`, `env VAR=val`) and versioned interpreters (`python3.11`) are handled; an existing extension match still wins.
 * Java (jdtls) and other Eclipse LSP4J servers: features registered via `client/registerCapability` now work — their string JSON-RPC ids were misparsed as notifications and dropped (#2340, reported by @maxandersen).
 * LSP/plugin popups follow the active theme's `popup_*` colors instead of a hard-wired dark background (#2379, by @peanball).
 * Paste falls back to the internal clipboard and works again on Termux (#2343, reported by @nightshade427).
