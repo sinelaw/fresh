@@ -100,21 +100,17 @@ fn plus_button_menu_captures_keyboard_and_filters_keys() {
     harness.assert_screen_contains("New Terminal");
 
     // The popup is modal: typing while it's open must be swallowed, not
-    // inserted into the active buffer underneath.
+    // inserted into the active buffer underneath. Observed on screen: the
+    // typed text never appears, and the status bar's cursor stays put.
     harness.type_text("ZZZ").unwrap();
     harness.render().unwrap();
-    assert_eq!(
-        harness.get_buffer_content().as_deref(),
-        Some(""),
-        "keystrokes leaked into the buffer while the '+' popup was open"
-    );
+    harness.assert_screen_not_contains("ZZZ");
+    harness.assert_screen_contains("Ln 1, Col 1");
     harness.assert_screen_contains("New Terminal");
 
     // Keyboard navigation drives the popup: Down highlights "New File",
     // Enter activates it (creating a second buffer) and closes the popup.
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::NONE)
-        .unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -160,14 +156,12 @@ fn tab_context_menu_captures_keyboard_and_filters_keys() {
     harness.mouse_right_click(2, 1).unwrap();
     harness.assert_screen_contains("Close Others");
 
-    // Modal: typing must not leak into the buffer underneath.
+    // Modal: typing must not leak into the buffer underneath. The menu
+    // overlaps the text area, so observe the status bar's cursor instead —
+    // it stays at "Ln 1, Col 1" rather than advancing to "Col 4".
     harness.type_text("QQQ").unwrap();
     harness.render().unwrap();
-    assert_eq!(
-        harness.get_buffer_content().as_deref(),
-        Some(""),
-        "keystrokes leaked into the buffer while the tab context menu was open"
-    );
+    harness.assert_screen_contains("Ln 1, Col 1");
     harness.assert_screen_contains("Close Others");
 
     // Esc dismisses the menu without taking any action.
