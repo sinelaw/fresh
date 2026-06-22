@@ -78,6 +78,7 @@ pub mod issue_2357_shebang_interpreter;
 pub mod issue_2362_replace_toolbar_theme;
 pub mod issue_2373_buffer_switcher_virtual;
 pub mod issue_2405_brackets_in_comments;
+pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod suspend_process;
