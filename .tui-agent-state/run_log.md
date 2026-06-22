@@ -2,6 +2,39 @@
 
 ---
 
+## Run #37 — 2026-06-22
+
+### Status: COMPLETED
+
+### What Was Done
+- Synced state (`tui-automated-testing-state`, pull --rebase clean). **Preflight:** playbook integrity OK (PER-RUN LOOP, ANTI-DRIFT RULES, ISSUE FILING STANDARDS, FALSE POSITIVE PATTERNS all present); GitHub MCP auth LIVE (`issue_read` #2307 returned); lessons continuity OK (topic-organized, intact).
+- **Build directive:** origin/master FORCE-UPDATED past Run #36's `1b5d7f8c8` → now **`42bfbb586` = v0.4.1**. Built release binary in `/tmp/fresh-build` worktree (`fresh 0.4.1`, exit 0). New 0.4.1 commits incl. `4b6e1d2f2` (#2307 fix), per-buffer view toggles `93ac8d5ff`, view persistence `233c5cb64` (#474), clipboard ANSI strip `7d636f1de`, LSP implementation `6df567f04`, remote/web-ui reconnect work.
+- **R1 (version changed → recheck the fix that landed): #2307 CONFIRMED FIXED.** Maintainer closed it 2026-06-21 (fix `4b6e1d2f2`). Reproduced the exact `default→emacs→default` keymap round-trip in the Keybinding Editor: default first-load = **875 bindings** (Plugin 392 / Keymap 261); after round-trip + reopen still **875 / Plugin 392** (the bug used to collapse to 547 / Plugin 0). Robust across a 2nd round-trip (`default→macos→default`). Commented "confirmed fixed in v0.4.1" on #2307; marked resolved in github_issues.md.
+- **R2 (advance new coverage): per-buffer view toggles (`93ac8d5ff`) + global View-toggle persistence #474 (`233c5cb64`) — COMPREHENSIVE PASS, no bug.**
+
+### NEW COVERAGE — Per-buffer "current buffer" view toggles + #474 persistence — PASS
+tmux `view_r37` (200×50), two files (`file1.txt` 5 short lines; `file2.txt` w/ a 313-char long line). Read commit intent + in-app command descriptions first.
+- Two palette cmds present (both builtin, no key): **"Toggle Line Numbers (Current Buffer)"**, **"Toggle Line Wrap (Current Buffer)"**.
+- **Line Numbers (Current Buffer):** on file2 → `Line numbers hidden`, `N │` gutter removed. Switch to file1 → **file1 still shows line numbers** (per-buffer scope holds). Switch back → file2 still hidden.
+- **Line Wrap (Current Buffer):** on file2 → `Line wrap disabled`, the 313-char line collapses from a wrapped continuation row to a single truncated row.
+- **Persistence across restart:** set BOTH overrides on file2, quit (Ctrl+Q) + relaunch WITHOUT `--no-restore` → file2 restored with gutter hidden + wrap off; file1 (no override) still follows global default.
+- **#474:** global **"Toggle Line Numbers"** (the non-"Current Buffer" cmd) now writes `{"editor":{"line_numbers":false}}` to `~/.config/fresh/config.json` and **survives restart** (file1, no override, shows no gutter after relaunch) — previously runtime-only and forgotten.
+
+### Issues filed
+- **None.** Both features behave correctly and as documented; #2307 confirmed fixed (comment only).
+
+### tmux gotchas (→ learning_db)
+- `--no-restore` skips SAVE too → next launch has nothing to restore. Test persistence WITHOUT `--no-restore` on both runs.
+- Palette `C-u`-clear-then-type is unreliable (once ran nothing → `No selection`); open fresh with `C-p`, type a unique prefix, verify the single match, then Enter.
+
+### Cleanup
+- Killed tmux `view_r37` + `fresh_qa_r37`; removed `/tmp/view_test_r37`, `/tmp/kb_test_r37`; reset `~/.config/fresh/config.json`. `/tmp/fresh-build` worktree retained for next run's incremental build.
+
+### NEXT (Run #38+, prefer freshest 0.4.1, top-down)
+- `7d636f1de` clipboard strips ANSI on default copy; `6df567f04` LSP `textDocument/implementation`; `77360e6c6` Shift+letter binding match when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims a column. Then prior backlog: (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition; (f) GDScript (#2238). #2197 only if a fix lands.
+
+---
+
 ## Run #33 — 2026-06-11
 
 ### Status: COMPLETED
