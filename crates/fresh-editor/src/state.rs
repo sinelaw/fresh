@@ -546,46 +546,19 @@ impl EditorState {
                 new_anchor,
                 new_sticky_column,
                 ..
-            } => {
-                if let Some(cursor) = cursors.get_mut(*cursor_id) {
-                    cursor.position = *new_position;
-                    cursor.anchor = *new_anchor;
-                    cursor.sticky_column = *new_sticky_column;
-                }
-
-                // Update primary cursor line number if this is the primary cursor
-                // Try to get exact line number from buffer, or estimate for large files
-                if *cursor_id == cursors.primary_id() {
-                    self.primary_cursor_line_number =
-                        match self.buffer.offset_to_position(*new_position) {
-                            Some(pos) => LineNumber::Absolute(pos.line),
-                            None => {
-                                // Large file without line metadata - estimate line number
-                                // Use default estimated_line_length of 80 bytes
-                                let estimated_line = *new_position / 80;
-                                LineNumber::Absolute(estimated_line)
-                            }
-                        };
-                }
-            }
+            } => self.apply_move_cursor(
+                cursors,
+                *cursor_id,
+                *new_position,
+                *new_anchor,
+                *new_sticky_column,
+            ),
 
             Event::AddCursor {
                 cursor_id,
                 position,
                 anchor,
-            } => {
-                let cursor = if let Some(anchor) = anchor {
-                    Cursor::with_selection(*anchor, *position)
-                } else {
-                    Cursor::new(*position)
-                };
-
-                // Insert cursor with the specific ID from the event
-                // This is important for undo/redo to work correctly
-                cursors.insert_with_id(*cursor_id, cursor);
-
-                cursors.normalize();
-            }
+            } => Self::apply_add_cursor(cursors, *cursor_id, *position, *anchor),
 
             Event::RemoveCursor { cursor_id, .. } => {
                 cursors.remove(*cursor_id);
@@ -641,38 +614,15 @@ impl EditorState {
                 message,
                 extend_to_line_end,
                 url,
-            } => {
-                tracing::trace!(
-                    "AddOverlay: namespace={:?}, range={:?}, face={:?}, priority={}",
-                    namespace,
-                    range,
-                    face,
-                    priority
-                );
-                // Convert event overlay face to overlay face
-                let overlay_face = convert_event_face_to_overlay_face(face);
-                tracing::trace!("Converted face: {:?}", overlay_face);
-
-                let mut overlay = Overlay::with_priority(
-                    &mut self.marker_list,
-                    range.clone(),
-                    overlay_face,
-                    *priority,
-                );
-                overlay.namespace = namespace.clone();
-                overlay.message = message.clone();
-                overlay.extend_to_line_end = *extend_to_line_end;
-                overlay.url = url.clone();
-
-                let actual_range = overlay.range(&self.marker_list);
-                tracing::trace!(
-                    "Created overlay with markers - actual range: {:?}, handle={:?}",
-                    actual_range,
-                    overlay.handle
-                );
-
-                self.overlays.add(overlay);
-            }
+            } => self.apply_add_overlay(
+                namespace,
+                range,
+                face,
+                *priority,
+                message,
+                *extend_to_line_end,
+                url,
+            ),
 
             Event::RemoveOverlay { handle } => {
                 tracing::trace!("RemoveOverlay: handle={:?}", handle);
@@ -694,22 +644,7 @@ impl EditorState {
                 self.overlays.clear(&mut self.marker_list);
             }
 
-            Event::ShowPopup { popup } => {
-                // The replay path has no theme handle, so we synthesize the
-                // popup with theme *defaults*. Editor-level callers
-                // (`Editor::apply_event_to_active_buffer`) intercept
-                // `Event::ShowPopup` *before* it reaches `state.apply` and
-                // build the popup with the live theme — see `event_apply.rs`.
-                // This arm is reached only when tests drive `state.apply`
-                // directly (no surrounding `Editor`).
-                use crate::view::theme::{default_popup_bg, default_popup_border_fg};
-                let popup_obj = convert_popup_data_to_popup(
-                    popup,
-                    default_popup_bg().into(),
-                    default_popup_border_fg().into(),
-                );
-                self.popups.show_or_replace(popup_obj);
-            }
+            Event::ShowPopup { popup } => self.apply_show_popup(popup),
 
             Event::HidePopup => {
                 self.popups.hide();
@@ -748,16 +683,7 @@ impl EditorState {
                 position,
                 content,
                 annotation_id,
-            } => {
-                let margin_position = convert_margin_position(position);
-                let margin_content = convert_margin_content(content);
-                let annotation = if let Some(id) = annotation_id {
-                    MarginAnnotation::with_id(*line, margin_position, margin_content, id.clone())
-                } else {
-                    MarginAnnotation::new(*line, margin_position, margin_content)
-                };
-                self.margins.add_annotation(annotation);
-            }
+            } => self.apply_add_margin_annotation(*line, position, content, annotation_id),
 
             Event::RemoveMarginAnnotation { annotation_id } => {
                 self.margins.remove_by_id(annotation_id);
@@ -806,86 +732,210 @@ impl EditorState {
                 edits,
                 displaced_markers,
                 ..
-            } => {
-                // Restore the target buffer state (piece tree + buffers) for this event.
-                // - For undo: snapshots are swapped, so new_snapshot is the original state
-                // - For redo: new_snapshot is the state after edits
-                // Restoring buffers alongside the tree is critical because
-                // consolidate_after_save() can replace buffers between snapshot and restore.
-                if let Some(snapshot) = new_snapshot {
-                    self.buffer.restore_buffer_state(snapshot);
-                }
+            } => self.apply_bulk_edit(cursors, new_snapshot, new_cursors, edits, displaced_markers),
+        }
+    }
 
-                // Replay marker adjustments from the edit list.
-                // For redo: same adjustments as the forward path.
-                // For undo: inverse() has swapped del/ins, so adjustments are reversed.
-                // Edits are in descending position order — process as-is so later
-                // positions are adjusted first (no cascading shift errors).
-                //
-                // For replacements (del > 0 AND ins > 0 at same position), we only
-                // adjust for the net delta to avoid the marker-at-boundary problem
-                // where sequential delete+insert pushes markers incorrectly.
-                for &(pos, del_len, ins_len) in edits {
-                    if del_len > 0 && ins_len > 0 {
-                        // Replacement: adjust by net delta only
-                        if ins_len > del_len {
-                            let net = ins_len - del_len;
-                            self.marker_list.adjust_for_insert(pos, net);
-                            self.margins.adjust_for_insert(pos, net);
-                        } else if del_len > ins_len {
-                            let net = del_len - ins_len;
-                            self.marker_list.adjust_for_delete(pos, net);
-                            self.margins.adjust_for_delete(pos, net);
-                        }
-                        // If equal: net delta 0, no adjustment needed
-                    } else if del_len > 0 {
-                        self.marker_list.adjust_for_delete(pos, del_len);
-                        self.margins.adjust_for_delete(pos, del_len);
-                    } else if ins_len > 0 {
-                        self.marker_list.adjust_for_insert(pos, ins_len);
-                        self.margins.adjust_for_insert(pos, ins_len);
+    /// Move `cursor_id` to a new position/anchor and keep the cached primary
+    /// cursor line number in sync. Split out of [`Self::apply`] so the
+    /// dispatcher stays a flat table of one-line arms.
+    fn apply_move_cursor(
+        &mut self,
+        cursors: &mut Cursors,
+        cursor_id: crate::model::event::CursorId,
+        new_position: usize,
+        new_anchor: Option<usize>,
+        new_sticky_column: usize,
+    ) {
+        if let Some(cursor) = cursors.get_mut(cursor_id) {
+            cursor.position = new_position;
+            cursor.anchor = new_anchor;
+            cursor.sticky_column = new_sticky_column;
+        }
+
+        // Update primary cursor line number if this is the primary cursor.
+        // Try to get exact line number from buffer, or estimate for large files.
+        if cursor_id == cursors.primary_id() {
+            self.primary_cursor_line_number = match self.buffer.offset_to_position(new_position) {
+                Some(pos) => LineNumber::Absolute(pos.line),
+                None => {
+                    // Large file without line metadata - estimate line number
+                    // using the default estimated_line_length of 80 bytes.
+                    LineNumber::Absolute(new_position / 80)
+                }
+            };
+        }
+    }
+
+    /// Insert a cursor under the exact id carried by the event. The id is
+    /// preserved (rather than freshly allocated) so undo/redo stays
+    /// deterministic.
+    fn apply_add_cursor(
+        cursors: &mut Cursors,
+        cursor_id: crate::model::event::CursorId,
+        position: usize,
+        anchor: Option<usize>,
+    ) {
+        let cursor = match anchor {
+            Some(anchor) => Cursor::with_selection(anchor, position),
+            None => Cursor::new(position),
+        };
+        cursors.insert_with_id(cursor_id, cursor);
+        cursors.normalize();
+    }
+
+    /// Materialize an `AddOverlay` event into a tracked [`Overlay`].
+    fn apply_add_overlay(
+        &mut self,
+        namespace: &Option<crate::view::overlay::OverlayNamespace>,
+        range: &Range<usize>,
+        face: &EventOverlayFace,
+        priority: i32,
+        message: &Option<String>,
+        extend_to_line_end: bool,
+        url: &Option<String>,
+    ) {
+        let overlay_face = convert_event_face_to_overlay_face(face);
+        let mut overlay =
+            Overlay::with_priority(&mut self.marker_list, range.clone(), overlay_face, priority);
+        overlay.namespace = namespace.clone();
+        overlay.message = message.clone();
+        overlay.extend_to_line_end = extend_to_line_end;
+        overlay.url = url.clone();
+        self.overlays.add(overlay);
+    }
+
+    /// Show a popup synthesized from replayed [`PopupData`].
+    ///
+    /// The replay path has no theme handle, so the popup is built with theme
+    /// *defaults*. Editor-level callers
+    /// (`Editor::apply_event_to_active_buffer`) intercept `Event::ShowPopup`
+    /// *before* it reaches `state.apply` and build the popup with the live
+    /// theme — see `event_apply.rs`. This is reached only when tests drive
+    /// `state.apply` directly (no surrounding `Editor`).
+    fn apply_show_popup(&mut self, popup: &PopupData) {
+        use crate::view::theme::{default_popup_bg, default_popup_border_fg};
+        let popup_obj = convert_popup_data_to_popup(
+            popup,
+            default_popup_bg().into(),
+            default_popup_border_fg().into(),
+        );
+        self.popups.show_or_replace(popup_obj);
+    }
+
+    /// Add a margin annotation, reusing the event-supplied id when present.
+    fn apply_add_margin_annotation(
+        &mut self,
+        line: usize,
+        position: &MarginPositionData,
+        content: &MarginContentData,
+        annotation_id: &Option<String>,
+    ) {
+        let margin_position = convert_margin_position(position);
+        let margin_content = convert_margin_content(content);
+        let annotation = match annotation_id {
+            Some(id) => {
+                MarginAnnotation::with_id(line, margin_position, margin_content, id.clone())
+            }
+            None => MarginAnnotation::new(line, margin_position, margin_content),
+        };
+        self.margins.add_annotation(annotation);
+    }
+
+    /// Replay a bulk (undo/redo) edit: restore the buffer snapshot, replay the
+    /// marker/margin adjustments, restore displaced markers, drop ephemeral
+    /// decorations, and move the cursors to their recorded positions.
+    fn apply_bulk_edit(
+        &mut self,
+        cursors: &mut Cursors,
+        new_snapshot: &Option<Arc<crate::model::buffer::BufferSnapshot>>,
+        new_cursors: &[(crate::model::event::CursorId, usize, Option<usize>)],
+        edits: &[(usize, usize, usize)],
+        displaced_markers: &[(u64, usize)],
+    ) {
+        // Restore the target buffer state (piece tree + buffers) for this event.
+        // - For undo: snapshots are swapped, so new_snapshot is the original state
+        // - For redo: new_snapshot is the state after edits
+        // Restoring buffers alongside the tree is critical because
+        // consolidate_after_save() can replace buffers between snapshot and restore.
+        if let Some(snapshot) = new_snapshot {
+            self.buffer.restore_buffer_state(snapshot);
+        }
+
+        self.replay_bulk_marker_adjustments(edits);
+
+        // Restore displaced markers to their original positions.
+        // This fixes markers that were inside a deleted range and collapsed
+        // to the deletion boundary — they're now moved back to their exact
+        // original positions after the text has been restored by undo.
+        if !displaced_markers.is_empty() {
+            self.restore_displaced_markers(displaced_markers);
+        }
+
+        // Clear ephemeral decorations — their source systems will re-push
+        // correct positions after the edit notification.
+        self.virtual_texts.clear(&mut self.marker_list);
+
+        use crate::view::overlay::OverlayNamespace;
+        let namespaces = ["lsp-diagnostic", "reference-highlight", "bracket-highlight"];
+        for ns in &namespaces {
+            self.overlays.clear_namespace(
+                &OverlayNamespace::from_string(ns.to_string()),
+                &mut self.marker_list,
+            );
+        }
+
+        // Update cursor positions
+        for &(cursor_id, position, anchor) in new_cursors {
+            if let Some(cursor) = cursors.get_mut(cursor_id) {
+                cursor.position = position;
+                cursor.anchor = anchor;
+            }
+        }
+
+        // Invalidate highlight cache for entire buffer
+        self.highlighter.invalidate_all();
+
+        // Update primary cursor line number
+        let primary_pos = cursors.primary().position;
+        self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_pos) {
+            Some(pos) => LineNumber::Absolute(pos.line),
+            None => LineNumber::Absolute(0),
+        };
+    }
+
+    /// Replay the marker and margin position adjustments recorded for a bulk
+    /// edit.
+    ///
+    /// `edits` are `(position, delete_len, insert_len)` tuples in descending
+    /// position order, so processing them as-is adjusts later positions first
+    /// and avoids cascading shift errors. Replacements (both lengths non-zero
+    /// at the same position) are collapsed to their net delta to avoid the
+    /// marker-at-boundary problem where a sequential delete+insert pushes
+    /// markers incorrectly.
+    fn replay_bulk_marker_adjustments(&mut self, edits: &[(usize, usize, usize)]) {
+        for &(pos, del_len, ins_len) in edits {
+            match (del_len, ins_len) {
+                (d, i) if d > 0 && i > 0 => {
+                    // Replacement: adjust by net delta only.
+                    if i > d {
+                        self.marker_list.adjust_for_insert(pos, i - d);
+                        self.margins.adjust_for_insert(pos, i - d);
+                    } else if d > i {
+                        self.marker_list.adjust_for_delete(pos, d - i);
+                        self.margins.adjust_for_delete(pos, d - i);
                     }
+                    // Equal lengths: net delta 0, no adjustment needed.
                 }
-
-                // Restore displaced markers to their original positions.
-                // This fixes markers that were inside a deleted range and collapsed
-                // to the deletion boundary — they're now moved back to their exact
-                // original positions after the text has been restored by undo.
-                if !displaced_markers.is_empty() {
-                    self.restore_displaced_markers(displaced_markers);
+                (d, _) if d > 0 => {
+                    self.marker_list.adjust_for_delete(pos, d);
+                    self.margins.adjust_for_delete(pos, d);
                 }
-
-                // Clear ephemeral decorations — their source systems will re-push
-                // correct positions after the edit notification.
-                self.virtual_texts.clear(&mut self.marker_list);
-
-                use crate::view::overlay::OverlayNamespace;
-                let namespaces = ["lsp-diagnostic", "reference-highlight", "bracket-highlight"];
-                for ns in &namespaces {
-                    self.overlays.clear_namespace(
-                        &OverlayNamespace::from_string(ns.to_string()),
-                        &mut self.marker_list,
-                    );
+                (_, i) if i > 0 => {
+                    self.marker_list.adjust_for_insert(pos, i);
+                    self.margins.adjust_for_insert(pos, i);
                 }
-
-                // Update cursor positions
-                for (cursor_id, position, anchor) in new_cursors {
-                    if let Some(cursor) = cursors.get_mut(*cursor_id) {
-                        cursor.position = *position;
-                        cursor.anchor = *anchor;
-                    }
-                }
-
-                // Invalidate highlight cache for entire buffer
-                self.highlighter.invalidate_all();
-
-                // Update primary cursor line number
-                let primary_pos = cursors.primary().position;
-                self.primary_cursor_line_number = match self.buffer.offset_to_position(primary_pos)
-                {
-                    Some(pos) => crate::model::buffer::LineNumber::Absolute(pos.line),
-                    None => crate::model::buffer::LineNumber::Absolute(0),
-                };
+                _ => {}
             }
         }
     }
