@@ -729,7 +729,7 @@ impl crate::app::window::Window {
 
         // Best-effort directory creation for terminal backing files
         #[allow(clippy::let_underscore_must_use)]
-        let _ = self.authority().filesystem.create_dir_all(
+        let _ = crate::app::terminal::terminal_backing_fs().create_dir_all(
             log_path
                 .parent()
                 .or_else(|| backing_path.parent())
@@ -841,7 +841,7 @@ impl crate::app::window::Window {
             large_file_threshold,
             &self.resources.grammar_registry,
             &self.resources.config.languages,
-            std::sync::Arc::clone(&self.authority().filesystem),
+            crate::app::terminal::terminal_backing_fs(),
         ) {
             self.install_terminal_buffer_state(buffer_id, new_state);
         }
@@ -1639,9 +1639,7 @@ impl crate::app::window::Window {
                     // lines a resize spilled into history on a terminal that was
                     // never viewed before quitting) so a restored workspace keeps
                     // the full scrollback.
-                    if let Ok(mut file) = self
-                        .authority()
-                        .filesystem
+                    if let Ok(mut file) = crate::app::terminal::terminal_backing_fs()
                         .open_file_for_append(&backing_path)
                     {
                         let mut writer = BufWriter::new(&mut *file);
@@ -1654,9 +1652,7 @@ impl crate::app::window::Window {
                         }
                     }
 
-                    if let Ok(mut file) = self
-                        .authority()
-                        .filesystem
+                    if let Ok(mut file) = crate::app::terminal::terminal_backing_fs()
                         .open_file_for_append(&backing_path)
                     {
                         let mut writer = BufWriter::new(&mut *file);

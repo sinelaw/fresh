@@ -103,7 +103,7 @@ impl Editor {
                 if backing_file.as_ref() != Some(&log_file) {
                     // Best-effort cleanup of temporary terminal files.
                     #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.authority().filesystem.remove_file(&log_file);
+                    let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
                 }
             }
 
@@ -1159,7 +1159,7 @@ impl Editor {
             .unwrap_or(0);
         let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
         #[allow(clippy::let_underscore_must_use)]
-        let _ = self.authority().filesystem.rename(path, &retained);
+        let _ = crate::app::terminal::terminal_backing_fs().rename(path, &retained);
         self.gc_retained_terminal_backings(parent);
     }
 
@@ -1169,7 +1169,7 @@ impl Editor {
     /// backing files (no `-closed-` marker) are never touched.
     fn gc_retained_terminal_backings(&self, dir: &std::path::Path) {
         const MAX_RETAINED: usize = 200;
-        let Ok(entries) = self.authority().filesystem.read_dir(dir) else {
+        let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir) else {
             return;
         };
         let mut retained: Vec<(u128, std::path::PathBuf)> = entries
@@ -1188,7 +1188,7 @@ impl Editor {
         let remove_count = retained.len() - MAX_RETAINED;
         for (_, p) in retained.into_iter().take(remove_count) {
             #[allow(clippy::let_underscore_must_use)]
-            let _ = self.authority().filesystem.remove_file(&p);
+            let _ = crate::app::terminal::terminal_backing_fs().remove_file(&p);
         }
     }
 }

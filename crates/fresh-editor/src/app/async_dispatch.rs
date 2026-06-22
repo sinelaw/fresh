@@ -840,10 +840,8 @@ impl Editor {
                 .get(&terminal_id)
                 .cloned()
             {
-                if let Ok(mut file) = self
-                    .authority()
-                    .filesystem
-                    .open_file_for_append(&backing_path)
+                if let Ok(mut file) =
+                    crate::app::terminal::terminal_backing_fs().open_file_for_append(&backing_path)
                 {
                     use std::io::Write;
                     if let Err(e) = file.write_all(exit_msg.as_bytes()) {

@@ -32,6 +32,29 @@ use crate::state::EditorState;
 use crate::view::split::SplitViewState;
 use rust_i18n::t;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Filesystem for terminal scrollback backing/log files.
+///
+/// The integrated terminal's PTY is always spawned on the **local** host —
+/// even an SSH terminal runs `ssh` as a *local* child process — and the PTY
+/// read loop renders scrollback into the backing file on the local disk via
+/// `std::fs` (`services/terminal/manager.rs`). Those files therefore always
+/// live on the local machine, at a path under the local `data_dir`,
+/// independent of the session's (possibly remote) authority filesystem.
+///
+/// Routing their create / append / truncate / read through the *remote*
+/// authority filesystem (issue #2424) made every scrollback-mode toggle do a
+/// blocking SSH round-trip against a path that only exists locally: it hung
+/// the UI for the round-trip and failed with "Failed to truncate terminal
+/// backing file", leaving the scrollback view empty. Always use this local
+/// handle for terminal backing/log files so it stays consistent with the read
+/// loop. This honours the "use the `FileSystem` trait" rule (it returns a
+/// trait object, never raw `std::fs` at the call site) while pinning the
+/// backend to local — the correct backend for a local artifact.
+pub(crate) fn terminal_backing_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
+    Arc::new(crate::model::filesystem::StdFileSystem)
+}
 
 /// How often [`Window::sync_terminal_titles`] polls each terminal's
 /// foreground process group for tmux-style tab auto-naming. Frequent enough
@@ -165,7 +188,7 @@ impl Window {
 
         let working_dir = cwd.unwrap_or_else(|| self.root.clone());
         let terminal_root = self.resources.dir_context.terminal_dir_for(&working_dir);
-        if let Err(e) = self.authority().filesystem.create_dir_all(&terminal_root) {
+        if let Err(e) = terminal_backing_fs().create_dir_all(&terminal_root) {
             tracing::warn!("Failed to create terminal directory: {}", e);
         }
 
@@ -257,7 +280,7 @@ impl Window {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.resources.dir_context.terminal_dir_for(&self.root);
-                if let Err(e) = self.authority().filesystem.create_dir_all(&root) {
+                if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
                 root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
@@ -266,8 +289,8 @@ impl Window {
         // Ensure the file exists — but DON'T truncate if it already has
         // content. The PTY read loop may have already started writing
         // scrollback.
-        if !self.authority().filesystem.exists(&backing_file) {
-            if let Err(e) = self.authority().filesystem.write_file(&backing_file, &[]) {
+        if !terminal_backing_fs().exists(&backing_file) {
+            if let Err(e) = terminal_backing_fs().write_file(&backing_file, &[]) {
                 tracing::warn!("Failed to create terminal backing file: {}", e);
             }
         }
@@ -277,7 +300,7 @@ impl Window {
 
         let mut state = EditorState::new_with_path(
             large_file_threshold,
-            std::sync::Arc::clone(&self.authority().filesystem),
+            terminal_backing_fs(),
             backing_file.clone(),
         );
         state.margins.configure_for_line_numbers(false);
@@ -717,21 +740,21 @@ impl Window {
             .cloned()
             .unwrap_or_else(|| {
                 let root = self.resources.dir_context.terminal_dir_for(&self.root);
-                if let Err(e) = self.authority().filesystem.create_dir_all(&root) {
+                if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
                 root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
             });
 
-        if !self.authority().filesystem.exists(&backing_file) {
-            if let Err(e) = self.authority().filesystem.write_file(&backing_file, &[]) {
+        if !terminal_backing_fs().exists(&backing_file) {
+            if let Err(e) = terminal_backing_fs().write_file(&backing_file, &[]) {
                 tracing::warn!("Failed to create terminal backing file: {}", e);
             }
         }
 
         let mut state = EditorState::new_with_path(
             large_file_threshold,
-            std::sync::Arc::clone(&self.authority().filesystem),
+            terminal_backing_fs(),
             backing_file.clone(),
         );
         state.margins.configure_for_line_numbers(false);
@@ -976,7 +999,7 @@ impl Editor {
             if let Some(ref path) = backing_file {
                 // Best-effort cleanup of temporary terminal files.
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = self.authority().filesystem.remove_file(path);
+                let _ = terminal_backing_fs().remove_file(path);
             }
             // Clean up raw log file
             if let Some(log_file) = self
@@ -987,7 +1010,7 @@ impl Editor {
                 if backing_file.as_ref() != Some(&log_file) {
                     // Best-effort cleanup of temporary terminal files.
                     #[allow(clippy::let_underscore_must_use)]
-                    let _ = self.authority().filesystem.remove_file(&log_file);
+                    let _ = terminal_backing_fs().remove_file(&log_file);
                 }
             }
 
@@ -1230,10 +1253,8 @@ impl Editor {
                             let truncate_pos = state.backing_file_history_end();
                             // Always truncate to remove appended visible screen
                             // (even if truncate_pos is 0, meaning no scrollback yet)
-                            if let Err(e) = self
-                                .authority()
-                                .filesystem
-                                .set_file_length(backing_path, truncate_pos)
+                            if let Err(e) =
+                                terminal_backing_fs().set_file_length(backing_path, truncate_pos)
                             {
                                 tracing::warn!("Failed to truncate terminal backing file: {}", e);
                             }
@@ -1507,11 +1528,7 @@ impl Window {
                 // screen into history. The PTY read loop also flushes on output,
                 // but an idle terminal that was only resized has pending lines;
                 // capturing them here guarantees the scroll-back view is complete.
-                if let Ok(mut file) = self
-                    .authority()
-                    .filesystem
-                    .open_file_for_append(&backing_file)
-                {
+                if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
                     if let Err(e) = state.flush_new_scrollback(&mut writer) {
                         tracing::error!("Failed to flush terminal scrollback: {}", e);
@@ -1520,17 +1537,13 @@ impl Window {
 
                 // Record the current file size as the history end point
                 // (before appending visible screen) so we can truncate back to it
-                if let Ok(metadata) = self.authority().filesystem.metadata(&backing_file) {
+                if let Ok(metadata) = terminal_backing_fs().metadata(&backing_file) {
                     state.set_backing_file_history_end(metadata.size);
                     history_end_byte = Some(metadata.size);
                 }
 
                 // Open backing file in append mode to add visible screen
-                if let Ok(mut file) = self
-                    .authority()
-                    .filesystem
-                    .open_file_for_append(&backing_file)
-                {
+                if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
                     if let Err(e) = state.append_visible_screen(&mut writer) {
                         tracing::error!("Failed to append visible screen to backing file: {}", e);
@@ -1548,7 +1561,7 @@ impl Window {
             large_file_threshold,
             &self.resources.grammar_registry,
             &self.resources.config.languages,
-            std::sync::Arc::clone(&self.authority().filesystem),
+            terminal_backing_fs(),
         ) {
             let total_bytes = new_state.buffer.total_bytes();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {

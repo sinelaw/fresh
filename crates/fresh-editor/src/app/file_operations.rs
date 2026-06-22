@@ -1128,6 +1128,17 @@ impl Editor {
             .map(|s| (s.buffer_settings.clone(), s.editing_disabled))
             .unwrap_or_default();
 
+        // Reload through the *buffer's own* filesystem rather than the
+        // session authority's. For normal files these are the same handle
+        // (buffers are created with the authority fs), so behaviour is
+        // unchanged — but terminal scrollback buffers are backed by a local
+        // file (see `terminal_backing_fs`), and reverting those through a
+        // remote authority would read a path that only exists locally.
+        let fs = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|s| std::sync::Arc::clone(s.buffer.filesystem()))
+            .unwrap_or_else(|| std::sync::Arc::clone(&self.authority().filesystem));
         // Load the file content fresh from disk
         let mut new_state = EditorState::from_file_with_languages(
             path,
@@ -1136,7 +1147,7 @@ impl Editor {
             self.config.editor.large_file_threshold_bytes as usize,
             &self.grammar_registry,
             &self.config.languages,
-            std::sync::Arc::clone(&self.authority().filesystem),
+            fs,
         )?;
 
         // Get the new file size for clamping
