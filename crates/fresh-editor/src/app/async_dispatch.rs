@@ -2,8 +2,9 @@
 //!
 //! `process_async_messages` runs each frame and drains the AsyncBridge,
 //! routing each AsyncMessage to its handler — LSP responses,
-//! initialization/errors, plugin commands, filesystem polling, etc.
-//! ~650 lines of `match`-armed dispatch.
+//! initialization/errors, plugin commands, filesystem polling, etc. The
+//! `match` is a thin dispatch table: every arm forwards to a `handle_*`
+//! method on `Editor` that owns the actual logic for that variant.
 
 use rust_i18n::t;
 
@@ -141,94 +142,14 @@ impl Editor {
                     server_name,
                     capabilities,
                 } => {
-                    tracing::info!(
-                        "LSP server '{}' initialized for language: {}",
-                        server_name,
-                        language
-                    );
-                    self.active_window_mut().status_message =
-                        Some(format!("LSP ({}) ready", language));
-
-                    // Store capabilities on the specific server handle
-                    let __active_id = self.active_window;
-                    if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
-                        lsp.set_server_capabilities(&language, &server_name, capabilities);
-                    }
-
-                    // Send didOpen for all open buffers of this language
-                    self.resend_did_open_for_language(&language);
-                    self.request_semantic_tokens_for_language(&language);
-                    self.request_folding_ranges_for_language(&language);
-                    // Now that capabilities are known, kick off inlay hints
-                    // and pull-diagnostics for buffers that opened before the
-                    // `initialize` handshake completed. Both paths route
-                    // through `handle_for_feature_mut`, so servers that
-                    // didn't advertise the capability are skipped.
-                    self.request_inlay_hints_for_language(&language);
-                    self.pull_diagnostics_for_language(&language);
+                    self.handle_lsp_initialized(language, server_name, capabilities);
                 }
                 AsyncMessage::LspError {
                     language,
                     error,
                     stderr_log_path,
                 } => {
-                    tracing::error!("LSP error for {}: {}", language, error);
-                    self.active_window_mut().status_message =
-                        Some(format!("LSP error ({}): {}", language, error));
-
-                    // Get server command from config for the hook
-                    let server_command = self
-                        .config
-                        .lsp
-                        .get(&language)
-                        .and_then(|configs| configs.as_slice().first())
-                        .map(|c| c.command.clone())
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    // Determine error type from error message
-                    let error_type = if error.contains("not found") || error.contains("NotFound") {
-                        "not_found"
-                    } else if error.contains("permission") || error.contains("PermissionDenied") {
-                        "spawn_failed"
-                    } else if error.contains("timeout") {
-                        "timeout"
-                    } else {
-                        "spawn_failed"
-                    }
-                    .to_string();
-
-                    // Fire the LspServerError hook for plugins
-                    self.plugin_manager.read().unwrap().run_hook(
-                        "lsp_server_error",
-                        crate::services::plugins::hooks::HookArgs::LspServerError {
-                            language: language.clone(),
-                            server_command,
-                            error_type,
-                            message: error.clone(),
-                        },
-                    );
-
-                    // Open stderr log as read-only buffer if it exists and has content
-                    // Opens in background (new tab) without stealing focus
-                    if let Some(log_path) = stderr_log_path {
-                        let has_content = log_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
-                        if has_content {
-                            tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
-                            match self.open_file_no_focus(&log_path) {
-                                Ok(buffer_id) => {
-                                    self.active_window_mut()
-                                        .mark_buffer_read_only(buffer_id, true);
-                                    self.active_window_mut().status_message = Some(format!(
-                                        "LSP error ({}): {} - See stderr log",
-                                        language, error
-                                    ));
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to open LSP stderr log: {}", e);
-                                }
-                            }
-                        }
-                    }
+                    self.handle_lsp_error(language, error, stderr_log_path);
                 }
                 AsyncMessage::LspCompletion { request_id, items } => {
                     if let Err(e) = self.handle_completion_response(request_id, items) {
@@ -285,33 +206,14 @@ impl Editor {
                     self.handle_code_actions_response(request_id, actions);
                 }
                 AsyncMessage::LspApplyEdit { edit, label } => {
-                    tracing::info!("Applying workspace edit from server (label: {:?})", label);
-                    match self.apply_workspace_edit(edit) {
-                        Ok(n) => {
-                            if let Some(label) = label {
-                                self.set_status_message(
-                                    t!("lsp.code_action_applied", title = &label, count = n)
-                                        .to_string(),
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to apply workspace edit: {}", e);
-                        }
-                    }
+                    self.handle_lsp_apply_edit(edit, label);
                 }
                 AsyncMessage::LspCodeActionResolved {
                     request_id: _,
                     action,
-                } => match action {
-                    Ok(resolved) => {
-                        self.execute_resolved_code_action(resolved);
-                    }
-                    Err(e) => {
-                        tracing::warn!("codeAction/resolve failed: {}", e);
-                        self.set_status_message(format!("Code action resolve failed: {e}"));
-                    }
-                },
+                } => {
+                    self.handle_lsp_code_action_resolved(action);
+                }
                 AsyncMessage::LspCompletionResolved {
                     request_id: _,
                     item,
@@ -412,71 +314,7 @@ impl Editor {
                     self.handle_file_explorer_expanded_to_path(window, view);
                 }
                 AsyncMessage::Plugin(plugin_msg) => {
-                    use fresh_core::api::{JsCallbackId, PluginAsyncMessage};
-                    match plugin_msg {
-                        PluginAsyncMessage::ProcessOutput {
-                            process_id,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        } => {
-                            self.handle_plugin_process_output(
-                                JsCallbackId::from(process_id),
-                                stdout,
-                                stderr,
-                                exit_code,
-                            );
-                        }
-                        PluginAsyncMessage::DelayComplete { callback_id } => {
-                            self.plugin_manager.read().unwrap().resolve_callback(
-                                JsCallbackId::from(callback_id),
-                                "null".to_string(),
-                            );
-                        }
-                        PluginAsyncMessage::ProcessStdout { process_id, data } => {
-                            self.plugin_manager.read().unwrap().run_hook(
-                                "onProcessStdout",
-                                crate::services::plugins::hooks::HookArgs::ProcessOutput {
-                                    process_id,
-                                    data,
-                                },
-                            );
-                        }
-                        PluginAsyncMessage::ProcessStderr { process_id, data } => {
-                            self.plugin_manager.read().unwrap().run_hook(
-                                "onProcessStderr",
-                                crate::services::plugins::hooks::HookArgs::ProcessOutput {
-                                    process_id,
-                                    data,
-                                },
-                            );
-                        }
-                        PluginAsyncMessage::ProcessExit {
-                            process_id,
-                            callback_id,
-                            exit_code,
-                        } => {
-                            self.background_process_handles.remove(&process_id);
-                            let result = fresh_core::api::BackgroundProcessResult {
-                                process_id,
-                                exit_code,
-                            };
-                            self.plugin_manager.read().unwrap().resolve_callback(
-                                JsCallbackId::from(callback_id),
-                                serde_json::to_string(&result).unwrap(),
-                            );
-                        }
-                        PluginAsyncMessage::LspResponse {
-                            language: _,
-                            request_id,
-                            result,
-                        } => {
-                            self.handle_plugin_lsp_response(request_id, result);
-                        }
-                        PluginAsyncMessage::PluginResponse(response) => {
-                            self.handle_plugin_response(response);
-                        }
-                    }
+                    self.handle_plugin_async_message(plugin_msg);
                 }
                 AsyncMessage::LspProgress {
                     language,
@@ -517,216 +355,16 @@ impl Editor {
                     self.resolve_pending_paste(request_id, text);
                 }
                 AsyncMessage::TerminalOutput { terminal } => {
-                    // The message carries its owning window: terminal ids
-                    // collide across windows, so we trust the tag rather
-                    // than scanning windows for a matching id (which would
-                    // attribute output to the wrong session).
-                    let terminal_id = terminal.terminal;
-                    let owner = terminal.window;
-                    // Terminal output received - check if we should auto-jump back to terminal mode
-                    tracing::trace!("Terminal output received for {}", terminal);
-
-                    // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
-                    // automatically re-enter terminal mode
-                    if self.config.terminal.jump_to_end_on_output
-                        && !self.active_window().terminal_mode
-                    {
-                        // Check if active buffer is this terminal
-                        if let Some(&active_terminal_id) = self
-                            .active_window()
-                            .terminal_buffers
-                            .get(&self.active_buffer())
-                        {
-                            if active_terminal_id == terminal_id {
-                                self.enter_terminal_mode();
-                            }
-                        }
-                    }
-
-                    // When in terminal mode, ensure display stays at bottom (follows new output)
-                    if self.active_window().terminal_mode {
-                        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id)
-                        {
-                            if let Ok(mut state) = handle.state.lock() {
-                                state.scroll_to_bottom();
-                            }
-                        }
-                    }
-
-                    // Notify plugins, attributing output to the owning
-                    // *session* even when it's a background one (terminals
-                    // live in their own window's manager, not the active
-                    // window's). Snapshot the cursor row's text from that
-                    // same window so prompt detection works off-focus too.
-                    // The grid lock is released before `run_hook` runs to
-                    // avoid holding it across plugin code.
-                    let last_line = self
-                        .windows
-                        .get(&owner)
-                        .and_then(|w| w.terminal_manager.get(terminal_id))
-                        .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
-                        .unwrap_or_default();
-                    self.plugin_manager.read().unwrap().run_hook(
-                        "terminal_output",
-                        crate::services::plugins::hooks::HookArgs::TerminalOutput {
-                            terminal_id: terminal_id.0 as u64,
-                            window_id: owner.0,
-                            last_line,
-                        },
-                    );
+                    self.handle_terminal_output(terminal);
                 }
                 AsyncMessage::PathChanged { handle, path, kind } => {
-                    self.last_path_change_for_test = Some((handle, path.clone(), kind.as_str()));
-                    self.plugin_manager.read().unwrap().run_hook(
-                        "path_changed",
-                        crate::services::plugins::hooks::HookArgs::PathChanged {
-                            handle,
-                            path: path.to_string_lossy().into_owned(),
-                            kind: kind.as_str().to_owned(),
-                        },
-                    );
+                    self.handle_path_changed(handle, path, kind);
                 }
                 AsyncMessage::TerminalExited {
                     terminal,
                     exit_code,
                 } => {
-                    // The message is tagged with its owning window, so the
-                    // plugin hook is attributed correctly even for a
-                    // background session's terminal.
-                    let terminal_id = terminal.terminal;
-                    let exited_window_id = terminal.window;
-                    tracing::info!("Terminal {} exited", terminal);
-                    // A remote-agent window whose carrier just dropped: its
-                    // embedded PTY (a separate `ssh -t` from the agent channel)
-                    // died with the link, not because the user exited the shell.
-                    // Keep the buffer↔terminal binding (and the backing/command
-                    // maps, which this handler already leaves intact) so a later
-                    // reconnect can respawn it in place over the new authority
-                    // (`respawn_terminals_through_authority`). Removing it here
-                    // would strand the buffer as a dead read-only tab with no way
-                    // back. A normal exit (remote still connected, or any local
-                    // terminal) falls through to the usual permanent teardown.
-                    let preserve_for_reconnect = matches!(
-                        self.active_window().authority_spec,
-                        crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
-                    ) && !self
-                        .active_window()
-                        .authority()
-                        .filesystem
-                        .is_remote_connected();
-                    // Find the buffer associated with this terminal
-                    if let Some((&buffer_id, _)) = self
-                        .active_window()
-                        .terminal_buffers
-                        .iter()
-                        .find(|(_, &tid)| tid == terminal_id)
-                    {
-                        // Exit terminal mode if this is the active buffer
-                        if self.active_buffer() == buffer_id && self.active_window().terminal_mode {
-                            self.active_window_mut().terminal_mode = false;
-                            self.active_window_mut().key_context =
-                                crate::input::keybindings::KeyContext::Normal;
-                        }
-
-                        // Sync terminal content to buffer (final screen state)
-                        self.active_window_mut().sync_terminal_to_buffer(buffer_id);
-
-                        // Append exit message to the backing file and reload
-                        let exit_msg = "\n[Terminal process exited]\n";
-
-                        if let Some(backing_path) = self
-                            .active_window()
-                            .terminal_backing_files
-                            .get(&terminal_id)
-                            .cloned()
-                        {
-                            if let Ok(mut file) = self
-                                .authority()
-                                .filesystem
-                                .open_file_for_append(&backing_path)
-                            {
-                                use std::io::Write;
-                                if let Err(e) = file.write_all(exit_msg.as_bytes()) {
-                                    tracing::warn!("Failed to write terminal exit message: {}", e);
-                                }
-                            }
-
-                            // Force reload buffer from file to pick up the exit message
-                            if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
-                                tracing::warn!("Failed to revert terminal buffer: {}", e);
-                            }
-
-                            // After revert, scroll the viewport so the just-
-                            // appended exit message is visible. sync_terminal_to_buffer
-                            // pinned the viewport to the start of the visible screen
-                            // (so exit is pixel-identical to the last live frame); the
-                            // exit message is appended *after* that pinned region,
-                            // so we have to deliberately scroll past the pin to bring
-                            // it on-screen. Move the cursor to the new end-of-buffer
-                            // and clear the skip_ensure_visible flag the sync path
-                            // armed; the next render's ensure_visible will then scroll
-                            // the cursor (and the exit-message line above it) into
-                            // view.
-                            let new_total = self
-                                .windows
-                                .get(&self.active_window)
-                                .and_then(|w| w.buffers.get(&buffer_id))
-                                .map(|s| s.buffer.total_bytes())
-                                .unwrap_or(0);
-                            if let Some((mgr, view_states)) = self
-                                .windows
-                                .get_mut(&self.active_window)
-                                .map(|w| &mut w.buffers)
-                                .expect("active window present")
-                                .splits_mut()
-                            {
-                                let active_split = mgr.active_split();
-                                if let Some(view_state) = view_states.get_mut(&active_split) {
-                                    view_state.cursors.primary_mut().position = new_total;
-                                    view_state.viewport.clear_skip_ensure_visible();
-                                }
-                            }
-                        }
-
-                        // Ensure buffer remains read-only with no line numbers
-                        if let Some(state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .map(|w| &mut w.buffers)
-                            .expect("active window present")
-                            .get_mut(&buffer_id)
-                        {
-                            state.editing_disabled = true;
-                            state.margins.configure_for_line_numbers(false);
-                            state.buffer.set_modified(false);
-                        }
-
-                        // Remove from terminal_buffers so it's no longer treated
-                        // as a terminal — unless we're holding it for a remote
-                        // reconnect to respawn in place (see above).
-                        if !preserve_for_reconnect {
-                            self.active_window_mut().terminal_buffers.remove(&buffer_id);
-                        }
-
-                        self.set_status_message(
-                            t!("terminal.exited", id = terminal_id.0).to_string(),
-                        );
-                    }
-                    self.active_window_mut().terminal_manager.close(terminal_id);
-
-                    // Notify plugins after the editor's own exit handling
-                    // is complete. Orchestrator's state machine reads this
-                    // to transition agents to READY (code 0) or ERRORED.
-                    // `exit_code` is currently always `None` here; full
-                    // wait-status capture is a follow-up commit.
-                    self.plugin_manager.read().unwrap().run_hook(
-                        "terminal_exit",
-                        crate::services::plugins::hooks::HookArgs::TerminalExited {
-                            terminal_id: terminal_id.0 as u64,
-                            window_id: exited_window_id.0,
-                            exit_code,
-                        },
-                    );
+                    self.handle_terminal_exited(terminal, exit_code);
                 }
 
                 AsyncMessage::LspServerRequest {
@@ -745,173 +383,14 @@ impl Editor {
                     self.handle_plugin_lsp_response(request_id, result);
                 }
                 AsyncMessage::RemoteAttachReady(ready) => {
-                    // The background connect succeeded. Install per `mode`:
-                    // Restart rebuilds the whole editor around the backend
-                    // (global), Window spawns a born-attached session beside
-                    // the existing ones.
-                    let crate::services::async_bridge::RemoteAttachReady {
-                        authority,
-                        keepalive,
-                        working_dir,
-                        mode,
-                        spec,
-                        request_id,
-                    } = ready;
-                    // If the plugin cancelled this connect while it was
-                    // in flight (the New-Session dialog's Cancel), the result
-                    // arrives too late to matter: drop the authority and its
-                    // keepalive here so the carrier is torn down and no window
-                    // is ever built. The reject was already delivered at cancel
-                    // time, so there's nothing left to resolve.
-                    if self.remote_attach_was_cancelled(request_id) {
-                        tracing::info!(
-                            "Remote attach for request {} arrived after cancellation; discarding",
-                            request_id
-                        );
-                        drop(keepalive);
-                        drop(authority);
-                        continue;
-                    }
-                    // Re-root at the pod's workspace (or its home if the plugin
-                    // didn't supply one) — never the stale local path. The
-                    // filesystem call is safe here: `process_async_messages`
-                    // runs on the main loop, not inside a runtime.
-                    let root = working_dir
-                        .or_else(|| authority.filesystem.home_dir().ok())
-                        .unwrap_or_else(|| std::path::PathBuf::from("/"));
-                    match mode {
-                        crate::services::async_bridge::RemoteAttachMode::Restart => {
-                            tracing::info!(
-                                "Remote attach connected ({}); installing authority (restart), rooting at {}",
-                                authority.display_label,
-                                root.display()
-                            );
-                            // Resolve before the restart tears the plugin
-                            // runtime down, so the awaiting caller observes
-                            // success rather than a vanished promise.
-                            self.resolve_remote_attach(request_id);
-                            // Record the reconnect spec on the (re-rooted)
-                            // active session before the restart so it persists
-                            // and the rebuilt editor restores this backend.
-                            self.active_window_mut().authority_spec = spec;
-                            self.install_authority_with_keepalive(authority, keepalive, root);
-                        }
-                        crate::services::async_bridge::RemoteAttachMode::Window {
-                            label,
-                            command,
-                        } => {
-                            tracing::info!(
-                                "Remote attach connected ({}); opening born-attached window at {}",
-                                authority.display_label,
-                                root.display()
-                            );
-                            // The session is only "ready" once the window
-                            // exists. Resolve on success; on a window-creation
-                            // failure reject so the plugin keeps its dialog
-                            // open with the reason and no half-built window.
-                            match self.create_remote_session_window(
-                                authority, keepalive, root, label, command, spec,
-                            ) {
-                                Ok(_) => self.resolve_remote_attach(request_id),
-                                Err(e) => self.reject_remote_attach(request_id, e),
-                            }
-                        }
-                        crate::services::async_bridge::RemoteAttachMode::Reconnect {
-                            window_id,
-                        } => {
-                            // The common case: a dormant remote session the user
-                            // dived into finished connecting. It has no `Window`
-                            // yet (it lived in `dormant_remote` as an
-                            // authority-less descriptor) — promote it now, born
-                            // with this connected authority, restoring its
-                            // workspace through it so its terminals run on the
-                            // remote backend, not the local host.
-                            if self.dormant_remote.contains_key(&window_id) {
-                                tracing::info!(
-                                    "Promoting dormant remote session {window_id} ({})",
-                                    authority.display_label
-                                );
-                                self.promote_dormant_remote(window_id, authority, keepalive);
-                            } else if self.windows.contains_key(&window_id) {
-                                tracing::info!(
-                                    "Reconnected dormant session {window_id} ({})",
-                                    authority.display_label
-                                );
-                                // Clear any prior FailedAttach now the reconnect
-                                // succeeded, so the indicator drops back to
-                                // Connected for this workspace.
-                                if let Some(w) = self.windows.get_mut(&window_id) {
-                                    w.remote_reconnect_error = None;
-                                }
-                                self.set_session_authority(window_id, authority);
-                                self.session_keepalives.insert(window_id, keepalive);
-                                // The window's embedded terminal(s) ran over the
-                                // old `ssh -t` carrier, which died with the link
-                                // — the agent-channel reconnect doesn't revive
-                                // them. Respawn each dead PTY through the
-                                // freshly-installed authority so it runs on the
-                                // remote backend again, reusing its backing file
-                                // so scrollback continues.
-                                if let Some(w) = self.windows.get_mut(&window_id) {
-                                    w.respawn_terminals_through_authority();
-                                }
-                                self.set_status_message(format!(
-                                    "Reconnected: {}",
-                                    self.windows
-                                        .get(&window_id)
-                                        .map(|w| w.label.clone())
-                                        .unwrap_or_default()
-                                ));
-                            } else {
-                                // The window was closed while the connect was in
-                                // flight — drop the backend we just built.
-                                drop(authority);
-                                drop(keepalive);
-                            }
-                        }
-                    }
+                    self.handle_remote_attach_ready(ready);
                 }
                 AsyncMessage::RemoteAttachFailed {
                     error,
                     request_id,
                     reconnect_window,
                 } => {
-                    // A cancelled connect was already rejected at cancel time;
-                    // swallow the late failure rather than rejecting twice.
-                    if self.remote_attach_was_cancelled(request_id) {
-                        tracing::info!(
-                            "Remote attach for request {} failed after cancellation; discarding",
-                            request_id
-                        );
-                        continue;
-                    }
-                    tracing::warn!("Remote attach failed: {}", error);
-                    // A *dive-triggered* reconnect of a dormant workspace has no
-                    // awaiting JS callback for `reject_remote_attach` to reject
-                    // and no plugin dialog open, so its only user-visible signal
-                    // is the status-bar remote indicator. Record the reason on
-                    // the workspace's window so the indicator renders
-                    // `FailedAttach` (persistent, error-styled, with a Retry /
-                    // Reopen Locally popup) until the next reconnect attempt.
-                    // Born-attached / restart attaches carry `None` here; their
-                    // failure is surfaced by the launching plugin's rejected
-                    // promise (e.g. the New-Session dialog's inline error).
-                    if let Some(window_id) = reconnect_window {
-                        let reason = error.lines().next().unwrap_or(&error).to_string();
-                        if let Some(w) = self.windows.get_mut(&window_id) {
-                            // An already-live remote window whose reconnect
-                            // failed: record on the window so its status-bar
-                            // indicator shows FailedAttach.
-                            w.remote_reconnect_error = Some(reason);
-                        } else {
-                            // A dormant session's connect failed: it has no
-                            // window (we never built one without the backend), so
-                            // surface the reason on the status line. The session
-                            // stays dormant in the dock; diving again retries.
-                            self.set_status_message(format!("Connection failed: {reason}"));
-                        }
-                    }
-                    self.reject_remote_attach(request_id, error);
+                    self.handle_remote_attach_failed(error, request_id, reconnect_window);
                 }
                 AsyncMessage::PluginProcessOutput {
                     process_id,
@@ -938,101 +417,14 @@ impl Editor {
                     registry,
                     callback_ids,
                 } => {
-                    tracing::info!(
-                        "Background grammar build completed ({} syntaxes)",
-                        registry.available_syntaxes().len()
-                    );
-                    // Merge user `[languages]` config into the catalog so
-                    // find_by_path honours user globs/filenames/extensions.
-                    // The background thread just sent the Arc through the
-                    // channel, so we're the sole owner here. Assert rather
-                    // than silently drop config.
-                    let mut registry = registry;
-                    std::sync::Arc::get_mut(&mut registry)
-                        .expect("freshly-received grammar registry Arc must be uniquely owned")
-                        .apply_language_config(&self.config.languages);
-                    crate::config::reload_indent_overrides(&self.config.languages);
-                    self.grammar_registry = registry;
-                    // Propagate the new grammar registry to every window's
-                    // resources so window-side syntax detection picks up the
-                    // freshly-built grammars without waiting for a restart.
-                    for w in self.windows.values_mut() {
-                        w.resources.grammar_registry = self.grammar_registry.clone();
-                    }
-                    self.grammar_build_in_progress = false;
-
-                    // Re-detect syntax for all open buffers with the full registry
-                    let buffers_to_update: Vec<_> = self
-                        .active_window()
-                        .buffer_metadata
-                        .iter()
-                        .filter_map(|(id, meta)| meta.file_path().map(|p| (*id, p.to_path_buf())))
-                        .collect();
-
-                    for (buf_id, path) in buffers_to_update {
-                        if let Some(state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .map(|w| &mut w.buffers)
-                            .expect("active window present")
-                            .get_mut(&buf_id)
-                        {
-                            let first_line = state.buffer.first_line_lossy();
-                            let detected =
-                                crate::primitives::detected_language::DetectedLanguage::from_path(
-                                    &path,
-                                    first_line.as_deref(),
-                                    &self.grammar_registry,
-                                    &self.config.languages,
-                                );
-
-                            if detected.highlighter.has_highlighting()
-                                || !state.highlighter.has_highlighting()
-                            {
-                                state.apply_language(detected);
-                            }
-                        }
-                    }
-
-                    // Resolve plugin callbacks that were waiting for this build
-                    #[cfg(feature = "plugins")]
-                    for cb_id in callback_ids {
-                        self.plugin_manager
-                            .read()
-                            .unwrap()
-                            .resolve_callback(cb_id, "null".to_string());
-                    }
-
-                    // Flush any plugin grammars that arrived during the build
-                    self.flush_pending_grammars();
+                    self.handle_grammar_registry_built(registry, callback_ids);
                 }
                 AsyncMessage::QuickOpenFilesLoaded {
                     cwd,
                     files,
                     complete,
                 } => {
-                    // Update the file provider cache and refresh suggestions
-                    // if Quick Open is currently showing file mode (empty prefix).
-                    if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("")
-                    {
-                        if let Some(fp) = provider
-                            .as_any()
-                            .downcast_ref::<crate::input::quick_open::providers::FileProvider>(
-                        ) {
-                            if complete {
-                                fp.set_cache(&cwd, files);
-                            } else {
-                                fp.set_partial_cache(&cwd, files);
-                            }
-                        }
-                    }
-                    // Refresh the Quick Open suggestions if the prompt is open
-                    if let Some(prompt) = &self.active_window_mut().prompt {
-                        if prompt.prompt_type == PromptType::QuickOpen {
-                            let input = prompt.input.clone();
-                            self.update_quick_open_suggestions(&input);
-                        }
-                    }
+                    self.handle_quick_open_files_loaded(cwd, files, complete);
                 }
                 AsyncMessage::PluginsDirLoaded {
                     dir,
@@ -1117,6 +509,701 @@ impl Editor {
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
         needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
+    }
+
+    /// Handle a server's `initialize` response: record capabilities and kick off
+    /// the deferred per-language requests that were gated on them.
+    fn handle_lsp_initialized(
+        &mut self,
+        language: String,
+        server_name: String,
+        capabilities: crate::services::lsp::manager::ServerCapabilitySummary,
+    ) {
+        tracing::info!(
+            "LSP server '{}' initialized for language: {}",
+            server_name,
+            language
+        );
+        self.active_window_mut().status_message = Some(format!("LSP ({}) ready", language));
+
+        // Store capabilities on the specific server handle
+        let __active_id = self.active_window;
+        if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
+            lsp.set_server_capabilities(&language, &server_name, capabilities);
+        }
+
+        // Send didOpen for all open buffers of this language
+        self.resend_did_open_for_language(&language);
+        self.request_semantic_tokens_for_language(&language);
+        self.request_folding_ranges_for_language(&language);
+        // Now that capabilities are known, kick off inlay hints
+        // and pull-diagnostics for buffers that opened before the
+        // `initialize` handshake completed. Both paths route
+        // through `handle_for_feature_mut`, so servers that
+        // didn't advertise the capability are skipped.
+        self.request_inlay_hints_for_language(&language);
+        self.pull_diagnostics_for_language(&language);
+    }
+
+    /// Handle an LSP server crash/spawn failure: surface it, fire the
+    /// `lsp_server_error` hook, and open the stderr log in the background.
+    fn handle_lsp_error(
+        &mut self,
+        language: String,
+        error: String,
+        stderr_log_path: Option<std::path::PathBuf>,
+    ) {
+        tracing::error!("LSP error for {}: {}", language, error);
+        self.active_window_mut().status_message =
+            Some(format!("LSP error ({}): {}", language, error));
+
+        // Get server command from config for the hook
+        let server_command = self
+            .config
+            .lsp
+            .get(&language)
+            .and_then(|configs| configs.as_slice().first())
+            .map(|c| c.command.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Determine error type from error message
+        let error_type = if error.contains("not found") || error.contains("NotFound") {
+            "not_found"
+        } else if error.contains("permission") || error.contains("PermissionDenied") {
+            "spawn_failed"
+        } else if error.contains("timeout") {
+            "timeout"
+        } else {
+            "spawn_failed"
+        }
+        .to_string();
+
+        // Fire the LspServerError hook for plugins
+        self.plugin_manager.read().unwrap().run_hook(
+            "lsp_server_error",
+            crate::services::plugins::hooks::HookArgs::LspServerError {
+                language: language.clone(),
+                server_command,
+                error_type,
+                message: error.clone(),
+            },
+        );
+
+        // Open stderr log as read-only buffer if it exists and has content
+        // Opens in background (new tab) without stealing focus
+        if let Some(log_path) = stderr_log_path {
+            let has_content = log_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+            if has_content {
+                tracing::info!("Opening LSP stderr log in background: {:?}", log_path);
+                match self.open_file_no_focus(&log_path) {
+                    Ok(buffer_id) => {
+                        self.active_window_mut()
+                            .mark_buffer_read_only(buffer_id, true);
+                        self.active_window_mut().status_message = Some(format!(
+                            "LSP error ({}): {} - See stderr log",
+                            language, error
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to open LSP stderr log: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply a server-initiated `workspace/applyEdit`.
+    fn handle_lsp_apply_edit(&mut self, edit: lsp_types::WorkspaceEdit, label: Option<String>) {
+        tracing::info!("Applying workspace edit from server (label: {:?})", label);
+        match self.apply_workspace_edit(edit) {
+            Ok(n) => {
+                if let Some(label) = label {
+                    self.set_status_message(
+                        t!("lsp.code_action_applied", title = &label, count = n).to_string(),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to apply workspace edit: {}", e);
+            }
+        }
+    }
+
+    /// Execute a resolved code action, or report the `codeAction/resolve` error.
+    fn handle_lsp_code_action_resolved(&mut self, action: Result<lsp_types::CodeAction, String>) {
+        match action {
+            Ok(resolved) => {
+                self.execute_resolved_code_action(resolved);
+            }
+            Err(e) => {
+                tracing::warn!("codeAction/resolve failed: {}", e);
+                self.set_status_message(format!("Code action resolve failed: {e}"));
+            }
+        }
+    }
+
+    /// Route a plugin-runtime async message (process I/O, delays, LSP and
+    /// generic plugin responses) to its handler/hook.
+    fn handle_plugin_async_message(&mut self, plugin_msg: fresh_core::api::PluginAsyncMessage) {
+        use fresh_core::api::{JsCallbackId, PluginAsyncMessage};
+        match plugin_msg {
+            PluginAsyncMessage::ProcessOutput {
+                process_id,
+                stdout,
+                stderr,
+                exit_code,
+            } => {
+                self.handle_plugin_process_output(
+                    JsCallbackId::from(process_id),
+                    stdout,
+                    stderr,
+                    exit_code,
+                );
+            }
+            PluginAsyncMessage::DelayComplete { callback_id } => {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(JsCallbackId::from(callback_id), "null".to_string());
+            }
+            PluginAsyncMessage::ProcessStdout { process_id, data } => {
+                self.plugin_manager.read().unwrap().run_hook(
+                    "onProcessStdout",
+                    crate::services::plugins::hooks::HookArgs::ProcessOutput { process_id, data },
+                );
+            }
+            PluginAsyncMessage::ProcessStderr { process_id, data } => {
+                self.plugin_manager.read().unwrap().run_hook(
+                    "onProcessStderr",
+                    crate::services::plugins::hooks::HookArgs::ProcessOutput { process_id, data },
+                );
+            }
+            PluginAsyncMessage::ProcessExit {
+                process_id,
+                callback_id,
+                exit_code,
+            } => {
+                self.background_process_handles.remove(&process_id);
+                let result = fresh_core::api::BackgroundProcessResult {
+                    process_id,
+                    exit_code,
+                };
+                self.plugin_manager.read().unwrap().resolve_callback(
+                    JsCallbackId::from(callback_id),
+                    serde_json::to_string(&result).unwrap(),
+                );
+            }
+            PluginAsyncMessage::LspResponse {
+                language: _,
+                request_id,
+                result,
+            } => {
+                self.handle_plugin_lsp_response(request_id, result);
+            }
+            PluginAsyncMessage::PluginResponse(response) => {
+                self.handle_plugin_response(response);
+            }
+        }
+    }
+
+    /// Handle new terminal output: follow the bottom when appropriate and fire
+    /// the `terminal_output` hook, attributing it to the owning session.
+    fn handle_terminal_output(&mut self, terminal: fresh_core::WindowTerminalId) {
+        // The message carries its owning window: terminal ids
+        // collide across windows, so we trust the tag rather
+        // than scanning windows for a matching id (which would
+        // attribute output to the wrong session).
+        let terminal_id = terminal.terminal;
+        let owner = terminal.window;
+        // Terminal output received - check if we should auto-jump back to terminal mode
+        tracing::trace!("Terminal output received for {}", terminal);
+
+        // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
+        // automatically re-enter terminal mode
+        if self.config.terminal.jump_to_end_on_output && !self.active_window().terminal_mode {
+            // Check if active buffer is this terminal
+            if let Some(&active_terminal_id) = self
+                .active_window()
+                .terminal_buffers
+                .get(&self.active_buffer())
+            {
+                if active_terminal_id == terminal_id {
+                    self.enter_terminal_mode();
+                }
+            }
+        }
+
+        // When in terminal mode, ensure display stays at bottom (follows new output)
+        if self.active_window().terminal_mode {
+            if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
+                if let Ok(mut state) = handle.state.lock() {
+                    state.scroll_to_bottom();
+                }
+            }
+        }
+
+        // Notify plugins, attributing output to the owning
+        // *session* even when it's a background one (terminals
+        // live in their own window's manager, not the active
+        // window's). Snapshot the cursor row's text from that
+        // same window so prompt detection works off-focus too.
+        // The grid lock is released before `run_hook` runs to
+        // avoid holding it across plugin code.
+        let last_line = self
+            .windows
+            .get(&owner)
+            .and_then(|w| w.terminal_manager.get(terminal_id))
+            .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
+            .unwrap_or_default();
+        self.plugin_manager.read().unwrap().run_hook(
+            "terminal_output",
+            crate::services::plugins::hooks::HookArgs::TerminalOutput {
+                terminal_id: terminal_id.0 as u64,
+                window_id: owner.0,
+                last_line,
+            },
+        );
+    }
+
+    /// Forward a watched-path filesystem event to the `path_changed` hook.
+    fn handle_path_changed(
+        &mut self,
+        handle: u64,
+        path: std::path::PathBuf,
+        kind: crate::services::async_bridge::PathChangeKind,
+    ) {
+        self.last_path_change_for_test = Some((handle, path.clone(), kind.as_str()));
+        self.plugin_manager.read().unwrap().run_hook(
+            "path_changed",
+            crate::services::plugins::hooks::HookArgs::PathChanged {
+                handle,
+                path: path.to_string_lossy().into_owned(),
+                kind: kind.as_str().to_owned(),
+            },
+        );
+    }
+
+    /// Tear down (or preserve, for a pending remote reconnect) a terminal whose
+    /// process exited, then fire the `terminal_exit` hook.
+    fn handle_terminal_exited(
+        &mut self,
+        terminal: fresh_core::WindowTerminalId,
+        exit_code: Option<i32>,
+    ) {
+        // The message is tagged with its owning window, so the
+        // plugin hook is attributed correctly even for a
+        // background session's terminal.
+        let terminal_id = terminal.terminal;
+        let exited_window_id = terminal.window;
+        tracing::info!("Terminal {} exited", terminal);
+        // A remote-agent window whose carrier just dropped: its
+        // embedded PTY (a separate `ssh -t` from the agent channel)
+        // died with the link, not because the user exited the shell.
+        // Keep the buffer↔terminal binding (and the backing/command
+        // maps, which this handler already leaves intact) so a later
+        // reconnect can respawn it in place over the new authority
+        // (`respawn_terminals_through_authority`). Removing it here
+        // would strand the buffer as a dead read-only tab with no way
+        // back. A normal exit (remote still connected, or any local
+        // terminal) falls through to the usual permanent teardown.
+        let preserve_for_reconnect = matches!(
+            self.active_window().authority_spec,
+            crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
+        ) && !self
+            .active_window()
+            .authority()
+            .filesystem
+            .is_remote_connected();
+        // Find the buffer associated with this terminal
+        if let Some((&buffer_id, _)) = self
+            .active_window()
+            .terminal_buffers
+            .iter()
+            .find(|(_, &tid)| tid == terminal_id)
+        {
+            // Exit terminal mode if this is the active buffer
+            if self.active_buffer() == buffer_id && self.active_window().terminal_mode {
+                self.active_window_mut().terminal_mode = false;
+                self.active_window_mut().key_context =
+                    crate::input::keybindings::KeyContext::Normal;
+            }
+
+            // Sync terminal content to buffer (final screen state)
+            self.active_window_mut().sync_terminal_to_buffer(buffer_id);
+
+            // Append exit message to the backing file and reload
+            let exit_msg = "\n[Terminal process exited]\n";
+
+            if let Some(backing_path) = self
+                .active_window()
+                .terminal_backing_files
+                .get(&terminal_id)
+                .cloned()
+            {
+                if let Ok(mut file) = self
+                    .authority()
+                    .filesystem
+                    .open_file_for_append(&backing_path)
+                {
+                    use std::io::Write;
+                    if let Err(e) = file.write_all(exit_msg.as_bytes()) {
+                        tracing::warn!("Failed to write terminal exit message: {}", e);
+                    }
+                }
+
+                // Force reload buffer from file to pick up the exit message
+                if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
+                    tracing::warn!("Failed to revert terminal buffer: {}", e);
+                }
+
+                // After revert, scroll the viewport so the just-
+                // appended exit message is visible. sync_terminal_to_buffer
+                // pinned the viewport to the start of the visible screen
+                // (so exit is pixel-identical to the last live frame); the
+                // exit message is appended *after* that pinned region,
+                // so we have to deliberately scroll past the pin to bring
+                // it on-screen. Move the cursor to the new end-of-buffer
+                // and clear the skip_ensure_visible flag the sync path
+                // armed; the next render's ensure_visible will then scroll
+                // the cursor (and the exit-message line above it) into
+                // view.
+                let new_total = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.get(&buffer_id))
+                    .map(|s| s.buffer.total_bytes())
+                    .unwrap_or(0);
+                if let Some((mgr, view_states)) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .splits_mut()
+                {
+                    let active_split = mgr.active_split();
+                    if let Some(view_state) = view_states.get_mut(&active_split) {
+                        view_state.cursors.primary_mut().position = new_total;
+                        view_state.viewport.clear_skip_ensure_visible();
+                    }
+                }
+            }
+
+            // Ensure buffer remains read-only with no line numbers
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buffer_id)
+            {
+                state.editing_disabled = true;
+                state.margins.configure_for_line_numbers(false);
+                state.buffer.set_modified(false);
+            }
+
+            // Remove from terminal_buffers so it's no longer treated
+            // as a terminal — unless we're holding it for a remote
+            // reconnect to respawn in place (see above).
+            if !preserve_for_reconnect {
+                self.active_window_mut().terminal_buffers.remove(&buffer_id);
+            }
+
+            self.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());
+        }
+        self.active_window_mut().terminal_manager.close(terminal_id);
+
+        // Notify plugins after the editor's own exit handling
+        // is complete. Orchestrator's state machine reads this
+        // to transition agents to READY (code 0) or ERRORED.
+        // `exit_code` is currently always `None` here; full
+        // wait-status capture is a follow-up commit.
+        self.plugin_manager.read().unwrap().run_hook(
+            "terminal_exit",
+            crate::services::plugins::hooks::HookArgs::TerminalExited {
+                terminal_id: terminal_id.0 as u64,
+                window_id: exited_window_id.0,
+                exit_code,
+            },
+        );
+    }
+
+    /// Install a completed `attachRemoteAgent` connection per its mode
+    /// (restart / new window / dormant-session reconnect).
+    fn handle_remote_attach_ready(
+        &mut self,
+        ready: crate::services::async_bridge::RemoteAttachReady,
+    ) {
+        // The background connect succeeded. Install per `mode`:
+        // Restart rebuilds the whole editor around the backend
+        // (global), Window spawns a born-attached session beside
+        // the existing ones.
+        let crate::services::async_bridge::RemoteAttachReady {
+            authority,
+            keepalive,
+            working_dir,
+            mode,
+            spec,
+            request_id,
+        } = ready;
+        // If the plugin cancelled this connect while it was
+        // in flight (the New-Session dialog's Cancel), the result
+        // arrives too late to matter: drop the authority and its
+        // keepalive here so the carrier is torn down and no window
+        // is ever built. The reject was already delivered at cancel
+        // time, so there's nothing left to resolve.
+        if self.remote_attach_was_cancelled(request_id) {
+            tracing::info!(
+                "Remote attach for request {} arrived after cancellation; discarding",
+                request_id
+            );
+            drop(keepalive);
+            drop(authority);
+            return;
+        }
+        // Re-root at the pod's workspace (or its home if the plugin
+        // didn't supply one) — never the stale local path. The
+        // filesystem call is safe here: `process_async_messages`
+        // runs on the main loop, not inside a runtime.
+        let root = working_dir
+            .or_else(|| authority.filesystem.home_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
+        match mode {
+            crate::services::async_bridge::RemoteAttachMode::Restart => {
+                tracing::info!(
+                    "Remote attach connected ({}); installing authority (restart), rooting at {}",
+                    authority.display_label,
+                    root.display()
+                );
+                // Resolve before the restart tears the plugin
+                // runtime down, so the awaiting caller observes
+                // success rather than a vanished promise.
+                self.resolve_remote_attach(request_id);
+                // Record the reconnect spec on the (re-rooted)
+                // active session before the restart so it persists
+                // and the rebuilt editor restores this backend.
+                self.active_window_mut().authority_spec = spec;
+                self.install_authority_with_keepalive(authority, keepalive, root);
+            }
+            crate::services::async_bridge::RemoteAttachMode::Window { label, command } => {
+                tracing::info!(
+                    "Remote attach connected ({}); opening born-attached window at {}",
+                    authority.display_label,
+                    root.display()
+                );
+                // The session is only "ready" once the window
+                // exists. Resolve on success; on a window-creation
+                // failure reject so the plugin keeps its dialog
+                // open with the reason and no half-built window.
+                match self
+                    .create_remote_session_window(authority, keepalive, root, label, command, spec)
+                {
+                    Ok(_) => self.resolve_remote_attach(request_id),
+                    Err(e) => self.reject_remote_attach(request_id, e),
+                }
+            }
+            crate::services::async_bridge::RemoteAttachMode::Reconnect { window_id } => {
+                // The common case: a dormant remote session the user
+                // dived into finished connecting. It has no `Window`
+                // yet (it lived in `dormant_remote` as an
+                // authority-less descriptor) — promote it now, born
+                // with this connected authority, restoring its
+                // workspace through it so its terminals run on the
+                // remote backend, not the local host.
+                if self.dormant_remote.contains_key(&window_id) {
+                    tracing::info!(
+                        "Promoting dormant remote session {window_id} ({})",
+                        authority.display_label
+                    );
+                    self.promote_dormant_remote(window_id, authority, keepalive);
+                } else if self.windows.contains_key(&window_id) {
+                    tracing::info!(
+                        "Reconnected dormant session {window_id} ({})",
+                        authority.display_label
+                    );
+                    // Clear any prior FailedAttach now the reconnect
+                    // succeeded, so the indicator drops back to
+                    // Connected for this workspace.
+                    if let Some(w) = self.windows.get_mut(&window_id) {
+                        w.remote_reconnect_error = None;
+                    }
+                    self.set_session_authority(window_id, authority);
+                    self.session_keepalives.insert(window_id, keepalive);
+                    // The window's embedded terminal(s) ran over the
+                    // old `ssh -t` carrier, which died with the link
+                    // — the agent-channel reconnect doesn't revive
+                    // them. Respawn each dead PTY through the
+                    // freshly-installed authority so it runs on the
+                    // remote backend again, reusing its backing file
+                    // so scrollback continues.
+                    if let Some(w) = self.windows.get_mut(&window_id) {
+                        w.respawn_terminals_through_authority();
+                    }
+                    self.set_status_message(format!(
+                        "Reconnected: {}",
+                        self.windows
+                            .get(&window_id)
+                            .map(|w| w.label.clone())
+                            .unwrap_or_default()
+                    ));
+                } else {
+                    // The window was closed while the connect was in
+                    // flight — drop the backend we just built.
+                    drop(authority);
+                    drop(keepalive);
+                }
+            }
+        }
+    }
+
+    /// Reject a failed `attachRemoteAgent` connect, recording the reason on the
+    /// reconnecting window so its status-bar indicator shows `FailedAttach`.
+    fn handle_remote_attach_failed(
+        &mut self,
+        error: String,
+        request_id: u64,
+        reconnect_window: Option<fresh_core::WindowId>,
+    ) {
+        // A cancelled connect was already rejected at cancel time;
+        // swallow the late failure rather than rejecting twice.
+        if self.remote_attach_was_cancelled(request_id) {
+            tracing::info!(
+                "Remote attach for request {} failed after cancellation; discarding",
+                request_id
+            );
+            return;
+        }
+        tracing::warn!("Remote attach failed: {}", error);
+        // A *dive-triggered* reconnect of a dormant workspace has no
+        // awaiting JS callback for `reject_remote_attach` to reject
+        // and no plugin dialog open, so its only user-visible signal
+        // is the status-bar remote indicator. Record the reason on
+        // the workspace's window so the indicator renders
+        // `FailedAttach` (persistent, error-styled, with a Retry /
+        // Reopen Locally popup) until the next reconnect attempt.
+        // Born-attached / restart attaches carry `None` here; their
+        // failure is surfaced by the launching plugin's rejected
+        // promise (e.g. the New-Session dialog's inline error).
+        if let Some(window_id) = reconnect_window {
+            let reason = error.lines().next().unwrap_or(&error).to_string();
+            if let Some(w) = self.windows.get_mut(&window_id) {
+                // An already-live remote window whose reconnect
+                // failed: record on the window so its status-bar
+                // indicator shows FailedAttach.
+                w.remote_reconnect_error = Some(reason);
+            } else {
+                // A dormant session's connect failed: it has no
+                // window (we never built one without the backend), so
+                // surface the reason on the status line. The session
+                // stays dormant in the dock; diving again retries.
+                self.set_status_message(format!("Connection failed: {reason}"));
+            }
+        }
+        self.reject_remote_attach(request_id, error);
+    }
+
+    /// Swap in a freshly-built grammar registry, re-detect syntax for open
+    /// buffers, and resolve any plugin callbacks that awaited the build.
+    fn handle_grammar_registry_built(
+        &mut self,
+        registry: std::sync::Arc<crate::primitives::grammar::GrammarRegistry>,
+        callback_ids: Vec<fresh_core::api::JsCallbackId>,
+    ) {
+        tracing::info!(
+            "Background grammar build completed ({} syntaxes)",
+            registry.available_syntaxes().len()
+        );
+        // Merge user `[languages]` config into the catalog so
+        // find_by_path honours user globs/filenames/extensions.
+        // The background thread just sent the Arc through the
+        // channel, so we're the sole owner here. Assert rather
+        // than silently drop config.
+        let mut registry = registry;
+        std::sync::Arc::get_mut(&mut registry)
+            .expect("freshly-received grammar registry Arc must be uniquely owned")
+            .apply_language_config(&self.config.languages);
+        crate::config::reload_indent_overrides(&self.config.languages);
+        self.grammar_registry = registry;
+        // Propagate the new grammar registry to every window's
+        // resources so window-side syntax detection picks up the
+        // freshly-built grammars without waiting for a restart.
+        for w in self.windows.values_mut() {
+            w.resources.grammar_registry = self.grammar_registry.clone();
+        }
+        self.grammar_build_in_progress = false;
+
+        // Re-detect syntax for all open buffers with the full registry
+        let buffers_to_update: Vec<_> = self
+            .active_window()
+            .buffer_metadata
+            .iter()
+            .filter_map(|(id, meta)| meta.file_path().map(|p| (*id, p.to_path_buf())))
+            .collect();
+
+        for (buf_id, path) in buffers_to_update {
+            if let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&buf_id)
+            {
+                let first_line = state.buffer.first_line_lossy();
+                let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+                    &path,
+                    first_line.as_deref(),
+                    &self.grammar_registry,
+                    &self.config.languages,
+                );
+
+                if detected.highlighter.has_highlighting() || !state.highlighter.has_highlighting()
+                {
+                    state.apply_language(detected);
+                }
+            }
+        }
+
+        // Resolve plugin callbacks that were waiting for this build
+        #[cfg(feature = "plugins")]
+        for cb_id in callback_ids {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(cb_id, "null".to_string());
+        }
+
+        // Flush any plugin grammars that arrived during the build
+        self.flush_pending_grammars();
+    }
+
+    /// Update the Quick Open file cache from a background scan and refresh the
+    /// open prompt's suggestions.
+    fn handle_quick_open_files_loaded(
+        &mut self,
+        cwd: String,
+        files: std::sync::Arc<Vec<crate::input::quick_open::providers::FileEntry>>,
+        complete: bool,
+    ) {
+        // Update the file provider cache and refresh suggestions
+        // if Quick Open is currently showing file mode (empty prefix).
+        if let Some((provider, _)) = self.quick_open_registry.get_provider_for_input("") {
+            if let Some(fp) = provider
+                .as_any()
+                .downcast_ref::<crate::input::quick_open::providers::FileProvider>()
+            {
+                if complete {
+                    fp.set_cache(&cwd, files);
+                } else {
+                    fp.set_partial_cache(&cwd, files);
+                }
+            }
+        }
+        // Refresh the Quick Open suggestions if the prompt is open
+        if let Some(prompt) = &self.active_window_mut().prompt {
+            if prompt.prompt_type == PromptType::QuickOpen {
+                let input = prompt.input.clone();
+                self.update_quick_open_suggestions(&input);
+            }
+        }
     }
 }
 
