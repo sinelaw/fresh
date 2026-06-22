@@ -1,6 +1,6 @@
 //! Autocomplete suggestions and command palette UI rendering
 
-use crate::input::commands::CommandSource;
+use crate::input::commands::{CommandSource, Suggestion};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::view::prompt::Prompt;
 use ratatui::layout::Rect;
@@ -67,67 +67,19 @@ impl SuggestionsRenderer {
             .style(Style::default().bg(theme.suggestion_bg));
 
         let inner_area = block.inner(area);
-
-        let mut lines = Vec::new();
         let visible_count = inner_area.height as usize;
+        let available_width = inner_area.width as usize;
 
         // The scroll position is owned by the Prompt itself and only adjusted
         // when the selection moves out of the viewport (see
         // `Prompt::ensure_selected_visible`, called once before render). This
         // keeps a stable list under the cursor so a click near the bottom
         // doesn't trigger a recenter that shifts items mid-double-click.
-        let max_offset = prompt.suggestions.len().saturating_sub(visible_count);
-        let start_idx = prompt.scroll_offset.min(max_offset);
-        let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
-
+        let (start_idx, end_idx) = visible_range(prompt, visible_count);
         let visible_suggestions = &prompt.suggestions[start_idx..end_idx];
+        let layout = ColumnLayout::compute(visible_suggestions, available_width);
 
-        // Fixed column layout: "  Name  |  Keybinding  |  Description  |  Source"
-        let left_margin = 2;
-        let column_spacing = 2;
-        let available_width = inner_area.width as usize;
-
-        // Check if any visible suggestions have keybinding or source
-        // If not, we can use more space for the name column
-        let has_keybinding = visible_suggestions.iter().any(|s| s.keybinding.is_some());
-        let has_source = visible_suggestions.iter().any(|s| s.source.is_some());
-
-        // Fixed column widths for consistent layout
-        let keybinding_column_width = if has_keybinding { 12 } else { 0 };
-        let source_column_width = if has_source { 15 } else { 0 };
-
-        // Calculate name column width dynamically based on available space
-        // Reserve space for: left_margin + name + spacing + keybinding + spacing + desc + spacing + source
-        let reserved_for_other_columns = left_margin
-            + column_spacing // after name
-            + keybinding_column_width
-            + (if has_keybinding { column_spacing } else { 0 }) // after keybinding
-            + column_spacing // after desc
-            + source_column_width;
-
-        // Give name column a reasonable portion of remaining space
-        // Scale with terminal width so wide screens aren't wasted on descriptions
-        let base_name_width = 30;
-        // Compute actual max name width from visible suggestions
-        let actual_max_name_width = visible_suggestions
-            .iter()
-            .map(|s| str_width(&s.text))
-            .max()
-            .unwrap_or(0);
-        let name_column_width = if !has_keybinding && !has_source {
-            // For file finders etc., use up to 60% of available width for name,
-            // but also cap to actual content width so descriptions get more room
-            let max_name_width = (available_width * 60 / 100).max(base_name_width);
-            let content_based = actual_max_name_width.max(base_name_width);
-            max_name_width
-                .min(content_based)
-                .min(available_width.saturating_sub(reserved_for_other_columns))
-        } else {
-            // Use ~30% of available width for the name, minimum 30
-            let dynamic_width = available_width * 30 / 100;
-            dynamic_width.max(base_name_width)
-        };
-
+        let mut lines = Vec::with_capacity(visible_count);
         for (idx, suggestion) in visible_suggestions.iter().enumerate() {
             let actual_idx = start_idx + idx;
             let is_selected = prompt.selected_suggestion == Some(actual_idx);
@@ -135,339 +87,14 @@ impl SuggestionsRenderer {
                 hover_target,
                 Some(crate::app::HoverTarget::SuggestionItem(hovered_idx)) if *hovered_idx == actual_idx
             );
-
-            let base_style = if suggestion.disabled {
-                // Greyed out disabled commands
-                if is_selected {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(theme.suggestion_selected_bg)
-                        .add_modifier(Modifier::DIM)
-                } else {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .bg(theme.suggestion_bg)
-                        .add_modifier(Modifier::DIM)
-                }
-            } else if is_selected {
-                // Highlight selected suggestion with theme colors
-                Style::default()
-                    .fg(theme.popup_selection_fg)
-                    .bg(theme.suggestion_selected_bg)
-            } else if is_hovered {
-                // Hover highlight
-                Style::default()
-                    .fg(theme.menu_hover_fg)
-                    .bg(theme.menu_hover_bg)
-            } else {
-                // Normal suggestion with theme colors
-                Style::default()
-                    .fg(theme.popup_text_fg)
-                    .bg(theme.suggestion_bg)
-            };
-
-            // Build the line with three columns
-            let mut spans = Vec::new();
-
-            // Left margin
-            spans.push(Span::styled(" ".repeat(left_margin), base_style));
-
-            // Column 1: Command name (fixed width, truncate if too long)
-            let name = &suggestion.text;
-            let name_visual_width = str_width(name);
-            let name_text = if name_visual_width > name_column_width {
-                // Truncate name by visual width
-                let truncate_at = name_column_width.saturating_sub(1); // -1 for "…"
-
-                // For file paths (containing '/'), truncate from the beginning
-                // to preserve the filename which is usually at the end
-                if name.contains('/') || name.contains('\\') {
-                    // Calculate how many chars to skip from the beginning
-                    let mut total_width = 0;
-                    let char_widths: Vec<(char, usize)> =
-                        name.chars().map(|ch| (ch, char_width(ch))).collect();
-
-                    // Find where to start to fit within truncate_at
-                    let mut start_idx = 0;
-                    for (i, &(_, w)) in char_widths.iter().enumerate().rev() {
-                        if total_width + w <= truncate_at {
-                            total_width += w;
-                            start_idx = i;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let truncated: String =
-                        char_widths[start_idx..].iter().map(|(ch, _)| *ch).collect();
-                    format!("…{}", truncated)
-                } else {
-                    // For non-paths, truncate from the end as before
-                    let mut width = 0;
-                    let truncated: String = name
-                        .chars()
-                        .take_while(|ch| {
-                            let w = char_width(*ch);
-                            if width + w <= truncate_at {
-                                width += w;
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .collect();
-                    format!("{}…", truncated)
-                }
-            } else {
-                name.clone()
-            };
-            spans.push(Span::styled(name_text.clone(), base_style));
-            let name_display_width = str_width(&name_text);
-            let name_padding = name_column_width.saturating_sub(name_display_width);
-            if name_padding > 0 {
-                spans.push(Span::styled(" ".repeat(name_padding), base_style));
-            }
-
-            // Column 2: Keyboard shortcut (only if any suggestions have keybindings)
-            if has_keybinding {
-                // Spacing before keybinding column
-                spans.push(Span::styled(" ".repeat(column_spacing), base_style));
-
-                let keybinding_style = if suggestion.disabled {
-                    base_style
-                } else if is_selected {
-                    Style::default()
-                        .fg(theme.help_key_fg)
-                        .bg(theme.suggestion_selected_bg)
-                } else if is_hovered {
-                    Style::default()
-                        .fg(theme.help_key_fg)
-                        .bg(theme.menu_hover_bg)
-                } else {
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .bg(theme.suggestion_bg)
-                };
-
-                if let Some(keybinding) = &suggestion.keybinding {
-                    let kb_visual_width = str_width(keybinding);
-                    let kb_text = if kb_visual_width > keybinding_column_width {
-                        // Truncate keybinding by visual width
-                        let mut width = 0;
-                        keybinding
-                            .chars()
-                            .take_while(|ch| {
-                                let w = char_width(*ch);
-                                if width + w <= keybinding_column_width {
-                                    width += w;
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect()
-                    } else {
-                        keybinding.clone()
-                    };
-                    spans.push(Span::styled(kb_text.clone(), keybinding_style));
-                    let kb_display_width = str_width(&kb_text);
-                    let kb_padding = keybinding_column_width.saturating_sub(kb_display_width);
-                    if kb_padding > 0 {
-                        spans.push(Span::styled(" ".repeat(kb_padding), base_style));
-                    }
-                } else {
-                    // No keybinding for this command, pad the column
-                    spans.push(Span::styled(
-                        " ".repeat(keybinding_column_width),
-                        base_style,
-                    ));
-                }
-            }
-
-            // Spacing before description column
-            spans.push(Span::styled(" ".repeat(column_spacing), base_style));
-
-            // Calculate space used by fixed columns
-            let fixed_columns_width = left_margin
-                + name_column_width
-                + column_spacing
-                + (if has_keybinding {
-                    keybinding_column_width + column_spacing
-                } else {
-                    0
-                });
-
-            // Reserve space for source column at the end (only if showing sources)
-            let source_reserved = if has_source {
-                column_spacing + source_column_width
-            } else {
-                0
-            };
-
-            // Column 3: Description (flexible width, leaves room for source)
-            // A suggestion may carry styled `description_spans` (rendered
-            // verbatim, each span with its own styling) or a plain
-            // `description` string. Styled spans take precedence and let a
-            // row highlight part of itself (e.g. the symbol word inside a
-            // code-line snippet).
-            if let Some(segments) = &suggestion.description_spans {
-                if fixed_columns_width + source_reserved < available_width {
-                    let desc_width = available_width
-                        .saturating_sub(fixed_columns_width)
-                        .saturating_sub(source_reserved);
-                    // Render each span, truncating to the remaining width.
-                    let mut used = 0usize;
-                    for seg in segments {
-                        if used >= desc_width {
-                            break;
-                        }
-                        let remaining = desc_width - used;
-                        let mut seg_width = 0;
-                        let seg_text: String = seg
-                            .text
-                            .chars()
-                            .take_while(|ch| {
-                                let w = char_width(*ch);
-                                if seg_width + w <= remaining {
-                                    seg_width += w;
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect();
-                        if seg_text.is_empty() {
-                            continue;
-                        }
-                        let seg_style = styled_span_style(base_style, seg.style.as_ref(), theme);
-                        spans.push(Span::styled(seg_text, seg_style));
-                        used += seg_width;
-                    }
-                    // Pad to fill the allocated space and align the source column.
-                    let desc_padding = desc_width.saturating_sub(used);
-                    if desc_padding > 0 {
-                        spans.push(Span::styled(" ".repeat(desc_padding), base_style));
-                    }
-                }
-            } else if let Some(desc) = &suggestion.description {
-                // Only show description if we have enough space
-                if fixed_columns_width + source_reserved < available_width {
-                    let desc_width = available_width
-                        .saturating_sub(fixed_columns_width)
-                        .saturating_sub(source_reserved);
-                    // Use visual width for truncation to handle double-width characters
-                    let desc_visual_width = str_width(desc);
-                    let desc_text = if desc_visual_width > desc_width {
-                        // Truncate description by visual width
-                        let truncate_at = desc_width.saturating_sub(3); // -3 for "..."
-                        let mut width = 0;
-                        let truncated: String = desc
-                            .chars()
-                            .take_while(|ch| {
-                                let w = char_width(*ch);
-                                if width + w <= truncate_at {
-                                    width += w;
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect();
-                        format!("{}...", truncated)
-                    } else {
-                        desc.clone()
-                    };
-                    let desc_display_width = str_width(&desc_text);
-                    spans.push(Span::styled(desc_text, base_style));
-                    // Pad description to fill its allocated space
-                    let desc_padding = desc_width.saturating_sub(desc_display_width);
-                    if desc_padding > 0 {
-                        spans.push(Span::styled(" ".repeat(desc_padding), base_style));
-                    }
-                }
-            } else {
-                // No description, but still need to pad to align source column
-                let desc_width = available_width
-                    .saturating_sub(fixed_columns_width)
-                    .saturating_sub(source_reserved);
-                if desc_width > 0 {
-                    spans.push(Span::styled(" ".repeat(desc_width), base_style));
-                }
-            }
-
-            // Column 4: Source (only if any suggestions have source info)
-            if has_source {
-                // Spacing before source column
-                spans.push(Span::styled(" ".repeat(column_spacing), base_style));
-
-                let source_style = if suggestion.disabled {
-                    base_style
-                } else if is_selected {
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .bg(theme.suggestion_selected_bg)
-                        .add_modifier(Modifier::DIM)
-                } else if is_hovered {
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .bg(theme.menu_hover_bg)
-                        .add_modifier(Modifier::DIM)
-                } else {
-                    Style::default()
-                        .fg(theme.line_number_fg)
-                        .bg(theme.suggestion_bg)
-                        .add_modifier(Modifier::DIM)
-                };
-
-                if let Some(source) = &suggestion.source {
-                    let source_text = match source {
-                        CommandSource::Builtin => "builtin".to_string(),
-                        CommandSource::Plugin(name) => name.clone(),
-                    };
-                    let source_visual_width = str_width(&source_text);
-                    let source_display = if source_visual_width > source_column_width {
-                        // Truncate source by visual width
-                        let truncate_at = source_column_width.saturating_sub(1); // -1 for "…"
-                        let mut width = 0;
-                        let truncated: String = source_text
-                            .chars()
-                            .take_while(|ch| {
-                                let w = char_width(*ch);
-                                if width + w <= truncate_at {
-                                    width += w;
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .collect();
-                        format!("{}…", truncated)
-                    } else {
-                        source_text
-                    };
-                    let source_display_width = str_width(&source_display);
-                    // Right-align the source text within its column
-                    let source_padding = source_column_width.saturating_sub(source_display_width);
-                    if source_padding > 0 {
-                        spans.push(Span::styled(" ".repeat(source_padding), base_style));
-                    }
-                    spans.push(Span::styled(source_display, source_style));
-                } else {
-                    // No source info, just pad
-                    spans.push(Span::styled(" ".repeat(source_column_width), base_style));
-                }
-            }
-
-            // Fill any remaining space with background (shouldn't be needed but safe)
-            let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
-            if current_width < available_width {
-                spans.push(Span::styled(
-                    " ".repeat(available_width.saturating_sub(current_width)),
-                    base_style,
-                ));
-            }
-
-            lines.push(Line::from(spans));
+            lines.push(render_row(
+                suggestion,
+                is_selected,
+                is_hovered,
+                &layout,
+                available_width,
+                theme,
+            ));
         }
 
         // Fill remaining lines with background color
@@ -491,6 +118,471 @@ impl SuggestionsRenderer {
             prompt.suggestions.len(),
         ))
     }
+}
+
+/// Compute the `[start, end)` slice of `prompt.suggestions` that fits in a
+/// viewport of `visible_count` rows, honoring the prompt's owned scroll offset.
+fn visible_range(prompt: &Prompt, visible_count: usize) -> (usize, usize) {
+    let max_offset = prompt.suggestions.len().saturating_sub(visible_count);
+    let start_idx = prompt.scroll_offset.min(max_offset);
+    let end_idx = (start_idx + visible_count).min(prompt.suggestions.len());
+    (start_idx, end_idx)
+}
+
+/// Fixed column layout for a suggestions popup row:
+/// `"  Name  |  Keybinding  |  Description  |  Source"`.
+///
+/// Keybinding and source columns only appear when at least one visible
+/// suggestion supplies them, freeing their width for the name otherwise.
+struct ColumnLayout {
+    left_margin: usize,
+    column_spacing: usize,
+    name_column_width: usize,
+    keybinding_column_width: usize,
+    source_column_width: usize,
+    has_keybinding: bool,
+    has_source: bool,
+}
+
+impl ColumnLayout {
+    fn compute(visible_suggestions: &[Suggestion], available_width: usize) -> Self {
+        let left_margin = 2;
+        let column_spacing = 2;
+
+        // Keybinding / source columns only show if some visible row has them.
+        let has_keybinding = visible_suggestions.iter().any(|s| s.keybinding.is_some());
+        let has_source = visible_suggestions.iter().any(|s| s.source.is_some());
+
+        let keybinding_column_width = if has_keybinding { 12 } else { 0 };
+        let source_column_width = if has_source { 15 } else { 0 };
+
+        // Reserve space for: left_margin + name + spacing + keybinding + spacing + desc + spacing + source
+        let reserved_for_other_columns = left_margin
+            + column_spacing // after name
+            + keybinding_column_width
+            + (if has_keybinding { column_spacing } else { 0 }) // after keybinding
+            + column_spacing // after desc
+            + source_column_width;
+
+        // Give the name column a portion of the remaining space, scaled with
+        // terminal width so wide screens aren't wasted on descriptions.
+        let base_name_width = 30;
+        let actual_max_name_width = visible_suggestions
+            .iter()
+            .map(|s| str_width(&s.text))
+            .max()
+            .unwrap_or(0);
+        let name_column_width = if !has_keybinding && !has_source {
+            // For file finders etc., use up to 60% of available width for name,
+            // but also cap to actual content width so descriptions get more room.
+            let max_name_width = (available_width * 60 / 100).max(base_name_width);
+            let content_based = actual_max_name_width.max(base_name_width);
+            max_name_width
+                .min(content_based)
+                .min(available_width.saturating_sub(reserved_for_other_columns))
+        } else {
+            // Use ~30% of available width for the name, minimum 30.
+            let dynamic_width = available_width * 30 / 100;
+            dynamic_width.max(base_name_width)
+        };
+
+        Self {
+            left_margin,
+            column_spacing,
+            name_column_width,
+            keybinding_column_width,
+            source_column_width,
+            has_keybinding,
+            has_source,
+        }
+    }
+
+    /// Width consumed by the margin, name, and keybinding columns (everything
+    /// left of the description).
+    fn fixed_columns_width(&self) -> usize {
+        self.left_margin
+            + self.name_column_width
+            + self.column_spacing
+            + if self.has_keybinding {
+                self.keybinding_column_width + self.column_spacing
+            } else {
+                0
+            }
+    }
+
+    /// Width the source column reserves at the right edge of the row.
+    fn source_reserved(&self) -> usize {
+        if self.has_source {
+            self.column_spacing + self.source_column_width
+        } else {
+            0
+        }
+    }
+}
+
+/// Render a single suggestion row into a styled [`Line`].
+fn render_row(
+    suggestion: &Suggestion,
+    is_selected: bool,
+    is_hovered: bool,
+    layout: &ColumnLayout,
+    available_width: usize,
+    theme: &crate::view::theme::Theme,
+) -> Line<'static> {
+    let base_style = row_base_style(theme, suggestion.disabled, is_selected, is_hovered);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Left margin.
+    spans.push(Span::styled(" ".repeat(layout.left_margin), base_style));
+
+    push_name_column(&mut spans, &suggestion.text, layout, base_style);
+
+    if layout.has_keybinding {
+        push_keybinding_column(
+            &mut spans,
+            suggestion,
+            layout,
+            base_style,
+            theme,
+            is_selected,
+            is_hovered,
+        );
+    }
+
+    // Spacing before description column.
+    spans.push(Span::styled(" ".repeat(layout.column_spacing), base_style));
+
+    push_description_column(
+        &mut spans,
+        suggestion,
+        layout,
+        available_width,
+        base_style,
+        theme,
+    );
+
+    if layout.has_source {
+        push_source_column(
+            &mut spans,
+            suggestion,
+            layout,
+            base_style,
+            theme,
+            is_selected,
+            is_hovered,
+        );
+    }
+
+    // Fill any remaining space with background (shouldn't be needed but safe).
+    let current_width: usize = spans.iter().map(|s| s.content.len()).sum();
+    if current_width < available_width {
+        spans.push(Span::styled(
+            " ".repeat(available_width.saturating_sub(current_width)),
+            base_style,
+        ));
+    }
+
+    Line::from(spans)
+}
+
+/// Column 1: the command name, truncated to the name column and left-padded
+/// to fill it. Paths keep their trailing filename; other names keep their head.
+fn push_name_column(
+    spans: &mut Vec<Span<'static>>,
+    name: &str,
+    layout: &ColumnLayout,
+    base_style: Style,
+) {
+    let width = layout.name_column_width;
+    let name_text = if str_width(name) > width {
+        // For file paths, keep the trailing filename; otherwise keep the head.
+        if name.contains('/') || name.contains('\\') {
+            truncate_head_ellipsis(name, width, "…")
+        } else {
+            truncate_tail_ellipsis(name, width, "…")
+        }
+    } else {
+        name.to_string()
+    };
+    let display_width = str_width(&name_text);
+    spans.push(Span::styled(name_text, base_style));
+    let padding = width.saturating_sub(display_width);
+    if padding > 0 {
+        spans.push(Span::styled(" ".repeat(padding), base_style));
+    }
+}
+
+/// Column 2: the keyboard shortcut (only emitted when [`ColumnLayout::has_keybinding`]).
+fn push_keybinding_column(
+    spans: &mut Vec<Span<'static>>,
+    suggestion: &Suggestion,
+    layout: &ColumnLayout,
+    base_style: Style,
+    theme: &crate::view::theme::Theme,
+    is_selected: bool,
+    is_hovered: bool,
+) {
+    // Spacing before keybinding column.
+    spans.push(Span::styled(" ".repeat(layout.column_spacing), base_style));
+
+    let style = keybinding_style(
+        theme,
+        base_style,
+        suggestion.disabled,
+        is_selected,
+        is_hovered,
+    );
+    let width = layout.keybinding_column_width;
+    if let Some(keybinding) = &suggestion.keybinding {
+        // `truncate_end_to_width` returns the string unchanged when it fits.
+        let kb_text = truncate_end_to_width(keybinding, width);
+        let kb_display_width = str_width(&kb_text);
+        spans.push(Span::styled(kb_text, style));
+        let padding = width.saturating_sub(kb_display_width);
+        if padding > 0 {
+            spans.push(Span::styled(" ".repeat(padding), base_style));
+        }
+    } else {
+        // No keybinding for this command, pad the column.
+        spans.push(Span::styled(" ".repeat(width), base_style));
+    }
+}
+
+/// Column 3: the description. A suggestion may carry styled `description_spans`
+/// (rendered verbatim, each span with its own styling) or a plain `description`
+/// string. Styled spans take precedence and let a row highlight part of itself
+/// (e.g. the symbol word inside a code-line snippet).
+fn push_description_column(
+    spans: &mut Vec<Span<'static>>,
+    suggestion: &Suggestion,
+    layout: &ColumnLayout,
+    available_width: usize,
+    base_style: Style,
+    theme: &crate::view::theme::Theme,
+) {
+    let fixed = layout.fixed_columns_width();
+    let source_reserved = layout.source_reserved();
+    let desc_width = available_width
+        .saturating_sub(fixed)
+        .saturating_sub(source_reserved);
+
+    if let Some(segments) = &suggestion.description_spans {
+        // Only render when there is room left of the source column.
+        if fixed + source_reserved >= available_width {
+            return;
+        }
+        let mut used = 0usize;
+        for seg in segments {
+            if used >= desc_width {
+                break;
+            }
+            let seg_text = truncate_end_to_width(&seg.text, desc_width - used);
+            if seg_text.is_empty() {
+                continue;
+            }
+            used += str_width(&seg_text);
+            let seg_style = styled_span_style(base_style, seg.style.as_ref(), theme);
+            spans.push(Span::styled(seg_text, seg_style));
+        }
+        // Pad to fill the allocated space and align the source column.
+        let padding = desc_width.saturating_sub(used);
+        if padding > 0 {
+            spans.push(Span::styled(" ".repeat(padding), base_style));
+        }
+    } else if let Some(desc) = &suggestion.description {
+        // Only show description if we have enough space.
+        if fixed + source_reserved >= available_width {
+            return;
+        }
+        let desc_text = truncate_tail_ellipsis(desc, desc_width, "...");
+        let display_width = str_width(&desc_text);
+        spans.push(Span::styled(desc_text, base_style));
+        let padding = desc_width.saturating_sub(display_width);
+        if padding > 0 {
+            spans.push(Span::styled(" ".repeat(padding), base_style));
+        }
+    } else if desc_width > 0 {
+        // No description, but still need to pad to align the source column.
+        spans.push(Span::styled(" ".repeat(desc_width), base_style));
+    }
+}
+
+/// Column 4: the source label (builtin / plugin), right-aligned within its
+/// column. Only emitted when [`ColumnLayout::has_source`].
+fn push_source_column(
+    spans: &mut Vec<Span<'static>>,
+    suggestion: &Suggestion,
+    layout: &ColumnLayout,
+    base_style: Style,
+    theme: &crate::view::theme::Theme,
+    is_selected: bool,
+    is_hovered: bool,
+) {
+    // Spacing before source column.
+    spans.push(Span::styled(" ".repeat(layout.column_spacing), base_style));
+
+    let style = source_style(
+        theme,
+        base_style,
+        suggestion.disabled,
+        is_selected,
+        is_hovered,
+    );
+    let width = layout.source_column_width;
+    if let Some(source) = &suggestion.source {
+        let source_text = match source {
+            CommandSource::Builtin => "builtin".to_string(),
+            CommandSource::Plugin(name) => name.clone(),
+        };
+        let source_display = truncate_tail_ellipsis(&source_text, width, "…");
+        let display_width = str_width(&source_display);
+        // Right-align the source text within its column.
+        let padding = width.saturating_sub(display_width);
+        if padding > 0 {
+            spans.push(Span::styled(" ".repeat(padding), base_style));
+        }
+        spans.push(Span::styled(source_display, style));
+    } else {
+        // No source info, just pad.
+        spans.push(Span::styled(" ".repeat(width), base_style));
+    }
+}
+
+/// Base style for a row, driving every column's default fg/bg.
+fn row_base_style(
+    theme: &crate::view::theme::Theme,
+    disabled: bool,
+    is_selected: bool,
+    is_hovered: bool,
+) -> Style {
+    if disabled {
+        // Greyed out disabled commands.
+        let bg = if is_selected {
+            theme.suggestion_selected_bg
+        } else {
+            theme.suggestion_bg
+        };
+        Style::default()
+            .fg(Color::DarkGray)
+            .bg(bg)
+            .add_modifier(Modifier::DIM)
+    } else if is_selected {
+        Style::default()
+            .fg(theme.popup_selection_fg)
+            .bg(theme.suggestion_selected_bg)
+    } else if is_hovered {
+        Style::default()
+            .fg(theme.menu_hover_fg)
+            .bg(theme.menu_hover_bg)
+    } else {
+        Style::default()
+            .fg(theme.popup_text_fg)
+            .bg(theme.suggestion_bg)
+    }
+}
+
+/// Style for the keybinding column text.
+fn keybinding_style(
+    theme: &crate::view::theme::Theme,
+    base_style: Style,
+    disabled: bool,
+    is_selected: bool,
+    is_hovered: bool,
+) -> Style {
+    if disabled {
+        base_style
+    } else if is_selected {
+        Style::default()
+            .fg(theme.help_key_fg)
+            .bg(theme.suggestion_selected_bg)
+    } else if is_hovered {
+        Style::default()
+            .fg(theme.help_key_fg)
+            .bg(theme.menu_hover_bg)
+    } else {
+        Style::default()
+            .fg(theme.line_number_fg)
+            .bg(theme.suggestion_bg)
+    }
+}
+
+/// Style for the source column text (always dimmed).
+fn source_style(
+    theme: &crate::view::theme::Theme,
+    base_style: Style,
+    disabled: bool,
+    is_selected: bool,
+    is_hovered: bool,
+) -> Style {
+    if disabled {
+        base_style
+    } else if is_selected {
+        Style::default()
+            .fg(theme.line_number_fg)
+            .bg(theme.suggestion_selected_bg)
+            .add_modifier(Modifier::DIM)
+    } else if is_hovered {
+        Style::default()
+            .fg(theme.line_number_fg)
+            .bg(theme.menu_hover_bg)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
+            .fg(theme.line_number_fg)
+            .bg(theme.suggestion_bg)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
+/// Truncate `text` so its visual width does not exceed `max_width`, keeping the
+/// leading characters. Characters are kept whole, so multi-byte/wide characters
+/// never split — this is what guards the UTF-8 boundary panic the tests cover.
+/// Returns `text` unchanged when it already fits.
+fn truncate_end_to_width(text: &str, max_width: usize) -> String {
+    let mut width = 0;
+    text.chars()
+        .take_while(|ch| {
+            let w = char_width(*ch);
+            if width + w <= max_width {
+                width += w;
+                true
+            } else {
+                false
+            }
+        })
+        .collect()
+}
+
+/// If `text` fits within `max_width`, return it unchanged; otherwise truncate
+/// the tail and append `ellipsis`, keeping the whole result within `max_width`.
+fn truncate_tail_ellipsis(text: &str, max_width: usize, ellipsis: &str) -> String {
+    if str_width(text) <= max_width {
+        return text.to_string();
+    }
+    let body = truncate_end_to_width(text, max_width.saturating_sub(str_width(ellipsis)));
+    format!("{}{}", body, ellipsis)
+}
+
+/// Truncate `text` keeping the *trailing* characters (used for paths so the
+/// filename at the end stays visible), prepending `ellipsis`. Intended for
+/// callers that have already checked `text` exceeds `max_width`.
+fn truncate_head_ellipsis(text: &str, max_width: usize, ellipsis: &str) -> String {
+    let budget = max_width.saturating_sub(str_width(ellipsis));
+    let char_widths: Vec<(char, usize)> = text.chars().map(|ch| (ch, char_width(ch))).collect();
+
+    // Walk from the end, keeping whole characters until we exhaust the budget.
+    let mut total_width = 0;
+    let mut start_idx = 0;
+    for (i, &(_, w)) in char_widths.iter().enumerate().rev() {
+        if total_width + w <= budget {
+            total_width += w;
+            start_idx = i;
+        } else {
+            break;
+        }
+    }
+    let tail: String = char_widths[start_idx..].iter().map(|(ch, _)| *ch).collect();
+    format!("{}{}", ellipsis, tail)
 }
 
 /// Resolve an overlay color spec (RGB array or `"section.field"` theme key)
@@ -552,7 +644,6 @@ fn styled_span_style(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::commands::Suggestion;
     use crate::view::prompt::Prompt;
     use crate::view::theme;
     use crate::view::theme::Theme;
