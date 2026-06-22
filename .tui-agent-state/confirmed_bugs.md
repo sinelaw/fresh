@@ -295,3 +295,42 @@ Each bug entry:
 - **Actual:** Sidebar shows `▾ assets/  +0 -0` group header then a file row with a **completely blank name**: `   ?   +0 -0`. Center pane shows `▾ assets/  +0 / -0` with no hunks and a `(untracked directory)` placeholder (revealed by `zr` unfold-all). The contained files (`assets/logo.txt`, `assets/icon.txt`) are never listed and have no diff/additions. `s`/Enter/Alt+o on the entry do nothing useful. Contrast: an untracked file in a TRACKED dir (`src/core/new_feature.py`) renders correctly with name + `+2/-0` + content.
 - **First Seen:** 2026-06-11 (Run #35), fresh 0.4.0 @ 1b5d7f8c8.
 - **Confirmed:** Run #35 — reproduced with two independent untracked dirs (`.review/` export artifact and a clean `assets/`); blank name verified byte-for-byte via `capture-pane | cat -A`.
+
+---
+
+## BUG-019: vi mode — find-char motions broken with operators; `;`/`,` repeat no-op
+- **ID:** BUG-019
+- **Title:** Operator + `f`/`t` (`df`/`dt`/`cf`/`ct`) hangs in operator-pending or silently mis-deletes; `;`/`,` repeat-find does nothing.
+- **Severity:** Medium (very common Vim ops; one path HANGS the editor requiring Esc, another silently deletes the wrong span).
+- **Status:** Open — GitHub #2441 filed (Run #44).
+- **GitHub Issue:** [#2441](https://github.com/sinelaw/fresh/issues/2441)
+- **Reproduction:** vi mode on `hello world foo bar baz`, cursor col 1.
+  - (A) `d` `f` `r` → stuck `-- OPERATOR (d) --` forever (target + even `Z` swallowed; Esc to recover). Same for `dt,`, `cfr`. Held at 0.4s AND 1.2s key gaps → not a timing race.
+  - (B) `d` `f` `w` → `world foo bar baz` (= plain `dw`; `f` dropped, `w` ran as word-motion). Vim expects `orld foo bar baz`.
+  - (C) `f` `o` (→col5) then `;` → no move; `x` deletes col5 `o` (`hell world...`). `,` also no-op.
+- **Expected (Vim):** `dfr`→`ld foo bar baz`; `dfw`→`orld foo bar baz`; `;` advances to next `o` (col 8).
+- **Control (works):** pure `f`/`t` cursor motions land correctly (`fr`+`x` deletes `r` of world; `t,`+`x` deletes char before comma).
+- **First Seen:** 2026-06-22 (Run #44), fresh 0.4.1 @ 3b8c2eca1.
+
+---
+
+## BUG-020: vi mode — `j`/`k` onto a shorter line parks cursor past EOL; `x` joins lines
+- **ID:** BUG-020
+- **Title:** Vertical motion onto a shorter line lands the cursor one column past the last char (col len+1); `x` then deletes the newline and joins the next line.
+- **Severity:** Medium (silent corruption from ordinary navigate-then-delete; off-by-one vs correct horizontal clamp).
+- **Status:** Open — GitHub #2442 filed (Run #44).
+- **GitHub Issue:** [#2442](https://github.com/sinelaw/fresh/issues/2442)
+- **Reproduction:** vi mode, lines `hello world foo bar baz` / `short` / `a longer line with many words here`.
+  1. Line 1 `$` (col 23, correct) → `j` onto `short` (5 chars) → status `Ln 2, Col 6` (past EOL).
+  2. `x` → deletes the newline → `shorta longer line with many words here` (lines joined).
+  - Also via `l`-to-col10 + `j`, and `k` from line 3 (3/3).
+- **Expected (Vim):** cursor clamps to last char (`t`, col 5); `x` → `shor`; `x` never joins lines in NORMAL.
+- **Control (works):** `$` direct on `short` → col 5 → `x` = `shor`; `l` stops at last char. Only vertical clamp is off-by-one.
+- **First Seen:** 2026-06-22 (Run #44), fresh 0.4.1 @ 3b8c2eca1.
+
+---
+
+## PENDING (not filed) — vi mode missing standard commands (→ IMP-023)
+- `R` (Replace/overtype mode): unrecognized — stays `-- NORMAL --`, next key runs as a normal command (`R`+`A` fired append-at-EOL).
+- `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.
+- Candidate for one consolidated "vi missing standard commands" issue once more are characterized (count them with `;`/`,` from #2441). Logged here + potential_improvements; NOT individually filed (missing-feature, lower sev than the broken-behavior bugs above).

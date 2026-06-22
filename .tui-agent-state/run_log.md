@@ -1551,3 +1551,29 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `vimr43`; removed `/tmp/vitest43`; left build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
 
 **NEXT new-coverage (Run #44+, top-down, prefer freshest 0.4.1):** finish remaining vi-compat motions NOT yet characterized — `$`-sticky/desired-column on `j`/`k`, `p`/`P` paste (charwise vs linewise), `r`/`R` replace, `>>`-with-count, `gU`/`gu`/`g~` case ops, `f`/`t`/`;`/`,` find-char, `%` match — to see if more deviate; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
+## Run #44 — 2026-06-22 — vi-mode sweep: find-char broken w/ operators (#2441) + `j`/`k` past-EOL → x joins lines (#2442) — v0.4.1 @ 3b8c2eca1
+
+**Preflight:** Synced state branch (clean, up to date). Master FORCE-UPDATED past Run #43's `8ee2baf31` → **`3b8c2eca1`** (still v0.4.1; 5 new commits, ALL e2e test-deflake fixes — `7b95b41b2`/`a50cfc4a8` open_folder instrumentation, `a430d2d71` loaded-parent wait, `36678bf8f` vi paste/dot-repeat wait, `3b8c2eca1` vi paragraph-motion wait — NO user-facing change). Per **R1**: no commit fixes an OPEN agent issue → skipped open-issue rechecks (14 open agent issues, listed via MCP). Per **R2**: continued the vi-compat motion sweep from Run #43's NEXT. Playbook intact (all sections). Lessons continuity OK. GitHub MCP auth live (`get_me`/`list_issues`/`search_issues` returned).
+
+**Build:** built release `fresh` 0.4.1 from a fresh origin/master worktree `/tmp/fresh-master` @ `3b8c2eca1` (container reclaimed; from-scratch build, exit 0). Removed worktree at cleanup.
+
+**Fixture:** `/tmp/vi44/motions.txt` (10 lines: `hello world foo bar baz` / `short` / `a longer line with many words here` / `    indented four spaces` / `MixedCase Words HERE` / `find the comma, and stop here` / `nested (parens [and brackets] inside) end` / `line eight`..`line ten`). Session `vi44test` 220×50. Vi mode via `Ctrl+P`→"Toggle Vi mode"→Enter (status `Vi mode enabled - NORMAL`).
+
+**Black-box results (verified by BUFFER-TEXT EFFECT; operator+motion keys sent SEPARATELY ~0.4–1.2s apart):**
+- **BUG → #2441 (med): find-char motions broken with operators; `;`/`,` no-op.** Pure `f`/`t` cursor motions WORK (`fr`→col9 then `x` deletes `r` of world; `t,`→col before comma). But `d`/`c`+`f`/`t` HANG in `-- OPERATOR (d/c) --` forever — `dfr`/`dt,`/`cfr` all stuck, target char + even `Z` swallowed, only Esc recovers; reproduced at 0.4s AND deliberate 1.2s gaps → NOT a timing race. When the find target is itself a motion key the `f` is dropped and the op degrades: `dfw`→`world foo bar baz` (=plain `dw`, NOT `orld...`). `;`/`,` repeat-find = no-op (proved via `fo`(col5)+`;`+`x` deleting col5 `o` → `hell world...`, cursor never advanced). 3 dup-search variations, 0 hits.
+- **BUG → #2442 (med): vertical `j`/`k` onto a shorter line parks cursor past EOL → `x` joins lines.** `$` on line1 (col23, correct) then `j` onto `short` (5 chars) → status `Ln2, Col6` (=len+1); `x` deletes the NEWLINE → `shorta longer line with many words here` (lines joined). 3/3: `$`+j, `l`-to-col10+j, `k` from line3. HORIZONTAL clamp correct: `$` direct on `short`→col5→`x`=`shor`; `l` stops at last char → vertical column-clamp off-by-one vs `$`/`l`. 2 dup-search variations, 0 hits.
+- **PASS / Vim-correct (do NOT re-test, R1):** `%` match-bracket (on `(` of line7 → jumps to OUTER `)`, skips nested `[...]`, `x` confirmed); `r`+`X` (replace single char `h`→`X`); `~` (toggle case + advance cursor); `p`/`P` linewise (`yy`+`p` dup below / `P` above, cursor on new line, status `Pasted`); `p` charwise (`x`(`h`)→`ello`, `p`→`ehllo`); `$`/`l` horizontal clamp (no past-EOL).
+- **NOT IMPLEMENTED (logged → IMP-023, NOT filed — missing-feature, candidate for one consolidated issue):** `R` Replace/overtype mode (stays NORMAL; next key runs as normal cmd — `R`+`A`→append-at-EOL, `R`+`x`→delete char); `gU`/`gu`/`g~` case OPERATORS (`gUw` no text change, `w` only moved cursor). Single-char `~` works.
+
+**Harness notes (learning_db):** find-char+operator hang is REAL not timing (held 1.2s). Verify by buffer-text effect, not cursor polling. Heavy `u` undo across trials desynced the buffer (an `R` test got a corrupted baseline) → recovered via `Ctrl+Q`→`d` discard + relaunch (file on disk pristine, never saved) + re-Toggle Vi mode. Launch reliably via `send-keys -l '<binpath> --no-restore file'` + Enter (a `cd && bin` one-liner via send-keys sometimes didn't start the editor).
+
+**Notification:** sent (2 new confirmed med-sev Vim-compat bugs filed) — substantive findings a maintainer actively working on vi compat would act on.
+
+**State updates:** run_log (this entry), learning_db (+"vi mode motion sweep — find-char, paste, case ops, vertical clamp (Run #44)"), confirmed_bugs (+BUG-019/#2441, +BUG-020/#2442, +PENDING vi-missing-commands), github_issues (+2 rows + Last-updated bump), potential_improvements (+IMP-023), test_plan (Run #44 note + Run #45 NEXT).
+
+**Cleanup:** killed tmux `vi44test`; removed `/tmp/vi44`; removed build worktree `/tmp/fresh-master`.
+
+**NEXT new-coverage (Run #45+, top-down, prefer freshest 0.4.1):** finish characterizing the vi-compat gap set for a consolidated "missing vi commands" issue (`R`, `gU`/`gu`/`g~`, plus check count+`gg`/`G`, `*`/`#` word-search, `n`/`N`, `o`/`O`, `s`/`S`, `D`/`C`/`Y`, `.` dot-repeat — recent deflake commit implies it exists, `>>`-with-count after #2438); then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition; (f) GDScript (#2238). Then #2197 only if a fix lands.

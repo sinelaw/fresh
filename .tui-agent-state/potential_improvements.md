@@ -214,3 +214,12 @@ change would make it self-evident without requiring users to read docs.
 - **Severity:** Low (discoverability/doc gap). Note batch candidate for the periodic "docs/UX polish" issue (R3).
 - **Reference:** Fresh's own Settings UI exposes other plugin options; new user-facing features are normally in CHANGELOG + docs.
 - **Discovered:** Run #42, 2026-06-22
+
+### IMP-023 — vi mode: several standard Vim commands are unimplemented (no-ops / fall-through)
+- **Observed (Run #44, v0.4.1 @ 3b8c2eca1):** while sweeping vi-compat motions, these standard Vim commands do nothing (and some silently fall through to other commands):
+  - **`R` (Replace/overtype mode):** `R` keeps `-- NORMAL --`; the next key runs as an ordinary NORMAL command (observed `R`+`A` firing append-at-EOL; `R`+`x` deleting a char). No overtype mode at all.
+  - **`gU`/`gu`/`g~` case operators:** no-ops — `gUw` left the word unchanged and `w` only moved the cursor (the `g`+`U` prefix was swallowed). NB the single-char `~` toggle DOES work; only the `g`-prefixed *operators* are missing.
+  - (Related find-char repeat `;`/`,` no-op is filed as a behavioral bug in #2441, since pure `f`/`t` work.)
+- **Suggested improvement:** implement these as part of the ongoing "Vim compatibility motions" work, or document the supported-motion subset so Vim users know what's available. Good candidate for ONE consolidated "vi mode: missing standard commands" issue once the full gap list is characterized (rather than one issue per command).
+- **Severity:** Low–Medium (missing features, not broken behavior; a Vim user reaching for `R`/`gU` just sees nothing happen — `R`'s fall-through to `A` is mildly surprising). Not individually filed per R3.
+- **Discovered:** Run #44, 2026-06-22
