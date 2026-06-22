@@ -2876,6 +2876,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "plugins")]
     fn repro_2414_plugin_edit_same_line_next_match() {
         // Issue #2414: after a plugin replaces the first of two matches on the
         // SAME line (delete range + insert, net length change), navigating to
