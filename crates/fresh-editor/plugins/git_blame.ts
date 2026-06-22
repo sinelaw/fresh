@@ -695,24 +695,6 @@ function git_blame_copy_hash() : void {
 }
 registerHandler("git_blame_copy_hash", git_blame_copy_hash);
 
-/**
- * Reset state when the blame buffer is closed externally (e.g. the user
- * runs the "Close Buffer" command or clicks the tab's × button rather
- * than pressing `q` / `Escape`). Without this, `blameState.isOpen`
- * stays true and the next "Git Blame" invocation early-returns with
- * "already open" — even though the buffer is gone.
- */
-function on_git_blame_buffer_closed(data: { buffer_id: number }): void {
-  if (!blameState.isOpen) return;
-  if (data.buffer_id === blameState.bufferId) {
-    blameState.isOpen = false;
-    blameState.bufferId = null;
-    resetState();
-  }
-}
-registerHandler("on_git_blame_buffer_closed", on_git_blame_buffer_closed);
-editor.on("buffer_closed", on_git_blame_buffer_closed);
-
 // =============================================================================
 // Command Registration
 // =============================================================================
