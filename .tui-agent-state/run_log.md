@@ -1473,3 +1473,31 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `rdiff36_*`; removed `/tmp/rdiff36`; left build worktree `/tmp/fresh-master` (reusable; remove if stale).
 
 **NEXT new-coverage (Run #37+, top-down):** (d) '+' new-tab popup / terminal Ctrl+Click path open / OSC 7 cwd; (e) color-transition animation on theme switch; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
+## Run #41 — 2026-06-22 — Clipboard strips ANSI on default copy (`7d636f1de`) — COMPREHENSIVE PASS, no bug — v0.4.1 @ 33e2ed130
+
+> Note: run_log entries for Runs #37–#40 live in `test_plan.md` (top "Note:" block) + `learning_db.md` topic sections, not here (a prior run stopped appending to run_log). This entry resumes the run_log.
+
+**Preflight:** Synced state branch (clean). Master UNCHANGED at **v0.4.1** (`33e2ed130`) since Run #40 → per **R1** skipped open-issue rechecks (no new fix landed; 11 open agent issues, none with new fix activity). Playbook intact (all sections). Lessons continuity OK (topic-based format; recent entries #2405/virtual-buffer/Review-Diff present). GitHub MCP auth live (listed 11 open `tui-agent-auto-bug` issues). Per **R2** advanced top new-coverage candidate: `7d636f1de` "fix(clipboard): strip ANSI escape codes from default copy".
+
+**Build:** rebuilt release `fresh` 0.4.1 from origin/master worktree `/tmp/fresh-master` @ `33e2ed130` (container was reclaimed; worktree + binary gone, rebuilt from scratch ~7m, exit 0).
+
+**Fixture:** `/tmp/ansi41/` text files with raw ESC bytes (verified via `cat -A`/`od -c`): `colored.txt` = `\033[31mRED\033[0m middle \033[32mGREEN\033[0m end` / `plain line two` / `\033[1;34mBOLDBLUE\033[0m tail`; plus `cf.txt`. Session `ansi_copy_r41`, 200×50, ANSI-verified.
+
+**Black-box results (all default-copy paths strip ANSI; the styled command keeps it):**
+- **ANSI-aware render confirmed** (`capture -e`): RED=`38;5;160`, GREEN=`38;5;2`, BOLDBLUE=bold+`38;5;25` — the file's escape bytes render as zero-width styling (not shown literally), so the buffer genuinely holds ESC bytes. This is the precondition the fix targets.
+- **Selection copy** (Home→Shift+End→Ctrl+C, status "Copied"): pasted line is pure ASCII `RED middle GREEN end` (`od -c`: no `\033`), originals still carry `^[[31m`. PASS.
+- **Whole-line copy** (no selection, Ctrl+C on BOLDBLUE line, status "Copied line"): pasted as `BOLDBLUE tail\n`, zero escape bytes. PASS.
+- **Block/rectangular copy** (Alt+Shift+Down×2 + Alt+Shift+Right×8, status "Copied"): block fragments (`RED`/`plain li`/`B`) all escape-free; block PASTE did VS Code column-paste (#1057) inserting the rectangle across lines — only the 2 original colored lines retained ESC (`grep -c $'\033'`=2). PASS.
+- **Copy with Formatting (contrast/control)** — palette builtin "Copy selection with syntax highlighting colors (as rich text)"; opens a **theme picker** (dark/dracula/high-contrast/light/nord/nostalgia/solarized-dark/terminal). Picked high-contrast → status "Copied as plain text" → pasted bytes RETAIN ANSI: `\033[31mRED\033[0m middle \033[32mGREEN\033[0m end`. Confirms the strip is specific to the default path, not a blanket removal. PASS.
+- **Not separately exercised:** the commit's 4th path "composite-buffer copy" (constructing a composite/virtual buffer holding ANSI black-box is impractical); the 3 default paths above + the formatted-copy contrast give a confident overall PASS.
+
+**Verdict:** `7d636f1de` works exactly as documented in its commit (default copy strips ANSI on selection/whole-line/block; "Copy with Formatting" keeps styling). **No bug, no false positive, no issue filed.** No notification (all-healthy run).
+
+**State updates:** run_log (this entry), learning_db (+"Clipboard ANSI strip on default copy (Run #41)"), test_plan (Run #41 note; clipboard candidate marked done). No confirmed_bugs / github_issues change.
+
+**Cleanup:** killed tmux `ansi_copy_r41`; removed `/tmp/ansi41`; left build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
+
+**NEXT new-coverage (Run #42+, top-down, prefer freshest 0.4.1):** `6df567f04` LSP `textDocument/implementation` (needs clangd on a small C iface/impl project); `77360e6c6` Shift+letter binding when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims column; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
