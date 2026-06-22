@@ -2,6 +2,35 @@
 
 ---
 
+## Run #38 — 2026-06-22 — #2317 line-level v stage/unstage/discard CONFIRMED FIXED in v0.4.1 + filed #2420 (raw i18n key on discard)
+
+### Status: COMPLETED
+
+**Preflight:** Synced state branch (pull --rebase clean). Playbook intact (PER-RUN LOOP / ANTI-DRIFT / ISSUE FILING STANDARDS / FALSE POSITIVE PATTERNS all present). Lessons continuity OK (topic-organized). GitHub MCP auth LIVE (`issue_read` #2317 returned).
+
+**Build:** Master FORCE-UPDATED past Run #37's `42bfbb586` → **`205b9640e`** (still v0.4.1; 2 new commits: `a1d3e4352` fix review-diff line-level stage/unstage/discard #2317; `205b9640e` quick-open virtual buffers #2373). Per R1 (version changed + a fix for an OPEN agent issue landed) → primary objective = recheck **#2317**. Built release `fresh` 0.4.1 from `/tmp/fresh-master` worktree @ origin/master (8m28s).
+
+**Fixture:** real git repo `/tmp/rdiff38` (commit signing off), tracked `README.md` + `src/calc.py`. Tested via tmux `rdiff38b_<pid>` 220×50, ANSI-verified cursor on a real +/- line before every op, each op confirmed against `git` ground truth.
+
+**#2317 — CONFIRMED FIXED (v0.4.1), commented + marked resolved.** All three line-level visual ops now work (issue was filed Run #36 when ALL failed):
+- **`v`+`s` stage** — single `+result = 1` (modification half) and clean `+extra line`: status `Lines staged`; `git diff --cached` shows exactly that one line staged, rest of hunk left unstaged. ✅
+- **`v`+`u` unstage** — single staged line returns to unstaged (`M ` → ` M`, cached empty). ✅
+- **`v`+`d` discard** — clean pure addition: line removed from working tree (git clean). Single-line **modification**: select full `-`/`+` pair (`v`,`j`,`d`) → reverts to HEAD (git clean). ✅
+
+**NEW BUG FILED → #2420 (low, `bug`+`tui-agent-auto-bug`):** line-level **discard** success path prints the **raw i18n key `status.lines_discardd`** (note typo "discardd", double-d) in the status bar instead of a localized message. Discard itself works (git verified). Deterministic across 2+ discards. CONTRAST: line-level **stage** shows proper `Lines staged`. 3 dup-searches (`lines_discardd`, `review diff discard status message i18n key`, `untranslated status key discard`), none.
+
+**Edge case (NOT filed — likely expected git semantics):** `v`+`d` discard on a SINGLE `+` line of a modification (without selecting the paired `-`) fails with `Patch failed: ... patch does not apply` and discards nothing. Reverse-applying just the `+` half of an in-place modification is ambiguous; the unambiguous path (select full `-`/`+` pair) works. Logged → potential_improvements (sub-hunk modification discard UX), do NOT file without clearer expected-vs-actual.
+
+**tmux harness gotchas (→ learning_db):** Review Diff focus cycles FILES→diff→COMMENTS via Tab; the ▸ in the center header marks the FOCUSED panel — only when ▸ is on the center diff do Up/Down move the line cursor (else they move the FILES sidebar selection). STAGED hunks render file-header-only (no content rows) in the combined view until you select that file in the FILES sidebar (then center expands it). Line-cursor Down can skip a visual row near hunk boundaries — verify exact landing with ANSI `48;5;243` (cursor-row bg) every time; do NOT trust step counts.
+
+**State updates:** run_log (this), learning_db (+"Review Diff line-level v ops fixed + i18n key leak (Run #38)"), confirmed_bugs (+BUG-015/#2420), github_issues (+#2420 row + #2317 → FIXED + Last-updated bump), potential_improvements (+sub-hunk modification-discard UX), test_plan (Run #38 note).
+
+**Cleanup:** killed tmux `rdiff38_*`/`rdiff38b_*`; removed `/tmp/rdiff38`. Left build worktree `/tmp/fresh-master` @ 205b9640e (reusable next run; remove if stale/version moves).
+
+**NEXT new-coverage (Run #39+, top-down, prefer freshest 0.4.1):** `205b9640e` quick-open lists virtual buffers in `#` switcher (#2373 — verify a virtual/special buffer like *Review Diff* or *Keyboard Shortcuts* appears in `#` buffer mode); then prior 0.4.1 backlog: `7d636f1de` clipboard strips ANSI on default copy; `6df567f04` LSP textDocument/implementation; `77360e6c6` Shift+letter binding when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims column; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
 ## Run #37 — 2026-06-22
 
 ### Status: COMPLETED

@@ -14,16 +14,27 @@ Each bug entry:
 
 ---
 
+## BUG-015: Review Diff — line-level discard shows raw i18n key `status.lines_discardd` (misspelled) instead of a localized message
+- **ID:** BUG-015
+- **Title:** After the #2317 fix, line-level **discard** works but its status-bar success message prints the literal lookup key `status.lines_discardd` (typo: "discardd", double-d). Sibling op **stage** shows proper `Lines staged`.
+- **Severity:** Low (cosmetic — discard itself git-verified correct; only the feedback string leaks an internal key).
+- **Status:** Open — GitHub #2420 filed (Run #38).
+- **GitHub Issue:** [#2420](https://github.com/sinelaw/fresh/issues/2420)
+- **Reproduction:** Real git repo, single-line modification. Review Diff → cursor on `-` line (ANSI-verify) → `v` → `j` (extend over the paired `+`) → `d`.
+- **Expected:** Localized confirmation consistent with stage (`Lines staged`), e.g. `Lines discarded`.
+- **Actual:** Status bar shows literal `status.lines_discardd`. Deterministic across 2+ discards.
+- **First Seen:** Run #38, 2026-06-22 (v0.4.1, master @ 205b9640e).
+
 ## BUG-013: Review Diff — line-level visual stage/unstage/discard (`v` then `s`/`u`/`d`) never works
 - **ID:** BUG-013
 - **Title:** The advertised line-level visual-selection staging (`v` then `s`/`u`/`d`) in Review Diff does nothing for any of the three ops, even with the cursor on a real +/- line.
 - **Severity:** Medium (a documented, help-bar-promoted feature is fully non-functional; hunk/file ops still work as a workaround).
-- **Status:** Open — GitHub #2317 filed (Run #36).
+- **Status:** **FIXED** (Run #38) — maintainer closed 2026-06-22, fix commit `a1d3e4352`. CONFIRMED via UI in v0.4.1 @ 205b9640e: `v`+`s` stages a single line (git diff --cached shows only it), `v`+`u` unstages a single staged line, `v`+`d` discards a pure addition and (full `-`/`+` pair selected) a modification. All git-verified. Commented on #2317.
 - **GitHub Issue:** [#2317](https://github.com/sinelaw/fresh/issues/2317)
 - **Reproduction:** Real git repo w/ a one-line change. Review Diff → cursor on the `+`/`-` line (ANSI-verify highlight) → `v` (status `Visual: j/k extend, s/u/d apply`) → `s`.
 - **Expected:** The selected line is staged (git_add_-p line granularity / VS Code "Stage Selected Ranges").
-- **Actual:** `v`+`s` and `v`+`d` → `Selection has no add/remove lines or crosses hunk boundary` (no-op); `v`+`u` → `Patch failed: … patch does not apply`. Reproduced for single `+`, full `-`/`+` (v+j), and pure single-add. Control: plain hunk `s`/`u`/`d` (no `v`) all work in the same session → defect is specific to the `v` path.
-- **First Seen:** Run #36, 2026-06-11 (v0.4.0, master @ 1b5d7f8c8).
+- **Actual (at filing, v0.4.0):** `v`+`s` and `v`+`d` → `Selection has no add/remove lines or crosses hunk boundary` (no-op); `v`+`u` → `Patch failed: … patch does not apply`. Now fixed in v0.4.1.
+- **First Seen:** Run #36, 2026-06-11 (v0.4.0, master @ 1b5d7f8c8). **Fixed:** v0.4.1 (Run #38).
 
 ## BUG-014: Review Diff — file-level Discard (`D`) reports "Discarded" but leaves staged changes intact
 - **ID:** BUG-014

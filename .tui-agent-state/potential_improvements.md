@@ -200,3 +200,10 @@ change would make it self-evident without requiring users to read docs.
 - **Severity:** Trivial (cosmetic / doc-vs-render wording). The `lsp_enabled` feature itself is a comprehensive PASS.
 - **Reference:** Fresh's own docs (docs/features/lsp.md). VS Code visually distinguishes a disabled/stopped language-status item from an active one.
 - **Discovered:** Run #33, 2026-06-11
+
+### IMP-021 — Review Diff: `v`+`d` discard of the lone `+` of a modification fails with "patch does not apply" (must select the whole `-`/`+` pair)
+- **Observed (Run #38, v0.4.1):** With the #2317 fix in place, line-level discard works when the visual selection covers a pure addition OR the full `-`/`+` pair of a modification. But selecting ONLY the `+` line of an in-place modification (cursor on `+A powerful calculator.`, `v`, `d`) → `Patch failed: error: patch failed: README.md:1error: README.md: patch does not apply` and nothing is discarded. Reverse-applying just the `+` half of a modification is semantically ambiguous (the original `-` text isn't in the working tree to restore), so this may be expected git behavior rather than a defect — which is why it was NOT filed as a bug.
+- **Suggested improvement:** When a visual selection lands on the `+` (or `-`) of a paired modification, either auto-expand the discard to the whole change-block (VS Code "Revert Selected Ranges" reverts the region to HEAD), or surface a clearer message ("select the full change to discard a modified line") instead of the raw `patch does not apply`.
+- **Severity:** Low (workaround = select the full pair, which works). Stage (`v`+`s`) of a lone `+` succeeds because adding-the-line is unambiguous; discard is the asymmetric case.
+- **Reference:** VS Code "Revert Selected Ranges" / `git checkout -p`.
+- **Discovered:** Run #38, 2026-06-22
