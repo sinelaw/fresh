@@ -817,14 +817,12 @@ fn test_session_persistence_across_project_switches() {
 /// Send two left-clicks at the same coordinates within the double-click window.
 fn double_click_at(harness: &mut EditorTestHarness, col: u16, row: u16) {
     // Ensure we are outside any previous click's double-click window.
-    let dct = harness.config().editor.double_click_time_ms;
-    let window = std::time::Duration::from_millis(dct.saturating_mul(2));
-    tracing::info!(
-        col,
-        row,
-        double_click_time_ms = dct,
-        ?window,
-        "double_click_at: sending Down/Up/Down/Up"
+    let window = std::time::Duration::from_millis(
+        harness
+            .config()
+            .editor
+            .double_click_time_ms
+            .saturating_mul(2),
     );
     harness.advance_time(window);
     let send = |h: &mut EditorTestHarness, kind: MouseEventKind| {
@@ -926,21 +924,6 @@ fn test_switch_project_double_click_navigates_into_folder() {
 /// parent as the new project root.
 #[test]
 fn test_switch_project_double_click_parent_navigates_up() {
-    // Tracing subscriber for the production-side decision logs. CI does not
-    // set `RUST_LOG`, so default to the file-browser double-click handler's
-    // target (`fresh::app::file_open_input`) at info — that's where the
-    // navigate-vs-commit branch is logged — while still honoring `RUST_LOG`
-    // if a developer sets it. The `eprintln!`s below are unconditional so the
-    // flaky-on-Windows hang (killed externally by nextest's `terminate-after`)
-    // still surfaces diagnostics; nextest shows captured output for a
-    // timed-out test.
-    let _ = tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("fresh::app::file_open_input=info,fresh::app::mouse_input=info")
-        }))
-        .try_init();
-
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().to_path_buf();
 
@@ -954,32 +937,17 @@ fn test_switch_project_double_click_parent_navigates_up() {
     fs::create_dir(&child).unwrap();
     fs::create_dir(root.join("upok")).unwrap();
 
-    // Path length is the Windows-specific variable here: long temp paths
-    // truncate in the browser title (`C:\Users\[...]\child`), and the
-    // ellipsis contains "..". Log the lengths so a flaky run shows whether
-    // truncation was in play.
-    tracing::info!(?root, ?child, "test dirs created");
-    eprintln!(
-        "[parent-nav] root={:?} (len {}), child={:?} (len {})",
-        root,
-        root.to_string_lossy().chars().count(),
-        child,
-        child.to_string_lossy().chars().count(),
-    );
-
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 24, Default::default(), child.clone())
             .unwrap();
 
     // Open Switch Project.
-    eprintln!("[parent-nav] opening command palette");
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains(">command"))
         .expect("Command palette should appear");
-    eprintln!("[parent-nav] command palette open; typing 'switch project'");
     harness.type_text("switch project").unwrap();
     // Wait for the palette to finish filtering and render the "Switch Project"
     // command (title-cased, so it can't match the lowercase input echo) before
@@ -989,48 +957,39 @@ fn test_switch_project_double_click_parent_navigates_up() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Switch Project"))
         .expect("Command palette should list the Switch Project command");
-    eprintln!("[parent-nav] 'Switch Project' command listed; pressing Enter");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // Wait for the folder browser AND its async directory listing to land.
-    // There are two ".." on screen: the inline parent *shortcut* on the
-    // "Navigation:" line (built synchronously, so it appears the instant the
-    // browser opens) and the ".." *list entry* (added only when the async
-    // directory read completes). The click below targets the list entry by
-    // anchoring below the header, so a bare `screen.contains("..")` is the
-    // wrong signal — it is satisfied by the sync shortcut before the list
-    // populates, after which the row-finder below finds no ".." entry and
-    // panics. Gate on the same thing the click needs: a ".." on a row below
-    // the Navigation header.
-    eprintln!("[parent-nav] waiting for folder browser '..' list entry below header");
+    // Wait for the folder browser's async directory read to FINISH before
+    // clicking. While it is pending the list shows a "Loading..." placeholder,
+    // and the only ".." on screen are dotted artifacts — the "Loading..."
+    // ellipsis, the inline "Navigation: .." shortcut, and (on Windows, whose
+    // temp paths are long enough to truncate) the path title's "[...]". None
+    // of those are the clickable parent row, so a bare `contains("..")` gate
+    // fires too early: the click then lands on the empty list, which commits
+    // the current dir as the project root and closes the browser — the test
+    // then hangs to nextest's external timeout. This reproduced only on
+    // Windows, where the slower filesystem keeps "Loading..." on screen longer.
+    //
+    // Gate on the thing the click actually needs: the *loaded* parent entry. A
+    // directory renders with a trailing slash, so the real row reads "../".
+    // The placeholder, the nav shortcut, and the title ellipsis have no slash,
+    // so "../" can only be the populated parent row.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             let Some(nav_row) = screen.lines().position(|l| l.contains("Navigation:")) else {
-                tracing::debug!("gate: no Navigation header yet");
                 return false;
             };
-            let has_entry = screen.lines().skip(nav_row + 1).any(|l| l.contains(".."));
-            tracing::debug!(nav_row, has_entry, "gate: waiting for '..' list entry");
-            has_entry
+            screen.lines().skip(nav_row + 1).any(|l| l.contains("../"))
         })
-        .expect("Folder browser should appear with the parent ('..') list entry");
-    eprintln!("[parent-nav] folder browser ready; full screen snapshot:");
-    eprintln!("{}", harness.screen_to_string());
+        .expect("Folder browser should finish loading and list the parent ('../') entry");
 
-    // Locate the row with the ".." entry by *position*, not by dot-matching.
-    // The ".." entry is the first list row, which sits below the
-    // "Navigation:" header. The current-path title is on the modal's top
-    // border, above that header — and when the path is too long it renders
-    // a truncation ellipsis that also contains dots ("prefix/[...]/suffix"
-    // on Linux; a plain "..." on Windows, whose "\" separators defeat
-    // truncate_path's '/'-split). Searching the whole screen for ".."
-    // matched that title first, so the click landed on the border and
-    // nothing navigated — the test timed out on Windows (its temp paths
-    // are long enough to truncate; Linux's short /tmp paths were not).
-    // Anchoring to the row *after* the header skips the title entirely.
+    // Locate the parent row by position (below the Navigation header) and the
+    // "../" text within it. Anchoring below the header skips the path title on
+    // the modal's top border; matching "../" (with slash) skips the inline
+    // "Navigation: .." shortcut on the header line itself.
     let screen = harness.screen_to_string();
     let nav_row = screen
         .lines()
@@ -1040,35 +999,11 @@ fn test_switch_project_double_click_parent_navigates_up() {
         .lines()
         .enumerate()
         .skip(nav_row + 1)
-        .find(|(_, l)| l.contains(".."))
-        .expect("Should find the '..' entry row below the Navigation header");
-    // `find` returns a *byte* offset; `screen_to_string()` emits multi-byte
-    // cell symbols (e.g. the popup border `│`), so this can differ from the
-    // intended *display column*. Log both so a misdirected click on Windows
-    // is visible. Entry selection is row-based, so a small skew is tolerated,
-    // but if the click ever lands off-row this is where we'd see it.
-    let dot_byte = line.find("..").expect("'..' must be on its row");
-    let col = dot_byte as u16 + 1;
-    tracing::info!(
-        nav_row,
-        row_idx,
-        dot_byte,
-        col,
-        line = %line,
-        "computed '..' click target"
-    );
-    eprintln!(
-        "[parent-nav] click target: nav_row={} row_idx={} dot_byte={} col={}\n  line={:?}",
-        nav_row, row_idx, dot_byte, col, line
-    );
+        .find(|(_, l)| l.contains("../"))
+        .expect("Should find the '../' entry row below the Navigation header");
+    let col = line.find("../").expect("'../' must be on its row") as u16 + 1;
 
-    eprintln!(
-        "[parent-nav] double-clicking '..' at col={} row={}",
-        col, row_idx
-    );
     double_click_at(&mut harness, col, row_idx as u16);
-    eprintln!("[parent-nav] post double-click screen snapshot:");
-    eprintln!("{}", harness.screen_to_string());
 
     // After the double-click, the post-condition that observably
     // distinguishes "navigated up" from "selected parent as new
@@ -1080,35 +1015,13 @@ fn test_switch_project_double_click_parent_navigates_up() {
     // conditions in one semantic wait so the test settles to a
     // stable state before observing — no model accessors, no bare
     // snapshots, per CONTRIBUTING.md E2E rules.
-    eprintln!("[parent-nav] waiting for navigated-up state (Navigation: + upok)");
-    let mut polls: u32 = 0;
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            let has_nav = screen.contains("Navigation:");
-            let has_marker = screen.contains("upok");
-            polls += 1;
-            tracing::debug!(polls, has_nav, has_marker, "post-click: waiting for upok");
-            // Throttle a full-screen dump to stderr so that if this wait
-            // hangs (the Windows flake) the externally-killed test still
-            // shows what was on screen. wait_until polls roughly every
-            // 50ms, so every 200th poll is ~10s — infrequent enough to keep
-            // the decisive early lines (browser-ready / click-target / post-
-            // click snapshots above) findable in the captured log.
-            if polls % 200 == 0 {
-                eprintln!(
-                    "[parent-nav] still waiting (poll {}, has_nav={}, has_marker={}); screen:\n{}",
-                    polls, has_nav, has_marker, screen
-                );
-            }
-            has_nav && has_marker
+            screen.contains("Navigation:") && screen.contains("upok")
         })
         .expect(
             "Folder browser must remain open and show the parent directory's contents \
              (the 'upok' marker) after double-clicking '..'",
         );
-    eprintln!(
-        "[parent-nav] success: navigated up, 'upok' visible after {} polls",
-        polls
-    );
 }
