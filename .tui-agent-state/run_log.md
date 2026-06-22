@@ -2,6 +2,40 @@
 
 ---
 
+## Run #40 — 2026-06-22 — #2405 brackets NOT highlighted inside comments/strings — COMPREHENSIVE PASS, no bug
+
+**Preflight:** Synced state branch. Master FORCE-UPDATED past Run #39's `205b9640e` → **`33e2ed130`** (still v0.4.1; 3 new commits: `1008134eb` fix(brackets) #2405, `0420b2eed` refactor TerminalManager::spawn, `33e2ed130` refactor process_async_messages). Auth not exercised this run (no bug to file, #2405 is owner-filed + already merged → verification only, no comment). Built `fresh` 0.4.1 from `/tmp/fresh-master` worktree @ origin/master `33e2ed130` (~14m, LTO fat). Per R1 (version changed + a fix landed) → primary objective = verify **#2405**. Per R2 this advances new bracket-highlighting coverage on top of Run #26's Rainbow Brackets pass.
+
+**Objective:** #2405 — "Rainbow bracket colorization and bracket-match highlighting were applied to every `()[]{}<>` including those inside comments and string literals … the bracket overlay now skips any bracket inside a Comment or String span — for rainbow colorization, cursor-on-bracket matching, AND nesting-depth calculation."
+
+**Fixture:** `/tmp/brk40/test.py` (Python, built-in syntax highlighting; no LSP needed), session `brk40_<pid>`, 200x50, `--no-restore`:
+```
+1  code = (1 + (2 * (3 + 4)))
+2  s = ("brk ( [ { } ] ) in str")
+3  # cmt ( [ { } ] ) in comment
+4  z = (10 + 20)  # ))) ((( fake
+5  w = (30)
+```
+
+**Results (ANSI `capture-pane -p -e` verified) — ALL PASS, no bug:**
+- **Rainbow colorization correct on real code** (line 1): `(`/`(`/`(` = `38;5;6`(cyan,d0)/`38;5;2`(green,d1)/`38;5;3`(yellow,d2); closers mirror `3,2,6`. Matches Run #26 cycle `[6,2,3,126,15,27]`.
+- **String brackets NOT rainbow** (line 2): the enclosing real `(`…`)` are `38;5;6` cyan, but the entire string `"brk ( [ { } ] ) in str"` renders as ONE `38;5;34` green span — the `( [ { } ] )` inside keep the string color, NOT individually rainbow-colored.
+- **Comment brackets NOT rainbow** (line 3): whole line `# cmt ( [ { } ] ) in comment` = `38;5;253` comment color; brackets keep comment color.
+- **Depth calc excludes comment/string brackets** (line 4): real `(…)` pair colored cyan/cyan (depth 0/0) — the trailing comment's `# ))) ((( fake` (all `38;5;253`) does NOT shift nesting depth; the real `)` still mirrors the real `(` at depth 0.
+- **Go to Matching Bracket (`Ctrl+]`, palette) — matching skips comment brackets:** from the real `(` (Col 5, line 4) → jumps to the real `)` (Col 13) — NOT to the comment `)))`. From a **comment `)`** (Col 18) → status `No matching bracket found` (comment bracket correctly not treated as structural). (Note: `Ctrl+]` via `tmux send-keys` did NOT fire — tmux likely intercepts it; drive via palette "Go to Matching Bracket" + Enter instead.)
+
+**Refactor smoke test (PASS):** the two new refactor commits (`TerminalManager::spawn` decompose, `process_async_messages` split — high regression risk) show no user-visible regression: editor launches + renders async (file loaded, palette + search work), terminal spawns via palette "Open Terminal" (tab `bash — root@vm: /tmp/brk40`), PTY I/O works (`echo SPAWN-OK-$((6*7))` → `SPAWN-OK-42`).
+
+**Conclusion:** #2405 fix works end-to-end (colorization + depth + matching all skip comment/string brackets). No bug, no false positive. #2405 is owner-filed + already merged → no GitHub comment.
+
+**State updates:** run_log (this), test_plan (Run #40 note + NEXT list), learning_db (+"Brackets in comments/strings — #2405 (Run #40)" extending the Rainbow Brackets lesson). No confirmed_bugs / github_issues / potential_improvements changes.
+
+**Cleanup:** killed tmux `brk40_*`; removed `/tmp/brk40`; left build worktree `/tmp/fresh-master` (reusable next run; remove if stale).
+
+**NEXT new-coverage (Run #41+, top-down, prefer freshest 0.4.1):** `7d636f1de` clipboard strips ANSI on default copy; `6df567f04` LSP `textDocument/implementation`; `77360e6c6` Shift+letter binding when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims column; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
 ## Run #39 — 2026-06-22 — #2373 quick-open lists virtual buffers in `#` switcher — COMPREHENSIVE PASS, no bug
 
 ### Status: COMPLETED

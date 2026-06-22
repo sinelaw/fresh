@@ -718,6 +718,17 @@ The dock is a persistent, non-modal LEFT-column session switcher (CHANGELOG head
 - **Unbalanced handling (robust):** unmatched open `( [ { a } ] ;` → the stray `(` stays its depth color, inner matched pairs unaffected (no cascade). Stray closers `a ) b ] c } ;` → all rendered at depth-0 color (6), no crash, no negative-depth glitch.
 - Minor: depth-3 magenta is sometimes `126` vs `127` between lines — both indistinguishable magenta; NOT a fileable bug.
 
+## Brackets in comments/strings — #2405 (Run #40) — v0.4.1 @ 33e2ed130, PASS (extends Rainbow Brackets)
+- **Fix (commit `1008134eb`, #2405):** bracket overlay now SKIPS any bracket inside a Comment or String span — for (1) rainbow colorization, (2) cursor-on-bracket matching, AND (3) nesting-depth calculation. Before, every `()[]{}<>` got colored/matched even inside prose/data.
+- **Black-box method:** a Python file with brackets in 4 contexts (real code / inside a string literal / inside a `#` comment / real code followed by a trailing comment full of fake brackets). ANSI `capture-pane -p -e` on each line; plus "Go to Matching Bracket".
+- **Verified (ANSI):**
+  - String `"… ( [ { } ] ) …"` renders as ONE string-color span (`38;5;34` green for Python strings) — inner brackets keep string color, NOT rainbow. Only the enclosing *real* `(`/`)` are rainbow (`38;5;6` cyan d0).
+  - Comment `# … ( [ { } ] ) …` whole line = comment color (`38;5;253`); brackets keep comment color.
+  - **Depth excludes them:** `z = (10 + 20)  # ))) ((( fake` → the real `(`/`)` are cyan d0/d0 (mirrored); the comment's `)))`/`(((` (all `38;5;253`) do NOT shift depth.
+- **Matching command:** "Go to Matching Bracket" (`Ctrl+]`, builtin, "Jump to the matching bracket, parenthesis, or brace"). From a real `(` → lands on the real `)`, skipping comment fake brackets. From a **comment bracket** → status `No matching bracket found` (correctly non-structural).
+- **tmux gotcha:** `Ctrl+]` via `tmux send-keys "C-]"` does NOT reach the editor (tmux intercepts it) — invoke the command via the palette ("Go to Matching Bracket" + Enter) instead. Also: the command palette overlay renders at the BOTTOM of the screen (rows ~43-50 on a 50-row pane) under a `> command | : line | # buffer` legend — `capture-pane | sed -n '1,14p'` shows only editor content above it; grep the whole capture or look at the bottom rows.
+- **Occurrence-highlight reminder (#2312, still present):** the word under the cursor gets a fixed `48;5;16` background (e.g. `code` highlighted) — that bg-16 is occurrence highlight, NOT a bracket/cursor artifact. Don't mistake it for a bracket-match highlight.
+
 ## Terminal Auto-Naming (Run #26) — 0.3.12, on by default, PASS
 - **Feature:** "Terminal tab auto-naming: tabs follow the foreground process and OSC title. Setting `editor.terminal_auto_title` (on by default)" (CHANGELOG 0.3.12).
 - **Tab name format:** `<foreground process> — <OSC title>`. On opening "Open Terminal" (palette; opens in current split as a buffer tab), the tab read `bash — root@vm: /home/user/fresh` (the `root@vm: /home/user/fresh` part is bash's own `\u@\h: \w` OSC title from PROMPT_COMMAND).
