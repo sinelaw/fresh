@@ -87,6 +87,235 @@ fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Val
     cur.as_object_mut().unwrap().insert(last.to_string(), value);
 }
 
+/// Discover startup plugin directories and load every plugin found in them.
+///
+/// Extracted from `Editor::with_options` to keep the constructor readable:
+/// this owns the whole "where do plugins live and how do we load them"
+/// concern. Directory discovery walks (in priority order) the embedded set,
+/// the user `plugins/` dir, package-manager installs, and bundle dirs from
+/// the package scan. Loading then takes one of two paths:
+///
+/// * `defer_plugin_load` (async startup): submit each dir to the plugin
+///   thread and let a forwarder thread translate the results into
+///   `AsyncMessage`s the main loop applies later.
+/// * otherwise (sync / test / server): load each dir inline, merge the
+///   discovered plugin configs back into `config`, and write the aggregate
+///   `.d.ts` declarations.
+///
+/// No-op when the plugin manager is inactive.
+#[allow(clippy::too_many_arguments)]
+fn load_startup_plugins(
+    plugin_manager: &Arc<RwLock<PluginManager>>,
+    dir_context: &DirectoryContext,
+    bundle_plugin_dirs: &[std::path::PathBuf],
+    config: &mut Config,
+    #[cfg_attr(not(feature = "plugins"), allow(unused_variables))] async_bridge: &AsyncBridge,
+    working_dir: &std::path::Path,
+    #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
+    enable_embedded_plugins: bool,
+    defer_plugin_load: bool,
+) {
+    if !plugin_manager.read().unwrap().is_active() {
+        return;
+    }
+    let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
+
+    // Embedded plugins. `enable_embedded_plugins` lets tests opt out so
+    // they get exactly the plugin set they pre-populated under
+    // `<config_dir>/plugins/`, without the bundled set leaking in.
+    #[cfg(feature = "embed-plugins")]
+    if enable_embedded_plugins && plugin_dirs.is_empty() {
+        if let Some(embedded_dir) = crate::services::plugins::embedded::get_embedded_plugins_dir() {
+            tracing::info!("Using embedded plugins from: {:?}", embedded_dir);
+            plugin_dirs.push(embedded_dir.clone());
+        }
+    }
+
+    // Always check user config plugins directory (~/.config/fresh/plugins)
+    let user_plugins_dir = dir_context.config_dir.join("plugins");
+    if user_plugins_dir.exists() && !plugin_dirs.contains(&user_plugins_dir) {
+        tracing::info!("Found user plugins directory: {:?}", user_plugins_dir);
+        plugin_dirs.push(user_plugins_dir.clone());
+    }
+
+    // Check for package manager installed plugins (~/.config/fresh/plugins/packages/*)
+    let packages_dir = dir_context.config_dir.join("plugins").join("packages");
+    if packages_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // Skip hidden directories (like .index for registry cache)
+                if path.is_dir() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if !name.starts_with('.') {
+                            tracing::info!("Found package manager plugin: {:?}", path);
+                            plugin_dirs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add bundle plugin directories from package scan
+    for dir in bundle_plugin_dirs {
+        tracing::info!("Found bundle plugin directory: {:?}", dir);
+        plugin_dirs.push(dir.clone());
+    }
+
+    if plugin_dirs.is_empty() {
+        tracing::debug!(
+            "No plugins directory found next to executable or in working dir: {:?}",
+            working_dir
+        );
+    }
+
+    if defer_plugin_load {
+        // Async startup path: hand each dir + a trailing
+        // ListPlugins request to the plugin thread now, return
+        // before they finish, and let a forwarder thread
+        // translate the responses into AsyncMessages that the
+        // main loop applies via `process_async_messages`. The
+        // plugin thread is FIFO, so submitting in this exact
+        // order guarantees declarations cover only the startup
+        // batch — init.ts and lifecycle hooks queue *after*
+        // ListPlugins from main.rs after construction returns,
+        // matching the original blocking behaviour.
+        #[cfg(feature = "plugins")]
+        {
+            let bridge = async_bridge;
+            let mut dir_receivers: Vec<(
+                std::path::PathBuf,
+                fresh_plugin_runtime::thread::oneshot::Receiver<
+                    fresh_plugin_runtime::thread::PluginsDirLoadResult,
+                >,
+            )> = Vec::with_capacity(plugin_dirs.len());
+            for plugin_dir in &plugin_dirs {
+                tracing::info!(
+                    "Submitting async TypeScript plugin load for: {:?}",
+                    plugin_dir
+                );
+                if let Some(rx) = plugin_manager
+                    .read()
+                    .unwrap()
+                    .load_plugins_from_dir_with_config_request(plugin_dir, &config.plugins)
+                {
+                    dir_receivers.push((plugin_dir.clone(), rx));
+                }
+            }
+            let declarations_rx = if !dir_receivers.is_empty() {
+                plugin_manager.read().unwrap().list_plugins_request()
+            } else {
+                None
+            };
+            if !dir_receivers.is_empty() {
+                let sender = bridge.sender();
+                std::thread::Builder::new()
+                    .name("plugin-load-forwarder".to_string())
+                    .spawn(move || {
+                        for (dir, rx) in dir_receivers {
+                            let load_start = std::time::Instant::now();
+                            match rx.recv() {
+                                Ok((errors, discovered_plugins)) => {
+                                    tracing::info!(
+                                        "Loaded TypeScript plugins from {:?} in {:?}",
+                                        dir,
+                                        load_start.elapsed()
+                                    );
+                                    drop(sender.send(
+                                        crate::services::async_bridge::AsyncMessage::PluginsDirLoaded {
+                                            dir,
+                                            errors,
+                                            discovered_plugins,
+                                        },
+                                    ));
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "plugin-load-forwarder: dir {:?} recv failed: {}",
+                                        dir,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        if let Some(rx) = declarations_rx {
+                            match rx.recv() {
+                                Ok(plugin_infos) => {
+                                    let declarations: Vec<(String, String)> = plugin_infos
+                                        .into_iter()
+                                        .filter_map(|info| {
+                                            info.declarations.map(|d| (info.name, d))
+                                        })
+                                        .collect();
+                                    drop(sender.send(
+                                        crate::services::async_bridge::AsyncMessage::PluginDeclarationsReady {
+                                            declarations,
+                                        },
+                                    ));
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "plugin-load-forwarder: list_plugins recv failed: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+            }
+        }
+    } else {
+        // Synchronous (legacy / test) path. Used by `for_test`,
+        // server, GUI: every other code path that wants the
+        // editor fully constructed before the constructor
+        // returns.
+        for plugin_dir in plugin_dirs {
+            tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
+            let load_start = std::time::Instant::now();
+            let (errors, discovered_plugins) = plugin_manager
+                .read()
+                .unwrap()
+                .load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
+            tracing::info!(
+                "Loaded TypeScript plugins from {:?} in {:?}",
+                plugin_dir,
+                load_start.elapsed()
+            );
+
+            // Merge discovered plugins into config
+            // discovered_plugins already contains the merged config (saved enabled state + discovered path)
+            for (name, plugin_config) in discovered_plugins {
+                config.plugins.insert(name, plugin_config);
+            }
+
+            if !errors.is_empty() {
+                for err in &errors {
+                    tracing::error!("TypeScript plugin load error: {}", err);
+                }
+                // In debug/test builds, panic to surface plugin loading errors
+                #[cfg(debug_assertions)]
+                panic!(
+                    "TypeScript plugin loading failed with {} error(s): {}",
+                    errors.len(),
+                    errors.join("; ")
+                );
+            }
+        }
+
+        // Collect `.d.ts` emits from every loaded plugin into a
+        // single aggregate under `<config_dir>/types/plugins.d.ts`.
+        // This is what makes `getPluginApi("foo")` typed in the
+        // user's init.ts without a hand-written cast — each plugin
+        // that uses `declare global { interface FreshPluginRegistry }`
+        // contributes its augmentation, and init.ts's tsconfig
+        // picks the aggregate up via `files`.
+        let declarations = plugin_manager.read().unwrap().plugin_declarations();
+        crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
+    }
+}
+
 /// Pre-built non-trivial inputs handed to [`Editor::from_parts`].
 ///
 /// Everything in here either depends on external resources (filesystem,
@@ -767,223 +996,23 @@ impl Editor {
             }
         }
 
-        // Load TypeScript plugins from multiple directories:
-        // 1. Next to the executable (for cargo-dist installations)
-        // 1. Embedded plugins (compiled into the binary via the
-        //    embed-plugins feature, default on for every shipped build).
-        // 2. User plugins directory (~/.config/fresh/plugins).
-        // 3. Package manager installed plugins (~/.config/fresh/plugins/packages/*).
-        // No working-directory or exe-dir lookup: a user project with a folder
-        // named `plugins/` (a Vite/Rollup project, a Hugo site) is not a Fresh
-        // plugin source, and packagers no longer ship plugins/ alongside the
-        // binary now that the bundled set is fully embedded.
         // Plugin schemas populated lazily by plugins calling
         // `editor.definePluginConfig(...)` at load time. See
         // `handle_register_plugin_config_schema`.
         let plugin_schemas: HashMap<String, serde_json::Value> = HashMap::new();
-        if plugin_manager.read().unwrap().is_active() {
-            let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
-            // Embedded plugins. `enable_embedded_plugins` lets tests opt out so
-            // they get exactly the plugin set they pre-populated under
-            // `<config_dir>/plugins/`, without the bundled set leaking in.
-            #[cfg(feature = "embed-plugins")]
-            if enable_embedded_plugins && plugin_dirs.is_empty() {
-                if let Some(embedded_dir) =
-                    crate::services::plugins::embedded::get_embedded_plugins_dir()
-                {
-                    tracing::info!("Using embedded plugins from: {:?}", embedded_dir);
-                    plugin_dirs.push(embedded_dir.clone());
-                }
-            }
-
-            // Always check user config plugins directory (~/.config/fresh/plugins)
-            let user_plugins_dir = dir_context.config_dir.join("plugins");
-            if user_plugins_dir.exists() && !plugin_dirs.contains(&user_plugins_dir) {
-                tracing::info!("Found user plugins directory: {:?}", user_plugins_dir);
-                plugin_dirs.push(user_plugins_dir.clone());
-            }
-
-            // Check for package manager installed plugins (~/.config/fresh/plugins/packages/*)
-            let packages_dir = dir_context.config_dir.join("plugins").join("packages");
-            if packages_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        // Skip hidden directories (like .index for registry cache)
-                        if path.is_dir() {
-                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                                if !name.starts_with('.') {
-                                    tracing::info!("Found package manager plugin: {:?}", path);
-                                    plugin_dirs.push(path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Add bundle plugin directories from package scan
-            for dir in &scan_result.bundle_plugin_dirs {
-                tracing::info!("Found bundle plugin directory: {:?}", dir);
-                plugin_dirs.push(dir.clone());
-            }
-
-            if plugin_dirs.is_empty() {
-                tracing::debug!(
-                    "No plugins directory found next to executable or in working dir: {:?}",
-                    working_dir
-                );
-            }
-
-            if defer_plugin_load {
-                // Async startup path: hand each dir + a trailing
-                // ListPlugins request to the plugin thread now, return
-                // before they finish, and let a forwarder thread
-                // translate the responses into AsyncMessages that the
-                // main loop applies via `process_async_messages`. The
-                // plugin thread is FIFO, so submitting in this exact
-                // order guarantees declarations cover only the startup
-                // batch — init.ts and lifecycle hooks queue *after*
-                // ListPlugins from main.rs after construction returns,
-                // matching the original blocking behaviour.
-                #[cfg(feature = "plugins")]
-                {
-                    let bridge = &async_bridge;
-                    let mut dir_receivers: Vec<(
-                        std::path::PathBuf,
-                        fresh_plugin_runtime::thread::oneshot::Receiver<
-                            fresh_plugin_runtime::thread::PluginsDirLoadResult,
-                        >,
-                    )> = Vec::with_capacity(plugin_dirs.len());
-                    for plugin_dir in &plugin_dirs {
-                        tracing::info!(
-                            "Submitting async TypeScript plugin load for: {:?}",
-                            plugin_dir
-                        );
-                        if let Some(rx) = plugin_manager
-                            .read()
-                            .unwrap()
-                            .load_plugins_from_dir_with_config_request(plugin_dir, &config.plugins)
-                        {
-                            dir_receivers.push((plugin_dir.clone(), rx));
-                        }
-                    }
-                    let declarations_rx = if !dir_receivers.is_empty() {
-                        plugin_manager.read().unwrap().list_plugins_request()
-                    } else {
-                        None
-                    };
-                    if !dir_receivers.is_empty() {
-                        let sender = bridge.sender();
-                        std::thread::Builder::new()
-                            .name("plugin-load-forwarder".to_string())
-                            .spawn(move || {
-                                for (dir, rx) in dir_receivers {
-                                    let load_start = std::time::Instant::now();
-                                    match rx.recv() {
-                                        Ok((errors, discovered_plugins)) => {
-                                            tracing::info!(
-                                                "Loaded TypeScript plugins from {:?} in {:?}",
-                                                dir,
-                                                load_start.elapsed()
-                                            );
-                                            drop(sender.send(
-                                                crate::services::async_bridge::AsyncMessage::PluginsDirLoaded {
-                                                    dir,
-                                                    errors,
-                                                    discovered_plugins,
-                                                },
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "plugin-load-forwarder: dir {:?} recv failed: {}",
-                                                dir,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                if let Some(rx) = declarations_rx {
-                                    match rx.recv() {
-                                        Ok(plugin_infos) => {
-                                            let declarations: Vec<(String, String)> = plugin_infos
-                                                .into_iter()
-                                                .filter_map(|info| {
-                                                    info.declarations.map(|d| (info.name, d))
-                                                })
-                                                .collect();
-                                            drop(sender.send(
-                                                crate::services::async_bridge::AsyncMessage::PluginDeclarationsReady {
-                                                    declarations,
-                                                },
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "plugin-load-forwarder: list_plugins recv failed: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            })
-                            .ok();
-                    }
-                }
-            } else {
-                // Synchronous (legacy / test) path. Used by `for_test`,
-                // server, GUI: every other code path that wants the
-                // editor fully constructed before the constructor
-                // returns.
-                for plugin_dir in plugin_dirs {
-                    tracing::info!("Loading TypeScript plugins from: {:?}", plugin_dir);
-                    let load_start = std::time::Instant::now();
-                    let (errors, discovered_plugins) = plugin_manager
-                        .read()
-                        .unwrap()
-                        .load_plugins_from_dir_with_config(&plugin_dir, &config.plugins);
-                    tracing::info!(
-                        "Loaded TypeScript plugins from {:?} in {:?}",
-                        plugin_dir,
-                        load_start.elapsed()
-                    );
-
-                    // Merge discovered plugins into config
-                    // discovered_plugins already contains the merged config (saved enabled state + discovered path)
-                    for (name, plugin_config) in discovered_plugins {
-                        config.plugins.insert(name, plugin_config);
-                    }
-
-                    if !errors.is_empty() {
-                        for err in &errors {
-                            tracing::error!("TypeScript plugin load error: {}", err);
-                        }
-                        // In debug/test builds, panic to surface plugin loading errors
-                        #[cfg(debug_assertions)]
-                        panic!(
-                            "TypeScript plugin loading failed with {} error(s): {}",
-                            errors.len(),
-                            errors.join("; ")
-                        );
-                    }
-                }
-
-                // Collect `.d.ts` emits from every loaded plugin into a
-                // single aggregate under `<config_dir>/types/plugins.d.ts`.
-                // This is what makes `getPluginApi("foo")` typed in the
-                // user's init.ts without a hand-written cast — each plugin
-                // that uses `declare global { interface FreshPluginRegistry }`
-                // contributes its augmentation, and init.ts's tsconfig
-                // picks the aggregate up via `files`.
-                let declarations = plugin_manager.read().unwrap().plugin_declarations();
-                crate::init_script::write_plugin_declarations(
-                    &dir_context.config_dir,
-                    &declarations,
-                );
-            }
-        }
+        // Discover plugin directories and load every plugin (see the helper for
+        // the discovery order and the async-vs-sync load paths).
+        load_startup_plugins(
+            &plugin_manager,
+            &dir_context,
+            &scan_result.bundle_plugin_dirs,
+            &mut config,
+            &async_bridge,
+            &working_dir,
+            enable_embedded_plugins,
+            defer_plugin_load,
+        );
 
         t.phase("plugin_loading");
         // Extract config values before moving config into the struct
