@@ -1487,10 +1487,7 @@ impl LspState {
         );
 
         let params = CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
             context: None,
@@ -1535,6 +1532,43 @@ impl LspState {
         }
     }
 
+    /// Build the `TextDocumentPositionParams` shared by every position-based
+    /// request (definition, implementation, rename, hover, references,
+    /// signature help, …). Centralizes the `uri`/`line`/`character` →
+    /// params construction that was otherwise repeated verbatim in each
+    /// handler.
+    fn text_document_position(uri: Uri, line: u32, character: u32) -> TextDocumentPositionParams {
+        TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position { line, character },
+        }
+    }
+
+    /// Parse a `textDocument/definition`-style response into a flat list of
+    /// locations. The LSP spec lets servers answer with a single `Location`,
+    /// an array of `Location`s, or an array of `LocationLink`s (whose target
+    /// lives in `target_uri` / `target_selection_range`). Definition and
+    /// implementation both accept all three shapes, so the decoding lives
+    /// here once instead of being copy-pasted into each handler.
+    fn locations_from_response(result: Value) -> Vec<lsp_types::Location> {
+        if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(result.clone()) {
+            vec![loc]
+        } else if let Ok(locs) = serde_json::from_value::<Vec<lsp_types::Location>>(result.clone())
+        {
+            locs
+        } else if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(result) {
+            links
+                .into_iter()
+                .map(|link| lsp_types::Location {
+                    uri: link.target_uri,
+                    range: link.target_selection_range,
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
     /// Handle go-to-definition request
     async fn handle_goto_definition(
         &self,
@@ -1554,10 +1588,7 @@ impl LspState {
         );
 
         let params = GotoDefinitionParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position_params: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         };
@@ -1569,28 +1600,7 @@ impl LspState {
         {
             Ok(result) => {
                 // Parse the definition response (can be Location, Vec<Location>, or LocationLink)
-                let locations = if let Ok(loc) =
-                    serde_json::from_value::<lsp_types::Location>(result.clone())
-                {
-                    vec![loc]
-                } else if let Ok(locs) =
-                    serde_json::from_value::<Vec<lsp_types::Location>>(result.clone())
-                {
-                    locs
-                } else if let Ok(links) =
-                    serde_json::from_value::<Vec<lsp_types::LocationLink>>(result)
-                {
-                    // Convert LocationLink to Location
-                    links
-                        .into_iter()
-                        .map(|link| lsp_types::Location {
-                            uri: link.target_uri,
-                            range: link.target_selection_range,
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let locations = Self::locations_from_response(result);
 
                 // Send to main loop
                 let _ = self.async_tx.send(AsyncMessage::LspGotoDefinition {
@@ -1630,10 +1640,7 @@ impl LspState {
         );
 
         let params = GotoImplementationParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position_params: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         };
@@ -1649,28 +1656,7 @@ impl LspState {
         {
             Ok(result) => {
                 // Parse the response (can be Location, Vec<Location>, or LocationLink)
-                let locations = if let Ok(loc) =
-                    serde_json::from_value::<lsp_types::Location>(result.clone())
-                {
-                    vec![loc]
-                } else if let Ok(locs) =
-                    serde_json::from_value::<Vec<lsp_types::Location>>(result.clone())
-                {
-                    locs
-                } else if let Ok(links) =
-                    serde_json::from_value::<Vec<lsp_types::LocationLink>>(result)
-                {
-                    // Convert LocationLink to Location
-                    links
-                        .into_iter()
-                        .map(|link| lsp_types::Location {
-                            uri: link.target_uri,
-                            range: link.target_selection_range,
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let locations = Self::locations_from_response(result);
 
                 // Send to main loop
                 let _ = self.async_tx.send(AsyncMessage::LspImplementation {
@@ -1712,10 +1698,7 @@ impl LspState {
         );
 
         let params = RenameParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position: Self::text_document_position(uri, line, character),
             new_name,
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
@@ -1777,10 +1760,7 @@ impl LspState {
         );
 
         let params = HoverParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position_params: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
 
@@ -1894,10 +1874,7 @@ impl LspState {
         );
 
         let params = ReferenceParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
             context: ReferenceContext {
@@ -1958,10 +1935,7 @@ impl LspState {
         );
 
         let params = SignatureHelpParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
+            text_document_position_params: Self::text_document_position(uri, line, character),
             work_done_progress_params: WorkDoneProgressParams::default(),
             context: None, // We can add context later for re-triggers
         };
