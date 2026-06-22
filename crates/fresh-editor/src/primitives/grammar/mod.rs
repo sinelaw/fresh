@@ -29,6 +29,7 @@
 // Loader requires filesystem access - runtime only
 #[cfg(feature = "runtime")]
 mod loader;
+mod shebang;
 mod types;
 
 // Re-export all public items for backward compatibility
