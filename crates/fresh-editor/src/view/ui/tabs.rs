@@ -160,6 +160,13 @@ const NEW_TAB_BUTTON_TEXT: &str = " + ";
 /// Display width (columns) of [`NEW_TAB_BUTTON_TEXT`].
 pub const NEW_TAB_BUTTON_WIDTH: usize = 3;
 
+/// Glyph drawn at the left edge when earlier tabs are scrolled off.
+const SCROLL_INDICATOR_LEFT: &str = "<";
+/// Glyph drawn at the right edge when later tabs are scrolled off.
+const SCROLL_INDICATOR_RIGHT: &str = ">";
+/// Column width of either scroll indicator.
+const SCROLL_INDICATOR_WIDTH: usize = 1;
+
 /// Width available for laying out / scrolling the real tabs, given the total
 /// width of all tabs (including inter-tab separators) and the full tab-bar
 /// width.
@@ -403,6 +410,318 @@ pub fn calculate_tab_widths(
     (tab_widths, rendered_targets)
 }
 
+/// Compute the (name, close-button) styles for one tab from its state flags.
+///
+/// For the inactive split's active tab we keep BOLD to show which tab is
+/// active inside that split, but use `tab_inactive_fg` instead of
+/// `tab_active_fg`: pairing `tab_active_fg` with `tab_inactive_bg` assumes
+/// `active_fg` was chosen against `active_bg`, which breaks on themes (e.g.
+/// high-contrast) where `active_fg == inactive_bg` and the label disappears.
+fn tab_styles(
+    is_active: bool,
+    is_active_split: bool,
+    is_hovered_name: bool,
+    is_hovered_close: bool,
+    is_preview: bool,
+    theme: &crate::view::theme::Theme,
+) -> (Style, Style) {
+    let mut base_style = if is_active {
+        let fg = if is_active_split {
+            theme.tab_active_fg
+        } else {
+            theme.tab_inactive_fg
+        };
+        let bg = if is_active_split {
+            theme.tab_active_bg
+        } else {
+            theme.tab_inactive_bg
+        };
+        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
+    } else if is_hovered_name {
+        // Non-active tab with name hovered - use hover background
+        Style::default()
+            .fg(theme.tab_inactive_fg)
+            .bg(theme.tab_hover_bg)
+    } else {
+        Style::default()
+            .fg(theme.tab_inactive_fg)
+            .bg(theme.tab_inactive_bg)
+    };
+    if is_preview {
+        base_style = base_style.add_modifier(Modifier::ITALIC);
+    }
+
+    let close_style = if is_hovered_close {
+        base_style.fg(theme.tab_close_hover_fg)
+    } else {
+        base_style
+    };
+    (base_style, close_style)
+}
+
+/// Build the styled `(name, close-button)` spans for every resolvable tab.
+///
+/// Returns `(spans, ranges, rendered_targets)` where `spans` holds two entries
+/// per tab (name then close button) as `(span, display_width)`, `ranges[i]` is
+/// the `(start, end, close_start)` logical columns of rendered tab `i`, and
+/// `rendered_targets[i]` is its target. Targets that don't resolve (hidden
+/// buffers, missing groups) are skipped, so the returned vectors index by
+/// *rendered* position, not by input position.
+#[allow(clippy::too_many_arguments)]
+fn build_tab_spans(
+    tab_targets: &[TabTarget],
+    resolved_names: &HashMap<TabTarget, String>,
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    active_target: TabTarget,
+    hovered_tab: Option<(TabTarget, bool)>,
+    preview_buffer: Option<BufferId>,
+    is_active_split: bool,
+    theme: &crate::view::theme::Theme,
+) -> (
+    Vec<(Span<'static>, usize)>,
+    Vec<(usize, usize, usize)>,
+    Vec<TabTarget>,
+) {
+    let mut all_tab_spans: Vec<(Span<'static>, usize)> = Vec::new();
+    let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new();
+    let mut rendered_targets: Vec<TabTarget> = Vec::new();
+
+    for t in tab_targets.iter() {
+        // Skip targets we couldn't resolve (hidden buffers, missing groups).
+        let Some(name_owned) = resolved_names.get(t).cloned() else {
+            continue;
+        };
+        let name = name_owned.as_str();
+        rendered_targets.push(*t);
+
+        // Composite buffers and groups never show as modified.
+        let modified = match t {
+            TabTarget::Buffer(id) if !composite_buffers.contains_key(id) => buffers
+                .get(id)
+                .filter(|state| state.buffer.is_modified())
+                .map(|_| "*")
+                .unwrap_or(""),
+            _ => "",
+        };
+        let binary_indicator = match t {
+            TabTarget::Buffer(id) if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) => {
+                " [BIN]"
+            }
+            _ => "",
+        };
+
+        // Preview (ephemeral) tabs render in italic and carry a translated
+        // suffix (e.g. " (preview)") so the user knows the tab will be
+        // replaced by the next single-click open.
+        let is_preview = is_preview_tab(t, preview_buffer);
+        let preview_indicator = preview_suffix(t, preview_buffer);
+        let is_active = *t == active_target;
+        let (is_hovered_name, is_hovered_close) = match hovered_tab {
+            Some((hover_target, is_close)) if hover_target == *t => (!is_close, is_close),
+            _ => (false, false),
+        };
+
+        let (base_style, close_style) = tab_styles(
+            is_active,
+            is_active_split,
+            is_hovered_name,
+            is_hovered_close,
+            is_preview,
+            theme,
+        );
+
+        // Tab content: " {name}{modified}{preview_indicator}{binary_indicator} ".
+        let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
+        let tab_name_width = str_width(&tab_name_text);
+        let close_text = "× ";
+        let close_width = str_width(close_text);
+
+        let start_pos: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
+        let close_start_pos = start_pos + tab_name_width;
+        let end_pos = start_pos + tab_name_width + close_width;
+        tab_ranges.push((start_pos, end_pos, close_start_pos));
+
+        all_tab_spans.push((Span::styled(tab_name_text, base_style), tab_name_width));
+        all_tab_spans.push((
+            Span::styled(close_text.to_string(), close_style),
+            close_width,
+        ));
+    }
+
+    (all_tab_spans, tab_ranges, rendered_targets)
+}
+
+/// Clip the full tab-span list to the horizontally-scrolled viewport.
+///
+/// Produces the spans actually painted on the bar — left indicator, the
+/// visible slice of tabs (truncating the boundary tab), right indicator and a
+/// trailing fill out to `max_width` — plus the screen-x where the right scroll
+/// indicator was drawn (if any), which the caller needs for its hit area.
+fn build_visible_line(
+    all_tab_spans: Vec<(Span<'static>, usize)>,
+    area: Rect,
+    offset: usize,
+    max_width: usize,
+    show_left: bool,
+    show_right: bool,
+    theme: &crate::view::theme::Theme,
+) -> (Vec<Span<'static>>, Option<u16>) {
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut rendered_width = 0;
+    let mut skip_chars_count = offset;
+
+    if show_left {
+        current_spans.push(Span::styled(
+            SCROLL_INDICATOR_LEFT,
+            Style::default().bg(theme.tab_separator_bg),
+        ));
+        rendered_width += SCROLL_INDICATOR_WIDTH;
+    }
+
+    let right_reserve = if show_right {
+        SCROLL_INDICATOR_WIDTH
+    } else {
+        0
+    };
+    for (mut span, width) in all_tab_spans.into_iter() {
+        if skip_chars_count >= width {
+            skip_chars_count -= width;
+            continue;
+        }
+
+        let visible_chars_in_span = width - skip_chars_count;
+        if rendered_width + visible_chars_in_span > max_width.saturating_sub(right_reserve) {
+            let remaining_width = max_width
+                .saturating_sub(rendered_width)
+                .saturating_sub(right_reserve);
+            let truncated_content = span
+                .content
+                .chars()
+                .skip(skip_chars_count)
+                .take(remaining_width)
+                .collect::<String>();
+            span.content = std::borrow::Cow::Owned(truncated_content);
+            current_spans.push(span);
+            rendered_width += remaining_width;
+            break;
+        }
+
+        let visible_content = span
+            .content
+            .chars()
+            .skip(skip_chars_count)
+            .collect::<String>();
+        span.content = std::borrow::Cow::Owned(visible_content);
+        current_spans.push(span);
+        rendered_width += visible_chars_in_span;
+        skip_chars_count = 0;
+    }
+
+    // Position of the right indicator (recorded before it's pushed) for hit
+    // testing.
+    let right_indicator_x = if show_right && rendered_width < max_width {
+        Some(area.x + rendered_width as u16)
+    } else {
+        None
+    };
+    if show_right && rendered_width < max_width {
+        current_spans.push(Span::styled(
+            SCROLL_INDICATOR_RIGHT,
+            Style::default().bg(theme.tab_separator_bg),
+        ));
+        rendered_width += SCROLL_INDICATOR_WIDTH;
+    }
+    if rendered_width < max_width {
+        current_spans.push(Span::styled(
+            " ".repeat(max_width.saturating_sub(rendered_width)),
+            Style::default().bg(theme.tab_separator_bg),
+        ));
+    }
+
+    (current_spans, right_indicator_x)
+}
+
+/// Map each rendered tab's logical column range to its on-screen hit areas
+/// (tab body + close button), pushing them into `layout` and recording the
+/// active/inactive theme cells. Tabs scrolled fully out of view are skipped.
+#[allow(clippy::too_many_arguments)]
+fn map_tab_hit_areas(
+    layout: &mut TabLayout,
+    rendered_targets: &[TabTarget],
+    tab_ranges: &[(usize, usize, usize)],
+    area: Rect,
+    offset: usize,
+    available: usize,
+    left_indicator_offset: usize,
+    active_target: TabTarget,
+    is_active_split: bool,
+    mut rec: Option<&mut CellThemeRecorder>,
+) {
+    let visible_start = offset;
+    let visible_end = offset + available;
+    let base_x = area.x + left_indicator_offset as u16;
+
+    for (idx, target) in rendered_targets.iter().enumerate() {
+        let (logical_start, logical_end, logical_close_start) = tab_ranges[idx];
+
+        // Skip tabs completely scrolled out of view.
+        if logical_end <= visible_start || logical_start >= visible_end {
+            continue;
+        }
+
+        let screen_start = if logical_start >= visible_start {
+            base_x + (logical_start - visible_start) as u16
+        } else {
+            base_x
+        };
+        let screen_end = if logical_end <= visible_end {
+            base_x + (logical_end - visible_start) as u16
+        } else {
+            base_x + available as u16
+        };
+        let screen_close_start =
+            if logical_close_start >= visible_start && logical_close_start < visible_end {
+                base_x + (logical_close_start - visible_start) as u16
+            } else if logical_close_start < visible_start {
+                // Close button scrolled off the left - clamp to the tab start.
+                screen_start
+            } else {
+                // Close button scrolled off the right.
+                screen_end
+            };
+
+        let tab_width = screen_end.saturating_sub(screen_start);
+        let close_width = screen_end.saturating_sub(screen_close_start);
+
+        // Record this tab's visible cells with its actual keys: the active tab
+        // of the active split wears the active palette, every other tab the
+        // inactive one (hover bg / close-hover fg are transient, not recorded).
+        if let Some(r) = rec.as_deref_mut() {
+            let (fg, bg) = if *target == active_target && is_active_split {
+                ("ui.tab_active_fg", "ui.tab_active_bg")
+            } else {
+                ("ui.tab_inactive_fg", "ui.tab_inactive_bg")
+            };
+            r.run(
+                screen_start,
+                area.y,
+                tab_width,
+                Some(fg),
+                Some(bg),
+                "Tab Bar",
+            );
+        }
+
+        layout.tabs.push(TabHitArea {
+            target: *target,
+            tab_area: Rect::new(screen_start, area.y, tab_width, 1),
+            close_area: Rect::new(screen_close_start, area.y, close_width, 1),
+        });
+    }
+}
+
 impl TabsRenderer {
     /// Render the tab bar for a specific split showing only its open buffers
     ///
@@ -453,13 +772,6 @@ impl TabsRenderer {
                 "Tab Bar",
             );
         }
-        const SCROLL_INDICATOR_LEFT: &str = "<";
-        const SCROLL_INDICATOR_RIGHT: &str = ">";
-        const SCROLL_INDICATOR_WIDTH: usize = 1; // Width of "<" or ">"
-
-        let mut all_tab_spans: Vec<(Span, usize)> = Vec::new(); // Store (Span, display_width)
-        let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new(); // (start, end, close_start) positions for each tab
-        let mut rendered_targets: Vec<TabTarget> = Vec::new(); // Track which targets actually got rendered
         let resolved_names = resolve_tab_names(
             tab_targets,
             buffers,
@@ -468,124 +780,23 @@ impl TabsRenderer {
             group_names,
         );
 
-        // First, build all spans and calculate their display widths
-        for t in tab_targets.iter() {
-            // Skip targets we couldn't resolve (hidden buffers, missing groups)
-            let Some(name_owned) = resolved_names.get(t).cloned() else {
-                continue;
-            };
-            let name = name_owned.as_str();
-            rendered_targets.push(*t);
+        // Phase 1: build each tab's styled name + close spans and logical
+        // column ranges (unresolvable targets are skipped, so the vectors
+        // index by rendered position).
+        let (all_tab_spans, mut tab_ranges, rendered_targets) = build_tab_spans(
+            tab_targets,
+            &resolved_names,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            active_target,
+            hovered_tab,
+            preview_buffer,
+            is_active_split,
+            theme,
+        );
 
-            // For composite buffers and groups, never show as modified
-            let modified = match t {
-                TabTarget::Buffer(id) => {
-                    if composite_buffers.contains_key(id) {
-                        ""
-                    } else if let Some(state) = buffers.get(id) {
-                        if state.buffer.is_modified() {
-                            "*"
-                        } else {
-                            ""
-                        }
-                    } else {
-                        ""
-                    }
-                }
-                TabTarget::Group(_) => "",
-            };
-            let binary_indicator = match t {
-                TabTarget::Buffer(id) => {
-                    if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) {
-                        " [BIN]"
-                    } else {
-                        ""
-                    }
-                }
-                TabTarget::Group(_) => "",
-            };
-
-            // Preview (ephemeral) tabs are rendered in italic AND carry a
-            // translated suffix (e.g. " (preview)") so the user has an
-            // unambiguous cue that this tab will be replaced by the next
-            // single-click open.
-            let is_preview = is_preview_tab(t, preview_buffer);
-            let preview_indicator = preview_suffix(t, preview_buffer);
-
-            let is_active = *t == active_target;
-
-            // Check hover state for this tab
-            let (is_hovered_name, is_hovered_close) = match hovered_tab {
-                Some((hover_target, is_close)) if hover_target == *t => (!is_close, is_close),
-                _ => (false, false),
-            };
-
-            // Determine base style. For the inactive split's active tab,
-            // we keep BOLD to show which tab is active inside that split,
-            // but use `tab_inactive_fg` instead of `tab_active_fg`. Pairing
-            // `tab_active_fg` with `tab_inactive_bg` assumed active_fg was
-            // chosen against active_bg — which breaks on themes (e.g.
-            // high-contrast) where active_fg == inactive_bg and the tab
-            // label disappears.
-            let mut base_style = if is_active {
-                if is_active_split {
-                    Style::default()
-                        .fg(theme.tab_active_fg)
-                        .bg(theme.tab_active_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(theme.tab_inactive_fg)
-                        .bg(theme.tab_inactive_bg)
-                        .add_modifier(Modifier::BOLD)
-                }
-            } else if is_hovered_name {
-                // Non-active tab with name hovered - use hover background
-                Style::default()
-                    .fg(theme.tab_inactive_fg)
-                    .bg(theme.tab_hover_bg)
-            } else {
-                Style::default()
-                    .fg(theme.tab_inactive_fg)
-                    .bg(theme.tab_inactive_bg)
-            };
-            if is_preview {
-                base_style = base_style.add_modifier(Modifier::ITALIC);
-            }
-
-            // Style for the close button
-            let close_style = if is_hovered_close {
-                // Close button hovered - use hover color
-                base_style.fg(theme.tab_close_hover_fg)
-            } else {
-                base_style
-            };
-
-            // Build tab content: " {name}{modified}{preview_indicator}{binary_indicator} "
-            let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary_indicator} ");
-            let tab_name_width = str_width(&tab_name_text);
-
-            // Close button: "× "
-            let close_text = "× ";
-            let close_width = str_width(close_text);
-
-            let total_width = tab_name_width + close_width;
-
-            let start_pos: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
-            let close_start_pos = start_pos + tab_name_width;
-            let end_pos = start_pos + total_width;
-            tab_ranges.push((start_pos, end_pos, close_start_pos));
-
-            // Add name span
-            all_tab_spans.push((Span::styled(tab_name_text, base_style), tab_name_width));
-            // Add close button span (can have different style when hovered)
-            all_tab_spans.push((
-                Span::styled(close_text.to_string(), close_style),
-                close_width,
-            ));
-        }
-
-        // Add separators between tabs (we do this after the loop to handle hidden buffers correctly)
+        // Phase 2: add separators between tabs (we do this after the loop to handle hidden buffers correctly)
         // We'll rebuild all_tab_spans with separators inserted, and fix up tab_ranges
         // to account for the separator widths
         let mut final_spans: Vec<(Span<'static>, usize)> = Vec::new();
@@ -647,112 +858,31 @@ impl TabsRenderer {
             inline_plus_range = Some((plus_start, plus_start + NEW_TAB_BUTTON_WIDTH));
         }
 
-        #[allow(clippy::let_and_return)]
-        let all_tab_spans = final_spans;
-
-        let mut current_spans: Vec<Span> = Vec::new();
-
-        let total_width: usize = all_tab_spans.iter().map(|(_, w)| w).sum();
-        // Use rendered_targets (not tab_targets) to find active index,
-        // since some targets may have been skipped
-        let _active_tab_idx = rendered_targets.iter().position(|t| *t == active_target);
-
-        let mut tab_widths: Vec<usize> = Vec::new();
-        for (start, end, _close_start) in &tab_ranges {
-            tab_widths.push(end.saturating_sub(*start));
-        }
-
-        // Use the scroll offset directly - ensure_active_tab_visible handles the calculation
-        // Only clamp to prevent negative or extreme values
+        // Phase 3: horizontal scroll geometry. Use the scroll offset directly
+        // (ensure_active_tab_visible drives it); only clamp to avoid extremes.
+        let total_width: usize = final_spans.iter().map(|(_, w)| w).sum();
         let max_offset = total_width.saturating_sub(max_width);
         let offset = tab_scroll_offset.min(total_width);
         tracing::trace!(
             "render_for_split: tab_scroll_offset={}, max_offset={}, offset={}, total={}, max_width={}",
             tab_scroll_offset, max_offset, offset, total_width, max_width
         );
-        // Indicators reserve space based on scroll position
+        // Indicators reserve space based on scroll position.
         let show_left = offset > 0;
         let show_right = total_width.saturating_sub(offset) > max_width;
         let available = max_width
             .saturating_sub((show_left as usize + show_right as usize) * SCROLL_INDICATOR_WIDTH);
 
-        let mut rendered_width = 0;
-        let mut skip_chars_count = offset;
-
-        if show_left {
-            current_spans.push(Span::styled(
-                SCROLL_INDICATOR_LEFT,
-                Style::default().bg(theme.tab_separator_bg),
-            ));
-            rendered_width += SCROLL_INDICATOR_WIDTH;
-        }
-
-        for (mut span, width) in all_tab_spans.into_iter() {
-            if skip_chars_count >= width {
-                skip_chars_count -= width;
-                continue;
-            }
-
-            let visible_chars_in_span = width - skip_chars_count;
-            if rendered_width + visible_chars_in_span
-                > max_width.saturating_sub(if show_right {
-                    SCROLL_INDICATOR_WIDTH
-                } else {
-                    0
-                })
-            {
-                let remaining_width =
-                    max_width
-                        .saturating_sub(rendered_width)
-                        .saturating_sub(if show_right {
-                            SCROLL_INDICATOR_WIDTH
-                        } else {
-                            0
-                        });
-                let truncated_content = span
-                    .content
-                    .chars()
-                    .skip(skip_chars_count)
-                    .take(remaining_width)
-                    .collect::<String>();
-                span.content = std::borrow::Cow::Owned(truncated_content);
-                current_spans.push(span);
-                rendered_width += remaining_width;
-                break;
-            } else {
-                let visible_content = span
-                    .content
-                    .chars()
-                    .skip(skip_chars_count)
-                    .collect::<String>();
-                span.content = std::borrow::Cow::Owned(visible_content);
-                current_spans.push(span);
-                rendered_width += visible_chars_in_span;
-                skip_chars_count = 0;
-            }
-        }
-
-        // Track where the right indicator will be rendered (before adding it)
-        let right_indicator_x = if show_right && rendered_width < max_width {
-            Some(area.x + rendered_width as u16)
-        } else {
-            None
-        };
-
-        if show_right && rendered_width < max_width {
-            current_spans.push(Span::styled(
-                SCROLL_INDICATOR_RIGHT,
-                Style::default().bg(theme.tab_separator_bg),
-            ));
-            rendered_width += SCROLL_INDICATOR_WIDTH;
-        }
-
-        if rendered_width < max_width {
-            current_spans.push(Span::styled(
-                " ".repeat(max_width.saturating_sub(rendered_width)),
-                Style::default().bg(theme.tab_separator_bg),
-            ));
-        }
+        // Phase 4: clip the spans to the viewport and paint the bar.
+        let (current_spans, right_indicator_x) = build_visible_line(
+            final_spans,
+            area,
+            offset,
+            max_width,
+            show_left,
+            show_right,
+            theme,
+        );
 
         let line = Line::from(current_spans);
         let block = Block::default().style(Style::default().bg(theme.tab_separator_bg));
@@ -799,76 +929,19 @@ impl TabsRenderer {
                 Some(Rect::new(right_x, area.y, SCROLL_INDICATOR_WIDTH as u16, 1));
         }
 
-        for (idx, target) in rendered_targets.iter().enumerate() {
-            let (logical_start, logical_end, logical_close_start) = tab_ranges[idx];
-
-            // Convert logical positions to screen positions
-            // Screen position = area.x + left_indicator_offset + (logical_pos - scroll_offset)
-            // But we need to clamp to visible area
-            let visible_start = offset;
-            let visible_end = offset + available;
-
-            // Skip tabs that are completely scrolled out of view
-            if logical_end <= visible_start || logical_start >= visible_end {
-                continue;
-            }
-
-            // Calculate visible portion of this tab
-            let screen_start = if logical_start >= visible_start {
-                area.x + left_indicator_offset as u16 + (logical_start - visible_start) as u16
-            } else {
-                area.x + left_indicator_offset as u16
-            };
-
-            let screen_end = if logical_end <= visible_end {
-                area.x + left_indicator_offset as u16 + (logical_end - visible_start) as u16
-            } else {
-                area.x + left_indicator_offset as u16 + available as u16
-            };
-
-            // Close button position (if visible)
-            let screen_close_start = if logical_close_start >= visible_start
-                && logical_close_start < visible_end
-            {
-                area.x + left_indicator_offset as u16 + (logical_close_start - visible_start) as u16
-            } else if logical_close_start < visible_start {
-                // Close button is partially/fully scrolled off left - use screen_start
-                screen_start
-            } else {
-                // Close button is scrolled off right
-                screen_end
-            };
-
-            // Build tab hit area using Rects
-            let tab_width = screen_end.saturating_sub(screen_start);
-            let close_width = screen_end.saturating_sub(screen_close_start);
-
-            // Record this tab's visible cells with its actual keys: the active
-            // tab of the active split wears the active palette, every other tab
-            // the inactive one (hover bg / close-hover fg are transient and not
-            // recorded). Overwrites the bar's separator surface seeded above.
-            if let Some(r) = rec.as_deref_mut() {
-                let (fg, bg) = if *target == active_target && is_active_split {
-                    ("ui.tab_active_fg", "ui.tab_active_bg")
-                } else {
-                    ("ui.tab_inactive_fg", "ui.tab_inactive_bg")
-                };
-                r.run(
-                    screen_start,
-                    area.y,
-                    tab_width,
-                    Some(fg),
-                    Some(bg),
-                    "Tab Bar",
-                );
-            }
-
-            layout.tabs.push(TabHitArea {
-                target: *target,
-                tab_area: Rect::new(screen_start, area.y, tab_width, 1),
-                close_area: Rect::new(screen_close_start, area.y, close_width, 1),
-            });
-        }
+        // Phase 5: per-tab hit areas (and recorded theme cells).
+        map_tab_hit_areas(
+            &mut layout,
+            &rendered_targets,
+            &tab_ranges,
+            area,
+            offset,
+            available,
+            left_indicator_offset,
+            active_target,
+            is_active_split,
+            rec.as_deref_mut(),
+        );
 
         // Map the inline "+" button's logical range to a screen rect using the
         // same visibility/clamping logic as the per-tab mapping above. (The
