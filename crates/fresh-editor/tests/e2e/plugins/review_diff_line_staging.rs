@@ -101,36 +101,22 @@ fn diff_line_of(harness: &mut EditorTestHarness, needle: &str) -> usize {
     );
 }
 
-/// Step the diff cursor down until the status bar reports `target` line.
+/// Step the diff cursor down one row at a time until the status bar reports
+/// `target`. Each Down is followed by a semantic wait for the reported line to
+/// change, rather than spinning on a fixed render budget (CONTRIBUTING.md:
+/// "use semantic waiting, not timers"). The cursor only moves downward here,
+/// so `target` must be at or below the current line.
 fn move_cursor_to_line(harness: &mut EditorTestHarness, target: usize) {
-    for _ in 0..60 {
-        harness.render().unwrap();
-        if status_line_number(harness) == Some(target) {
+    loop {
+        let current = status_line_number(harness);
+        if current == Some(target) {
             return;
         }
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| status_line_number(h) != current)
+            .unwrap();
     }
-    panic!(
-        "never reached diff line {} (status: {:?}). Screen:\n{}",
-        target,
-        status_line_number(harness),
-        harness.screen_to_string()
-    );
-}
-
-/// Bounded settle loop: pump the async runtime up to ~3s waiting for
-/// `cond` to hold, then return whether it did. Unlike `wait_until`, this
-/// never hangs — a failing operation simply returns `false`.
-fn settle_until<F: Fn() -> bool>(harness: &mut EditorTestHarness, cond: F) -> bool {
-    for _ in 0..60 {
-        harness.tick_and_render().unwrap();
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        harness.advance_time(std::time::Duration::from_millis(50));
-    }
-    cond()
 }
 
 fn cached_diff(repo: &GitTestRepo) -> String {
@@ -165,18 +151,12 @@ fn test_review_visual_stage_single_added_line() {
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
 
-    // The line-level selection must stage the line. Give the async git
-    // apply + refresh a chance to complete.
-    settle_until(&mut harness, || cached_diff(&repo).contains("+extra line"));
-
-    let staged = cached_diff(&repo);
-    assert!(
-        staged.contains("+extra line"),
-        "line-level visual stage should stage the selected added line; \
-         `git diff --cached` was:\n{}\nScreen:\n{}",
-        staged,
-        harness.screen_to_string()
-    );
+    // The line-level selection must stage the line. Wait (indefinitely, per the
+    // testing guidelines) for the async git apply + refresh to land it in the
+    // index — this wait IS the assertion.
+    harness
+        .wait_until(|_| cached_diff(&repo).contains("+extra line"))
+        .unwrap();
 }
 
 /// A repo with a one-line modification in the working tree (produces a
@@ -217,16 +197,14 @@ fn test_review_visual_stage_modified_line_pair() {
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
 
-    settle_until(&mut harness, || cached_diff(&repo).contains("+BETA"));
-
-    let staged = cached_diff(&repo);
-    assert!(
-        staged.contains("+BETA") && staged.contains("-beta"),
-        "line-level visual stage should stage the -/+ modification pair; \
-         `git diff --cached` was:\n{}\nScreen:\n{}",
-        staged,
-        harness.screen_to_string()
-    );
+    // Wait for the whole -/+ modification pair to land in the index; the
+    // compound condition is the assertion.
+    harness
+        .wait_until(|_| {
+            let staged = cached_diff(&repo);
+            staged.contains("+BETA") && staged.contains("-beta")
+        })
+        .unwrap();
 }
 
 /// #2317 — `v` then `d` discards the selected added line from the working tree.
@@ -250,19 +228,14 @@ fn test_review_visual_discard_single_added_line() {
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
 
-    settle_until(&mut harness, || {
-        let content = fs::read_to_string(repo.path.join("README.md")).unwrap_or_default();
-        !content.contains("extra line")
-    });
-
-    let content = fs::read_to_string(repo.path.join("README.md")).unwrap();
-    assert!(
-        !content.contains("extra line"),
-        "line-level visual discard should remove the added line from the \
-         working tree; README.md is:\n{}\nScreen:\n{}",
-        content,
-        harness.screen_to_string()
-    );
+    // Wait for the discard to remove the added line from the working tree; the
+    // worktree read is the assertion.
+    harness
+        .wait_until(|_| {
+            let content = fs::read_to_string(repo.path.join("README.md")).unwrap_or_default();
+            !content.contains("extra line")
+        })
+        .unwrap();
 }
 
 /// A repo whose single hunk contains two *separate* added lines, so a
@@ -301,15 +274,14 @@ fn test_review_visual_stage_only_selected_line_of_hunk() {
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
 
-    settle_until(&mut harness, || cached_diff(&repo).contains("+ADD1"));
+    // Wait for the selected line to be staged...
+    harness
+        .wait_until(|_| cached_diff(&repo).contains("+ADD1"))
+        .unwrap();
 
+    // ...then assert the *other* line did NOT get staged. This is a distinct
+    // invariant the wait above can't cover, so it stays an explicit assert.
     let staged = cached_diff(&repo);
-    assert!(
-        staged.contains("+ADD1"),
-        "the selected line should be staged; `git diff --cached`:\n{}\nScreen:\n{}",
-        staged,
-        harness.screen_to_string()
-    );
     assert!(
         !staged.contains("+ADD2"),
         "ONLY the selected line should be staged — `+ADD2` must remain \
@@ -371,16 +343,11 @@ fn test_review_visual_stage_line_in_second_file() {
         .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
 
-    settle_until(&mut harness, || cached_diff(&repo).contains("+ADDED_B"));
-
-    let staged = cached_diff(&repo);
-    assert!(
-        staged.contains("+ADDED_B"),
-        "line-staging a line in the second (focused) file should stage \
-         `+ADDED_B`; `git diff --cached`:\n{}\nScreen:\n{}",
-        staged,
-        harness.screen_to_string()
-    );
+    // Wait for the second (focused) file's line to land in the index; this wait
+    // is the assertion.
+    harness
+        .wait_until(|_| cached_diff(&repo).contains("+ADDED_B"))
+        .unwrap();
 }
 
 /// A repo with a single added line already staged in the index.
@@ -421,14 +388,9 @@ fn test_review_visual_unstage_single_added_line() {
         .send_key(KeyCode::Char('u'), KeyModifiers::NONE)
         .unwrap();
 
-    settle_until(&mut harness, || !cached_diff(&repo).contains("+extra line"));
-
-    let staged = cached_diff(&repo);
-    assert!(
-        !staged.contains("+extra line"),
-        "line-level visual unstage should unstage the selected line; \
-         `git diff --cached` still shows it:\n{}\nScreen:\n{}",
-        staged,
-        harness.screen_to_string()
-    );
+    // Wait for the selected line to leave the index (unstaged); this wait is the
+    // assertion.
+    harness
+        .wait_until(|_| !cached_diff(&repo).contains("+extra line"))
+        .unwrap();
 }
