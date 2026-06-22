@@ -54,7 +54,15 @@ const FILE_MENU_GOLDEN: &[&str] = &[
 fn menu_render_golden_file_menu() {
     let mut h = EditorTestHarness::with_temp_project_no_plugins(100, 40).unwrap();
     h.send_key(KeyCode::Char('f'), KeyModifiers::ALT).unwrap();
-    h.render().unwrap();
+    // Opening the menu can take an extra tick to paint the dropdown box, so a
+    // single render() may capture the bare menu bar (no box) and flake. Wait
+    // semantically for the dropdown to be fully painted (its bottom border
+    // present) and for the render to settle before snapshotting.
+    h.wait_until_stable(|h| {
+        let rows = menu_region(h);
+        rows.last().is_some_and(|r| r.contains('└'))
+    })
+    .unwrap();
     let rows = menu_region(&h);
     if rows != FILE_MENU_GOLDEN {
         eprintln!("---- ACTUAL FILE MENU ----");
@@ -75,7 +83,15 @@ fn menu_render_golden_view_menu() {
     h.send_key(KeyCode::Char('f'), KeyModifiers::ALT).unwrap();
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
+    // Opening + navigating menus can take an extra tick to repaint the dropdown,
+    // so a single render() may capture a half-painted View menu and flake. Wait
+    // semantically for the View dropdown content to render (and settle) first.
+    h.wait_until_stable(|h| {
+        let rows = menu_region(h);
+        rows.iter().any(|r| r.contains("Line Numbers"))
+            && rows.last().is_some_and(|r| r.contains('└'))
+    })
+    .unwrap();
     let rows = menu_region(&h);
     let joined = rows.join("\n");
     eprintln!("---- VIEW MENU REGION ----\n{joined}\n---- END ----");

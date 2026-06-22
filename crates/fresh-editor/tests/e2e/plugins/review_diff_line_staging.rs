@@ -355,6 +355,11 @@ fn test_review_visual_stage_line_in_second_file() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // Hunk navigation + focus-mode repaint are async: focus mode only paints the
+    // focused file's body, so `+ADDED_B` isn't on screen until the jump to the
+    // second file completes. `diff_line_of` renders just once and panics if the
+    // row is missing, so wait for the second file's body to render first.
+    harness.wait_for_screen_contains("+ADDED_B").unwrap();
     let bravo_added = diff_line_of(&mut harness, "+ADDED_B");
     move_cursor_to_line(&mut harness, bravo_added);
 

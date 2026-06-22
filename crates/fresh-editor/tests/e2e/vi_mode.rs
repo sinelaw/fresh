@@ -1676,7 +1676,12 @@ fn test_vi_visual_word_end_yanks_selected_text() {
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
         .unwrap();
+    // The vi-mode plugin applies the WORD-end motion asynchronously; yanking
+    // before it lands would capture a too-short selection. The inclusive visual
+    // selection puts the display cursor one past the end of "elephant" (byte 7),
+    // i.e. at byte 8, so wait for that before yanking.
     send_vi_key(&mut harness, 'E');
+    harness.wait_until(|h| h.cursor_position() == 8).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
@@ -1703,7 +1708,12 @@ fn test_vi_visual_word_forward_yanks_selected_text() {
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
         .unwrap();
+    // The vi-mode plugin applies the WORD motion asynchronously; yanking before
+    // it lands would capture a too-short selection. The inclusive visual
+    // selection puts the display cursor one past the WORD start ("zebra" at byte
+    // 9), i.e. at byte 10, so wait for that before yanking.
     send_vi_key(&mut harness, 'W');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
@@ -1730,8 +1740,15 @@ fn test_vi_visual_word_forward_accumulates_from_visual_head() {
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
         .unwrap();
+    // The vi-mode plugin applies each WORD motion asynchronously, so yanking
+    // before both `W`s land would capture a too-short selection. The inclusive
+    // visual selection puts the display cursor one past each WORD start ("zebra"
+    // at byte 9 -> cursor 10, then "giraffe" at byte 15 -> cursor 16), so wait
+    // for each before extending / yanking.
     send_vi_key(&mut harness, 'W');
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
     send_vi_key(&mut harness, 'W');
+    harness.wait_until(|h| h.cursor_position() == 16).unwrap();
     send_vi_key(&mut harness, 'y');
     harness
         .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
