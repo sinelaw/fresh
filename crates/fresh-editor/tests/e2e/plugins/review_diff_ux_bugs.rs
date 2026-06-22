@@ -2074,9 +2074,18 @@ fn test_issue2318_discard_fully_staged_file_reverts_to_head() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    for _ in 0..20 {
-        harness.tick_and_render().unwrap();
-    }
+
+    // The discard runs asynchronously (spawns `git`), and the handler sets its
+    // status message only AFTER the `git` process and the follow-up refresh have
+    // completed. Wait for that signal before inspecting git state, rather than
+    // guessing a fixed number of ticks (which races on slower machines and can
+    // observe a half-applied index/worktree).
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Discarded") || s.contains("Discard failed")
+        })
+        .unwrap();
 
     // The staged change must be fully discarded: clean git status and the file
     // reverted to its committed content on disk.
