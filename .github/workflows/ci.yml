@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: check formatting
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       # Plain `cargo clippy` fails the build only on error-level diagnostics
@@ -51,7 +51,7 @@ jobs:
     name: doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Run cargo doc
@@ -62,7 +62,7 @@ jobs:
     name: schema
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Generate schema
@@ -74,7 +74,7 @@ jobs:
     name: check (no plugins)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Check build without plugins feature
@@ -94,7 +94,7 @@ jobs:
       #   if: runner.os == 'Windows'
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo dependencies
