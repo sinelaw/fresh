@@ -136,7 +136,9 @@ impl QuickOpenProvider for BufferProvider {
         let mut scored: Vec<(Suggestion, i32, usize)> = context
             .open_buffers
             .iter()
-            .filter(|buf| !buf.path.is_empty())
+            // Virtual buffers (plugin panels) have no path but should still be
+            // listed; file buffers without a path are unnamed scratch buffers.
+            .filter(|buf| buf.is_virtual || !buf.path.is_empty())
             .filter_map(|buf| {
                 let m = matcher.match_target(&buf.name);
                 if !m.matched {
@@ -1018,12 +1020,14 @@ mod tests {
                     path: "/tmp/main.rs".to_string(),
                     name: "main.rs".to_string(),
                     modified: false,
+                    is_virtual: false,
                 },
                 BufferInfo {
                     id: 2,
                     path: "/tmp/lib.rs".to_string(),
                     name: "lib.rs".to_string(),
                     modified: true,
+                    is_virtual: false,
                 },
             ],
             active_buffer_id: 1,
@@ -1061,6 +1065,47 @@ mod tests {
         let suggestions = provider.suggestions("main", &context);
         assert_eq!(suggestions.len(), 1);
         assert!(suggestions[0].text.contains("main.rs"));
+    }
+
+    /// Issue #2373: virtual buffers (empty `path`, `is_virtual = true`) must be
+    /// listed by the `#` switcher, while pathless non-virtual buffers stay out.
+    #[test]
+    fn test_buffer_provider_includes_virtual_buffers() {
+        let provider = BufferProvider::new();
+        let mut context = make_test_context("/tmp");
+        context.open_buffers.push(BufferInfo {
+            id: 3,
+            path: String::new(),
+            name: "*blame:lib.rs*".to_string(),
+            modified: false,
+            is_virtual: true,
+        });
+        // A pathless, non-virtual buffer (e.g. unnamed scratch) must NOT appear.
+        context.open_buffers.push(BufferInfo {
+            id: 4,
+            path: String::new(),
+            name: "scratch".to_string(),
+            modified: false,
+            is_virtual: false,
+        });
+
+        // Empty query lists everything that is eligible.
+        let all = provider.suggestions("", &context);
+        assert!(
+            all.iter().any(|s| s.text.contains("*blame:lib.rs*")),
+            "virtual buffer should be listed: {:?}",
+            all.iter().map(|s| &s.text).collect::<Vec<_>>()
+        );
+        assert!(
+            !all.iter().any(|s| s.text.contains("scratch")),
+            "pathless non-virtual buffer should be excluded"
+        );
+
+        // The virtual buffer is reachable by a fuzzy query, carrying its id.
+        let filtered = provider.suggestions("blame", &context);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].text.contains("*blame:lib.rs*"));
+        assert_eq!(filtered[0].value.as_deref(), Some("3"));
     }
 
     #[test]

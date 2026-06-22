@@ -119,6 +119,10 @@ pub struct BufferInfo {
     pub path: String,
     pub name: String,
     pub modified: bool,
+    /// Whether this is a virtual buffer (a plugin panel like `*blame:…*` or
+    /// `*Git Log*`) with no backing file path. Virtual buffers are listed in
+    /// the `#` switcher even though `path` is empty.
+    pub is_virtual: bool,
 }
 
 /// Parse a `path:line:col` string into its components.

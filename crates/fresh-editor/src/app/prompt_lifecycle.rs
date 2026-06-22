@@ -156,21 +156,46 @@ impl Editor {
 
     /// Build a QuickOpenContext from current editor state
     pub(super) fn build_quick_open_context(&self) -> QuickOpenContext {
+        let metadata = &self.active_window().buffer_metadata;
         let open_buffers = self
             .buffers()
             .iter()
             .filter_map(|(buffer_id, state)| {
-                let path = state.buffer.file_path()?;
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("Buffer {}", buffer_id.0));
-                Some(BufferInfo {
-                    id: buffer_id.0,
-                    path: path.display().to_string(),
-                    name,
-                    modified: state.buffer.is_modified(),
-                })
+                let meta = metadata.get(buffer_id);
+                // Mirror the tab bar: skip buffers that aren't shown as tabs
+                // (composite source buffers, the synthetic blank placeholder).
+                if meta.is_some_and(|m| m.hidden_from_tabs || m.synthetic_placeholder) {
+                    return None;
+                }
+                match state.buffer.file_path() {
+                    Some(path) => {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| format!("Buffer {}", buffer_id.0));
+                        Some(BufferInfo {
+                            id: buffer_id.0,
+                            path: path.display().to_string(),
+                            name,
+                            modified: state.buffer.is_modified(),
+                            is_virtual: false,
+                        })
+                    }
+                    // No file path: only virtual buffers (plugin panels like
+                    // *blame:…*, *Git Log*) are surfaced — by their tab name —
+                    // so they're reachable without clicking the tab (#2373).
+                    // Unnamed scratch buffers stay out, as before.
+                    None => {
+                        let meta = meta.filter(|m| m.is_virtual())?;
+                        Some(BufferInfo {
+                            id: buffer_id.0,
+                            path: String::new(),
+                            name: meta.display_name.clone(),
+                            modified: state.buffer.is_modified(),
+                            is_virtual: true,
+                        })
+                    }
+                }
             })
             .collect();
 
