@@ -2,6 +2,36 @@
 
 ---
 
+## Run #39 — 2026-06-22 — #2373 quick-open lists virtual buffers in `#` switcher — COMPREHENSIVE PASS, no bug
+
+### Status: COMPLETED
+
+**Preflight:** Synced state branch (`pull --rebase`, already up to date). Playbook intact (PER-RUN LOOP / ANTI-DRIFT / ISSUE FILING STANDARDS / FALSE POSITIVE PATTERNS all present). Lessons continuity OK. GitHub MCP auth **LIVE** (`issue_read` #2373 returned full body).
+
+**Build:** Master **UNCHANGED** at `205b9640e` (= v0.4.1) since Run #38 — per **R1** skipped open-issue rechecks (no new fix landed; #2317 already confirmed fixed last run). Build worktree `/tmp/fresh-master` was gone → recreated via `git worktree add --force /tmp/fresh-master origin/master`; built release `fresh 0.4.1` (6m24s, exit 0). Per **R2** advanced top new-coverage candidate: **#2373** (`205b9640e` "fix(quick-open): list virtual buffers in the # buffer switcher").
+
+**Issue context:** #2373 is **owner-filed** (sinelaw), already closed by maintainer 2026-06-22. Not an agent issue → no comment needed; this run is new-coverage verification that the fix behaves. Expected (per issue): the `#buffer` quick switcher previously listed ONLY file-backed buffers; virtual buffers (plugin panels like `*blame:*`, `*Git Log:*`, `*Keyboard Shortcuts*`) never appeared and could only be reached by clicking their tab. After the fix they should be listed by name.
+
+**Fixture:** real git repo `/tmp/vbuf39` (commit signing off), 2 commits, `sample.py` (modified across commits → real blame history) + `notes.txt`. Launched `fresh --no-restore sample.py` from inside the repo dir (cd in tmux shell first, per learning_db — blame needs repo cwd). tmux `vbuf39_<pid>` 220×50, ANSI-verified.
+
+**Results — COMPREHENSIVE PASS (black-box, `#` switcher = Ctrl+P → `C-u` clear → `#`):**
+- **BASELINE** (only `sample.py` open): `#` switcher lists just `sample.py` with its path `/tmp/vbuf39/sample.py`. Mode line `file | >command | :line | #buffer`.
+- **Create virtual buffer #1** — palette → "Git Blame" → `*blame:sample.py*` tab created (status `Git blame: 4 blocks`). Re-open `#` switcher → **BOTH** `sample.py` (with path) AND `*blame:sample.py*` (name only, no path — it's virtual) now listed. ✅ This is exactly the #2373 fix.
+- **Filterable by name** — typing `#blame` narrows the list to just `*blame:sample.py*`, row highlighted (ANSI `48;5;25m`). ✅
+- **Selectable / navigates** — switched active buffer away to `sample.py` (C-PageUp; content = raw file, no blame separators), then `#`→`blame`→Enter → active buffer became the blame buffer (content shows `── <sha> … ──` separators, status `Git blame: 4 blocks`). ✅ Navigation by name works.
+- **General, not blame-specific** — palette → "Show Keyboard Shortcuts" → `*Keyboard Shortcuts*` tab. `#` switcher now lists **all three**: `sample.py` (path) + `*blame:sample.py*` + `*Keyboard Shortcuts*` (both virtual, name-only). ✅ Matches issue note "Not specific to those plugins."
+- **Round-trip to a file buffer** — filter `#sample` fuzzy-matches BOTH `sample.py` and `*blame:sample.py*` (correct substring behavior); selecting top entry navigates back to the raw file. ✅
+
+**Verdict:** #2373 fix CONFIRMED working in v0.4.1. Virtual/plugin-panel buffers now appear in the `#` quick switcher, are fuzzy-filterable by name, and selectable to navigate. File buffers show their path; virtual buffers show name only (sensible, since they have no fs path). **No bug, no false positive, no friction worth filing.**
+
+**State updates:** run_log (this), learning_db (+"`#` buffer switcher lists virtual buffers (Run #39)"), test_plan (Run #39 note + candidate done). No GitHub issue (owner issue already closed; nothing agent-owned changed). No confirmed_bugs / potential_improvements change.
+
+**Cleanup:** killed tmux `vbuf39_*`; removed `/tmp/vbuf39`. Left build worktree `/tmp/fresh-master` @ `205b9640e` (reusable next run; remove if version moves).
+
+**NEXT new-coverage (Run #40+, top-down, prefer freshest 0.4.1):** `7d636f1de` clipboard strips ANSI on default copy; `6df567f04` LSP `textDocument/implementation`; `77360e6c6` Shift+letter binding match when terminal omits SHIFT; `e4a554347` terminal hides scrollbar/reclaims column; then (d) '+' new-tab popup / terminal Ctrl+Click / OSC 7; (e) theme color-transition animation; (f) GDScript (#2238). Then #2197 only if a fix lands.
+
+---
+
 ## Run #38 — 2026-06-22 — #2317 line-level v stage/unstage/discard CONFIRMED FIXED in v0.4.1 + filed #2420 (raw i18n key on discard)
 
 ### Status: COMPLETED

@@ -100,6 +100,7 @@
   - `:` → line mode
   - `#` → buffer mode
   - Type characters with spaces: use single-char `send-keys` format
+  - **`#` buffer switcher lists virtual buffers (Run #39, #2373 fix, v0.4.1):** the `#buffer` mode now lists VIRTUAL buffers (plugin panels: `*blame:<file>*`, `*Keyboard Shortcuts*`, `*Git Log:*`, etc.) alongside file buffers — previously only file-backed buffers appeared. File buffers render with their fs path (`name  /abs/path`); virtual buffers render name-only (no path). Fuzzy-filterable by name (`#blame`), highlighted row `48;5;25m`, Enter navigates to it. To open the switcher over tmux: `C-p` then `C-u` (clear the leading `>`) then `#`. NOTE the bottom prompt + result panel appear BELOW the status bar — `capture-pane -p | tail` to see them. Verified general across plugin types (blame + keyboard-shortcuts), not blame-specific.
 
 ### Terminal
 - **Alt+`** — Open Terminal in Utility Dock
