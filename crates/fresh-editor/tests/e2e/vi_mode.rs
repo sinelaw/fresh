@@ -380,7 +380,12 @@ fn test_vi_vim_compat_repeat_change_word_keeps_change_semantics() {
     send_vi_key(&mut harness, 'W');
     send_vi_key(&mut harness, '.');
 
-    harness.assert_buffer_content("X X four.five\n");
+    // The `.` repeat replays the recorded change (cW → insert "X" → Esc)
+    // through the async command pipeline, applying the WORD delete and the
+    // "X" insert in separate stages. Assert via a semantic wait so we don't
+    // observe the intermediate "X four.five" between those stages (the
+    // original flake). Matches the sibling repeat tests below.
+    harness.wait_for_buffer_content("X X four.five\n").unwrap();
 }
 
 #[test]
@@ -574,7 +579,9 @@ fn test_vi_vim_compat_yank_word_with_multibyte_text_uses_byte_range() {
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
 
-    harness.assert_buffer_content("éé nextéé \n");
+    // Paste applies through the async command pipeline; wait for the result
+    // rather than asserting immediately (same race as the dot-repeat test).
+    harness.wait_for_buffer_content("éé nextéé \n").unwrap();
 }
 
 #[test]
@@ -593,7 +600,9 @@ fn test_vi_vim_compat_word_end_handles_astral_unicode_boundaries() {
     send_vi_key(&mut harness, '$');
     send_vi_key(&mut harness, 'p');
 
-    harness.assert_buffer_content("😀 next😀 next\n");
+    // Paste applies through the async command pipeline; wait for the result
+    // rather than asserting immediately (same race as the dot-repeat test).
+    harness.wait_for_buffer_content("😀 next😀 next\n").unwrap();
 }
 
 #[test]
@@ -1498,7 +1507,9 @@ fn test_vi_end_motion_operators_include_final_character() {
         send_vi_key(&mut harness, '$');
         send_vi_key(&mut harness, 'p');
 
-        harness.assert_buffer_content(" worldhello\n");
+        // Paste applies through the async command pipeline; wait for the
+        // result rather than asserting immediately (dot-repeat test race).
+        harness.wait_for_buffer_content(" worldhello\n").unwrap();
     }
 
     {
@@ -1516,7 +1527,11 @@ fn test_vi_end_motion_operators_include_final_character() {
         send_vi_key(&mut harness, '$');
         send_vi_key(&mut harness, 'p');
 
-        harness.assert_buffer_content("hello worldhello\n");
+        // Paste applies through the async command pipeline; wait for the
+        // result rather than asserting immediately (dot-repeat test race).
+        harness
+            .wait_for_buffer_content("hello worldhello\n")
+            .unwrap();
     }
 }
 
