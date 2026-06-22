@@ -739,7 +739,7 @@ fn test_vi_vim_compat_paragraph_down_at_trailing_newline_eof_stays_on_last_line(
     harness.wait_until(|h| h.cursor_position() == 5).unwrap();
 
     send_vi_key(&mut harness, '}');
-    assert_eq!(harness.cursor_position(), 7);
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
 }
 
 #[test]
@@ -758,7 +758,7 @@ fn test_vi_vim_compat_paragraph_down_at_eof_without_trailing_newline_stays_on_la
     harness.wait_until(|h| h.cursor_position() == 5).unwrap();
 
     send_vi_key(&mut harness, '}');
-    assert_eq!(harness.cursor_position(), 7);
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
 }
 
 #[test]
@@ -772,7 +772,7 @@ fn test_vi_vim_compat_paragraph_down_skips_whitespace_only_lines() {
     enable_vi_mode(&mut harness);
 
     send_vi_key(&mut harness, '}');
-    assert_eq!(harness.cursor_position(), 10);
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
 }
 
 #[test]
@@ -800,10 +800,10 @@ fn test_vi_vim_compat_paragraph_up_skips_whitespace_only_lines() {
     enable_vi_mode(&mut harness);
 
     send_vi_key(&mut harness, '}');
-    assert_eq!(harness.cursor_position(), 10);
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
 
     send_vi_key(&mut harness, '{');
-    assert_eq!(harness.cursor_position(), 0);
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
 }
 
 #[test]
@@ -817,7 +817,7 @@ fn test_vi_vim_compat_operator_paragraph_up_skips_whitespace_only_lines() {
     enable_vi_mode(&mut harness);
 
     send_vi_key(&mut harness, '}');
-    assert_eq!(harness.cursor_position(), 10);
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
 
     send_vi_operator_motion(&mut harness, 'd', '{');
     harness.assert_buffer_content("o\n");
