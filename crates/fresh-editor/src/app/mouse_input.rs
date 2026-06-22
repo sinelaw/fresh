@@ -3576,6 +3576,97 @@ impl Editor {
         Ok(())
     }
 
+    /// Handle keyboard input for the "+" new-tab popup menu.
+    ///
+    /// While the popup is open it owns the keyboard: Up/Down move the
+    /// highlight, Enter activates the highlighted item, Esc dismisses it,
+    /// and *every other key is swallowed* so nothing leaks into the buffer
+    /// underneath. Returns `Some` when a popup is open (the key is always
+    /// consumed in that case), `None` when there is no popup.
+    pub(super) fn handle_new_tab_menu_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+    ) -> Option<AnyhowResult<()>> {
+        use crossterm::event::KeyCode;
+
+        self.active_window().new_tab_menu.as_ref()?;
+
+        match code {
+            KeyCode::Up => {
+                if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
+                    menu.prev_item();
+                }
+            }
+            KeyCode::Down => {
+                if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
+                    menu.next_item();
+                }
+            }
+            KeyCode::Enter => {
+                let selected = self.active_window().new_tab_menu.as_ref().map(|menu| {
+                    (
+                        super::types::NewTabMenuItem::all()[menu.highlighted],
+                        menu.split_id,
+                    )
+                });
+                self.active_window_mut().new_tab_menu = None;
+                if let Some((item, split_id)) = selected {
+                    return Some(self.execute_new_tab_menu_action(item, split_id));
+                }
+            }
+            KeyCode::Esc => {
+                self.active_window_mut().new_tab_menu = None;
+            }
+            // Filter out everything else while the popup is focused.
+            _ => {}
+        }
+        Some(Ok(()))
+    }
+
+    /// Handle keyboard input for the tab right-click context menu.
+    ///
+    /// Modal like [`handle_new_tab_menu_key`]: Up/Down navigate, Enter
+    /// activates the highlighted item, Esc dismisses, and all other keys are
+    /// swallowed so they can't reach the buffer underneath.
+    pub(super) fn handle_tab_context_menu_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+    ) -> Option<AnyhowResult<()>> {
+        use crossterm::event::KeyCode;
+
+        self.active_window().tab_context_menu.as_ref()?;
+
+        match code {
+            KeyCode::Up => {
+                if let Some(ref mut menu) = self.active_window_mut().tab_context_menu {
+                    menu.prev_item();
+                }
+            }
+            KeyCode::Down => {
+                if let Some(ref mut menu) = self.active_window_mut().tab_context_menu {
+                    menu.next_item();
+                }
+            }
+            KeyCode::Enter => {
+                let selected = self
+                    .active_window()
+                    .tab_context_menu
+                    .as_ref()
+                    .map(|menu| (menu.highlighted_item(), menu.buffer_id, menu.split_id));
+                self.active_window_mut().tab_context_menu = None;
+                if let Some((item, buffer_id, split_id)) = selected {
+                    return Some(self.execute_tab_context_menu_action(item, buffer_id, split_id));
+                }
+            }
+            KeyCode::Esc => {
+                self.active_window_mut().tab_context_menu = None;
+            }
+            // Filter out everything else while the popup is focused.
+            _ => {}
+        }
+        Some(Ok(()))
+    }
+
     /// Handle keyboard navigation for the file explorer context menu.
     /// Returns `Some` if the key was consumed, `None` to let normal dispatch continue.
     pub(super) fn handle_file_explorer_context_menu_key(

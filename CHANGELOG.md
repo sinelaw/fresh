@@ -52,6 +52,7 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * Occurrence highlighting uses a theme-appropriate background in every shipped theme (#2312).
 * Review Diff lists files inside untracked directories (#2315).
 * The embedded terminal forwards the wheel as a mouse report to mouse-tracking programs, so scrolling no longer cycles their history (#2366).
+* The tab bar's "+" new-tab popup and the tab right-click context menu now grab the keyboard while open: Up/Down navigate, Enter selects, Esc dismisses, and every other key is filtered out instead of leaking into the active buffer underneath.
 * Replace toolbar: checked search options are visible in every theme (#2363).
 * Alt+W and other search toggles no longer leak into the close prompt (#2359).
 * Fixed a crash on a stale soft-wrap position in multi-byte text (#2320).

@@ -5,6 +5,7 @@
 //! creates a new empty buffer (a second tab appears).
 
 use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
 
 /// Locate the 0-based cell column of `needle` on the given (0-based) screen row.
 fn col_of_char_on_row(screen: &str, row: usize, needle: char) -> Option<u16> {
@@ -84,6 +85,98 @@ fn plus_button_pins_to_right_edge_on_overflow() {
     harness.mouse_click(plus_col, 1).unwrap();
     harness.assert_screen_contains("New Terminal");
     harness.assert_screen_contains("New File");
+}
+
+#[test]
+fn plus_button_menu_captures_keyboard_and_filters_keys() {
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
+        panic!("expected a '+' new-tab button on the tab row. Screen:\n{screen}")
+    });
+    harness.mouse_click(plus_col, 1).unwrap();
+    harness.assert_screen_contains("New Terminal");
+
+    // The popup is modal: typing while it's open must be swallowed, not
+    // inserted into the active buffer underneath.
+    harness.type_text("ZZZ").unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().as_deref(),
+        Some(""),
+        "keystrokes leaked into the buffer while the '+' popup was open"
+    );
+    harness.assert_screen_contains("New Terminal");
+
+    // Keyboard navigation drives the popup: Down highlights "New File",
+    // Enter activates it (creating a second buffer) and closes the popup.
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("New Terminal"),
+        "popup should be dismissed after Enter. Screen:\n{screen}"
+    );
+    harness.assert_screen_contains("[No Name] 2");
+}
+
+#[test]
+fn plus_button_menu_dismisses_on_escape() {
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
+        panic!("expected a '+' new-tab button on the tab row. Screen:\n{screen}")
+    });
+    harness.mouse_click(plus_col, 1).unwrap();
+    harness.assert_screen_contains("New Terminal");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("New Terminal"),
+        "Esc should dismiss the '+' popup. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("[No Name] 2"),
+        "Esc should not create a new buffer. Screen:\n{screen}"
+    );
+}
+
+#[test]
+fn tab_context_menu_captures_keyboard_and_filters_keys() {
+    let mut harness = EditorTestHarness::new(120, 30).unwrap();
+    harness.render().unwrap();
+
+    // Right-click the (only) tab to open its context menu.
+    harness.mouse_right_click(2, 1).unwrap();
+    harness.assert_screen_contains("Close Others");
+
+    // Modal: typing must not leak into the buffer underneath.
+    harness.type_text("QQQ").unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.get_buffer_content().as_deref(),
+        Some(""),
+        "keystrokes leaked into the buffer while the tab context menu was open"
+    );
+    harness.assert_screen_contains("Close Others");
+
+    // Esc dismisses the menu without taking any action.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Close Others"),
+        "Esc should dismiss the tab context menu. Screen:\n{screen}"
+    );
 }
 
 #[test]

@@ -556,6 +556,17 @@ impl Editor {
             }
         }
 
+        // The tab-bar popups (the "+" new-tab menu and the tab right-click
+        // context menu) are modal: while one is open it owns the keyboard so
+        // navigation/selection work and every other key is filtered out
+        // instead of leaking into the active buffer underneath.
+        if let Some(result) = self.handle_new_tab_menu_key(code) {
+            return result;
+        }
+        if let Some(result) = self.handle_tab_context_menu_key(code) {
+            return result;
+        }
+
         // Determine the current context first
         let mut context = self.get_key_context();
 
