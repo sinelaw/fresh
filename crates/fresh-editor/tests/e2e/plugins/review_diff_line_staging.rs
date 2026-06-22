@@ -322,7 +322,10 @@ fn test_review_visual_discard_status_is_localized() {
         harness.advance_time(std::time::Duration::from_millis(20));
     }
 
-    assert!(reverted, "line-level discard never reverted the working tree");
+    assert!(
+        reverted,
+        "line-level discard never reverted the working tree"
+    );
     assert!(
         !saw_raw_key,
         "line-level discard must not leak a raw i18n key (e.g. \
