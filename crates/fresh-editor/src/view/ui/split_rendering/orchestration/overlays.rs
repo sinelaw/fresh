@@ -128,6 +128,24 @@ pub(crate) fn decoration_context(
         theme.semantic_highlight_bg,
     );
 
+    // Brackets inside comments and strings are prose/data, not structural
+    // punctuation, so they must be excluded from bracket matching and rainbow
+    // colorization (issue #2405). The highlighter already classifies these
+    // spans; collect their ranges (already sorted by start) to pass down.
+    use fresh_languages::HighlightCategory;
+    let mut bracket_skip_ranges: Vec<std::ops::Range<usize>> = highlight_spans
+        .iter()
+        .filter(|span| {
+            matches!(
+                span.category,
+                Some(HighlightCategory::Comment) | Some(HighlightCategory::String)
+            )
+        })
+        .map(|span| span.range.clone())
+        .collect();
+    // `pos_in_ranges` binary-searches, so the ranges must be sorted by start.
+    bracket_skip_ranges.sort_by_key(|range| range.start);
+
     // Update bracket highlight overlays.
     state.bracket_highlight_overlay.update(
         &state.buffer,
@@ -137,6 +155,7 @@ pub(crate) fn decoration_context(
         primary_cursor_position,
         viewport_start,
         viewport_end,
+        &bracket_skip_ranges,
     );
 
     // Semantic tokens are stored as overlays so their ranges track edits.
