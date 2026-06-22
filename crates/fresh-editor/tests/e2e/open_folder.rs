@@ -926,14 +926,19 @@ fn test_switch_project_double_click_navigates_into_folder() {
 /// parent as the new project root.
 #[test]
 fn test_switch_project_double_click_parent_navigates_up() {
-    // Tracing subscriber for `RUST_LOG`-gated structured logs, matching the
-    // other tests in this file. The `eprintln!`s below are unconditional so
-    // the flaky-on-Windows hang (killed externally by nextest's
-    // `terminate-after`) still surfaces diagnostics without `RUST_LOG` set —
-    // nextest shows captured stdout/stderr for a timed-out test.
+    // Tracing subscriber for the production-side decision logs. CI does not
+    // set `RUST_LOG`, so default to the file-browser double-click handler's
+    // target (`fresh::app::file_open_input`) at info — that's where the
+    // navigate-vs-commit branch is logged — while still honoring `RUST_LOG`
+    // if a developer sets it. The `eprintln!`s below are unconditional so the
+    // flaky-on-Windows hang (killed externally by nextest's `terminate-after`)
+    // still surfaces diagnostics; nextest shows captured output for a
+    // timed-out test.
     let _ = tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("fresh::app::file_open_input=info,fresh::app::mouse_input=info")
+        }))
         .try_init();
 
     let temp_dir = TempDir::new().unwrap();
@@ -1087,8 +1092,10 @@ fn test_switch_project_double_click_parent_navigates_up() {
             // Throttle a full-screen dump to stderr so that if this wait
             // hangs (the Windows flake) the externally-killed test still
             // shows what was on screen. wait_until polls roughly every
-            // 50ms, so every 40th poll is ~2s.
-            if polls % 40 == 0 {
+            // 50ms, so every 200th poll is ~10s — infrequent enough to keep
+            // the decisive early lines (browser-ready / click-target / post-
+            // click snapshots above) findable in the captured log.
+            if polls % 200 == 0 {
                 eprintln!(
                     "[parent-nav] still waiting (poll {}, has_nav={}, has_marker={}); screen:\n{}",
                     polls, has_nav, has_marker, screen

@@ -692,6 +692,24 @@ impl Editor {
                     .and_then(|s| s.entries.get(index))
                     .map(|e| e.fs_entry.name.clone());
 
+                let entries_len = self
+                    .active_window()
+                    .file_open_state
+                    .as_ref()
+                    .map(|s| s.entries.len())
+                    .unwrap_or(0);
+                // Pairs with the double-click log: shows whether the first
+                // click of a double actually lands on a selectable entry.
+                tracing::info!(
+                    x,
+                    y,
+                    index,
+                    entries_len,
+                    selected = index < entries_len,
+                    name = ?entry_name,
+                    "handle_file_open_click: list entry"
+                );
+
                 if let Some(state) = &mut self.active_window_mut().file_open_state {
                     state.active_section = FileOpenSection::Files;
                     if index < state.entries.len() {
@@ -799,8 +817,43 @@ impl Editor {
             None => return false,
         };
 
+        let in_list = layout.is_in_list(x, y);
+        let scroll_offset = self
+            .active_window()
+            .file_open_state
+            .as_ref()
+            .map(|s| s.scroll_offset)
+            .unwrap_or(0);
+        // Diagnostics for the flaky Switch Project "navigate up" e2e: this
+        // logs exactly which branch a double-click takes (navigate vs.
+        // commit-and-close) and the inputs that decide it. See
+        // tests/e2e/open_folder.rs::test_switch_project_double_click_parent_navigates_up.
+        tracing::info!(
+            x,
+            y,
+            in_list,
+            list_x = layout.list_area.x,
+            list_y = layout.list_area.y,
+            list_w = layout.list_area.width,
+            list_h = layout.list_area.height,
+            click_index = ?layout.click_to_index(y, scroll_offset),
+            folder_mode = self.is_folder_open_mode(),
+            selected_index = ?self
+                .active_window()
+                .file_open_state
+                .as_ref()
+                .and_then(|s| s.selected_index),
+            entries = self
+                .active_window()
+                .file_open_state
+                .as_ref()
+                .map(|s| s.entries.len())
+                .unwrap_or(0),
+            "handle_file_open_double_click"
+        );
+
         // Double-click in file list opens/navigates
-        if layout.is_in_list(x, y) {
+        if in_list {
             // In Switch Project (folder-only) mode, double-clicking a directory
             // entry should navigate INTO it like a file manager would, rather
             // than immediately selecting it as the new project root. Selecting
@@ -814,9 +867,13 @@ impl Editor {
                         .map(|e| e.fs_entry.path.clone())
                 });
                 if let Some(path) = selected_dir {
+                    tracing::info!(?path, "double-click: navigating into selected dir");
                     self.file_open_navigate_to(path);
                     return true;
                 }
+                tracing::warn!(
+                    "double-click in folder mode but no selected dir — falling through to confirm (closes browser)"
+                );
             }
             self.file_open_confirm();
             return true;
