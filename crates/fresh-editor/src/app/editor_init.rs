@@ -403,6 +403,138 @@ pub(super) struct EditorParts {
     pub(super) event_broadcaster: crate::model::control_event::EventBroadcaster,
 }
 
+/// Load the per-window prompt-history rings (search / replace / goto-line)
+/// from disk. A missing or unreadable file is not an error — it just yields
+/// an empty ring.
+fn load_prompt_histories(
+    dir_context: &DirectoryContext,
+) -> HashMap<String, crate::input::input_history::InputHistory> {
+    let mut histories = HashMap::new();
+    for history_name in ["search", "replace", "goto_line"] {
+        let path = dir_context.prompt_history_path(history_name);
+        let history = crate::input::input_history::InputHistory::load_from_file(&path)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load {} history: {}", history_name, e);
+                crate::input::input_history::InputHistory::new()
+            });
+        histories.insert(history_name.to_string(), history);
+    }
+    histories
+}
+
+/// Build the inert "shell" windows for every persisted session *other than*
+/// the active one, returning `(shells, dormant_remote)`.
+///
+/// Background (restored, non-active) windows are distinct projects and do NOT
+/// inherit the active session's backend: when construction is an
+/// `install_authority` restart (the editor is rebuilt with a container/SSH/k8s
+/// authority re-rooted at the active project), fanning that authority onto
+/// every restored shell is exactly the bug where switching to another project
+/// via the Orchestrator dock kept acting through the devcontainer. Each shell
+/// instead gets its own local authority — with its **own** per-session trust
+/// scoped to its root — and `shell_resources` (which already carries a local
+/// `fs_manager`) so its file explorer reads the host, not the active session's
+/// remote/container backend.
+///
+/// Each shell's `splits` stays `None`; the first dive into it re-warms exactly
+/// like a freshly created window.
+fn build_persisted_window_shells(
+    persisted_env: Option<&crate::app::orchestrator_persistence::PersistedWindows>,
+    active_came_from_pick: bool,
+    active_window_id: fresh_core::WindowId,
+    active_root: &std::path::Path,
+    width: u16,
+    height: u16,
+    dir_context: &DirectoryContext,
+    shell_resources: &crate::app::window_resources::WindowResources,
+) -> (
+    HashMap<fresh_core::WindowId, crate::app::window::Window>,
+    HashMap<fresh_core::WindowId, crate::app::orchestrator_persistence::PersistedWindow>,
+) {
+    let mut windows = HashMap::new();
+    let mut dormant_remote = HashMap::new();
+    let Some(env) = persisted_env else {
+        return (windows, dormant_remote);
+    };
+
+    // The active window came from a real pick when `active_came_from_pick` is
+    // set — its persisted entry must NOT also become a shell. When the pick
+    // found nothing we synthesized a clean base at `WindowId(1)` (the base is
+    // always id 1); a global `windows.json` may already hold a *different*
+    // project's id-1 base, which would collide. Re-id that collider onto a
+    // fresh id so it survives as an inactive shell instead of being
+    // shadowed/dropped (issue #2056 cross-project case).
+    let active_root_key = crate::app::orchestrator_persistence::canonical_key(active_root);
+    let mut next_fresh_id = env
+        .next_id
+        .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
+        .max(active_window_id.0 + 1);
+
+    for ps in &env.windows {
+        if active_came_from_pick && ps.id == active_window_id.0 {
+            continue;
+        }
+        // One session per directory: never seed a shell that resolves to the
+        // active window's own directory (the clean-base case where the cwd has
+        // a stale persisted window the pick didn't claim).
+        if crate::app::orchestrator_persistence::canonical_key(&ps.root) == active_root_key {
+            continue;
+        }
+        let id = if ps.id == active_window_id.0 {
+            let fresh = fresh_core::WindowId(next_fresh_id);
+            next_fresh_id += 1;
+            fresh
+        } else {
+            fresh_core::WindowId(ps.id)
+        };
+        // Remote (SSH / kube) sessions are NOT built as windows here. A
+        // `Window` must own its session's real authority, and a remote backend
+        // doesn't exist until it connects — building one now would require a
+        // dummy local-placeholder authority (the old shell), the "local
+        // before, remote later" pattern that ran restored terminals on the
+        // local host. Keep them as authority-less dormant descriptors instead:
+        // listed in the dock (via the `WindowInfo` snapshot) and promoted to a
+        // real window, born with the connected authority, on first dive (see
+        // `bring_dormant_remote_online`).
+        if matches!(
+            ps.authority_spec,
+            crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
+        ) {
+            let mut descriptor = ps.clone();
+            descriptor.id = id.0;
+            dormant_remote.insert(id, descriptor);
+            continue;
+        }
+        // This shell's own local authority, gated by its own per-session trust
+        // + env (scoped to its root + project store) — never a clone of the
+        // active session's handles.
+        let shell_authority = crate::services::authority::Authority::local_scoped(
+            crate::services::authority::SessionScope::for_root(
+                &ps.root,
+                &dir_context.project_state_dir(&ps.root),
+            ),
+        );
+        let mut shell = crate::app::window::Window::new(
+            id,
+            ps.label.clone(),
+            ps.root.clone(),
+            shell_authority,
+            shell_resources.clone(),
+        );
+        shell.terminal_width = width;
+        shell.terminal_height = height;
+        shell.plugin_state = ps.plugin_state.clone();
+        // Carry the session's backend spec so an unmaterialized background
+        // remote session keeps its identity (and a later save doesn't clobber
+        // it back to local). Its live authority stays the local placeholder
+        // until reconnect — i.e. dormant.
+        shell.authority_spec = ps.authority_spec.clone();
+        windows.insert(id, shell);
+    }
+
+    (windows, dormant_remote)
+}
+
 impl Editor {
     /// Lightweight constructor. Takes the non-trivial editor-global
     /// resources via [`EditorParts`] and fills in every other field
@@ -1175,7 +1307,7 @@ impl Editor {
             active_label,
             active_root,
             authority,
-            base_resources,
+            base_resources.clone(),
         );
         // Seed the window's terminal dimensions from the editor's
         // initial size — `Window::new` defaults to 80x24, which is
@@ -1198,143 +1330,33 @@ impl Editor {
         active_win.authority_spec = active_authority_spec;
         // Load prompt histories from disk for the active window.
         // Each window has its own prompt-history rings.
-        for history_name in ["search", "replace", "goto_line"] {
-            let path = dir_context.prompt_history_path(history_name);
-            let history = crate::input::input_history::InputHistory::load_from_file(&path)
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to load {} history: {}", history_name, e);
-                    crate::input::input_history::InputHistory::new()
-                });
-            active_win
-                .prompt_histories
-                .insert(history_name.to_string(), history);
-        }
+        active_win
+            .prompt_histories
+            .extend(load_prompt_histories(&dir_context));
 
-        // Build the inert shells for every other persisted window.
-        // Their `splits` stays `None`; first dive into them re-warms
-        // exactly like a freshly created window.
-        // Background (restored, non-active) windows are distinct projects
-        // and do NOT inherit the active session's backend: when this
-        // construction is an `install_authority` restart (the editor is
-        // rebuilt with a container/SSH/k8s `authority` re-rooted at the
-        // active project), fanning that authority onto every restored shell
-        // is exactly the bug where switching to another project via the
-        // Orchestrator dock kept acting through the devcontainer. Each shell
-        // gets its own local authority (sharing trust + env) and a matching
-        // local `fs_manager` so its file explorer reads the host, not the
-        // active session's remote/container backend. The active window keeps
-        // `authority` (wired into `base_resources` above). Each shell's
-        // authority — with its **own** per-session trust scoped to its root —
-        // is built in the loop below so trusting the active project never
-        // raises another session's trust level.
-        let background_fs_manager = Arc::new(FsManager::new(Arc::new(
-            crate::model::filesystem::StdFileSystem,
-        )));
-        let mut windows = HashMap::new();
-        let mut dormant_remote: HashMap<
-            fresh_core::WindowId,
-            crate::app::orchestrator_persistence::PersistedWindow,
-        > = HashMap::new();
-        if let Some(ref env) = persisted_env {
-            // The active window came from a real pick when `picked_active`
-            // is `Some` — its persisted entry must NOT also become a shell.
-            // When the pick found nothing we synthesized a clean base at
-            // `WindowId(1)` (the base is always id 1); a global
-            // `windows.json` may already hold a *different* project's id-1
-            // base, which would collide. Re-id that collider onto a fresh
-            // id so it survives as an inactive shell instead of being
-            // shadowed/dropped (issue #2056 cross-project case).
-            let active_came_from_pick = picked_active.is_some();
-            let active_root_key =
-                crate::app::orchestrator_persistence::canonical_key(&active_win.root);
-            let mut next_fresh_id = env
-                .next_id
-                .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
-                .max(active_window_id.0 + 1);
-            for ps in &env.windows {
-                if active_came_from_pick && ps.id == active_window_id.0 {
-                    continue;
-                }
-                // One session per directory: never seed a shell that
-                // resolves to the active window's own directory (the
-                // clean-base case where the cwd has a stale persisted
-                // window the pick didn't claim).
-                if crate::app::orchestrator_persistence::canonical_key(&ps.root) == active_root_key
-                {
-                    continue;
-                }
-                let id = if ps.id == active_window_id.0 {
-                    let fresh = fresh_core::WindowId(next_fresh_id);
-                    next_fresh_id += 1;
-                    fresh
-                } else {
-                    fresh_core::WindowId(ps.id)
-                };
-                // Remote (SSH / kube) sessions are NOT built as windows here.
-                // A `Window` must own its session's real authority, and a remote
-                // backend doesn't exist until it connects — building one now
-                // would require a dummy local-placeholder authority (the old
-                // shell), the "local before, remote later" pattern that ran
-                // restored terminals on the local host. Keep them as
-                // authority-less dormant descriptors instead: listed in the dock
-                // (via the `WindowInfo` snapshot) and promoted to a real window,
-                // born with the connected authority, on first dive (see
-                // `bring_dormant_remote_online`).
-                if matches!(
-                    ps.authority_spec,
-                    crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
-                ) {
-                    let mut descriptor = ps.clone();
-                    descriptor.id = id.0;
-                    dormant_remote.insert(id, descriptor);
-                    continue;
-                }
-                // This shell's own local authority, gated by its own
-                // per-session trust + env (scoped to its root + project store)
-                // — never a clone of the active session's handles.
-                let shell_authority = crate::services::authority::Authority::local_scoped(
-                    crate::services::authority::SessionScope::for_root(
-                        &ps.root,
-                        &dir_context.project_state_dir(&ps.root),
-                    ),
-                );
-                let resources = crate::app::window_resources::WindowResources {
-                    config: Arc::clone(&config_arc),
-                    grammar_registry: Arc::clone(&grammar_registry),
-                    theme_registry: Arc::clone(&theme_registry),
-                    theme_cache: Arc::clone(&theme_cache),
-                    keybindings: Arc::clone(&keybindings),
-                    command_registry: Arc::clone(&command_registry),
-                    fs_manager: Arc::clone(&background_fs_manager),
-                    local_filesystem: Arc::clone(&local_filesystem),
-                    buffer_id_alloc: buffer_id_alloc.clone(),
-                    time_source: Arc::clone(&time_source),
-                    dir_context: dir_context.clone(),
-                    tokio_runtime: tokio_runtime.clone(),
-                    async_bridge: Some(async_bridge.clone()),
-                    plugin_manager: std::rc::Rc::clone(&plugin_manager),
-                    theme: Arc::clone(&theme),
-                    event_broadcaster: event_broadcaster.clone(),
-                    recovery_service: Arc::clone(&recovery_service),
-                };
-                let mut shell = crate::app::window::Window::new(
-                    id,
-                    ps.label.clone(),
-                    ps.root.clone(),
-                    shell_authority,
-                    resources,
-                );
-                shell.terminal_width = width;
-                shell.terminal_height = height;
-                shell.plugin_state = ps.plugin_state.clone();
-                // Carry the session's backend spec so an unmaterialized
-                // background remote session keeps its identity (and a later
-                // save doesn't clobber it back to local). Its live authority
-                // stays the local placeholder until reconnect — i.e. dormant.
-                shell.authority_spec = ps.authority_spec.clone();
-                windows.insert(id, shell);
-            }
-        }
+        // Build the inert shells for every other persisted window. They share
+        // every editor-global resource with the active window but get their
+        // own local `fs_manager` (so a restored project's file explorer reads
+        // the host, not the active session's remote/container backend) — and,
+        // built inside the helper, their own per-session local authority. The
+        // active window keeps the boot `authority` moved into it above. See
+        // `build_persisted_window_shells` for the full rationale.
+        let background_shell_resources = crate::app::window_resources::WindowResources {
+            fs_manager: Arc::new(FsManager::new(Arc::new(
+                crate::model::filesystem::StdFileSystem,
+            ))),
+            ..base_resources
+        };
+        let (mut windows, dormant_remote) = build_persisted_window_shells(
+            persisted_env.as_ref(),
+            picked_active.is_some(),
+            active_window_id,
+            &active_win.root,
+            width,
+            height,
+            &dir_context,
+            &background_shell_resources,
+        );
         windows.insert(active_window_id, active_win);
 
         // Allocate next window ids past every persisted entry and
