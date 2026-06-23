@@ -964,6 +964,11 @@ function concealedText(text: string): string {
   return result;
 }
 
+// Terminal column width (wide glyphs = 2), matching the renderer's layout.
+function displayWidth(text: string): number {
+  return editor.stringWidth(text);
+}
+
 const MIN_COL_W = 3;
 
 /**
@@ -1113,7 +1118,7 @@ function processLineConceals(
             const wrapW = Math.max(1, colWidths[ci] - 2);
             const wrapped = cellWrapped[ci] || [];
             const text = vl < wrapped.length ? wrapped[vl] : '';
-            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - text.length)) + ' │';
+            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
           }
           visualLines.push(vline);
         }
@@ -1171,7 +1176,7 @@ function processLineConceals(
       if (!cursorStrictlyOnLine && colWidths) {
         for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
           const cellText = concealedText(cells[ci]);
-          if (cellText.length > colWidths[ci]) {
+          if (displayWidth(cellText) > colWidths[ci]) {
             const prevPipe = pipePositions[ci];
             const nextPipe = pipePositions[ci + 1];
             if (prevPipe !== undefined && nextPipe !== undefined) {
@@ -1196,7 +1201,7 @@ function processLineConceals(
           const cellIdx = pipeIdx - 1;
           if (!cursorStrictlyOnLine && colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
             const cellText = concealedText(cells[cellIdx]);
-            const cellWidth = cellText.length;
+            const cellWidth = displayWidth(cellText);
             const allocatedWidth = colWidths[cellIdx];
 
             if (cellWidth > allocatedWidth) {
@@ -1539,7 +1544,7 @@ function processTableAlignment(
           // a row. Concealed rows simply get extra padding.
           const isSep = /^[-:\s]+$/.test(row[col]);
           if (!isSep) {
-            maxW = Math.max(maxW, row[col].length);
+            maxW = Math.max(maxW, displayWidth(row[col]));
           }
         }
       }
