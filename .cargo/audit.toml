@@ -1,0 +1,47 @@
+# cargo-audit configuration.
+#
+# Run with:  cargo audit
+#
+# The advisories ignored below are all *informational* (RustSec class
+# `unmaintained`) or affect crates that are never actually compiled in any
+# Fresh build. Each entry is justified; revisit when the upstream dependency
+# offers a maintained replacement so we can drop the suppression.
+#
+# Two notes on "phantom" entries: Cargo.lock records the union of dependencies
+# across every target platform, so crates that a dependency only pulls in on a
+# platform we never build it on still appear in the lockfile (and therefore in
+# the audit) even though `cargo build` never compiles them.
+
+[advisories]
+ignore = [
+    # --- gtk-rs GTK3 stack: PHANTOM, never compiled ----------------------
+    # `muda` is a macOS-only dependency of fresh-gui (see
+    # crates/fresh-gui/Cargo.toml, `cfg(target_os = "macos")`), and on macOS
+    # it uses the native NSMenu backend — it never touches GTK. muda only
+    # declares the gtk-rs crates as deps for its *Linux* backend, which we
+    # never build. These entries exist purely as lockfile artifacts.
+    "RUSTSEC-2024-0413",  # atk        unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0416",  # atk-sys    unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0412",  # gdk        unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0418",  # gdk-sys    unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0415",  # gtk        unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0420",  # gtk-sys    unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0419",  # gtk3-macros unmaintained (gtk-rs GTK3)
+    "RUSTSEC-2024-0429",  # glib       unsound VariantStrIter — only reachable
+                          #            via the same GTK3 stack above; not compiled.
+    "RUSTSEC-2024-0370",  # proc-macro-error unmaintained — pulled only by
+                          #            glib-macros / gtk3-macros (GTK3 stack).
+
+    # --- paste: PHANTOM, never compiled ---------------------------------
+    # Pulled in only by `metal`, the Apple/Metal wgpu-hal backend. On macOS
+    # wgpu uses Metal; on the platforms we build it never compiles.
+    "RUSTSEC-2024-0436",  # paste      unmaintained
+
+    # --- syntect transitive, unmaintained-only --------------------------
+    # bincode 1.x and yaml-rust are pulled by syntect (5.3, latest) for its
+    # dump (de)serialization and `yaml-load` syntax parsing, which we require
+    # for SyntaxDefinition::load_from_str. No maintained drop-in upgrade path
+    # without losing functionality; informational only (no known vuln).
+    "RUSTSEC-2025-0141",  # bincode    unmaintained
+    "RUSTSEC-2024-0320",  # yaml-rust  unmaintained
+]
