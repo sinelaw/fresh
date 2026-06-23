@@ -701,6 +701,8 @@ pub struct Window {
         Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
 
     /// Receiver for background directory change poll results for this window.
+    /// The second element carries mtimes for all watched `.git/index` files
+    /// (one per repo in a monorepo, or a single entry for a normal repo).
     #[allow(clippy::type_complexity)]
     pub pending_dir_poll_rx: Option<
         std::sync::mpsc::Receiver<(
@@ -709,7 +711,7 @@ pub struct Window {
                 PathBuf,
                 Option<std::time::SystemTime>,
             )>,
-            Option<(PathBuf, std::time::SystemTime)>,
+            Vec<(PathBuf, std::time::SystemTime)>,
         )>,
     >,
 

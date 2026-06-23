@@ -1,4 +1,6 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { discoverSubRepos } from "./lib/git_history.ts";
+
 const editor = getEditor();
 
 /**
@@ -147,26 +149,6 @@ function buildNameColorSlots(
   }));
 }
 
-/**
- * Recursively discover directories containing `.git` entries, up to maxDepth
- * levels. Stops descending into a directory once `.git` is found (git repo
- * internals like submodules are managed by git itself).
- */
-function discoverSubRepos(dir: string, maxDepth: number = 3): string[] {
-  if (maxDepth <= 0) return [];
-  const repos: string[] = [];
-  const entries = editor.readDir(dir);
-  for (const entry of entries) {
-    if (entry.name.startsWith(".") || entry.name === "node_modules" || !entry.is_dir) continue;
-    const subDir = editor.pathJoin(dir, entry.name);
-    if (editor.fileExists(editor.pathJoin(subDir, ".git"))) {
-      repos.push(subDir);
-    } else {
-      repos.push(...discoverSubRepos(subDir, maxDepth - 1));
-    }
-  }
-  return repos;
-}
 async function refreshGitExplorerDecorations() {
   if (refreshInFlight) {
     refreshPending = true;
@@ -190,7 +172,7 @@ async function refreshGitExplorerDecorations() {
       }
     } else {
       // cwd is not a git repo — discover sub-repos (monorepo/multi-repo)
-      const subRepos = discoverSubRepos(cwd);
+      const subRepos = discoverSubRepos(editor, cwd);
       for (const subDir of subRepos) {
         const subRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], subDir);
         if (subRootResult.exit_code !== 0) continue;

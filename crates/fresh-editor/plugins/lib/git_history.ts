@@ -11,6 +11,39 @@
  */
 
 // =============================================================================
+// Sub-repo discovery (monorepo support)
+// =============================================================================
+
+/**
+ * Recursively discover directories containing `.git` entries, up to
+ * `maxDepth` levels. Stops descending into a directory once `.git` is
+ * found (git repo internals are managed by git itself). Skips hidden
+ * directories and `node_modules`.
+ *
+ * NOTE: a parallel BFS lives on the Rust side in `file_operations.rs`
+ * (`resolve_git_indexes`). Keep the two in sync.
+ */
+export function discoverSubRepos(
+  editor: EditorAPI,
+  dir: string,
+  maxDepth: number = 3,
+): string[] {
+  if (maxDepth <= 0) return [];
+  const repos: string[] = [];
+  const entries = editor.readDir(dir);
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules" || !entry.is_dir) continue;
+    const subDir = editor.pathJoin(dir, entry.name);
+    if (editor.fileExists(editor.pathJoin(subDir, ".git"))) {
+      repos.push(subDir);
+    } else {
+      repos.push(...discoverSubRepos(editor, subDir, maxDepth - 1));
+    }
+  }
+  return repos;
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 

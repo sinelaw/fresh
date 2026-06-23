@@ -659,9 +659,9 @@ impl Editor {
         let mut dir_poll_pending = false;
         if let Some(ref rx) = self.active_window_mut().pending_dir_poll_rx {
             match rx.try_recv() {
-                Ok((dir_results, git_index_mtime)) => {
+                Ok((dir_results, git_index_mtimes)) => {
                     self.active_window_mut().pending_dir_poll_rx = None;
-                    any_refreshed = self.process_dir_poll_results(dir_results, git_index_mtime);
+                    any_refreshed = self.process_dir_poll_results(dir_results, git_index_mtimes);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     dir_poll_pending = true;
@@ -695,12 +695,13 @@ impl Editor {
             return any_refreshed;
         }
 
-        // Resolve the git index path once (first poll only). This uses the
-        // ProcessSpawner which may block briefly on the first call, but only
-        // happens once per session.
+        // Resolve all git index paths once (first poll only). This uses
+        // the ProcessSpawner which may block briefly on the first call,
+        // but only happens once per session. In a monorepo every sub-repo
+        // gets its own watched index so decorations refresh for all of them.
         if !self.active_window_mut().git_index_resolved {
             self.active_window_mut().git_index_resolved = true;
-            if let Some(path) = self.resolve_git_index() {
+            for path in self.resolve_git_indexes() {
                 if let Ok(meta) = self.authority().filesystem.metadata(&path) {
                     if let Some(mtime) = meta.modified {
                         self.active_window_mut().dir_mod_times.insert(path, mtime);
@@ -722,19 +723,21 @@ impl Editor {
             .map(|node| (node.id, node.entry.path.clone()))
             .collect();
 
-        // Find the git index path to include in the background metadata check
-        let git_index_path: Option<PathBuf> = self
+        // Collect all watched git index paths for the background metadata check.
+        // In a monorepo there may be several; in a single-repo just one.
+        let git_index_paths: Vec<PathBuf> = self
             .active_window()
             .dir_mod_times
             .keys()
-            .find(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
-            .cloned();
+            .filter(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
+            .cloned()
+            .collect();
 
-        if expanded_dirs.is_empty() && git_index_path.is_none() {
+        if expanded_dirs.is_empty() && git_index_paths.is_empty() {
             return any_refreshed;
         }
 
-        // Spawn background metadata checks (directories + git index)
+        // Spawn background metadata checks (directories + git indexes)
         let (tx, rx) = std::sync::mpsc::channel();
         let fs = self.authority().filesystem.clone();
         std::thread::Builder::new()
@@ -748,14 +751,16 @@ impl Editor {
                     })
                     .collect();
 
-                // Also check git index mtime in the same background thread
-                let git_index_mtime = git_index_path.and_then(|path| {
-                    let mtime = fs.metadata(&path).ok().and_then(|m| m.modified);
-                    Some((path, mtime?))
-                });
+                let git_index_mtimes: Vec<(PathBuf, std::time::SystemTime)> = git_index_paths
+                    .into_iter()
+                    .filter_map(|path| {
+                        let mtime = fs.metadata(&path).ok().and_then(|m| m.modified)?;
+                        Some((path, mtime))
+                    })
+                    .collect();
 
                 // Receiver may have been dropped during shutdown — that's fine.
-                if tx.send((results, git_index_mtime)).is_err() {}
+                if tx.send((results, git_index_mtimes)).is_err() {}
             })
             .ok();
         self.active_window_mut().pending_dir_poll_rx = Some(rx);
@@ -771,7 +776,7 @@ impl Editor {
             PathBuf,
             Option<std::time::SystemTime>,
         )>,
-        git_index_mtime: Option<(PathBuf, std::time::SystemTime)>,
+        git_index_mtimes: Vec<(PathBuf, std::time::SystemTime)>,
     ) -> bool {
         let mut dirs_to_refresh: Vec<(crate::view::file_tree::NodeId, PathBuf)> = Vec::new();
 
@@ -795,23 +800,19 @@ impl Editor {
             }
         }
 
-        // Check if .git/index mtime changed (detected in background thread)
-        let git_index_changed = if let Some((path, current_mtime)) = git_index_mtime {
+        // Check if any .git/index mtime changed (detected in background thread).
+        // In a monorepo multiple indexes are watched; fire the hook if any changed.
+        let mut git_index_changed = false;
+        for (path, current_mtime) in git_index_mtimes {
             if let Some(&stored_mtime) = self.active_window_mut().dir_mod_times.get(&path) {
                 if current_mtime != stored_mtime {
                     self.active_window_mut()
                         .dir_mod_times
                         .insert(path, current_mtime);
-                    true
-                } else {
-                    false
+                    git_index_changed = true;
                 }
-            } else {
-                false
             }
-        } else {
-            false
-        };
+        }
 
         if dirs_to_refresh.is_empty() && !git_index_changed {
             return false;
@@ -928,14 +929,24 @@ impl Editor {
         changed
     }
 
-    /// Resolve the path to `.git/index` via `git rev-parse --git-dir`.
+    /// Resolve the paths to every `.git/index` reachable from the working
+    /// directory. In a normal repo this returns a single entry; in a
+    /// monorepo (working dir is not itself a git repo) it BFS-scans
+    /// subdirectories up to 3 levels deep and returns one entry per
+    /// discovered sub-repo so that *all* indexes are watched.
+    ///
     /// Uses the `ProcessSpawner` so it works transparently on both local
     /// and remote (SSH) filesystems.
-    fn resolve_git_index(&self) -> Option<PathBuf> {
+    ///
+    /// NOTE: a parallel BFS lives on the TypeScript side in
+    /// `lib/git_history.ts` (`discoverSubRepos`). Keep the two in sync.
+    fn resolve_git_indexes(&self) -> Vec<PathBuf> {
         let spawner = &self.authority().process_spawner;
         let cwd = self.working_dir().to_string_lossy().to_string();
 
-        let rt = self.tokio_runtime.as_ref()?;
+        let Some(rt) = self.tokio_runtime.as_ref() else {
+            return Vec::new();
+        };
 
         let result = rt.block_on(spawner.spawn(
             "git".to_string(),
@@ -951,12 +962,12 @@ impl Editor {
                 } else {
                     self.working_dir().join(git_dir)
                 };
-                return Some(git_dir_path.join("index"));
+                return vec![git_dir_path.join("index")];
             }
         }
 
         // Working dir is not a git repo — recursively scan subdirectories
-        // (up to 3 levels) to find a sub-repo's .git/index (monorepo support).
+        // (up to 3 levels) to find all sub-repos' .git/index (monorepo).
         let working_dir = self.working_dir().to_path_buf();
         let fs = self.authority().filesystem.clone();
 
@@ -964,6 +975,7 @@ impl Editor {
         let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
         queue.push_back((working_dir, 0));
         const MAX_DEPTH: u32 = 3;
+        let mut indexes = Vec::new();
 
         while let Some((dir, depth)) = queue.pop_front() {
             let entries = match fs.read_dir(&dir) {
@@ -995,7 +1007,7 @@ impl Editor {
                             } else {
                                 entry.path.join(git_dir)
                             };
-                            return Some(git_dir_path.join("index"));
+                            indexes.push(git_dir_path.join("index"));
                         }
                     }
                 } else if depth < MAX_DEPTH {
@@ -1004,7 +1016,7 @@ impl Editor {
             }
         }
 
-        None
+        indexes
     }
 
     /// Notify LSP server about a newly opened file
