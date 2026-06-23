@@ -971,6 +971,114 @@ impl Editor {
         );
     }
 
+    /// Open a new terminal in a fresh split created from the active pane.
+    ///
+    /// `SplitDirection::Vertical` places the terminal in a pane to the
+    /// right; `SplitDirection::Horizontal` places it below. Unlike
+    /// `open_terminal` (which attaches a terminal tab to the *current*
+    /// split), this seeds a brand-new split leaf with the terminal buffer
+    /// directly — mirroring `Action::OpenTerminalInDock` — so the new pane
+    /// shows only the terminal, with no phantom tab carrying the
+    /// previously-active buffer.
+    pub fn open_terminal_split(&mut self, direction: crate::model::event::SplitDirection) {
+        // Splitting the layout is a commitment gesture for any preview tab.
+        // Promote before touching the split tree so the "preview is anchored
+        // to a single split" invariant holds across the operation (mirrors
+        // `split_pane_impl`).
+        self.active_window_mut().promote_current_preview();
+
+        // Spawn the PTY first so we have a real terminal buffer to seed the
+        // new leaf with — otherwise the leaf would carry the user's
+        // previously-active buffer as a placeholder that would linger as a
+        // phantom tab.
+        let Some(terminal_id) = self.spawn_terminal_session() else {
+            return;
+        };
+        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+
+        // Split the active pane, placing the new terminal leaf after
+        // (right for Vertical, below for Horizontal).
+        let new_leaf = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .split_active(direction, buffer_id, 0.5);
+        let new_leaf = match new_leaf {
+            Ok(leaf) => leaf,
+            Err(e) => {
+                self.set_status_message(t!("split.error", error = e.to_string()).to_string());
+                return;
+            }
+        };
+
+        let mut view_state =
+            SplitViewState::with_buffer(self.terminal_width, self.terminal_height, buffer_id);
+        // Terminal-dedicated splits never show line numbers or current-line
+        // highlight (mirrors the dock + plugin-terminal split setup).
+        view_state.apply_config_defaults(
+            false,
+            false,
+            self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+            self.config.editor.wrap_indent,
+            self.active_window()
+                .resolve_wrap_column_for_buffer(buffer_id),
+            self.config.editor.rulers.clone(),
+            0,
+        );
+        // Terminals don't wrap — keep escape sequences intact.
+        view_state.viewport.line_wrap_enabled = false;
+
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .insert(new_leaf, view_state);
+        self.windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .set_active_split(new_leaf);
+
+        // Mirror open_terminal's post-attach bookkeeping.
+        self.active_window_mut().terminal_mode = true;
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
+        self.active_window_mut().resize_visible_terminals();
+
+        // A new split changes every sibling pane's size. Reflow through the
+        // single layout funnel so existing terminals fit their new panes.
+        self.relayout();
+
+        // Editor-wide: refresh the plugin-state snapshot so plugin hooks see
+        // the new active buffer, then fire `buffer_activated`.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
+
+        let exit_key = self
+            .keybindings
+            .read()
+            .unwrap()
+            .find_keybinding_for_action(
+                "terminal_escape",
+                crate::input::keybindings::KeyContext::Terminal,
+            )
+            .unwrap_or_else(|| "Ctrl+Space".to_string());
+        self.set_status_message(
+            t!("terminal.opened", id = terminal_id.0, exit_key = exit_key).to_string(),
+        );
+        tracing::info!(
+            "Opened terminal {:?} into new split leaf {:?} (buffer {:?})",
+            terminal_id,
+            new_leaf,
+            buffer_id
+        );
+    }
+
     /// Editor-side thin wrapper. Delegates to the active window's
     /// `Window::create_terminal_buffer_detached` (used during session
     /// restore by `input.rs`).

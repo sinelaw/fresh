@@ -1372,6 +1372,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.open_terminal_right",
+        desc_key: "cmd.open_terminal_right_desc",
+        action: || Action::OpenTerminalRight,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.open_terminal_below",
+        desc_key: "cmd.open_terminal_below_desc",
+        action: || Action::OpenTerminalBelow,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.focus_terminal",
         desc_key: "cmd.focus_terminal_desc",
         action: || Action::FocusTerminal,

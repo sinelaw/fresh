@@ -395,6 +395,8 @@ pub enum Action {
 
     // Terminal operations
     OpenTerminal,          // Open a new terminal in the current split
+    OpenTerminalRight,     // Open a new terminal in a split to the right (vertical split)
+    OpenTerminalBelow,     // Open a new terminal in a split below (horizontal split)
     CloseTerminal,         // Close the current terminal
     FocusTerminal,         // Focus the terminal buffer (if viewing terminal, focus input)
     TerminalEscape,        // Escape from terminal mode back to editor

@@ -3044,6 +3044,8 @@ pub fn action_to_events(
         | Action::TrimTrailingWhitespace
         | Action::EnsureFinalNewline
         | Action::OpenTerminal
+        | Action::OpenTerminalRight
+        | Action::OpenTerminalBelow
         | Action::CloseTerminal
         | Action::FocusTerminal
         | Action::TerminalEscape

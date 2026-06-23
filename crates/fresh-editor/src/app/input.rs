@@ -2307,6 +2307,12 @@ impl Editor {
             Action::OpenTerminal => {
                 self.open_terminal();
             }
+            Action::OpenTerminalRight => {
+                self.open_terminal_split(crate::model::event::SplitDirection::Vertical);
+            }
+            Action::OpenTerminalBelow => {
+                self.open_terminal_split(crate::model::event::SplitDirection::Horizontal);
+            }
             Action::CloseTerminal => {
                 self.close_terminal();
             }

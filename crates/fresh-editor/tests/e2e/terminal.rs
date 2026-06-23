@@ -155,6 +155,57 @@ fn test_open_terminal() {
     harness.assert_screen_contains("Terminal");
 }
 
+/// Opening a terminal to the right creates a new split (vertical) seeded
+/// with a terminal, and focuses it in terminal mode.
+#[test]
+fn test_open_terminal_split_right() {
+    let mut harness = harness_or_return!(120, 24);
+
+    // Start with a single split showing the default buffer.
+    assert_eq!(harness.editor().get_split_count(), 1);
+
+    harness
+        .editor_mut()
+        .open_terminal_split(fresh::model::event::SplitDirection::Vertical);
+    harness.render().unwrap();
+
+    // A new split was created and it shows the terminal.
+    assert_eq!(harness.editor().get_split_count(), 2);
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // The new terminal split is active and focused in terminal mode.
+    assert!(harness.editor().is_terminal_mode());
+    let active = harness.editor().active_buffer_id();
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(active));
+}
+
+/// Opening a terminal below creates a new split (horizontal) seeded with a
+/// terminal, and focuses it in terminal mode.
+#[test]
+fn test_open_terminal_split_below() {
+    let mut harness = harness_or_return!(120, 24);
+
+    assert_eq!(harness.editor().get_split_count(), 1);
+
+    harness
+        .editor_mut()
+        .open_terminal_split(fresh::model::event::SplitDirection::Horizontal);
+    harness.render().unwrap();
+
+    assert_eq!(harness.editor().get_split_count(), 2);
+    harness.assert_screen_contains("*Terminal 0*");
+
+    assert!(harness.editor().is_terminal_mode());
+    let active = harness.editor().active_buffer_id();
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(active));
+}
+
 /// Test closing a terminal
 #[test]
 fn test_close_terminal() {

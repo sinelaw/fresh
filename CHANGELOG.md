@@ -26,6 +26,7 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * **Windows on ARM** release artifacts (#784, requested by @teobugslayer; by @NihilDigit).
 * `CancelMark` / `ClearMark` actions for fine-grained selection-anchor management (#2371, by @masmu).
 * **Git Log (Current File)** command, plus concurrent git-blame buffers.
+* **Open Terminal to the Right** / **Open Terminal Below** commands — create a new terminal in a fresh split beside (vertical) or below (horizontal) the active pane.
 
 ### Improvements
 

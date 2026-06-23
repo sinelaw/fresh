@@ -795,6 +795,8 @@ pub enum Action {
 
     // Terminal operations
     OpenTerminal,            // Open a new terminal in the current split
+    OpenTerminalRight,       // Open a new terminal in a split to the right (vertical split)
+    OpenTerminalBelow,       // Open a new terminal in a split below (horizontal split)
     CloseTerminal,           // Close the current terminal
     FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
     TerminalEscape,          // Escape from terminal mode back to editor
@@ -1241,6 +1243,8 @@ impl Action {
             "menu_execute" => MenuExecute,
 
             "open_terminal" => OpenTerminal,
+            "open_terminal_right" => OpenTerminalRight,
+            "open_terminal_below" => OpenTerminalBelow,
             "close_terminal" => CloseTerminal,
             "focus_terminal" => FocusTerminal,
             "terminal_escape" => TerminalEscape,
@@ -1821,6 +1825,8 @@ impl KeybindingResolver {
                 | Action::TerminalEscape
                 | Action::ToggleKeyboardCapture
                 | Action::OpenTerminal
+                | Action::OpenTerminalRight
+                | Action::OpenTerminalBelow
                 | Action::CloseTerminal
                 | Action::TerminalPaste
                 // File explorer
@@ -2700,6 +2706,8 @@ impl KeybindingResolver {
             Action::SwitchToPreviousTab => t!("action.switch_to_previous_tab"),
             Action::SwitchToTabByName => t!("action.switch_to_tab_by_name"),
             Action::OpenTerminal => t!("action.open_terminal"),
+            Action::OpenTerminalRight => t!("action.open_terminal_right"),
+            Action::OpenTerminalBelow => t!("action.open_terminal_below"),
             Action::CloseTerminal => t!("action.close_terminal"),
             Action::FocusTerminal => t!("action.focus_terminal"),
             Action::TerminalEscape => t!("action.terminal_escape"),
