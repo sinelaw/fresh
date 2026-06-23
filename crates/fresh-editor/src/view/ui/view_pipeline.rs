@@ -239,6 +239,169 @@ impl<'a> ViewLineIterator<'a> {
             self.token_idx += 1;
         }
     }
+
+    /// Expand a single `Text` token into `acc`, handling UTF-8 decoding,
+    /// grapheme segmentation, tab expansion, ANSI escapes, and binary-mode
+    /// `<XX>` rendering. Works one display character at a time so the
+    /// byte↔column mappings stay exact.
+    fn push_text_token(
+        &self,
+        t: &str,
+        base: Option<usize>,
+        token_style: Option<ViewTokenStyle>,
+        acc: &mut LineAccumulator,
+        ansi_parser: &mut Option<AnsiParser>,
+    ) {
+        let t_bytes = t.as_bytes();
+        let mut byte_idx = 0;
+
+        while byte_idx < t_bytes.len() {
+            let b = t_bytes[byte_idx];
+
+            // In binary mode, render unprintable bytes as <XX> code points.
+            // These are never part of a grapheme cluster.
+            if self.binary_mode && is_unprintable_byte(b) {
+                acc.push_escape(
+                    &format_unprintable_byte(b),
+                    base.map(|s| s + byte_idx),
+                    token_style.clone(),
+                );
+                byte_idx += 1;
+                continue;
+            }
+
+            // Decode the largest valid UTF-8 slice starting here so we can
+            // segment it into grapheme clusters. Any invalid byte is
+            // handled as a single-byte replacement char and we resume
+            // decoding afterwards.
+            let remaining = &t_bytes[byte_idx..];
+            let valid = match std::str::from_utf8(remaining) {
+                Ok(s) => s,
+                Err(e) => {
+                    let valid_up_to = e.valid_up_to();
+                    if valid_up_to == 0 {
+                        let source = base.map(|s| s + byte_idx);
+                        if self.binary_mode {
+                            acc.push_escape(
+                                &format_unprintable_byte(b),
+                                source,
+                                token_style.clone(),
+                            );
+                        } else {
+                            acc.push_char('\u{FFFD}', source, token_style.clone(), 1);
+                        }
+                        byte_idx += 1;
+                        continue;
+                    } else {
+                        // SAFETY: `valid_up_to` is a char boundary.
+                        unsafe { std::str::from_utf8_unchecked(&remaining[..valid_up_to]) }
+                    }
+                }
+            };
+
+            // Canonical Unicode handling: iterate grapheme clusters, not
+            // codepoints. The width of a cluster is `str_width(cluster)` —
+            // `unicode-width` 0.2 correctly returns 2 for ZWJ family emoji,
+            // 1 for a base+combining sequence like "é", 2 for fullwidth
+            // letters, and so on. This is the same width ratatui computes
+            // when it re-segments the span, so every stage of the pipeline
+            // (wrap, column tracking, span placement) agrees on how many
+            // cells each cluster occupies.
+            //
+            // We still record per-codepoint entries in the char-indexed
+            // arrays (char_source_bytes / char_styles / char_visual_cols)
+            // so byte↔column mapping stays exact for LSP positions, mouse
+            // clicks, and cursor arithmetic. But `col` advances exactly
+            // once per grapheme: the first codepoint of a cluster carries
+            // the full width, the rest carry 0.
+            let mut segmented_bytes = 0usize;
+            for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
+                segmented_bytes = g_byte_offset + grapheme.len();
+
+                // In binary mode, any ASCII unprintable byte inside the
+                // decoded slice must still be rendered as `<XX>`. This
+                // covers graphemes consisting entirely of one unprintable
+                // byte (e.g. `\x1A`) and CRLF (`\r\n`) where only the
+                // `\r` half is unprintable — we split those out.
+                if self.binary_mode {
+                    let bytes = grapheme.as_bytes();
+                    let has_unprintable = bytes.iter().any(|&b| b < 0x80 && is_unprintable_byte(b));
+                    if has_unprintable {
+                        let mut inner = 0usize;
+                        for ch in grapheme.chars() {
+                            let ch_len = ch.len_utf8();
+                            let src = base.map(|s| s + byte_idx + g_byte_offset + inner);
+                            let ch_byte = ch as u32;
+                            if ch_byte < 0x80 && is_unprintable_byte(ch_byte as u8) {
+                                acc.push_escape(
+                                    &format_unprintable_byte(ch_byte as u8),
+                                    src,
+                                    token_style.clone(),
+                                );
+                            } else {
+                                acc.push_char(ch, src, token_style.clone(), 1);
+                            }
+                            inner += ch_len;
+                        }
+                        continue;
+                    }
+                }
+
+                // Tab: a single codepoint forming its own grapheme, expanded to spaces.
+                if grapheme == "\t" {
+                    let source = base.map(|s| s + byte_idx + g_byte_offset);
+                    acc.push_tab(
+                        source,
+                        token_style.clone(),
+                        self.tab_expansion_width(acc.col),
+                    );
+                    continue;
+                }
+
+                // ANSI escape sequences. Process char-by-char so the
+                // AnsiParser state machine keeps track of the escape,
+                // and keep them as width 0. In practice ESC never sits
+                // inside a grapheme with visible content, so treating
+                // a grapheme that starts with ESC as width-0 here is
+                // correct.
+                if let Some(parser) = ansi_parser.as_mut() {
+                    let first_ch = grapheme.chars().next().unwrap_or('\0');
+                    if parser.parse_char(first_ch).is_none() {
+                        for ch in grapheme.chars() {
+                            // All codepoints of an escape grapheme are width 0.
+                            let src = base.map(|s| s + byte_idx + g_byte_offset);
+                            // Keep the parser fed so state transitions work
+                            // even across a multi-codepoint escape (rare).
+                            if ch != first_ch {
+                                let _ = parser.parse_char(ch);
+                            }
+                            acc.push_char(ch, src, token_style.clone(), 0);
+                        }
+                        continue;
+                    }
+                }
+
+                // Normal case: emit one display unit per grapheme.
+                // Width goes on the FIRST codepoint, the rest are 0.
+                let cluster_width = str_width(grapheme);
+                let mut first = true;
+                let mut inner_byte_offset = 0usize;
+                for ch in grapheme.chars() {
+                    let source = base.map(|s| s + byte_idx + g_byte_offset + inner_byte_offset);
+                    let w = if first {
+                        first = false;
+                        cluster_width
+                    } else {
+                        0
+                    };
+                    acc.push_char(ch, source, token_style.clone(), w);
+                    inner_byte_offset += ch.len_utf8();
+                }
+            }
+
+            byte_idx += segmented_bytes.max(1);
+        }
+    }
 }
 
 /// Check if a byte is an unprintable control character that should be rendered as <XX>
@@ -263,6 +426,111 @@ fn is_unprintable_byte(b: u8) -> bool {
 /// Format an unprintable byte as a code point string like "<00>"
 fn format_unprintable_byte(b: u8) -> String {
     format!("<{:02X}>", b)
+}
+
+/// Mutable per-line accumulator shared by all token-kind handlers. Owns the
+/// parallel character / visual-column mappings that a [`ViewLine`] exposes and
+/// grows them one display character at a time, keeping the byte↔column
+/// mappings exact for cursors, mouse clicks, and LSP positions.
+struct LineAccumulator {
+    text: String,
+    char_source_bytes: Vec<Option<usize>>,
+    char_styles: Vec<Option<ViewTokenStyle>>,
+    char_visual_cols: Vec<usize>,
+    visual_to_char: Vec<usize>,
+    tab_starts: HashSet<usize>,
+    /// Current visual column (advances by each character's display width).
+    col: usize,
+}
+
+impl LineAccumulator {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            char_source_bytes: Vec::new(),
+            char_styles: Vec::new(),
+            char_visual_cols: Vec::new(),
+            visual_to_char: Vec::new(),
+            tab_starts: HashSet::new(),
+            col: 0,
+        }
+    }
+
+    /// Append one display character occupying `width` visual columns.
+    ///
+    /// `width` is 0 for zero-width codepoints (combining marks, ZWJ, the
+    /// continuation codepoints within a grapheme cluster, ANSI escapes) — we
+    /// deliberately emit no `visual_to_char` entries for them.
+    fn push_char(
+        &mut self,
+        ch: char,
+        source: Option<usize>,
+        style: Option<ViewTokenStyle>,
+        width: usize,
+    ) {
+        let char_idx = self.char_source_bytes.len();
+        self.text.push(ch);
+        self.char_source_bytes.push(source);
+        self.char_styles.push(style);
+        self.char_visual_cols.push(self.col);
+        for _ in 0..width {
+            self.visual_to_char.push(char_idx);
+        }
+        self.col += width;
+    }
+
+    /// Append each character of `s` as its own width-1 cell, all mapped to the
+    /// same `source` byte. Used to render `<XX>` escapes for unprintable bytes.
+    fn push_escape(&mut self, s: &str, source: Option<usize>, style: Option<ViewTokenStyle>) {
+        for ch in s.chars() {
+            self.push_char(ch, source, style.clone(), 1);
+        }
+    }
+
+    /// Expand a tab at the current column into `spaces` spaces. Every expanded
+    /// column maps back to the single source byte of the tab, and the first
+    /// space records the tab-start marker.
+    fn push_tab(&mut self, source: Option<usize>, style: Option<ViewTokenStyle>, spaces: usize) {
+        let char_idx = self.char_source_bytes.len();
+        self.tab_starts.insert(char_idx);
+
+        self.text.push(' ');
+        self.char_source_bytes.push(source);
+        self.char_styles.push(style.clone());
+        self.char_visual_cols.push(self.col);
+        for _ in 0..spaces {
+            self.visual_to_char.push(char_idx);
+        }
+        self.col += spaces;
+
+        // Spaces 1..N of the tab expansion. The i-th space sits at
+        // `col_before_tab + i`, where `col_before_tab = self.col - spaces`
+        // (`self.col` was already advanced above).
+        for i in 1..spaces {
+            self.text.push(' ');
+            self.char_source_bytes.push(source);
+            self.char_styles.push(style.clone());
+            self.char_visual_cols.push(self.col - spaces + i);
+        }
+    }
+
+    /// Finalize into a [`ViewLine`] with the given line metadata.
+    fn into_view_line(self, line_start: LineStart, ends_with_newline: bool) -> ViewLine {
+        let source_start_byte = self.char_source_bytes.iter().find_map(|s| *s);
+        ViewLine {
+            text: self.text,
+            source_start_byte,
+            char_source_bytes: self.char_source_bytes,
+            char_styles: self.char_styles,
+            char_visual_cols: self.char_visual_cols,
+            visual_to_char: self.visual_to_char,
+            tab_starts: self.tab_starts,
+            line_start,
+            ends_with_newline,
+            virtual_gutter_glyph: None,
+            virtual_line_style: None,
+        }
+    }
 }
 
 impl<'a> Iterator for ViewLineIterator<'a> {
@@ -301,18 +569,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
         }
 
         let line_start = self.next_line_start;
-        let mut text = String::new();
-
-        // Per-character tracking (indexed by character position)
-        let mut char_source_bytes: Vec<Option<usize>> = Vec::new();
-        let mut char_styles: Vec<Option<ViewTokenStyle>> = Vec::new();
-        let mut char_visual_cols: Vec<usize> = Vec::new();
-
-        // Per-visual-column tracking (indexed by visual column)
-        let mut visual_to_char: Vec<usize> = Vec::new();
-
-        let mut tab_starts = HashSet::new();
-        let mut col = 0usize; // Current visual column
+        let mut acc = LineAccumulator::new();
         let mut ends_with_newline = false;
 
         // ANSI parser for tracking escape sequences (reuse existing implementation)
@@ -321,31 +578,6 @@ impl<'a> Iterator for ViewLineIterator<'a> {
         } else {
             None
         };
-
-        /// Helper to add a character with all its mappings
-        macro_rules! add_char {
-            ($ch:expr, $source:expr, $style:expr, $width:expr) => {{
-                let char_idx = char_source_bytes.len();
-
-                // Per-character data
-                text.push($ch);
-                char_source_bytes.push($source);
-                char_styles.push($style);
-                char_visual_cols.push(col);
-
-                // Per-visual-column data (for O(1) mouse clicks).
-                // Note: $width is 0 for zero-width codepoints (combining
-                // marks, ZWJ, continuation codepoints within a grapheme
-                // cluster) — we deliberately emit no visual_to_char
-                // entries for them.
-                #[allow(clippy::reversed_empty_ranges)]
-                for _ in 0..$width {
-                    visual_to_char.push(char_idx);
-                }
-
-                col += $width;
-            }};
-        }
 
         // Process tokens until we hit a line break
         while self.token_idx < self.tokens.len() {
@@ -360,188 +592,22 @@ impl<'a> Iterator for ViewLineIterator<'a> {
 
             match &token.kind {
                 ViewTokenWireKind::Text(t) => {
-                    let base = token.source_offset;
-                    let t_bytes = t.as_bytes();
-                    let mut byte_idx = 0;
-
-                    while byte_idx < t_bytes.len() {
-                        let b = t_bytes[byte_idx];
-
-                        // In binary mode, render unprintable bytes as <XX> code points.
-                        // These are never part of a grapheme cluster.
-                        if self.binary_mode && is_unprintable_byte(b) {
-                            let source = base.map(|s| s + byte_idx);
-                            let formatted = format_unprintable_byte(b);
-                            for display_ch in formatted.chars() {
-                                add_char!(display_ch, source, token_style.clone(), 1);
-                            }
-                            byte_idx += 1;
-                            continue;
-                        }
-
-                        // Decode the largest valid UTF-8 slice starting here so we can
-                        // segment it into grapheme clusters. Any invalid byte is
-                        // handled as a single-byte replacement char and we resume
-                        // decoding afterwards.
-                        let remaining = &t_bytes[byte_idx..];
-                        let valid = match std::str::from_utf8(remaining) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                let valid_up_to = e.valid_up_to();
-                                if valid_up_to == 0 {
-                                    let source = base.map(|s| s + byte_idx);
-                                    if self.binary_mode {
-                                        let formatted = format_unprintable_byte(b);
-                                        for display_ch in formatted.chars() {
-                                            add_char!(display_ch, source, token_style.clone(), 1);
-                                        }
-                                    } else {
-                                        add_char!('\u{FFFD}', source, token_style.clone(), 1);
-                                    }
-                                    byte_idx += 1;
-                                    continue;
-                                } else {
-                                    // SAFETY: `valid_up_to` is a char boundary.
-                                    unsafe {
-                                        std::str::from_utf8_unchecked(&remaining[..valid_up_to])
-                                    }
-                                }
-                            }
-                        };
-
-                        // Canonical Unicode handling: iterate grapheme clusters, not
-                        // codepoints. The width of a cluster is `str_width(cluster)` —
-                        // `unicode-width` 0.2 correctly returns 2 for ZWJ family emoji,
-                        // 1 for a base+combining sequence like "é", 2 for fullwidth
-                        // letters, and so on. This is the same width ratatui computes
-                        // when it re-segments the span, so every stage of the pipeline
-                        // (wrap, column tracking, span placement) agrees on how many
-                        // cells each cluster occupies.
-                        //
-                        // We still record per-codepoint entries in the char-indexed
-                        // arrays (char_source_bytes / char_styles / char_visual_cols)
-                        // so byte↔column mapping stays exact for LSP positions, mouse
-                        // clicks, and cursor arithmetic. But `col` advances exactly
-                        // once per grapheme: the first codepoint of a cluster carries
-                        // the full width, the rest carry 0.
-                        let mut segmented_bytes = 0usize;
-                        for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
-                            segmented_bytes = g_byte_offset + grapheme.len();
-
-                            // In binary mode, any ASCII unprintable byte inside the
-                            // decoded slice must still be rendered as `<XX>`. This
-                            // covers graphemes consisting entirely of one unprintable
-                            // byte (e.g. `\x1A`) and CRLF (`\r\n`) where only the
-                            // `\r` half is unprintable — we split those out.
-                            if self.binary_mode {
-                                let bytes = grapheme.as_bytes();
-                                let has_unprintable =
-                                    bytes.iter().any(|&b| b < 0x80 && is_unprintable_byte(b));
-                                if has_unprintable {
-                                    let mut inner = 0usize;
-                                    for ch in grapheme.chars() {
-                                        let ch_len = ch.len_utf8();
-                                        let src =
-                                            base.map(|s| s + byte_idx + g_byte_offset + inner);
-                                        let ch_byte = ch as u32;
-                                        if ch_byte < 0x80 && is_unprintable_byte(ch_byte as u8) {
-                                            let formatted = format_unprintable_byte(ch_byte as u8);
-                                            for display_ch in formatted.chars() {
-                                                add_char!(display_ch, src, token_style.clone(), 1);
-                                            }
-                                        } else {
-                                            add_char!(ch, src, token_style.clone(), 1);
-                                        }
-                                        inner += ch_len;
-                                    }
-                                    continue;
-                                }
-                            }
-
-                            // Tab: a single codepoint forming its own grapheme, expanded to spaces.
-                            if grapheme == "\t" {
-                                let source = base.map(|s| s + byte_idx + g_byte_offset);
-                                let tab_start_pos = char_source_bytes.len();
-                                tab_starts.insert(tab_start_pos);
-                                let spaces = self.tab_expansion_width(col);
-
-                                let char_idx = char_source_bytes.len();
-                                text.push(' ');
-                                char_source_bytes.push(source);
-                                char_styles.push(token_style.clone());
-                                char_visual_cols.push(col);
-
-                                for _ in 0..spaces {
-                                    visual_to_char.push(char_idx);
-                                }
-                                col += spaces;
-
-                                // Spaces 1..N of the tab expansion. The i-th
-                                // space sits at `col_before_tab + i`, where
-                                // `col_before_tab = col - spaces` (col was
-                                // already incremented above).
-                                for i in 1..spaces {
-                                    text.push(' ');
-                                    char_source_bytes.push(source);
-                                    char_styles.push(token_style.clone());
-                                    char_visual_cols.push(col - spaces + i);
-                                }
-                                continue;
-                            }
-
-                            // ANSI escape sequences. Process char-by-char so the
-                            // AnsiParser state machine keeps track of the escape,
-                            // and keep them as width 0. In practice ESC never sits
-                            // inside a grapheme with visible content, so treating
-                            // a grapheme that starts with ESC as width-0 here is
-                            // correct.
-                            if let Some(ref mut parser) = ansi_parser {
-                                let first_ch = grapheme.chars().next().unwrap_or('\0');
-                                if parser.parse_char(first_ch).is_none() {
-                                    for ch in grapheme.chars() {
-                                        // All codepoints of an escape grapheme are width 0.
-                                        let src = base.map(|s| s + byte_idx + g_byte_offset);
-                                        // Keep the parser fed so state transitions work
-                                        // even across a multi-codepoint escape (rare).
-                                        if ch != first_ch {
-                                            let _ = parser.parse_char(ch);
-                                        }
-                                        add_char!(ch, src, token_style.clone(), 0);
-                                    }
-                                    continue;
-                                }
-                            }
-
-                            // Normal case: emit one display unit per grapheme.
-                            // Width goes on the FIRST codepoint, the rest are 0.
-                            let cluster_width = str_width(grapheme);
-                            let mut first = true;
-                            let mut inner_byte_offset = 0usize;
-                            for ch in grapheme.chars() {
-                                let source =
-                                    base.map(|s| s + byte_idx + g_byte_offset + inner_byte_offset);
-                                let w = if first {
-                                    first = false;
-                                    cluster_width
-                                } else {
-                                    0
-                                };
-                                add_char!(ch, source, token_style.clone(), w);
-                                inner_byte_offset += ch.len_utf8();
-                            }
-                        }
-
-                        byte_idx += segmented_bytes.max(1);
-                    }
+                    self.push_text_token(
+                        t,
+                        token.source_offset,
+                        token_style,
+                        &mut acc,
+                        &mut ansi_parser,
+                    );
                     self.token_idx += 1;
                 }
                 ViewTokenWireKind::Space => {
-                    add_char!(' ', token.source_offset, token_style, 1);
+                    acc.push_char(' ', token.source_offset, token_style, 1);
                     self.token_idx += 1;
                 }
                 ViewTokenWireKind::Newline => {
                     // Newline ends this line - width 1 for the newline char
-                    add_char!('\n', token.source_offset, token_style, 1);
+                    acc.push_char('\n', token.source_offset, token_style, 1);
                     ends_with_newline = true;
 
                     // Determine how the next line starts
@@ -555,7 +621,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                 }
                 ViewTokenWireKind::Break => {
                     // Break is a synthetic line break from wrapping
-                    add_char!('\n', None, None, 1);
+                    acc.push_char('\n', None, None, 1);
                     ends_with_newline = true;
 
                     self.next_line_start = LineStart::AfterBreak;
@@ -563,18 +629,16 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                     break;
                 }
                 ViewTokenWireKind::BinaryByte(b) => {
-                    // Binary byte rendered as <XX> - all 4 chars map to same source byte
-                    let formatted = format_unprintable_byte(*b);
-                    for display_ch in formatted.chars() {
-                        add_char!(display_ch, token.source_offset, token_style.clone(), 1);
-                    }
+                    // Binary byte rendered as <XX> - all chars map to same source byte
+                    acc.push_escape(
+                        &format_unprintable_byte(*b),
+                        token.source_offset,
+                        token_style,
+                    );
                     self.token_idx += 1;
                 }
             }
         }
-
-        // col's final value is intentionally unused (only needed during iteration)
-        let _ = col;
 
         // If we consumed all remaining tokens without hitting a Newline or Break,
         // the content didn't end with a line terminator.  Reset next_line_start
@@ -591,26 +655,14 @@ impl<'a> Iterator for ViewLineIterator<'a> {
         // newline — it represents a real document line (e.g. after a file's
         // trailing '\n') and the cursor may sit on it — but only when
         // at_buffer_end is set (otherwise this is just a viewport slice).
-        if text.is_empty()
+        if acc.text.is_empty()
             && self.token_idx >= self.tokens.len()
             && !(self.at_buffer_end && matches!(line_start, LineStart::AfterSourceNewline))
         {
             return None;
         }
 
-        Some(ViewLine {
-            text,
-            source_start_byte: char_source_bytes.iter().find_map(|s| *s),
-            char_source_bytes,
-            char_styles,
-            char_visual_cols,
-            visual_to_char,
-            tab_starts,
-            line_start,
-            ends_with_newline,
-            virtual_gutter_glyph: None,
-            virtual_line_style: None,
-        })
+        Some(acc.into_view_line(line_start, ends_with_newline))
     }
 }
 
