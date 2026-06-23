@@ -829,191 +829,124 @@ impl KeybindingEditor {
         };
 
         match self.bindings[idx].source {
-            BindingSource::Custom => {
-                let binding = &self.bindings[idx];
-                let action_name = binding.action.clone();
-
-                // Use the original config-level Keybinding if available (for
-                // bindings loaded from config), otherwise reconstruct it.
-                // This avoids lossy round-trips through parse_key which
-                // lowercases key names (e.g. "N" → "n").
-                let config_kb = binding
-                    .original_config
-                    .clone()
-                    .unwrap_or_else(|| self.resolved_to_config_keybinding(binding));
-
-                // If this binding was added in the current session, just
-                // remove it from pending_adds. Otherwise track for removal
-                // from the persisted config.
-                let found_in_adds = self.pending_adds.iter().position(|kb| {
-                    kb.action == config_kb.action
-                        && kb.key == config_kb.key
-                        && kb.modifiers == config_kb.modifiers
-                        && kb.when == config_kb.when
-                });
-                if let Some(pos) = found_in_adds {
-                    self.pending_adds.remove(pos);
-                } else {
-                    self.pending_removes.push(config_kb);
-                }
-
-                self.bindings.remove(idx);
-                self.has_changes = true;
-
-                // If no other binding exists for this action, re-add as unbound
-                let still_bound = self.bindings.iter().any(|b| b.action == action_name);
-                if !still_bound {
-                    let action_display = KeybindingResolver::format_action_from_str(&action_name);
-                    self.bindings.push(ResolvedBinding {
-                        key_display: String::new(),
-                        action: action_name,
-                        action_display,
-                        context: String::new(),
-                        source: BindingSource::Unbound,
-                        key_code: KeyCode::Null,
-                        modifiers: KeyModifiers::NONE,
-                        is_chord: false,
-                        plugin_name: None,
-                        command_name: None,
-                        original_config: None,
-                    });
-                }
-
-                self.apply_filters();
-                DeleteResult::CustomRemoved
-            }
-            BindingSource::Keymap => {
-                let binding = &self.bindings[idx];
-                let action_name = binding.action.clone();
-
-                // Build a noop custom override for the same key+context
-                let noop_kb = Keybinding {
-                    key: if binding.is_chord {
-                        String::new()
-                    } else {
-                        key_code_to_config_name(binding.key_code)
-                    },
-                    modifiers: if binding.is_chord {
-                        Vec::new()
-                    } else {
-                        modifiers_to_config_names(binding.modifiers)
-                    },
-                    keys: Vec::new(),
-                    action: "noop".to_string(),
-                    args: HashMap::new(),
-                    when: if binding.context.is_empty() {
-                        None
-                    } else {
-                        Some(binding.context.clone())
-                    },
-                };
-                self.pending_adds.push(noop_kb);
-
-                // Replace the keymap entry with a noop custom entry in the display
-                let noop_display = KeybindingResolver::format_action_from_str("noop");
-                self.bindings[idx] = ResolvedBinding {
-                    key_display: self.bindings[idx].key_display.clone(),
-                    action: "noop".to_string(),
-                    action_display: noop_display,
-                    context: self.bindings[idx].context.clone(),
-                    source: BindingSource::Custom,
-                    key_code: self.bindings[idx].key_code,
-                    modifiers: self.bindings[idx].modifiers,
-                    is_chord: self.bindings[idx].is_chord,
-                    plugin_name: self.bindings[idx].plugin_name.clone(),
-                    command_name: None,
-                    original_config: None,
-                };
-                self.has_changes = true;
-
-                // The original action may now be unbound
-                let still_bound = self.bindings.iter().any(|b| b.action == action_name);
-                if !still_bound {
-                    let action_display = KeybindingResolver::format_action_from_str(&action_name);
-                    self.bindings.push(ResolvedBinding {
-                        key_display: String::new(),
-                        action: action_name,
-                        action_display,
-                        context: String::new(),
-                        source: BindingSource::Unbound,
-                        key_code: KeyCode::Null,
-                        modifiers: KeyModifiers::NONE,
-                        is_chord: false,
-                        plugin_name: None,
-                        command_name: None,
-                        original_config: None,
-                    });
-                }
-
-                self.apply_filters();
-                DeleteResult::KeymapOverridden
-            }
-            BindingSource::Plugin => {
-                // Plugin bindings behave like keymap bindings - create a noop override
-                let binding = &self.bindings[idx];
-                let action_name = binding.action.clone();
-
-                let noop_kb = Keybinding {
-                    key: if binding.is_chord {
-                        String::new()
-                    } else {
-                        key_code_to_config_name(binding.key_code)
-                    },
-                    modifiers: if binding.is_chord {
-                        Vec::new()
-                    } else {
-                        modifiers_to_config_names(binding.modifiers)
-                    },
-                    keys: Vec::new(),
-                    action: "noop".to_string(),
-                    args: HashMap::new(),
-                    when: if binding.context.is_empty() {
-                        None
-                    } else {
-                        Some(binding.context.clone())
-                    },
-                };
-                self.pending_adds.push(noop_kb);
-
-                let noop_display = KeybindingResolver::format_action_from_str("noop");
-                self.bindings[idx] = ResolvedBinding {
-                    key_display: self.bindings[idx].key_display.clone(),
-                    action: "noop".to_string(),
-                    action_display: noop_display,
-                    context: self.bindings[idx].context.clone(),
-                    source: BindingSource::Custom,
-                    key_code: self.bindings[idx].key_code,
-                    modifiers: self.bindings[idx].modifiers,
-                    is_chord: self.bindings[idx].is_chord,
-                    plugin_name: self.bindings[idx].plugin_name.clone(),
-                    command_name: None,
-                    original_config: None,
-                };
-                self.has_changes = true;
-
-                let still_bound = self.bindings.iter().any(|b| b.action == action_name);
-                if !still_bound {
-                    let action_display = KeybindingResolver::format_action_from_str(&action_name);
-                    self.bindings.push(ResolvedBinding {
-                        key_display: String::new(),
-                        action: action_name,
-                        action_display,
-                        context: String::new(),
-                        source: BindingSource::Unbound,
-                        key_code: KeyCode::Null,
-                        modifiers: KeyModifiers::NONE,
-                        is_chord: false,
-                        plugin_name: None,
-                        command_name: None,
-                        original_config: None,
-                    });
-                }
-
-                self.apply_filters();
-                DeleteResult::KeymapOverridden
-            }
+            BindingSource::Custom => self.delete_custom_binding(idx),
+            // Keymap and plugin defaults can't be removed from their source
+            // map, so both shadow the key with a custom `noop` override —
+            // identical handling, hence one arm.
+            BindingSource::Keymap | BindingSource::Plugin => self.override_binding_with_noop(idx),
             BindingSource::Unbound => DeleteResult::CannotDelete,
         }
+    }
+
+    /// Remove a user-defined (`Custom`) binding: drop it from `pending_adds`
+    /// when it was added this session, otherwise record it in `pending_removes`
+    /// so the save drops it from the persisted config.
+    fn delete_custom_binding(&mut self, idx: usize) -> DeleteResult {
+        let binding = &self.bindings[idx];
+        let action_name = binding.action.clone();
+
+        // Use the original config-level Keybinding if available (for bindings
+        // loaded from config), otherwise reconstruct it. This avoids lossy
+        // round-trips through parse_key which lowercases key names (e.g.
+        // "N" → "n").
+        let config_kb = binding
+            .original_config
+            .clone()
+            .unwrap_or_else(|| self.resolved_to_config_keybinding(binding));
+
+        let found_in_adds = self.pending_adds.iter().position(|kb| {
+            kb.action == config_kb.action
+                && kb.key == config_kb.key
+                && kb.modifiers == config_kb.modifiers
+                && kb.when == config_kb.when
+        });
+        if let Some(pos) = found_in_adds {
+            self.pending_adds.remove(pos);
+        } else {
+            self.pending_removes.push(config_kb);
+        }
+
+        self.bindings.remove(idx);
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::CustomRemoved
+    }
+
+    /// Shadow a built-in keymap or plugin binding with a custom `noop` override
+    /// for the same key+context — the underlying map can't be edited in place,
+    /// so the override masks the default in the resolver.
+    fn override_binding_with_noop(&mut self, idx: usize) -> DeleteResult {
+        let binding = &self.bindings[idx];
+        let action_name = binding.action.clone();
+
+        // Build a noop custom override for the same key+context.
+        let noop_kb = Keybinding {
+            key: if binding.is_chord {
+                String::new()
+            } else {
+                key_code_to_config_name(binding.key_code)
+            },
+            modifiers: if binding.is_chord {
+                Vec::new()
+            } else {
+                modifiers_to_config_names(binding.modifiers)
+            },
+            keys: Vec::new(),
+            action: "noop".to_string(),
+            args: HashMap::new(),
+            when: if binding.context.is_empty() {
+                None
+            } else {
+                Some(binding.context.clone())
+            },
+        };
+        self.pending_adds.push(noop_kb);
+
+        // Replace the entry with a noop custom entry in the display.
+        let noop_display = KeybindingResolver::format_action_from_str("noop");
+        self.bindings[idx] = ResolvedBinding {
+            key_display: self.bindings[idx].key_display.clone(),
+            action: "noop".to_string(),
+            action_display: noop_display,
+            context: self.bindings[idx].context.clone(),
+            source: BindingSource::Custom,
+            key_code: self.bindings[idx].key_code,
+            modifiers: self.bindings[idx].modifiers,
+            is_chord: self.bindings[idx].is_chord,
+            plugin_name: self.bindings[idx].plugin_name.clone(),
+            command_name: None,
+            original_config: None,
+        };
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::KeymapOverridden
+    }
+
+    /// After a delete/override, if no binding remains for `action_name`, push an
+    /// `Unbound` placeholder row so the action stays visible (and re-bindable)
+    /// in the editor instead of disappearing from the list.
+    fn readd_as_unbound_if_orphaned(&mut self, action_name: String) {
+        if self.bindings.iter().any(|b| b.action == action_name) {
+            return;
+        }
+        let action_display = KeybindingResolver::format_action_from_str(&action_name);
+        self.bindings.push(ResolvedBinding {
+            key_display: String::new(),
+            action: action_name,
+            action_display,
+            context: String::new(),
+            source: BindingSource::Unbound,
+            key_code: KeyCode::Null,
+            modifiers: KeyModifiers::NONE,
+            is_chord: false,
+            plugin_name: None,
+            command_name: None,
+            original_config: None,
+        });
     }
 
     /// Convert a ResolvedBinding to a config-level Keybinding (for matching).
