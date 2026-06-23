@@ -374,10 +374,20 @@ fn test_vi_vim_compat_repeat_change_word_keeps_change_semantics() {
     send_vi_operator_motion(&mut harness, 'c', 'W');
     harness.type_text("X").unwrap();
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Wait for the Esc to land us back in normal mode before sending more vi
+    // keys — otherwise a not-yet-processed Esc means the following `W` is typed
+    // as a literal character in insert mode.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
     harness.assert_buffer_content("X three four.five\n");
 
+    // `W` moves the cursor asynchronously to the start of "three" (byte 2 in
+    // "X three four.five"). Wait for it to land before `.`, otherwise the
+    // dot-repeat can replay `cW` at the old position and never produce the
+    // expected buffer (the motion-before-repeat race).
     send_vi_key(&mut harness, 'W');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
     send_vi_key(&mut harness, '.');
 
     // The `.` repeat replays the recorded change (cW → insert "X" → Esc)
