@@ -251,7 +251,7 @@ pub fn detect_encoding(bytes: &[u8]) -> Encoding {
 /// 5. Use chardetng for statistical detection of legacy encodings
 /// 6. If encoding detection is uncertain, default to Windows-1252
 pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bool) {
-    // Only check the first 8KB for encoding detection
+    // Only check the first 8KB for encoding detection.
     let check_len = bytes.len().min(8 * 1024);
     let sample = &bytes[..check_len];
 
@@ -262,196 +262,183 @@ pub fn detect_encoding_or_binary(bytes: &[u8], truncated: bool) -> (Encoding, bo
     // strict validation even though the full buffer is valid UTF-8 (#1635).
     let sample_truncated = truncated || check_len < bytes.len();
 
-    // 1. Check for BOM (Byte Order Mark) - highest priority, definitely text
-    if sample.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return (Encoding::Utf8Bom, false);
+    // Run the detection phases in priority order, returning at the first one
+    // that reaches a verdict. See the doc comment above for the strategy.
+    if let Some(result) = detect_by_bom(sample) {
+        return result;
     }
-    if sample.starts_with(&[0xFF, 0xFE]) {
-        // Could also be UTF-32 LE, but UTF-16 LE is much more common
-        return (Encoding::Utf16Le, false);
+    if let Some(result) = detect_utf8(sample, sample_truncated) {
+        return result;
     }
-    if sample.starts_with(&[0xFE, 0xFF]) {
-        return (Encoding::Utf16Be, false);
+    if let Some(result) = detect_utf16_without_bom(sample) {
+        return result;
     }
+    detect_legacy_encoding(sample)
+}
 
-    // 2. Try UTF-8 validation (fast path for most modern files)
-    // Note: When we truncate to 8KB, we may cut in the middle of a multi-byte UTF-8 sequence.
-    // We need to handle this case - if most of the sample is valid UTF-8 and the only error
-    // is an incomplete sequence at the very end, we should still detect it as UTF-8.
+/// Phase 1: detect a leading Byte Order Mark. A BOM is definitive — the content
+/// is text in the marked encoding. Returns `None` when no BOM is present.
+fn detect_by_bom(sample: &[u8]) -> Option<(Encoding, bool)> {
+    if sample.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        Some((Encoding::Utf8Bom, false))
+    } else if sample.starts_with(&[0xFF, 0xFE]) {
+        // Could also be UTF-32 LE, but UTF-16 LE is much more common.
+        Some((Encoding::Utf16Le, false))
+    } else if sample.starts_with(&[0xFE, 0xFF]) {
+        Some((Encoding::Utf16Be, false))
+    } else {
+        None
+    }
+}
+
+/// Phase 2: validate as UTF-8 (the fast path for most modern files). Returns
+/// `None` when the sample is not valid UTF-8, leaving the verdict to later
+/// phases.
+fn detect_utf8(sample: &[u8], sample_truncated: bool) -> Option<(Encoding, bool)> {
+    // When we truncate to 8KB we may cut in the middle of a multi-byte UTF-8
+    // sequence. If the only error is an incomplete sequence at the very end,
+    // treat the valid prefix as UTF-8 rather than rejecting the whole sample.
     let utf8_valid_len = match std::str::from_utf8(sample) {
         Ok(_) => sample.len(),
-        Err(e) => {
-            // error_len() returns None if the error is due to incomplete sequence at end
-            // (i.e., unexpected end of input), vs Some(n) for an invalid byte
-            if e.error_len().is_none() {
-                // Incomplete sequence at end - this is likely due to sample truncation
-                e.valid_up_to()
-            } else {
-                // Invalid byte found - not valid UTF-8
-                0
-            }
-        }
+        // error_len() is None for an incomplete sequence at end-of-input (a
+        // likely truncation artifact), vs Some(n) for a genuinely invalid byte.
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => 0,
     };
 
-    // If the sample is valid UTF-8, treat it as UTF-8.
-    // When the caller indicates the sample was truncated from a larger stream,
-    // tolerate up to 3 trailing bytes of an incomplete multi-byte sequence (a
-    // truncation artifact). Without truncation, require exact validity — a
-    // trailing 0xE9 in a short file is a Latin-1 'é', not a truncated codepoint.
+    // Accept exact validity; or, when the caller flagged truncation, tolerate
+    // up to 3 trailing bytes of an incomplete multi-byte sequence. Without
+    // truncation a trailing 0xE9 in a short file is a Latin-1 'é', not a cut
+    // codepoint, so we require exact validity there.
     let is_valid_utf8 = utf8_valid_len == sample.len()
         || (sample_truncated && utf8_valid_len > 0 && utf8_valid_len >= sample.len() - 3);
-    if is_valid_utf8 {
-        let valid_sample = &sample[..utf8_valid_len];
-        // Check if it's pure ASCII (subset of UTF-8)
-        // Also check for binary indicators in valid ASCII/UTF-8
-        let has_binary_control = valid_sample.iter().any(|&b| is_binary_control_char(b));
-        if has_binary_control {
-            return (Encoding::Utf8, true);
-        }
-        // If the tolerance branch accepted a trailing incomplete multi-byte
-        // sequence, the file is not pure ASCII — the byte at `utf8_valid_len`
-        // is a UTF-8 lead byte. Classify as UTF-8 in that case.
-        let has_non_ascii_tail = utf8_valid_len < sample.len();
-        if !has_non_ascii_tail && valid_sample.iter().all(|&b| b < 128) {
-            return (Encoding::Ascii, false);
-        }
-        return (Encoding::Utf8, false);
+    if !is_valid_utf8 {
+        return None;
     }
 
-    // 3. Check for UTF-16 without BOM (common in some Windows files)
-    // Heuristic: Look for patterns of null bytes alternating with printable chars
-    // The non-null byte should be printable (0x20-0x7E) or a valid high byte
-    //
-    // Note: Unlike UTF-8 above, this heuristic is robust to sample truncation because:
-    // - We use statistical pattern matching (50% threshold), not strict validation
-    // - chunks(2) naturally handles odd-length samples by dropping the last byte
-    // - Losing 1 pair out of ~4096 doesn't affect the detection threshold
-    if sample.len() >= 4 {
-        let is_printable_or_high = |b: u8| (0x20..=0x7E).contains(&b) || b >= 0x80;
+    let valid_sample = &sample[..utf8_valid_len];
+    if valid_sample.iter().any(|&b| is_binary_control_char(b)) {
+        return Some((Encoding::Utf8, true));
+    }
+    // If the tolerance branch accepted a trailing incomplete multi-byte
+    // sequence, the file is not pure ASCII — the byte at `utf8_valid_len` is a
+    // UTF-8 lead byte — so classify it as UTF-8.
+    let has_non_ascii_tail = utf8_valid_len < sample.len();
+    if !has_non_ascii_tail && valid_sample.iter().all(|&b| b < 128) {
+        return Some((Encoding::Ascii, false));
+    }
+    Some((Encoding::Utf8, false))
+}
 
-        // Align to even boundary to ensure we only process complete 2-byte pairs
-        let aligned_len = sample.len() & !1; // Round down to even
-        let aligned_sample = &sample[..aligned_len];
-
-        let le_pairs = aligned_sample
-            .chunks(2)
-            .filter(|chunk| chunk[1] == 0 && is_printable_or_high(chunk[0]))
-            .count();
-        let be_pairs = aligned_sample
-            .chunks(2)
-            .filter(|chunk| chunk[0] == 0 && is_printable_or_high(chunk[1]))
-            .count();
-        let pair_count = aligned_len / 2;
-
-        // If more than 50% of pairs look like valid UTF-16 text, it's text
-        if le_pairs > pair_count / 2 {
-            return (Encoding::Utf16Le, false);
-        }
-        if be_pairs > pair_count / 2 {
-            return (Encoding::Utf16Be, false);
-        }
+/// Phase 3: detect BOM-less UTF-16 (common in some Windows files) by looking
+/// for null bytes alternating with printable characters.
+///
+/// Unlike UTF-8 above, this heuristic is robust to sample truncation: it uses
+/// statistical pattern matching (50% threshold) over complete 2-byte pairs, so
+/// losing one pair out of ~4096 does not affect the verdict. Returns `None`
+/// when neither orientation crosses the threshold.
+fn detect_utf16_without_bom(sample: &[u8]) -> Option<(Encoding, bool)> {
+    if sample.len() < 4 {
+        return None;
     }
 
-    // 4. Check for binary indicators EARLY (before chardetng)
-    // Binary files often contain control characters and null bytes that should not
-    // appear in any valid text encoding. Check this before chardetng because
-    // chardetng might still be "confident" about some encoding for binary data.
-    let has_binary_control = sample
+    let is_printable_or_high = |b: u8| (0x20..=0x7E).contains(&b) || b >= 0x80;
+
+    // Align to an even boundary so we only process complete 2-byte pairs.
+    let aligned_len = sample.len() & !1;
+    let aligned_sample = &sample[..aligned_len];
+
+    let le_pairs = aligned_sample
+        .chunks(2)
+        .filter(|chunk| chunk[1] == 0 && is_printable_or_high(chunk[0]))
+        .count();
+    let be_pairs = aligned_sample
+        .chunks(2)
+        .filter(|chunk| chunk[0] == 0 && is_printable_or_high(chunk[1]))
+        .count();
+    let pair_count = aligned_len / 2;
+
+    // More than 50% of pairs looking like UTF-16 text means it is text.
+    if le_pairs > pair_count / 2 {
+        Some((Encoding::Utf16Le, false))
+    } else if be_pairs > pair_count / 2 {
+        Some((Encoding::Utf16Be, false))
+    } else {
+        None
+    }
+}
+
+/// Phase 4-7: the sample is neither valid UTF-8 nor UTF-16. Reject binary
+/// content, then use chardetng plus heuristics to pick a legacy 8-bit (or CJK)
+/// encoding. Always reaches a verdict.
+fn detect_legacy_encoding(sample: &[u8]) -> (Encoding, bool) {
+    // Binary files often contain null bytes and control characters that appear
+    // in no valid text encoding. Check this before chardetng, which can still
+    // be "confident" about an encoding for binary data.
+    if sample
         .iter()
-        .any(|&b| b == 0x00 || is_binary_control_char(b));
-    if has_binary_control {
+        .any(|&b| b == 0x00 || is_binary_control_char(b))
+    {
         return (Encoding::Utf8, true);
     }
 
-    // 5. Check for Latin-1 patterns: high bytes followed by invalid CJK trail bytes
-    // In GB18030/GBK, trail bytes must be 0x40-0x7E or 0x80-0xFE
-    // If a high byte is followed by a byte outside these ranges (e.g., space, newline,
-    // punctuation < 0x40), it's likely Latin-1, not CJK
+    // High bytes followed by invalid CJK trail bytes (space, newline,
+    // punctuation < 0x40) indicate Latin-1 rather than GB18030/GBK.
     let has_latin1_pattern = has_latin1_high_byte_pattern(sample);
-
-    // Also check for bytes in CJK-only range (0x81-0x9F) which can only be CJK lead bytes
+    // Bytes in 0x81-0x9F can only be CJK lead bytes.
     let has_cjk_only_bytes = sample.iter().any(|&b| (0x81..0xA0).contains(&b));
 
-    // 6. Use chardetng for statistical encoding detection
     let mut detector = chardetng::EncodingDetector::new();
     detector.feed(sample, true);
     let (detected_encoding, confident) = detector.guess_assess(None, true);
 
-    // If chardetng is confident, use that encoding (not binary)
-    if confident {
-        let is_cjk_encoding = detected_encoding == encoding_rs::GB18030
-            || detected_encoding == encoding_rs::GBK
-            || detected_encoding == encoding_rs::SHIFT_JIS
-            || detected_encoding == encoding_rs::EUC_KR;
-
-        // For CJK encodings, prefer Windows-1252 if we have clear Latin-1 indicators:
-        // - Space followed by high byte (0xA0-0xFF) is common in Latin-1 text
-        //
-        // If there are CJK-only bytes (0x81-0x9F), it's definitely CJK (not ambiguous).
-        // If there are Latin-1 patterns (space + high byte), prefer Windows-1252.
-        // Otherwise, trust chardetng's detection.
-        if is_cjk_encoding && !has_cjk_only_bytes && has_latin1_pattern {
-            return (Encoding::Windows1252, false);
-        }
-
-        // GBK is a subset of GB18030. Since we only inspect the first 8KB for
-        // detection, the sample may not contain GB18030-only code points (uncommon
-        // Chinese characters, emoji, etc.). Treating GBK as GB18030 is safer and
-        // ensures proper display of all characters including French, Spanish, and emoji.
-        let encoding =
-            if detected_encoding == encoding_rs::GB18030 || detected_encoding == encoding_rs::GBK {
-                Encoding::Gb18030
-            } else if detected_encoding == encoding_rs::SHIFT_JIS {
-                Encoding::ShiftJis
-            } else if detected_encoding == encoding_rs::EUC_KR {
-                Encoding::EucKr
-            } else if detected_encoding == encoding_rs::WINDOWS_1251
-                || detected_encoding == encoding_rs::WINDOWS_1252
-                || detected_encoding == encoding_rs::WINDOWS_1250
-            {
-                // chardetng can't reliably distinguish Latin-1 from Cyrillic for
-                // short samples with ambiguous high bytes — a run like "éééÿ"
-                // (Latin-1) has the same bytes as "еёёя" (Cyrillic) and chardetng
-                // may confidently pick either. Route through the heuristic and
-                // default to Windows-1252 unless there is strong evidence.
-                if has_windows1250_pattern(sample) {
-                    Encoding::Windows1250
-                } else if has_windows1251_pattern(sample) {
-                    Encoding::Windows1251
-                } else {
-                    Encoding::Windows1252
-                }
-            } else if detected_encoding == encoding_rs::UTF_8 {
-                // chardetng thinks it's UTF-8, but validation failed above
-                // Could still be Windows-1250/1251 if it has legacy patterns
-                if has_windows1250_pattern(sample) {
-                    Encoding::Windows1250
-                } else if has_windows1251_pattern(sample) {
-                    Encoding::Windows1251
-                } else {
-                    Encoding::Windows1252
-                }
-            } else {
-                // Unknown encoding - check for Windows-1250/1251 patterns
-                if has_windows1250_pattern(sample) {
-                    Encoding::Windows1250
-                } else if has_windows1251_pattern(sample) {
-                    Encoding::Windows1251
-                } else {
-                    Encoding::Windows1252
-                }
-            };
-        return (encoding, false);
+    if !confident {
+        // No binary indicators (checked above), so this is valid legacy text.
+        return (windows_125x_fallback(sample), false);
     }
 
-    // 7. chardetng not confident, but no binary indicators - check for Windows-1250/1251 patterns
-    // We already checked for binary control chars earlier, so this is valid text
+    let is_cjk_encoding = detected_encoding == encoding_rs::GB18030
+        || detected_encoding == encoding_rs::GBK
+        || detected_encoding == encoding_rs::SHIFT_JIS
+        || detected_encoding == encoding_rs::EUC_KR;
+
+    // For CJK encodings with no CJK-only bytes but clear Latin-1 indicators
+    // (a space followed by a high byte), prefer Windows-1252.
+    if is_cjk_encoding && !has_cjk_only_bytes && has_latin1_pattern {
+        return (Encoding::Windows1252, false);
+    }
+
+    // GBK is a subset of GB18030. Because we only inspect the first 8KB, the
+    // sample may lack GB18030-only code points, so treating GBK as GB18030 is
+    // safer and still renders French, Spanish, emoji, etc.
+    let encoding =
+        if detected_encoding == encoding_rs::GB18030 || detected_encoding == encoding_rs::GBK {
+            Encoding::Gb18030
+        } else if detected_encoding == encoding_rs::SHIFT_JIS {
+            Encoding::ShiftJis
+        } else if detected_encoding == encoding_rs::EUC_KR {
+            Encoding::EucKr
+        } else {
+            // chardetng cannot reliably distinguish Latin-1 from Cyrillic for short
+            // samples with ambiguous high bytes — "éééÿ" (Latin-1) shares bytes with
+            // "еёёя" (Cyrillic). It may also report UTF-8 even though validation
+            // failed above. Route every remaining case through the same heuristic,
+            // defaulting to Windows-1252 unless there is strong evidence otherwise.
+            windows_125x_fallback(sample)
+        };
+    (encoding, false)
+}
+
+/// Disambiguate an ambiguous Windows code page from the sample's byte patterns,
+/// defaulting to Windows-1252 (Western European) when no stronger signal is
+/// present.
+fn windows_125x_fallback(sample: &[u8]) -> Encoding {
     if has_windows1250_pattern(sample) {
-        (Encoding::Windows1250, false)
+        Encoding::Windows1250
     } else if has_windows1251_pattern(sample) {
-        (Encoding::Windows1251, false)
+        Encoding::Windows1251
     } else {
-        (Encoding::Windows1252, false)
+        Encoding::Windows1252
     }
 }
 
