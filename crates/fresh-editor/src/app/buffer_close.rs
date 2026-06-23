@@ -16,6 +16,19 @@ use crate::view::prompt::PromptType;
 
 use super::Editor;
 
+/// Which buffer a split should show after the one being closed is removed,
+/// chosen by [`Editor::resolve_close_replacement`].
+struct CloseReplacement {
+    /// Buffer the host split's `active_buffer` becomes.
+    buffer: BufferId,
+    /// `true` when no other buffer existed and a fresh empty one was created.
+    created_empty: bool,
+    /// Set when the LRU landing target was a buffer *group* rather than a
+    /// buffer: `buffer` is then only housekeeping and the caller re-activates
+    /// the group tab on this leaf.
+    return_to_group: Option<LeafId>,
+}
+
 impl Editor {
     /// Close the given buffer
     pub fn close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
@@ -70,57 +83,17 @@ impl Editor {
             tracing::debug!("Failed to delete buffer recovery on close: {}", e);
         }
 
-        // If closing a terminal buffer, clean up terminal-related data structures
+        // If closing a terminal buffer, tear down its terminal-side state.
         if let Some(terminal_id) = self.active_window_mut().terminal_buffers.remove(&id) {
-            // Close the terminal process
-            self.active_window_mut().terminal_manager.close(terminal_id);
-            // Drop any explicit-title marker / cached foreground name so the
-            // id can't carry stale auto-naming state if a future buffer
-            // reuses it.
-            self.active_window_mut()
-                .terminal_explicit_titles
-                .remove(&id);
-            self.active_window_mut().terminal_fg_cache.remove(&id);
-
-            // Retain the rendered backing file so its scrollback stays
-            // searchable after close (Universal Search "Terminals" scope).
-            // Rename rather than leave in place: backing files are named
-            // by terminal id, which restarts per session, so a future
-            // same-id terminal would otherwise clobber this log.
-            let backing_file = self
-                .active_window_mut()
-                .terminal_backing_files
-                .remove(&terminal_id);
-            if let Some(ref path) = backing_file {
-                self.retain_closed_terminal_backing(path);
-            }
-            // Clean up raw log file
-            if let Some(log_file) = self
-                .active_window_mut()
-                .terminal_log_files
-                .remove(&terminal_id)
-            {
-                if backing_file.as_ref() != Some(&log_file) {
-                    // Best-effort cleanup of temporary terminal files.
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
-                }
-            }
-
-            // Remove from terminal_mode_resume to prevent stale entries
-            self.active_window_mut().terminal_mode_resume.remove(&id);
-
-            // Exit terminal mode if we were in it
-            if self.active_window().terminal_mode {
-                self.active_window_mut().terminal_mode = false;
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-            }
+            self.cleanup_closed_terminal(id, terminal_id);
         }
 
-        // Walk the focus-history LRU (most recent first) to find the tab
-        // the user should land on. This naturally handles both buffer and
-        // group tabs — whichever the user was looking at most recently wins.
+        // Capture before resolving the replacement: the last-resort
+        // `new_buffer()` path calls `set_active_buffer`, which would change
+        // `active_buffer()` out from under this check.
+        let closing_active = self.active_buffer() == id;
+
+        // The split the replacement lands in.
         let active_split = self
             .windows
             .get(&self.active_window)
@@ -129,6 +102,155 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .active_split();
 
+        let CloseReplacement {
+            buffer: replacement_buffer,
+            created_empty: created_empty_buffer,
+            return_to_group,
+        } = self.resolve_close_replacement(id, active_split);
+
+        // Switch to replacement buffer BEFORE updating splits.
+        // Only needed when the closing buffer is the one the user is
+        // looking at — otherwise the current active buffer stays.
+        if closing_active {
+            self.set_active_buffer(replacement_buffer);
+
+            // If we landed on a hidden panel buffer to fill the Group-case
+            // housekeeping slot, scrub the *visible* side effects
+            // (`open_buffers`, `focus_history`) so the panel buffer doesn't
+            // appear as a tab. The `keyed_states` entry `switch_buffer`
+            // inserted has to stay — `active_state()` requires
+            // `active_buffer ∈ keyed_states` — but it's harmless as long as
+            // the plugin-snapshot lookup skips it; see
+            // `snapshot_source_split` in `update_plugin_state_snapshot`.
+            let hidden = self
+                .active_window()
+                .buffer_metadata
+                .get(&replacement_buffer)
+                .is_some_and(|m| m.hidden_from_tabs);
+            if return_to_group.is_some() && hidden {
+                use crate::view::split::TabTarget;
+                if let Some(vs) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .and_then(|w| w.split_view_states_mut())
+                    .expect("active window must have a populated split layout")
+                    .get_mut(&active_split)
+                {
+                    vs.open_buffers
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                    vs.focus_history
+                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
+                }
+            }
+        }
+
+        // Update all splits that are showing this buffer to show the replacement.
+        // Routed through `set_pane_buffer` so the split tree and the
+        // matching `SplitViewState` stay consistent — updating only the
+        // tree left SVS pointing at the buffer we were about to free,
+        // which caused the click panic in issue #1620.
+        let splits_to_update = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .splits_for_buffer(id);
+        for split_id in splits_to_update {
+            self.active_window_mut()
+                .set_pane_buffer(split_id, replacement_buffer);
+        }
+
+        self.purge_buffer_state(id);
+
+        if closing_active {
+            if created_empty_buffer && self.config.file_explorer.auto_open_on_last_buffer_close {
+                self.focus_file_explorer();
+            }
+            if let Some(group_leaf) = return_to_group {
+                self.activate_group_tab(active_split, group_leaf);
+            }
+        }
+
+        // Notify plugins so they can reset any state tied to this buffer
+        // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
+        // when the group is closed via the tab's close button rather than
+        // through the plugin's own close command).
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_closed",
+            fresh_core::hooks::HookArgs::BufferClosed { buffer_id: id },
+        );
+
+        Ok(())
+    }
+
+    /// Tear down the terminal-side state for a closing terminal buffer:
+    /// stop the process, drop its title / foreground-name caches, retain the
+    /// searchable backing log while removing the raw one, and leave terminal
+    /// mode if this was the focused terminal.
+    fn cleanup_closed_terminal(
+        &mut self,
+        id: BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) {
+        // Close the terminal process
+        self.active_window_mut().terminal_manager.close(terminal_id);
+        // Drop any explicit-title marker / cached foreground name so the
+        // id can't carry stale auto-naming state if a future buffer
+        // reuses it.
+        self.active_window_mut()
+            .terminal_explicit_titles
+            .remove(&id);
+        self.active_window_mut().terminal_fg_cache.remove(&id);
+
+        // Retain the rendered backing file so its scrollback stays
+        // searchable after close (Universal Search "Terminals" scope).
+        // Rename rather than leave in place: backing files are named
+        // by terminal id, which restarts per session, so a future
+        // same-id terminal would otherwise clobber this log.
+        let backing_file = self
+            .active_window_mut()
+            .terminal_backing_files
+            .remove(&terminal_id);
+        if let Some(ref path) = backing_file {
+            self.retain_closed_terminal_backing(path);
+        }
+        // Clean up raw log file
+        if let Some(log_file) = self
+            .active_window_mut()
+            .terminal_log_files
+            .remove(&terminal_id)
+        {
+            if backing_file.as_ref() != Some(&log_file) {
+                // Best-effort cleanup of temporary terminal files.
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
+            }
+        }
+
+        // Remove from terminal_mode_resume to prevent stale entries
+        self.active_window_mut().terminal_mode_resume.remove(&id);
+
+        // Exit terminal mode if we were in it
+        if self.active_window().terminal_mode {
+            self.active_window_mut().terminal_mode = false;
+            self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+        }
+    }
+
+    /// Choose which buffer the host split should show after `id` is closed.
+    ///
+    /// Walks `active_split`'s focus-history LRU (most recent first) for a
+    /// still-valid buffer or group tab, then falls back to any visible
+    /// buffer, then any buffer at all, and finally synthesizes a fresh
+    /// `[No Name]` buffer — the editor must always hold at least one. This
+    /// naturally handles both buffer and group tabs: whichever the user was
+    /// looking at most recently wins.
+    fn resolve_close_replacement(
+        &mut self,
+        id: BufferId,
+        active_split: LeafId,
+    ) -> CloseReplacement {
         let replacement_target: Option<crate::view::split::TabTarget> = self
             .windows
             .get(&self.active_window)
@@ -184,10 +306,6 @@ impl Editor {
                     .unwrap_or(false)
         });
 
-        // Capture before the replacement computation — new_buffer() has the
-        // side effect of calling set_active_buffer which changes active_buffer().
-        let closing_active = self.active_buffer() == id;
-
         // Pick the BufferId that becomes the host split's `active_buffer`.
         // When `return_to_group` is set, `active_buffer` is a housekeeping
         // fiction — nothing renders it — so any existing buffer works; we
@@ -210,7 +328,7 @@ impl Editor {
         // the plugin-state snapshot could non-deterministically prefer over
         // the panel split's authoritative copy. Picking something already
         // keyed sidesteps that insert. (We clean up after the fact if a
-        // shadow does get created — see below.)
+        // shadow does get created — see the caller.)
         let already_keyed = return_to_group.and_then(|_| {
             self.windows
                 .get(&self.active_window)
@@ -225,7 +343,7 @@ impl Editor {
         });
 
         // Absolute last-resort pool for the Group case: any buffer at all,
-        // including hidden panel ones. The shadow cleanup below keeps
+        // including hidden panel ones. The shadow cleanup in the caller keeps
         // those invisible.
         let any_remaining = return_to_group.and_then(|_| {
             self.windows
@@ -235,7 +353,7 @@ impl Editor {
                 .find_id(|bid, _| bid != id)
         });
 
-        let (replacement_buffer, created_empty_buffer) = match direct_replacement
+        let (buffer, created_empty) = match direct_replacement
             .or(already_keyed)
             .or(fallback_buffer)
             .or(any_remaining)
@@ -262,59 +380,18 @@ impl Editor {
             }
         };
 
-        // Switch to replacement buffer BEFORE updating splits.
-        // Only needed when the closing buffer is the one the user is
-        // looking at — otherwise the current active buffer stays.
-        if closing_active {
-            self.set_active_buffer(replacement_buffer);
-
-            // If we landed on a hidden panel buffer to fill the Group-case
-            // housekeeping slot, scrub the *visible* side effects
-            // (`open_buffers`, `focus_history`) so the panel buffer doesn't
-            // appear as a tab. The `keyed_states` entry `switch_buffer`
-            // inserted has to stay — `active_state()` requires
-            // `active_buffer ∈ keyed_states` — but it's harmless as long as
-            // the plugin-snapshot lookup skips it; see
-            // `snapshot_source_split` in `update_plugin_state_snapshot`.
-            let hidden = self
-                .active_window()
-                .buffer_metadata
-                .get(&replacement_buffer)
-                .is_some_and(|m| m.hidden_from_tabs);
-            if return_to_group.is_some() && hidden {
-                use crate::view::split::TabTarget;
-                if let Some(vs) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&active_split)
-                {
-                    vs.open_buffers
-                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
-                    vs.focus_history
-                        .retain(|t| *t != TabTarget::Buffer(replacement_buffer));
-                }
-            }
+        CloseReplacement {
+            buffer,
+            created_empty,
+            return_to_group,
         }
+    }
 
-        // Update all splits that are showing this buffer to show the replacement.
-        // Routed through `set_pane_buffer` so the split tree and the
-        // matching `SplitViewState` stay consistent — updating only the
-        // tree left SVS pointing at the buffer we were about to free,
-        // which caused the click panic in issue #1620.
-        let splits_to_update = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(id);
-        for split_id in splits_to_update {
-            self.active_window_mut()
-                .set_pane_buffer(split_id, replacement_buffer);
-        }
-
+    /// Remove every trace of a now-closed buffer from the active window's
+    /// per-buffer maps: the buffer registry, cross-window attachments, event
+    /// logs, semantic-token bookkeeping, the panel-id mapping, and each
+    /// split's open-buffers / focus-history lists.
+    fn purge_buffer_state(&mut self, id: BufferId) {
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
@@ -369,26 +446,6 @@ impl Editor {
             view_state.remove_buffer(id);
             view_state.remove_from_history(id);
         }
-
-        if closing_active {
-            if created_empty_buffer && self.config.file_explorer.auto_open_on_last_buffer_close {
-                self.focus_file_explorer();
-            }
-            if let Some(group_leaf) = return_to_group {
-                self.activate_group_tab(active_split, group_leaf);
-            }
-        }
-
-        // Notify plugins so they can reset any state tied to this buffer
-        // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
-        // when the group is closed via the tab's close button rather than
-        // through the plugin's own close command).
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_closed",
-            fresh_core::hooks::HookArgs::BufferClosed { buffer_id: id },
-        );
-
-        Ok(())
     }
 
     /// Switch to the given buffer
