@@ -155,55 +155,79 @@ fn test_open_terminal() {
     harness.assert_screen_contains("Terminal");
 }
 
-/// Opening a terminal to the right creates a new split (vertical) seeded
-/// with a terminal, and focuses it in terminal mode.
+/// Running "Open Terminal to the Right" from the command palette creates a
+/// terminal in a new split beside the editor: both panes stay visible side
+/// by side, with the terminal to the right of the still-visible editor
+/// content. Drives the real palette flow (keyboard only) and asserts purely
+/// on rendered output.
 #[test]
-fn test_open_terminal_split_right() {
+fn test_open_terminal_to_the_right_via_palette() {
     let mut harness = harness_or_return!(120, 24);
 
-    // Start with a single split showing the default buffer.
-    assert_eq!(harness.editor().get_split_count(), 1);
-
-    harness
-        .editor_mut()
-        .open_terminal_split(fresh::model::event::SplitDirection::Vertical);
+    // Distinctive content so the editor pane is locatable on screen.
+    harness.type_text("EDITORPANE").unwrap();
     harness.render().unwrap();
 
-    // A new split was created and it shows the terminal.
-    assert_eq!(harness.editor().get_split_count(), 2);
-    harness.assert_screen_contains("*Terminal 0*");
+    // Ctrl+P opens the command palette already in command (">") mode.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("open terminal to the right").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
-    // The new terminal split is active and focused in terminal mode.
-    assert!(harness.editor().is_terminal_mode());
-    let active = harness.editor().active_buffer_id();
-    assert!(harness
-        .editor()
-        .active_window()
-        .is_terminal_buffer(active));
+    // A terminal pane appeared alongside the still-visible editor content.
+    let (term_col, _term_row) = harness
+        .find_text_on_screen("*Terminal 0*")
+        .expect("terminal tab should be visible after running the command");
+    let (editor_col, _editor_row) = harness
+        .find_text_on_screen("EDITORPANE")
+        .expect("editor content should remain visible in its own pane");
+
+    // Vertical split → side by side: the terminal sits to the right of the
+    // editor content.
+    assert!(
+        term_col > editor_col,
+        "terminal pane should be to the right (term col {term_col} vs editor col {editor_col})"
+    );
 }
 
-/// Opening a terminal below creates a new split (horizontal) seeded with a
-/// terminal, and focuses it in terminal mode.
+/// Running "Open Terminal Below" from the command palette creates a terminal
+/// in a new split stacked under the editor: the editor content stays visible
+/// on top with the terminal below it. Keyboard-driven; asserts only on
+/// rendered output.
 #[test]
-fn test_open_terminal_split_below() {
+fn test_open_terminal_below_via_palette() {
     let mut harness = harness_or_return!(120, 24);
 
-    assert_eq!(harness.editor().get_split_count(), 1);
-
-    harness
-        .editor_mut()
-        .open_terminal_split(fresh::model::event::SplitDirection::Horizontal);
+    harness.type_text("EDITORPANE").unwrap();
     harness.render().unwrap();
 
-    assert_eq!(harness.editor().get_split_count(), 2);
-    harness.assert_screen_contains("*Terminal 0*");
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("open terminal below").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
 
-    assert!(harness.editor().is_terminal_mode());
-    let active = harness.editor().active_buffer_id();
-    assert!(harness
-        .editor()
-        .active_window()
-        .is_terminal_buffer(active));
+    let (_term_col, term_row) = harness
+        .find_text_on_screen("*Terminal 0*")
+        .expect("terminal tab should be visible after running the command");
+    let (_editor_col, editor_row) = harness
+        .find_text_on_screen("EDITORPANE")
+        .expect("editor content should remain visible in its own pane");
+
+    // Horizontal split → stacked: the terminal sits below the editor content.
+    assert!(
+        term_row > editor_row,
+        "terminal pane should be below the editor (term row {term_row} vs editor row {editor_row})"
+    );
 }
 
 /// Test closing a terminal
