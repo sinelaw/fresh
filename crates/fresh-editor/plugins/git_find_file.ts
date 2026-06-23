@@ -24,28 +24,35 @@ const finder = new Finder<string>(editor, {
 
 // Load git-tracked files
 async function loadGitFiles(): Promise<string[]> {
-  // Use active buffer's directory to find the right git repo in monorepo setups
-  let cwd = editor.getCwd();
-  const bufferId = editor.getActiveBufferId();
-  if (bufferId) {
-    const bufPath = editor.getBufferPath(bufferId);
-    if (bufPath) {
-      const dir = editor.pathDirname(bufPath);
-      if (dir) cwd = dir;
-    }
-  }
-  const result = await editor.spawnProcess("git", ["ls-files"], cwd);
+  const result = await editor.spawnProcess("git", [
+    "ls-files",
+    "--full-name",
+  ]);
 
-  if (result.exit_code === 0) {
-    // Split by newline and trim each line to handle \r\n on Windows
-    return result.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line !== "");
+  if (result.exit_code !== 0) {
+    editor.debug(`Failed to load git files: ${result.stderr}`);
+    return [];
   }
 
-  editor.debug(`Failed to load git files: ${result.stderr}`);
-  return [];
+  const files = result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+  // `ls-files --full-name` returns paths relative to the repo root.
+  // Resolve them to absolute paths so openFile works regardless of the
+  // workspace root (important in monorepo setups where the workspace
+  // root may differ from the git root).
+  const topResult = await editor.spawnProcess("git", [
+    "rev-parse",
+    "--show-toplevel",
+  ]);
+  if (topResult.exit_code === 0) {
+    const repoRoot = topResult.stdout.trim();
+    return files.map((f) => `${repoRoot}/${f}`);
+  }
+
+  return files;
 }
 
 // Global function to start file finder

@@ -251,7 +251,7 @@ async function loadTour(manifestPath: string): Promise<void> {
         "rev-parse",
         "--short",
         "HEAD",
-      ], editor.getCwd());
+      ]);
       if (result.exit_code === 0) {
         const currentCommit = result.stdout.trim();
         if (!currentCommit.startsWith(manifest.commit_hash) &&

@@ -4160,10 +4160,7 @@ fn test_file_explorer_git_decorations_monorepo_subrepos() {
     let output = git_command(&project_a).arg("init").output().unwrap();
     assert!(output.status.success(), "git init project-a failed");
     fs::write(project_a.join("file-a.txt"), "original").unwrap();
-    git_command(&project_a)
-        .args(["add", "."])
-        .output()
-        .unwrap();
+    git_command(&project_a).args(["add", "."]).output().unwrap();
     git_command(&project_a)
         .args(["commit", "-m", "init-a"])
         .output()
@@ -4176,10 +4173,7 @@ fn test_file_explorer_git_decorations_monorepo_subrepos() {
     let output = git_command(&project_b).arg("init").output().unwrap();
     assert!(output.status.success(), "git init project-b failed");
     fs::write(project_b.join("file-b.txt"), "tracked").unwrap();
-    git_command(&project_b)
-        .args(["add", "."])
-        .output()
-        .unwrap();
+    git_command(&project_b).args(["add", "."]).output().unwrap();
     git_command(&project_b)
         .args(["commit", "-m", "init-b"])
         .output()

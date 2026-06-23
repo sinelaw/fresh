@@ -1126,7 +1126,7 @@ async function git_log_detail_open_file(): Promise<void> {
   const result = await editor.spawnProcess("git", [
     "show",
     `${commit.hash}:${file}`,
-  ], editor.getCwd());
+  ]);
   if (result.exit_code !== 0) {
     editor.setStatus(
       editor.t("status.file_not_found", { file, hash: commit.shortHash })
