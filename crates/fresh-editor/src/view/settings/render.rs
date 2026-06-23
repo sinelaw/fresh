@@ -3169,104 +3169,103 @@ fn build_highlighted_text(
 }
 
 /// Render the unsaved changes confirmation dialog
-fn render_confirm_dialog(
+/// Draw a centered modal dialog: clear the region, paint a rounded border in
+/// `border_fg`, and return `(dialog_area, inner)` where `inner` is the
+/// 2-column / 1-row padded content rect. Shared by every settings confirm
+/// dialog so the centering, border, and inset math live in one place.
+fn centered_dialog_frame(
     frame: &mut Frame,
     parent_area: Rect,
-    state: &SettingsState,
+    width: u16,
+    height: u16,
+    title: String,
+    border_fg: Color,
     theme: &Theme,
-) {
-    // Calculate dialog size
-    let changes = state.get_change_descriptions();
-    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
-    // Base height: 2 borders + 2 prompt lines + 1 separator + 1 buttons + 1 help = 7
-    // Plus one line per change
-    let dialog_height = (7 + changes.len() as u16)
-        .min(20)
-        .min(parent_area.height.saturating_sub(4));
+) -> (Rect, Rect) {
+    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(width)) / 2;
+    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(height)) / 2;
+    let dialog_area = Rect::new(dialog_x, dialog_y, width, height);
 
-    // Center the dialog
-    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
-    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-
-    // Clear and draw border
     frame.render_widget(Clear, dialog_area);
 
-    let title = format!(" {} ", t!("confirm.unsaved_changes_title"));
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.diagnostic_warning_fg))
+        .border_style(Style::default().fg(border_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
 
-    // Inner area
     let inner = Rect::new(
         dialog_area.x + 2,
         dialog_area.y + 1,
         dialog_area.width.saturating_sub(4),
         dialog_area.height.saturating_sub(2),
     );
+    (dialog_area, inner)
+}
 
-    let mut y = inner.y;
-
-    // Prompt text
-    let prompt = t!("confirm.unsaved_changes_prompt").to_string();
-    let prompt_style = Style::default().fg(theme.popup_text_fg);
+/// Render the standard one-line key-hint footer just below the button row.
+fn render_dialog_help(frame: &mut Frame, inner: Rect, button_y: u16, help: &str, theme: &Theme) {
     frame.render_widget(
-        Paragraph::new(prompt).style(prompt_style),
-        Rect::new(inner.x, y, inner.width, 1),
+        Paragraph::new(help.to_string()).style(Style::default().fg(theme.line_number_fg)),
+        Rect::new(inner.x, button_y + 1, inner.width, 1),
     );
-    y += 2;
+}
 
-    // List changes. Character-based truncation here (rather than byte
-    // truncation) keeps CJK / emoji change descriptions from byte-slicing
-    // through a multi-byte UTF-8 sequence and panicking — same class as
-    // #1718.
+/// List the pending-change descriptions as bulleted, width-truncated lines
+/// starting at `start_y`. Character-based truncation (rather than byte
+/// truncation) keeps CJK / emoji descriptions from slicing through a
+/// multi-byte UTF-8 sequence and panicking — same class as #1718.
+fn render_change_list(
+    frame: &mut Frame,
+    inner: Rect,
+    start_y: u16,
+    changes: &[String],
+    dialog_height: u16,
+    theme: &Theme,
+) {
     let change_style = Style::default().fg(theme.popup_text_fg);
-    for change in changes
+    for (i, change) in changes
         .iter()
         .take((dialog_height as usize).saturating_sub(7))
+        .enumerate()
     {
         let max_chars = (inner.width as usize).saturating_sub(2);
         let truncated = format!("• {}", truncate_chars_with_ellipsis(change, max_chars));
         frame.render_widget(
             Paragraph::new(truncated).style(change_style),
-            Rect::new(inner.x, y, inner.width, 1),
+            Rect::new(inner.x, start_y + i as u16, inner.width, 1),
         );
-        y += 1;
     }
+}
 
-    // Skip to button row
-    let button_y = dialog_area.y + dialog_area.height - 3;
-
-    // Draw separator
-    let sep_line: String = "─".repeat(inner.width as usize);
-    frame.render_widget(
-        Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
-        Rect::new(inner.x, button_y - 1, inner.width, 1),
-    );
-
-    // Render the three options
-    let options = [
-        t!("confirm.save_and_exit").to_string(),
-        t!("confirm.discard").to_string(),
-        t!("confirm.cancel").to_string(),
-    ];
+/// Render a centered row of `[ label ]` choice buttons using the menu
+/// highlight/hover palette. The selected button is prefixed with `>` and bold;
+/// a hovered (but unselected) button uses the hover palette. Shared by the
+/// unsaved-changes and reset confirm dialogs.
+fn render_choice_buttons(
+    frame: &mut Frame,
+    inner: Rect,
+    button_y: u16,
+    options: &[String],
+    selected: usize,
+    hover: Option<usize>,
+    theme: &Theme,
+) {
     let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4; // +4 for gaps
     let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
 
     for (idx, label) in options.iter().enumerate() {
-        let is_selected = idx == state.confirm_dialog_selection;
-        let is_hovered = state.confirm_dialog_hover == Some(idx);
+        let is_selected = idx == selected;
+        let is_hovered = hover == Some(idx);
         let button_width = label.len() as u16 + 4;
 
         let style = if is_selected {
             Style::default()
                 .fg(theme.menu_highlight_fg)
                 .bg(theme.menu_highlight_bg)
-                .add_modifier(ratatui::style::Modifier::BOLD)
+                .add_modifier(Modifier::BOLD)
         } else if is_hovered {
             Style::default()
                 .fg(theme.menu_hover_fg)
@@ -3287,181 +3286,29 @@ fn render_confirm_dialog(
 
         x += button_width + 3;
     }
-
-    // Help text
-    let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel";
-    let help_style = Style::default().fg(theme.line_number_fg);
-    frame.render_widget(
-        Paragraph::new(help).style(help_style),
-        Rect::new(inner.x, button_y + 1, inner.width, 1),
-    );
 }
 
-/// Render the reset confirmation dialog
-fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsState, theme: &Theme) {
-    let changes = state.get_change_descriptions();
-    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
-    // Base height: 2 borders + 2 prompt lines + 1 separator + 1 buttons + 1 help = 7
-    // Plus one line per change
-    let dialog_height = (7 + changes.len() as u16)
-        .min(20)
-        .min(parent_area.height.saturating_sub(4));
-
-    // Center the dialog
-    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
-    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-
-    // Clear and draw border
-    frame.render_widget(Clear, dialog_area);
-
-    let block = Block::default()
-        .title(" Reset All Changes ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.diagnostic_warning_fg))
-        .style(Style::default().bg(theme.popup_bg));
-    frame.render_widget(block, dialog_area);
-
-    // Inner area
-    let inner = Rect::new(
-        dialog_area.x + 2,
-        dialog_area.y + 1,
-        dialog_area.width.saturating_sub(4),
-        dialog_area.height.saturating_sub(2),
-    );
-
-    let mut y = inner.y;
-
-    // Prompt text
-    let prompt_style = Style::default().fg(theme.popup_text_fg);
-    frame.render_widget(
-        Paragraph::new("Discard all pending changes?").style(prompt_style),
-        Rect::new(inner.x, y, inner.width, 1),
-    );
-    y += 2;
-
-    // List changes. Character-based truncation here (rather than byte
-    // truncation) keeps CJK / emoji change descriptions from byte-slicing
-    // through a multi-byte UTF-8 sequence and panicking — same class as
-    // #1718.
-    let change_style = Style::default().fg(theme.popup_text_fg);
-    for change in changes
-        .iter()
-        .take((dialog_height as usize).saturating_sub(7))
-    {
-        let max_chars = (inner.width as usize).saturating_sub(2);
-        let truncated = format!("• {}", truncate_chars_with_ellipsis(change, max_chars));
-        frame.render_widget(
-            Paragraph::new(truncated).style(change_style),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
-        y += 1;
-    }
-
-    // Skip to button row
-    let button_y = dialog_area.y + dialog_area.height - 3;
-
-    // Draw separator
-    let sep_line: String = "─".repeat(inner.width as usize);
-    frame.render_widget(
-        Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
-        Rect::new(inner.x, button_y - 1, inner.width, 1),
-    );
-
-    // Render the two options: Reset, Cancel
-    let options = ["Reset", "Cancel"];
-    let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4;
-    let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
-
-    for (idx, label) in options.iter().enumerate() {
-        let is_selected = idx == state.reset_dialog_selection;
-        let is_hovered = state.reset_dialog_hover == Some(idx);
-        let button_width = label.len() as u16 + 4;
-
-        let style = if is_selected {
-            Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_highlight_bg)
-                .add_modifier(ratatui::style::Modifier::BOLD)
-        } else if is_hovered {
-            Style::default()
-                .fg(theme.menu_hover_fg)
-                .bg(theme.menu_hover_bg)
-        } else {
-            Style::default().fg(theme.popup_text_fg)
-        };
-
-        let text = if is_selected {
-            format!(">[ {} ]", label)
-        } else {
-            format!(" [ {} ]", label)
-        };
-        frame.render_widget(
-            Paragraph::new(text).style(style),
-            Rect::new(x, button_y, button_width + 1, 1),
-        );
-
-        x += button_width + 3;
-    }
-
-    // Help text
-    let help = "←/→/Tab: Select   Enter: Confirm   Esc: Cancel";
-    let help_style = Style::default().fg(theme.line_number_fg);
-    frame.render_widget(
-        Paragraph::new(help).style(help_style),
-        Rect::new(inner.x, button_y + 1, inner.width, 1),
-    );
-}
-
-/// Render the "Discard changes?" prompt that appears when the user
-/// presses Esc on a dirty entry dialog.
-fn render_entry_discard_confirm(
+/// Render a centered row of `[ label ]` buttons for a destructive-action
+/// confirm dialog: the button at `destructive_idx` is tinted with the danger
+/// foreground, and the selected button gets the popup-selection background.
+/// Shared by the entry discard / delete confirm dialogs.
+fn render_destructive_buttons(
     frame: &mut Frame,
-    parent_area: Rect,
-    state: &SettingsState,
+    inner: Rect,
+    button_y: u16,
+    options: &[&str],
+    selected: usize,
+    destructive_idx: usize,
     theme: &Theme,
 ) {
-    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
-    let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
-    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
-    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-
-    frame.render_widget(Clear, dialog_area);
-
-    let block = Block::default()
-        .title(" Discard changes? ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.diagnostic_warning_fg))
-        .style(Style::default().bg(theme.popup_bg));
-    frame.render_widget(block, dialog_area);
-
-    let inner = Rect::new(
-        dialog_area.x + 2,
-        dialog_area.y + 1,
-        dialog_area.width.saturating_sub(4),
-        dialog_area.height.saturating_sub(2),
-    );
-
-    let prompt_style = Style::default().fg(theme.popup_text_fg);
-    frame.render_widget(
-        Paragraph::new("You have uncommitted edits in this dialog.").style(prompt_style),
-        Rect::new(inner.x, inner.y, inner.width, 1),
-    );
-
-    // Buttons. 0 = Keep editing (default), 1 = Discard. Discard styled
-    // in the danger fg to make the destructive choice unmistakable.
-    let button_y = dialog_area.y + dialog_area.height - 3;
-    let options = ["Keep editing", "Discard"];
-    let total_width: u16 = options.iter().map(|o| o.len() as u16 + 4).sum::<u16>() + 4;
+    let total_width: u16 =
+        options.iter().map(|o| o.len() as u16 + 5).sum::<u16>() + 2 * (options.len() as u16 - 1);
     let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
 
     for (idx, label) in options.iter().enumerate() {
-        let is_selected = idx == state.entry_discard_confirm_selection;
-        let is_discard = idx == 1;
-        let style = if is_selected && is_discard {
+        let is_selected = idx == selected;
+        let is_destructive = idx == destructive_idx;
+        let style = if is_selected && is_destructive {
             Style::default()
                 .fg(theme.diagnostic_error_fg)
                 .bg(theme.popup_selection_bg)
@@ -3471,7 +3318,7 @@ fn render_entry_discard_confirm(
                 .fg(theme.popup_selection_fg)
                 .bg(theme.popup_selection_bg)
                 .add_modifier(Modifier::BOLD)
-        } else if is_discard {
+        } else if is_destructive {
             Style::default()
                 .fg(theme.diagnostic_error_fg)
                 .add_modifier(Modifier::BOLD)
@@ -3490,12 +3337,173 @@ fn render_entry_discard_confirm(
         );
         x += w + 2;
     }
+}
 
-    let help = "Tab/←→: Select   Enter: Confirm   Esc: Keep editing";
-    let help_style = Style::default().fg(theme.line_number_fg);
+fn render_confirm_dialog(
+    frame: &mut Frame,
+    parent_area: Rect,
+    state: &SettingsState,
+    theme: &Theme,
+) {
+    let changes = state.get_change_descriptions();
+    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
+    // Base height: 2 borders + 2 prompt lines + 1 separator + 1 buttons + 1 help = 7
+    // Plus one line per change
+    let dialog_height = (7 + changes.len() as u16)
+        .min(20)
+        .min(parent_area.height.saturating_sub(4));
+
+    let title = format!(" {} ", t!("confirm.unsaved_changes_title"));
+    let (dialog_area, inner) = centered_dialog_frame(
+        frame,
+        parent_area,
+        dialog_width,
+        dialog_height,
+        title,
+        theme.diagnostic_warning_fg,
+        theme,
+    );
+
+    // Prompt text
+    let prompt = t!("confirm.unsaved_changes_prompt").to_string();
     frame.render_widget(
-        Paragraph::new(help).style(help_style),
-        Rect::new(inner.x, button_y + 1, inner.width, 1),
+        Paragraph::new(prompt).style(Style::default().fg(theme.popup_text_fg)),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+    render_change_list(frame, inner, inner.y + 2, &changes, dialog_height, theme);
+
+    let button_y = dialog_area.y + dialog_area.height - 3;
+
+    // Draw separator
+    let sep_line: String = "─".repeat(inner.width as usize);
+    frame.render_widget(
+        Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
+        Rect::new(inner.x, button_y - 1, inner.width, 1),
+    );
+
+    let options = [
+        t!("confirm.save_and_exit").to_string(),
+        t!("confirm.discard").to_string(),
+        t!("confirm.cancel").to_string(),
+    ];
+    render_choice_buttons(
+        frame,
+        inner,
+        button_y,
+        &options,
+        state.confirm_dialog_selection,
+        state.confirm_dialog_hover,
+        theme,
+    );
+    render_dialog_help(
+        frame,
+        inner,
+        button_y,
+        "←/→/Tab: Select   Enter: Confirm   Esc: Cancel",
+        theme,
+    );
+}
+
+/// Render the reset confirmation dialog
+fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsState, theme: &Theme) {
+    let changes = state.get_change_descriptions();
+    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
+    // Base height: 2 borders + 2 prompt lines + 1 separator + 1 buttons + 1 help = 7
+    // Plus one line per change
+    let dialog_height = (7 + changes.len() as u16)
+        .min(20)
+        .min(parent_area.height.saturating_sub(4));
+
+    let (dialog_area, inner) = centered_dialog_frame(
+        frame,
+        parent_area,
+        dialog_width,
+        dialog_height,
+        " Reset All Changes ".to_string(),
+        theme.diagnostic_warning_fg,
+        theme,
+    );
+
+    // Prompt text
+    frame.render_widget(
+        Paragraph::new("Discard all pending changes?")
+            .style(Style::default().fg(theme.popup_text_fg)),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+    render_change_list(frame, inner, inner.y + 2, &changes, dialog_height, theme);
+
+    let button_y = dialog_area.y + dialog_area.height - 3;
+
+    // Draw separator
+    let sep_line: String = "─".repeat(inner.width as usize);
+    frame.render_widget(
+        Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
+        Rect::new(inner.x, button_y - 1, inner.width, 1),
+    );
+
+    let options = ["Reset".to_string(), "Cancel".to_string()];
+    render_choice_buttons(
+        frame,
+        inner,
+        button_y,
+        &options,
+        state.reset_dialog_selection,
+        state.reset_dialog_hover,
+        theme,
+    );
+    render_dialog_help(
+        frame,
+        inner,
+        button_y,
+        "←/→/Tab: Select   Enter: Confirm   Esc: Cancel",
+        theme,
+    );
+}
+
+/// Render the "Discard changes?" prompt that appears when the user
+/// presses Esc on a dirty entry dialog.
+fn render_entry_discard_confirm(
+    frame: &mut Frame,
+    parent_area: Rect,
+    state: &SettingsState,
+    theme: &Theme,
+) {
+    let dialog_width = 50.min(parent_area.width.saturating_sub(4));
+    let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
+    let (dialog_area, inner) = centered_dialog_frame(
+        frame,
+        parent_area,
+        dialog_width,
+        dialog_height,
+        " Discard changes? ".to_string(),
+        theme.diagnostic_warning_fg,
+        theme,
+    );
+
+    frame.render_widget(
+        Paragraph::new("You have uncommitted edits in this dialog.")
+            .style(Style::default().fg(theme.popup_text_fg)),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    // Buttons. 0 = Keep editing (default), 1 = Discard. Discard styled
+    // in the danger fg to make the destructive choice unmistakable.
+    let button_y = dialog_area.y + dialog_area.height - 3;
+    render_destructive_buttons(
+        frame,
+        inner,
+        button_y,
+        &["Keep editing", "Discard"],
+        state.entry_discard_confirm_selection,
+        1,
+        theme,
+    );
+    render_dialog_help(
+        frame,
+        inner,
+        button_y,
+        "Tab/←→: Select   Enter: Confirm   Esc: Keep editing",
+        theme,
     );
 }
 
@@ -3537,11 +3545,6 @@ fn render_entry_delete_confirm(
 ) {
     let dialog_width = 60.min(parent_area.width.saturating_sub(4));
     let dialog_height = 7u16.min(parent_area.height.saturating_sub(4));
-    let dialog_x = parent_area.x + (parent_area.width.saturating_sub(dialog_width)) / 2;
-    let dialog_y = parent_area.y + (parent_area.height.saturating_sub(dialog_height)) / 2;
-    let dialog_area = Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
-
-    frame.render_widget(Clear, dialog_area);
 
     let title = if !state.entry_delete_target_name.is_empty() {
         format!(" Delete \"{}\"? ", state.entry_delete_target_name)
@@ -3551,19 +3554,14 @@ fn render_entry_delete_confirm(
         " Delete entry? ".to_string()
     };
 
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.diagnostic_error_fg))
-        .style(Style::default().bg(theme.popup_bg));
-    frame.render_widget(block, dialog_area);
-
-    let inner = Rect::new(
-        dialog_area.x + 2,
-        dialog_area.y + 1,
-        dialog_area.width.saturating_sub(4),
-        dialog_area.height.saturating_sub(2),
+    let (dialog_area, inner) = centered_dialog_frame(
+        frame,
+        parent_area,
+        dialog_width,
+        dialog_height,
+        title,
+        theme.diagnostic_error_fg,
+        theme,
     );
 
     let body = if !state.entry_delete_target_name.is_empty() {
@@ -3576,55 +3574,27 @@ fn render_entry_delete_confirm(
     } else {
         "This will permanently remove the entry.".to_string()
     };
-    let prompt_style = Style::default().fg(theme.popup_text_fg);
     frame.render_widget(
-        Paragraph::new(body).style(prompt_style),
+        Paragraph::new(body).style(Style::default().fg(theme.popup_text_fg)),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
 
     let button_y = dialog_area.y + dialog_area.height - 3;
-    let options = ["Cancel", "Delete"];
-    let total_width: u16 = options.iter().map(|o| o.len() as u16 + 5).sum::<u16>() + 2;
-    let mut x = inner.x + (inner.width.saturating_sub(total_width)) / 2;
-
-    for (idx, label) in options.iter().enumerate() {
-        let is_selected = idx == state.entry_delete_confirm_selection;
-        let is_delete = idx == 1;
-        let style = if is_selected && is_delete {
-            Style::default()
-                .fg(theme.diagnostic_error_fg)
-                .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
-        } else if is_selected {
-            Style::default()
-                .fg(theme.popup_selection_fg)
-                .bg(theme.popup_selection_bg)
-                .add_modifier(Modifier::BOLD)
-        } else if is_delete {
-            Style::default()
-                .fg(theme.diagnostic_error_fg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.popup_text_fg)
-        };
-        let text = if is_selected {
-            format!(">[ {} ]", label)
-        } else {
-            format!(" [ {} ]", label)
-        };
-        let w = label.len() as u16 + 5;
-        frame.render_widget(
-            Paragraph::new(text).style(style),
-            Rect::new(x, button_y, w, 1),
-        );
-        x += w + 2;
-    }
-
-    let help = "Tab/←→: Select   Enter: Confirm   Esc: Cancel";
-    let help_style = Style::default().fg(theme.line_number_fg);
-    frame.render_widget(
-        Paragraph::new(help).style(help_style),
-        Rect::new(inner.x, button_y + 1, inner.width, 1),
+    render_destructive_buttons(
+        frame,
+        inner,
+        button_y,
+        &["Cancel", "Delete"],
+        state.entry_delete_confirm_selection,
+        1,
+        theme,
+    );
+    render_dialog_help(
+        frame,
+        inner,
+        button_y,
+        "Tab/←→: Select   Enter: Confirm   Esc: Cancel",
+        theme,
     );
 }
 
