@@ -34,29 +34,35 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// (bytes 92–93) and `→` (bytes 96–98).
 #[test]
 fn settings_search_hidden_does_not_panic_across_widths() {
-    for width in 40u16..=250 {
-        let mut harness = EditorTestHarness::new(width, 40).unwrap();
+    // Open one harness into Settings search, then sweep the terminal width via
+    // resize() (which re-renders) instead of rebuilding the whole editor +
+    // Settings dialog for every width. Re-rendering is the panic site, so
+    // resizing exercises exactly the same truncation cut-points a fresh harness
+    // per width would — but without paying full setup 211 times. The old
+    // per-width rebuild took ~66s solo and timed out (180s) under parallel CI
+    // load.
+    let mut harness = EditorTestHarness::new(40, 40).unwrap();
+    harness.open_settings().unwrap();
 
-        harness.open_settings().unwrap();
-
-        // Enter search mode.
+    // Enter search mode and type the query from the issue report. The
+    // `whitespace_show` setting description fuzzy-matches "hidden" and is
+    // rendered in the results; the render code then byte-slices the description.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for ch in "hidden".chars() {
         harness
-            .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
             .unwrap();
-        harness.render().unwrap();
+    }
+    harness.render().unwrap();
 
-        // Type the query from the issue report.  The `whitespace_show` setting
-        // description fuzzy-matches "hidden" and is rendered in the results; the
-        // render code then byte-slices the description at an unsafe offset.
-        for ch in "hidden".chars() {
-            harness
-                .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
-                .unwrap();
-        }
-
-        // render() is where the panic occurs.
+    // Sweep widths 40–250. Each resize re-renders, exercising every truncation
+    // cut-point through the description, including those that land inside `·`
+    // (bytes 92–93) and `→` (bytes 96–98).
+    for width in 40u16..=250 {
         harness
-            .render()
-            .unwrap_or_else(|e| panic!("width={width}: render failed: {e}"));
+            .resize(width, 40)
+            .unwrap_or_else(|e| panic!("width={width}: resize/render failed: {e}"));
     }
 }
