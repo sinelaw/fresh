@@ -1177,7 +1177,7 @@ impl LspState {
         // reports `initialized`. Every other request fails fast right here, so
         // its handler's existing error path replies immediately instead of
         // sending a doomed frame and waiting out the timeout. This is what lets
-        // `dispatch_request_command` stay a plain "spawn the handler" table with
+        // the request arms in `run` stay plain "spawn the handler" calls with
         // no per-command not-initialized fallbacks.
         if method != Initialize::METHOD && !self.initialized.load(Ordering::SeqCst) {
             return Err("LSP server not initialized".to_string());
@@ -2795,227 +2795,6 @@ impl LspState {
         }
     }
 
-    /// Route a *request-type* LSP command to its handler.
-    ///
-    /// Every request is spawned onto its own task so a slow or unresponsive
-    /// server can't block the dispatch loop (issue #1679); only the handler
-    /// call differs per command, so this reads as a plain routing table.
-    ///
-    /// There is deliberately no not-initialized branch here. A request issued
-    /// before the server finishes `initialize` fails fast in
-    /// [`Self::send_request_with_timeout`], which drops it straight into the
-    /// handler's existing error path — and every handler already replies with
-    /// its own empty/error result there. Keeping that knowledge in one place
-    /// (the handler) is what removed the ~20 per-command fallbacks this method
-    /// used to carry.
-    ///
-    /// Notifications and lifecycle commands (didOpen/didChange, Initialize,
-    /// Shutdown, …) interact with the run loop's own state and are handled
-    /// inline by `run`; they never reach here.
-    fn dispatch_request_command(&self, cmd: LspCommand, pending: &PendingRequests) {
-        use LspCommand::*;
-        match cmd {
-            Completion {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_completion(request_id, uri, line, character, &p)
-                    .await
-            }),
-            GotoDefinition {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_goto_definition(request_id, uri, line, character, &p)
-                    .await
-            }),
-            Implementation {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_implementation(request_id, uri, line, character, &p)
-                    .await
-            }),
-            Rename {
-                request_id,
-                uri,
-                line,
-                character,
-                new_name,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_rename(request_id, uri, line, character, new_name, &p)
-                    .await
-            }),
-            Hover {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_hover(request_id, uri, line, character, &p).await
-            }),
-            References {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_references(request_id, uri, line, character, &p)
-                    .await
-            }),
-            SignatureHelp {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_signature_help(request_id, uri, line, character, &p)
-                    .await
-            }),
-            CodeActions {
-                request_id,
-                uri,
-                start_line,
-                start_char,
-                end_line,
-                end_char,
-                diagnostics,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_code_actions(
-                    request_id,
-                    uri,
-                    start_line,
-                    start_char,
-                    end_line,
-                    end_char,
-                    diagnostics,
-                    &p,
-                )
-                .await
-            }),
-            DocumentDiagnostic {
-                request_id,
-                uri,
-                previous_result_id,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_document_diagnostic(request_id, uri, previous_result_id, &p)
-                    .await
-            }),
-            InlayHints {
-                request_id,
-                uri,
-                start_line,
-                start_char,
-                end_line,
-                end_char,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_inlay_hints(
-                    request_id, uri, start_line, start_char, end_line, end_char, &p,
-                )
-                .await
-            }),
-            FoldingRange { request_id, uri } => self.spawn_request(pending, |s, p| async move {
-                s.handle_folding_ranges(request_id, uri, &p).await
-            }),
-            SemanticTokensFull { request_id, uri } => self
-                .spawn_request(pending, |s, p| async move {
-                    s.handle_semantic_tokens_full(request_id, uri, &p).await
-                }),
-            SemanticTokensFullDelta {
-                request_id,
-                uri,
-                previous_result_id,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_semantic_tokens_full_delta(request_id, uri, previous_result_id, &p)
-                    .await
-            }),
-            SemanticTokensRange {
-                request_id,
-                uri,
-                range,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_semantic_tokens_range(request_id, uri, range, &p)
-                    .await
-            }),
-            ExecuteCommand { command, arguments } => self
-                .spawn_request(pending, |s, p| async move {
-                    s.handle_execute_command(command, arguments, &p).await
-                }),
-            CodeActionResolve { request_id, action } => self
-                .spawn_request(pending, |s, p| async move {
-                    s.handle_code_action_resolve(request_id, *action, &p).await
-                }),
-            CompletionResolve { request_id, item } => self
-                .spawn_request(pending, |s, p| async move {
-                    s.handle_completion_resolve(request_id, *item, &p).await
-                }),
-            DocumentFormatting {
-                request_id,
-                uri,
-                tab_size,
-                insert_spaces,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_document_formatting(request_id, uri, tab_size, insert_spaces, &p)
-                    .await
-            }),
-            DocumentRangeFormatting {
-                request_id,
-                uri,
-                start_line,
-                start_char,
-                end_line,
-                end_char,
-                tab_size,
-                insert_spaces,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_document_range_formatting(
-                    request_id,
-                    uri,
-                    start_line,
-                    start_char,
-                    end_line,
-                    end_char,
-                    tab_size,
-                    insert_spaces,
-                    &p,
-                )
-                .await
-            }),
-            PrepareRename {
-                request_id,
-                uri,
-                line,
-                character,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_prepare_rename(request_id, uri, line, character, &p)
-                    .await
-            }),
-            PluginRequest {
-                request_id,
-                method,
-                params,
-            } => self.spawn_request(pending, |s, p| async move {
-                s.handle_plugin_request(request_id, method, params, &p)
-                    .await;
-                Ok(())
-            }),
-            // Lifecycle / notification / Initialize / Shutdown commands are
-            // handled inline by `run` and never routed here.
-            other => {
-                tracing::error!(
-                    "dispatch_request_command received non-request command: {:?}",
-                    other
-                );
-            }
-        }
-    }
-
     /// Spawn one request handler on its own task so a slow or unresponsive
     /// server can't block the dispatch loop (issue #1679). `run` receives a
     /// fresh clone of the shared state and of `pending`, so the spawned future
@@ -3566,7 +3345,197 @@ impl LspTask {
                     let _ = state.handle_shutdown().await;
                     break;
                 }
-                cmd => state.dispatch_request_command(cmd, &pending),
+                LspCommand::Completion {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_completion(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::GotoDefinition {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_goto_definition(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::Implementation {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_implementation(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::Rename {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                    new_name,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_rename(request_id, uri, line, character, new_name, &p)
+                        .await
+                }),
+                LspCommand::Hover {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_hover(request_id, uri, line, character, &p).await
+                }),
+                LspCommand::References {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_references(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::SignatureHelp {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_signature_help(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::CodeActions {
+                    request_id,
+                    uri,
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    diagnostics,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_code_actions(
+                        request_id,
+                        uri,
+                        start_line,
+                        start_char,
+                        end_line,
+                        end_char,
+                        diagnostics,
+                        &p,
+                    )
+                    .await
+                }),
+                LspCommand::DocumentDiagnostic {
+                    request_id,
+                    uri,
+                    previous_result_id,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_document_diagnostic(request_id, uri, previous_result_id, &p)
+                        .await
+                }),
+                LspCommand::InlayHints {
+                    request_id,
+                    uri,
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_inlay_hints(
+                        request_id, uri, start_line, start_char, end_line, end_char, &p,
+                    )
+                    .await
+                }),
+                LspCommand::FoldingRange { request_id, uri } => state
+                    .spawn_request(&pending, |s, p| async move {
+                        s.handle_folding_ranges(request_id, uri, &p).await
+                    }),
+                LspCommand::SemanticTokensFull { request_id, uri } => state
+                    .spawn_request(&pending, |s, p| async move {
+                        s.handle_semantic_tokens_full(request_id, uri, &p).await
+                    }),
+                LspCommand::SemanticTokensFullDelta {
+                    request_id,
+                    uri,
+                    previous_result_id,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_semantic_tokens_full_delta(request_id, uri, previous_result_id, &p)
+                        .await
+                }),
+                LspCommand::SemanticTokensRange {
+                    request_id,
+                    uri,
+                    range,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_semantic_tokens_range(request_id, uri, range, &p)
+                        .await
+                }),
+                LspCommand::ExecuteCommand { command, arguments } => state
+                    .spawn_request(&pending, |s, p| async move {
+                        s.handle_execute_command(command, arguments, &p).await
+                    }),
+                LspCommand::CodeActionResolve { request_id, action } => state
+                    .spawn_request(&pending, |s, p| async move {
+                        s.handle_code_action_resolve(request_id, *action, &p).await
+                    }),
+                LspCommand::CompletionResolve { request_id, item } => state
+                    .spawn_request(&pending, |s, p| async move {
+                        s.handle_completion_resolve(request_id, *item, &p).await
+                    }),
+                LspCommand::DocumentFormatting {
+                    request_id,
+                    uri,
+                    tab_size,
+                    insert_spaces,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_document_formatting(request_id, uri, tab_size, insert_spaces, &p)
+                        .await
+                }),
+                LspCommand::DocumentRangeFormatting {
+                    request_id,
+                    uri,
+                    start_line,
+                    start_char,
+                    end_line,
+                    end_char,
+                    tab_size,
+                    insert_spaces,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_document_range_formatting(
+                        request_id,
+                        uri,
+                        start_line,
+                        start_char,
+                        end_line,
+                        end_char,
+                        tab_size,
+                        insert_spaces,
+                        &p,
+                    )
+                    .await
+                }),
+                LspCommand::PrepareRename {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_prepare_rename(request_id, uri, line, character, &p)
+                        .await
+                }),
+                LspCommand::PluginRequest {
+                    request_id,
+                    method,
+                    params,
+                } => state.spawn_request(&pending, |s, p| async move {
+                    s.handle_plugin_request(request_id, method, params, &p)
+                        .await;
+                    Ok(())
+                }),
             }
         }
 
