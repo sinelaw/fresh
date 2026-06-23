@@ -131,16 +131,23 @@ pub fn run_gui(
             for (path, line, col) in &file_locations {
                 editor.queue_file_open(path.clone(), *line, *col, None, None, None, None);
             }
-        } else if show_file_explorer {
-            editor.show_file_explorer();
         }
 
         if workspace_enabled {
-            match editor.try_restore_workspace() {
+            // Shared restore flow (same as the TUI launch and the dock's
+            // `materialize_window`): a restored workspace keeps its
+            // persisted explorer visibility, and only a brand-new
+            // directory defaults to the tree — so a closed explorer is
+            // not re-opened on every relaunch.
+            match editor.restore_active_window_on_launch(!show_file_explorer) {
                 Ok(true) => tracing::info!("Workspace restored"),
                 Ok(false) => tracing::debug!("No previous workspace"),
                 Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
             }
+        } else if show_file_explorer {
+            // No session restore (e.g. --no-session) but a bare directory:
+            // still default to showing the tree.
+            editor.apply_active_window_explorer_default(!show_file_explorer, false);
         }
 
         if let Err(e) = editor.start_recovery_session() {

@@ -204,12 +204,19 @@ pub fn pump(editor: &mut Editor) -> bool {
                         .file_name()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                    // A directory that already has a session window is
+                    // restored by `set_active_window` → `materialize_window`
+                    // and keeps its persisted explorer visibility. Only a
+                    // brand-new directory gets the fresh-session default,
+                    // mirroring a normal `fresh <dir>` launch instead of
+                    // leaving the new window on an empty buffer.
+                    let known_session = editor.find_window_by_root(&path).is_some();
                     let id = editor.create_window_at(path, label);
                     editor.set_active_window(id);
-                    // Match a normal `fresh <dir>` launch, which opens the
-                    // file explorer for a directory argument (see `main.rs`),
-                    // rather than leaving the new window on an empty buffer.
-                    editor.show_file_explorer();
+                    if !known_session {
+                        editor.apply_active_window_explorer_default(false, false);
+                        editor.relayout();
+                    }
                     changed = true;
                 } else {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);

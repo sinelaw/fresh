@@ -184,6 +184,55 @@ impl Editor {
         self.restore_workspace_for(self.active_window)
     }
 
+    /// The single window-restore flow: load and apply window `id`'s
+    /// persisted workspace, then apply the fresh-session file-explorer
+    /// default. Shared by eager startup restore
+    /// ([`Editor::restore_active_window_on_launch`]) and lazy
+    /// dock/preview materialization ([`Editor::materialize_window`]) so a
+    /// directory behaves identically however it is (re-)entered — a
+    /// deliberately-closed explorer stays closed, a brand-new directory
+    /// defaults to the tree. Operates on `windows[id]` directly, so it is
+    /// correct for a background window that is not active yet.
+    ///
+    /// `opened_files` suppresses the explorer default when the launch
+    /// opened specific files instead of a bare directory.
+    pub fn restore_window(
+        &mut self,
+        id: fresh_core::WindowId,
+        opened_files: bool,
+    ) -> Result<bool, WorkspaceError> {
+        let restored = self.restore_workspace_for(id)?;
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.apply_fresh_session_explorer_default(opened_files, restored);
+        }
+        Ok(restored)
+    }
+
+    /// Eager startup restore of the active foreground window, applying
+    /// the fresh-session explorer default. The launch-time counterpart to
+    /// the lazy [`Editor::materialize_window`]; both funnel through
+    /// [`Editor::restore_window`].
+    pub fn restore_active_window_on_launch(
+        &mut self,
+        opened_files: bool,
+    ) -> Result<bool, WorkspaceError> {
+        self.restore_window(self.active_window, opened_files)
+    }
+
+    /// Apply the fresh-session explorer default to the active window for
+    /// launch/enter paths that did *not* run a workspace restore (e.g.
+    /// `--no-restore`, or a new directory opened into a running instance).
+    /// Same rule as [`Editor::restore_window`], just without a restore to
+    /// bundle it with.
+    pub fn apply_active_window_explorer_default(
+        &mut self,
+        opened_files: bool,
+        workspace_restored: bool,
+    ) {
+        self.active_window_mut()
+            .apply_fresh_session_explorer_default(opened_files, workspace_restored);
+    }
+
     /// Apply hot exit recovery to all currently open file-backed buffers.
     ///
     /// This restores unsaved changes from recovery files for buffers that were
@@ -565,7 +614,11 @@ impl Editor {
             return;
         }
         let saved_plugin_state = self.plugin_global_state.clone();
-        match self.restore_workspace_for(id) {
+        // Lazy counterpart to the eager startup restore: same
+        // `restore_window` flow, so a dock-switched directory applies its
+        // persisted explorer visibility (or the fresh-session default)
+        // exactly as a cold launch would. No CLI files on this path.
+        match self.restore_window(id, false) {
             Ok(true) => tracing::debug!("Materialized window {id} from workspace"),
             Ok(false) => {
                 tracing::trace!("No persisted workspace for window {id}; empty seed kept")
@@ -1459,6 +1512,35 @@ impl crate::app::window::Window {
 
         // Keep key_context as Normal so the editor (not the explorer) has focus.
         if self.file_explorer_visible && self.file_explorer.is_none() {
+            self.init_file_explorer();
+        }
+    }
+
+    /// The fresh-session file-explorer default: show the tree for a
+    /// brand-new directory. This is the single rule shared by every way
+    /// of entering a directory — startup restore, the orchestrator
+    /// dock/preview materialization, and the new-window (`fresh <dir>`
+    /// into a running instance) path — all of which funnel their restore
+    /// through [`Editor::restore_window`].
+    ///
+    /// It fires *only* when nothing was restored: a restored workspace
+    /// already carries the explorer's persisted visibility (applied by
+    /// [`Window::restore_file_explorer_settings`]), so re-showing here
+    /// would reopen a deliberately-closed explorer on every relaunch.
+    /// `opened_files` suppresses it when the launch opened specific files
+    /// rather than a bare directory. Visibility only — `key_context`
+    /// stays Normal so the buffer keeps focus, mirroring
+    /// `restore_file_explorer_settings`.
+    pub(crate) fn apply_fresh_session_explorer_default(
+        &mut self,
+        opened_files: bool,
+        workspace_restored: bool,
+    ) {
+        if opened_files || workspace_restored {
+            return;
+        }
+        self.file_explorer_visible = true;
+        if self.file_explorer.is_none() {
             self.init_file_explorer();
         }
     }

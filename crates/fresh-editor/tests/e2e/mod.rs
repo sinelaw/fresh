@@ -38,6 +38,7 @@ pub mod file_browser;
 pub mod file_explorer;
 pub mod file_explorer_compact_chain;
 pub mod file_explorer_open_focus;
+pub mod file_explorer_session_persist;
 pub mod file_permissions;
 pub mod flash;
 pub mod folding;

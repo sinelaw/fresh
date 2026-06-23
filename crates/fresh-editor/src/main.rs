@@ -820,7 +820,14 @@ fn handle_first_run_setup(
         && (args.force_restore || editor.config().editor.restore_previous_session);
 
     if restore_full_session {
-        match editor.try_restore_workspace() {
+        // Shared window-restore flow — the same `restore_window` the
+        // orchestrator dock's `materialize_window` uses — so the
+        // foreground directory applies its persisted explorer visibility,
+        // or the fresh-session default, exactly as a dock switch would. A
+        // bare single-directory launch (`show_file_explorer`) defaults to
+        // the tree only when nothing was restored, which keeps a
+        // deliberately-closed explorer closed across relaunches.
+        match editor.restore_active_window_on_launch(!show_file_explorer) {
             Ok(true) => {
                 tracing::info!("Workspace restored successfully");
             }
@@ -865,6 +872,10 @@ fn handle_first_run_setup(
                 tracing::warn!("Failed to restore hot-exit buffers: {}", e);
             }
         }
+        // No workspace was restored, so the persisted explorer visibility
+        // never loaded — apply the same fresh-session default the restore
+        // flow would, so a bare directory launch still opens the tree.
+        editor.apply_active_window_explorer_default(!show_file_explorer, false);
     }
 
     // Handle stdin streaming (takes priority over files)
@@ -900,9 +911,10 @@ fn handle_first_run_setup(
         editor.schedule_hot_exit_recovery();
     }
 
-    if show_file_explorer {
-        editor.show_file_explorer();
-    }
+    // The file-explorer default is applied by the restore/no-restore
+    // branches above (via `restore_window` / `apply_active_window_explorer_default`),
+    // which respect a deliberately-closed explorer rather than re-opening
+    // it unconditionally on every relaunch.
 
     if editor.has_recovery_files().unwrap_or(false) {
         tracing::info!("Recovery files found from previous session, recovering...");
@@ -3484,7 +3496,12 @@ fn run_if_subcommand(
 /// Attempt workspace or hot-exit restore when the editor restarts into a new project.
 fn restore_editor_workspace(editor: &mut Editor, args: &Args) {
     if args.force_restore || editor.config().editor.restore_previous_session {
-        match editor.try_restore_workspace() {
+        // Shared restore flow (same as startup / the dock's
+        // `materialize_window`): applies the new project's persisted
+        // explorer visibility, or the fresh-session default when there is
+        // nothing to restore — so a project whose explorer was closed
+        // does not spring back open on a Switch Project restart.
+        match editor.restore_active_window_on_launch(false) {
             Ok(true) => tracing::info!("Workspace restored successfully"),
             Ok(false) => tracing::debug!("No previous workspace found"),
             Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
@@ -3503,6 +3520,8 @@ fn restore_editor_workspace(editor: &mut Editor, args: &Args) {
             Ok(_) => {}
             Err(e) => tracing::warn!("Failed to restore hot-exit buffers on restart: {}", e),
         }
+        // Nothing restored — apply the bare-directory explorer default.
+        editor.apply_active_window_explorer_default(false, false);
     }
 }
 
@@ -3961,8 +3980,14 @@ fn real_main() -> AnyhowResult<()> {
         } else {
             if restore_workspace_on_restart {
                 restore_editor_workspace(&mut editor, &args);
+            } else {
+                // Not restoring on this restart at all — still default the
+                // explorer for the freshly-entered directory.
+                editor.apply_active_window_explorer_default(false, false);
             }
-            editor.show_file_explorer();
+            // Mid-session restart: reflow so the (possibly toggled) sidebar
+            // and the split/terminal viewports match the new visibility.
+            editor.relayout();
             let path = current_working_dir
                 .as_ref()
                 .map(|p| p.display().to_string())
