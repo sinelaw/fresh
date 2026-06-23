@@ -1552,9 +1552,12 @@ impl Window {
             }
         }
 
-        // Reload buffer from the backing file (reusing existing file loading)
+        // Reload buffer from the backing file (reusing existing file loading).
+        // Force text mode: raw PTY scrollback can contain control bytes that
+        // would otherwise trip binary detection, dropping ANSI colors and
+        // showing escape-code fragments in scrollback mode (#2449).
         let large_file_threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
-        if let Ok(new_state) = EditorState::from_file_with_languages(
+        if let Ok(new_state) = EditorState::from_file_with_languages_force_text(
             &backing_file,
             self.terminal_width,
             self.terminal_height,

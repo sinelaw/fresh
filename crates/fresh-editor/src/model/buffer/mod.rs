@@ -389,6 +389,31 @@ impl TextBuffer {
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
+        Self::load_from_file_internal(path, large_file_threshold, fs, false)
+    }
+
+    /// Load a text buffer from a file, forcing it to be treated as text.
+    ///
+    /// Identical to [`load_from_file`](Self::load_from_file) but skips binary
+    /// detection entirely — the buffer is always loaded through the text path
+    /// and `is_binary` stays `false`. Used for the terminal scrollback backing
+    /// file, whose raw PTY output can contain control bytes that would
+    /// otherwise trip binary detection and suppress ANSI-color rendering in
+    /// scrollback mode (issue #2449).
+    pub fn load_from_file_force_text<P: AsRef<Path>>(
+        path: P,
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_file_internal(path, large_file_threshold, fs, true)
+    }
+
+    fn load_from_file_internal<P: AsRef<Path>>(
+        path: P,
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        force_text: bool,
+    ) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
         // Get file size to determine loading strategy
@@ -404,9 +429,9 @@ impl TextBuffer {
 
         // Choose loading strategy based on file size
         if file_size >= threshold {
-            Self::load_large_file(path, file_size, fs)
+            Self::load_large_file_internal(path, file_size, fs, false, force_text)
         } else {
-            Self::load_small_file(path, fs)
+            Self::load_small_file(path, fs, force_text)
         }
     }
 
@@ -428,11 +453,19 @@ impl TextBuffer {
     }
 
     /// Load a small file with full eager loading and line indexing
-    fn load_small_file(path: &Path, fs: Arc<dyn FileSystem + Send + Sync>) -> anyhow::Result<Self> {
+    ///
+    /// When `force_text` is true, binary detection is ignored and the file is
+    /// always loaded through the text path (see `load_from_file_force_text`).
+    fn load_small_file(
+        path: &Path,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        force_text: bool,
+    ) -> anyhow::Result<Self> {
         let contents = fs.read_file(path)?;
 
         // Use unified encoding/binary detection
-        let (encoding, is_binary) = format::detect_encoding_or_binary(&contents, false);
+        let (encoding, detected_binary) = format::detect_encoding_or_binary(&contents, false);
+        let is_binary = detected_binary && !force_text;
 
         // For binary files, skip encoding conversion to preserve raw bytes
         let mut buffer = if is_binary {
@@ -497,18 +530,6 @@ impl TextBuffer {
         Ok(None)
     }
 
-    /// Load a large file with unloaded buffer (no line indexing, lazy loading)
-    ///
-    /// If `force_full_load` is true, loads the entire file regardless of encoding.
-    /// This should be set to true after user confirms loading a non-resynchronizable encoding.
-    fn load_large_file(
-        path: &Path,
-        file_size: usize,
-        fs: Arc<dyn FileSystem + Send + Sync>,
-    ) -> anyhow::Result<Self> {
-        Self::load_large_file_internal(path, file_size, fs, false)
-    }
-
     /// Load a large file, optionally forcing full load for non-resynchronizable encodings.
     ///
     /// Called with `force_full_load=true` after user confirms the warning about
@@ -520,15 +541,19 @@ impl TextBuffer {
         let path = path.as_ref();
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
-        Self::load_large_file_internal(path, file_size, fs, true)
+        Self::load_large_file_internal(path, file_size, fs, true, false)
     }
 
     /// Internal implementation for loading large files.
+    ///
+    /// When `force_text` is true, binary detection is ignored and the file is
+    /// always loaded through the text path (see `load_from_file_force_text`).
     fn load_large_file_internal(
         path: &Path,
         file_size: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_full_load: bool,
+        force_text: bool,
     ) -> anyhow::Result<Self> {
         use crate::model::piece_tree::{BufferData, BufferLocation};
 
@@ -538,8 +563,9 @@ impl TextBuffer {
         let sample = fs.read_range(path, 0, sample_size)?;
 
         // Use unified encoding/binary detection
-        let (encoding, is_binary) =
+        let (encoding, detected_binary) =
             format::detect_encoding_or_binary(&sample, file_size > sample_size);
+        let is_binary = detected_binary && !force_text;
 
         // Binary files skip encoding conversion to preserve raw bytes
         if is_binary {

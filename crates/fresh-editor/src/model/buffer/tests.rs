@@ -408,6 +408,52 @@ mod large_file_support {
         assert!(buffer.buffers[0].is_loaded());
     }
 
+    /// Content with binary control bytes (a NUL) is normally flagged as
+    /// binary — this guards the precondition for the force-text test below.
+    #[test]
+    fn test_load_binary_content_detected_as_binary() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("scrollback.txt");
+
+        // ANSI-colored text with embedded control bytes (NUL + DEL) such as
+        // raw PTY output can produce.
+        let data = b"\x1b[31mhello\x00world\x7f\x1b[0m\n";
+        File::create(&file_path).unwrap().write_all(data).unwrap();
+
+        let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
+        assert!(
+            buffer.is_binary(),
+            "control bytes should trip binary detection on the normal load path"
+        );
+    }
+
+    /// `load_from_file_force_text` must keep the buffer in text mode even when
+    /// the bytes would otherwise be flagged as binary — the terminal
+    /// scrollback path relies on this so ANSI colors render (#2449).
+    #[test]
+    fn test_load_force_text_skips_binary_detection() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Same binary-tripping content, small-file path.
+        let small = temp_dir.path().join("small.txt");
+        let data = b"\x1b[31mhello\x00world\x7f\x1b[0m\n";
+        File::create(&small).unwrap().write_all(data).unwrap();
+        let buffer = TextBuffer::load_from_file_force_text(&small, 0, test_fs()).unwrap();
+        assert!(
+            !buffer.is_binary(),
+            "force_text small-file load must not flag the buffer binary"
+        );
+
+        // Large-file (lazy) path: force the large branch with a tiny threshold.
+        let large = temp_dir.path().join("large.txt");
+        File::create(&large).unwrap().write_all(data).unwrap();
+        let buffer = TextBuffer::load_from_file_force_text(&large, 1, test_fs()).unwrap();
+        assert!(
+            !buffer.is_binary(),
+            "force_text large-file load must not flag the buffer binary"
+        );
+    }
+
     #[test]
     fn test_load_large_file_lazy_loading() {
         let temp_dir = TempDir::new().unwrap();

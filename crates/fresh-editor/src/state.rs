@@ -391,6 +391,31 @@ impl EditorState {
         Ok(state)
     }
 
+    /// Create an editor state from a file, always treating it as text.
+    ///
+    /// Like [`from_file_with_languages`](Self::from_file_with_languages) but
+    /// skips binary detection — the backing file is always loaded through the
+    /// text path. Used for the terminal scrollback view so raw PTY output
+    /// containing control bytes never flips the buffer into binary mode, which
+    /// would otherwise suppress ANSI-color rendering in scrollback (#2449).
+    pub fn from_file_with_languages_force_text(
+        path: &std::path::Path,
+        _width: u16,
+        _height: u16,
+        large_file_threshold: usize,
+        registry: &GrammarRegistry,
+        languages: &std::collections::HashMap<String, crate::config::LanguageConfig>,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+    ) -> anyhow::Result<Self> {
+        let buffer = Buffer::load_from_file_force_text(path, large_file_threshold, fs)?;
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            DetectedLanguage::from_path(path, first_line.as_deref(), registry, languages);
+        let mut state = Self::new_from_buffer(buffer);
+        state.apply_language(detected);
+        Ok(state)
+    }
+
     /// Create an editor state from a buffer and a pre-built `DetectedLanguage`.
     ///
     /// This is useful when you have already loaded a buffer with a specific encoding
