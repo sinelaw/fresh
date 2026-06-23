@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Thoát (%{key})",
   "statusbar.trust.trusted": "Tin cậy",
   "statusbar.trust.restricted": "Giới hạn",
-  "statusbar.trust.blocked": "Đã chặn"
+  "statusbar.trust.blocked": "Đã chặn",
+  "action.show_read_only_menu": "Hiện menu chỉ đọc",
+  "read_only.menu.title": "Bộ đệm chỉ đọc",
+  "read_only.menu.enable_editing": "Bật chỉnh sửa",
+  "read_only.menu.cancel": "Hủy"
 }

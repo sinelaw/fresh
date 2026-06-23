@@ -123,6 +123,20 @@ impl Editor {
                 PopupConfirmResult::EarlyReturn
             }
 
+            Some(PopupResolver::ReadOnly) => {
+                let action_key = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.selected_item())
+                    .and_then(|item| item.data.clone());
+                self.hide_popup();
+                if let Some(key) = action_key {
+                    self.handle_read_only_menu_action(&key);
+                }
+                PopupConfirmResult::EarlyReturn
+            }
+
             Some(PopupResolver::WorkspaceTrust) => {
                 // The trust prompt lives on the global stack; read its
                 // selection there (global-first, matching the resolver lookup).
@@ -360,6 +374,10 @@ impl Editor {
             }
 
             Some(PopupResolver::RemoteIndicator) => {
+                self.hide_popup();
+            }
+
+            Some(PopupResolver::ReadOnly) => {
                 self.hide_popup();
             }
 

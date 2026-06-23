@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "終了 (%{key})",
   "statusbar.trust.trusted": "信頼済み",
   "statusbar.trust.restricted": "制限",
-  "statusbar.trust.blocked": "ブロック"
+  "statusbar.trust.blocked": "ブロック",
+  "action.show_read_only_menu": "読み取り専用メニューを表示",
+  "read_only.menu.title": "読み取り専用バッファー",
+  "read_only.menu.enable_editing": "編集を有効化",
+  "read_only.menu.cancel": "キャンセル"
 }

@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Вийти (%{key})",
   "statusbar.trust.trusted": "Довірено",
   "statusbar.trust.restricted": "Обмежено",
-  "statusbar.trust.blocked": "Заблоковано"
+  "statusbar.trust.blocked": "Заблоковано",
+  "action.show_read_only_menu": "Показати меню «лише читання»",
+  "read_only.menu.title": "Буфер лише для читання",
+  "read_only.menu.enable_editing": "Увімкнути редагування",
+  "read_only.menu.cancel": "Скасувати"
 }

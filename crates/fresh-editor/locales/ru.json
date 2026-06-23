@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Выйти (%{key})",
   "statusbar.trust.trusted": "Доверено",
   "statusbar.trust.restricted": "Ограничено",
-  "statusbar.trust.blocked": "Заблокировано"
+  "statusbar.trust.blocked": "Заблокировано",
+  "action.show_read_only_menu": "Показать меню «только чтение»",
+  "read_only.menu.title": "Буфер только для чтения",
+  "read_only.menu.enable_editing": "Включить редактирование",
+  "read_only.menu.cancel": "Отмена"
 }

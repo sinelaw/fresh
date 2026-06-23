@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Beenden (%{key})",
   "statusbar.trust.trusted": "Vertraut",
   "statusbar.trust.restricted": "Eingeschränkt",
-  "statusbar.trust.blocked": "Blockiert"
+  "statusbar.trust.blocked": "Blockiert",
+  "action.show_read_only_menu": "Schreibschutz-Menü anzeigen",
+  "read_only.menu.title": "Schreibgeschützter Puffer",
+  "read_only.menu.enable_editing": "Bearbeitung aktivieren",
+  "read_only.menu.cancel": "Abbrechen"
 }

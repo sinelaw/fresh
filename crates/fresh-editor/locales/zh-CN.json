@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "退出 (%{key})",
   "statusbar.trust.trusted": "已信任",
   "statusbar.trust.restricted": "受限",
-  "statusbar.trust.blocked": "已阻止"
+  "statusbar.trust.blocked": "已阻止",
+  "action.show_read_only_menu": "显示只读菜单",
+  "read_only.menu.title": "只读缓冲区",
+  "read_only.menu.enable_editing": "启用编辑",
+  "read_only.menu.cancel": "取消"
 }

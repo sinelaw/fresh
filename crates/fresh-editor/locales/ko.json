@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "종료 (%{key})",
   "statusbar.trust.trusted": "신뢰됨",
   "statusbar.trust.restricted": "제한됨",
-  "statusbar.trust.blocked": "차단됨"
+  "statusbar.trust.blocked": "차단됨",
+  "action.show_read_only_menu": "읽기 전용 메뉴 표시",
+  "read_only.menu.title": "읽기 전용 버퍼",
+  "read_only.menu.enable_editing": "편집 활성화",
+  "read_only.menu.cancel": "취소"
 }

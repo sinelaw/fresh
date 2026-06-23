@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Ukončit (%{key})",
   "statusbar.trust.trusted": "Důvěryhodné",
   "statusbar.trust.restricted": "Omezeno",
-  "statusbar.trust.blocked": "Blokováno"
+  "statusbar.trust.blocked": "Blokováno",
+  "action.show_read_only_menu": "Zobrazit nabídku jen pro čtení",
+  "read_only.menu.title": "Vyrovnávací paměť jen pro čtení",
+  "read_only.menu.enable_editing": "Povolit úpravy",
+  "read_only.menu.cancel": "Zrušit"
 }

@@ -990,19 +990,11 @@ impl Editor {
                     (WarningLevel::None, 0)
                 };
 
-            // Compute status bar hover state for styling
-            use crate::view::ui::status_bar::StatusBarHover;
-            let status_bar_hover = match &self.active_window_mut().mouse_state.hover_target {
-                Some(HoverTarget::StatusBarLspIndicator) => StatusBarHover::LspIndicator,
-                Some(HoverTarget::StatusBarWarningBadge) => StatusBarHover::WarningBadge,
-                Some(HoverTarget::StatusBarLineEndingIndicator) => {
-                    StatusBarHover::LineEndingIndicator
-                }
-                Some(HoverTarget::StatusBarEncodingIndicator) => StatusBarHover::EncodingIndicator,
-                Some(HoverTarget::StatusBarLanguageIndicator) => StatusBarHover::LanguageIndicator,
-                Some(HoverTarget::StatusBarRemoteIndicator) => StatusBarHover::RemoteIndicator,
-                Some(HoverTarget::StatusBarTrustIndicator) => StatusBarHover::WorkspaceTrust,
-                _ => StatusBarHover::None,
+            // Which clickable status-bar segment (if any) the mouse is over —
+            // drives hover styling generically (one variant for the whole bar).
+            let status_bar_hovered = match &self.active_window_mut().mouse_state.hover_target {
+                Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
+                _ => None,
             };
 
             let remote_connection = self.connection_display_string();
@@ -1068,7 +1060,7 @@ impl Editor {
                         update_available: update_available.as_deref(),
                         warning_level,
                         general_warning_count,
-                        hover: status_bar_hover,
+                        hovered: status_bar_hovered,
                         remote_connection: remote_connection.as_deref(),
                         session_name: session_name.as_deref(),
                         read_only: is_read_only,
@@ -1101,17 +1093,7 @@ impl Editor {
             let status_bar_area = main_chunks[status_bar_idx];
             self.active_chrome_mut().status_bar_area =
                 Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
-            self.active_chrome_mut().status_bar_lsp_area = status_bar_layout.lsp_indicator;
-            self.active_chrome_mut().status_bar_warning_area = status_bar_layout.warning_badge;
-            self.active_chrome_mut().status_bar_line_ending_area =
-                status_bar_layout.line_ending_indicator;
-            self.active_chrome_mut().status_bar_encoding_area =
-                status_bar_layout.encoding_indicator;
-            self.active_chrome_mut().status_bar_language_area =
-                status_bar_layout.language_indicator;
-            self.active_chrome_mut().status_bar_message_area = status_bar_layout.message_area;
-            self.active_chrome_mut().status_bar_remote_area = status_bar_layout.remote_indicator;
-            self.active_chrome_mut().status_bar_trust_area = status_bar_layout.trust_indicator;
+            self.active_chrome_mut().status_bar_clickable = status_bar_layout.clickable;
             self.active_chrome_mut().status_bar_plugin_token_areas =
                 status_bar_layout.plugin_token_areas;
             self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;

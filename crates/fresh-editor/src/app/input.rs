@@ -1269,6 +1269,9 @@ impl Editor {
             Action::ShowRemoteIndicatorMenu => {
                 self.show_remote_indicator_popup();
             }
+            Action::ShowReadOnlyMenu => {
+                self.show_read_only_popup();
+            }
             Action::ClearWarnings => {
                 self.active_window_mut().clear_warnings();
             }

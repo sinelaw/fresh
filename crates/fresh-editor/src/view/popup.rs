@@ -119,6 +119,10 @@ pub enum PopupResolver {
     /// ("trusted" / "restricted" / "blocked") through
     /// `handle_workspace_trust_action`.
     WorkspaceTrust,
+    /// Read-only indicator menu (anchored to the status bar's `{read_only}`
+    /// segment). Confirm dispatches the selected row's `data`
+    /// ("toggle_read_only" / "cancel") through `handle_read_only_menu_action`.
+    ReadOnly,
 }
 
 /// Content of a popup window

@@ -46,20 +46,12 @@ pub enum HoverTarget {
     FileExplorerCloseButton,
     /// Hovering over a file explorer item's status indicator (path)
     FileExplorerStatusIndicator(std::path::PathBuf),
-    /// Hovering over the status bar LSP indicator
-    StatusBarLspIndicator,
-    /// Hovering over the status bar remote-authority indicator
-    StatusBarRemoteIndicator,
-    /// Hovering over the status bar workspace-trust indicator
-    StatusBarTrustIndicator,
-    /// Hovering over the status bar warning badge
-    StatusBarWarningBadge,
-    /// Hovering over the status bar line ending indicator
-    StatusBarLineEndingIndicator,
-    /// Hovering over the status bar encoding indicator
-    StatusBarEncodingIndicator,
-    /// Hovering over the status bar language indicator
-    StatusBarLanguageIndicator,
+    /// Hovering over a clickable status-bar segment (LSP / encoding / line
+    /// ending / language / warnings / messages / remote / trust / read-only).
+    /// One generic variant carrying the segment's identity — the renderer
+    /// styles it and `handle_click_status_bar` dispatches it via a single
+    /// hit-test over `ChromeLayout::status_bar_clickable`.
+    StatusBarClickable(crate::view::ui::status_bar::StatusBarClickable),
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,
     /// Hovering over the search options "Whole Word" checkbox

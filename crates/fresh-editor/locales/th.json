@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "ออก (%{key})",
   "statusbar.trust.trusted": "เชื่อถือ",
   "statusbar.trust.restricted": "จำกัด",
-  "statusbar.trust.blocked": "ปิดกั้น"
+  "statusbar.trust.blocked": "ปิดกั้น",
+  "action.show_read_only_menu": "แสดงเมนูอ่านอย่างเดียว",
+  "read_only.menu.title": "บัฟเฟอร์อ่านอย่างเดียว",
+  "read_only.menu.enable_editing": "เปิดใช้การแก้ไข",
+  "read_only.menu.cancel": "ยกเลิก"
 }

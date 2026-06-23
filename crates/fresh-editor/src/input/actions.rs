@@ -2886,6 +2886,7 @@ pub fn action_to_events(
         | Action::ShowStatusLog
         | Action::ShowLspStatus
         | Action::ShowRemoteIndicatorMenu
+        | Action::ShowReadOnlyMenu
         | Action::ClearWarnings
         | Action::SmartHome
         | Action::ToggleComment

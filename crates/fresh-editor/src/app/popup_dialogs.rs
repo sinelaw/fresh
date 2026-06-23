@@ -600,7 +600,7 @@ impl Editor {
         // even in prompt-auto-hide mode.
         let position = self
             .active_chrome()
-            .status_bar_lsp_area
+            .status_bar_clickable_area(crate::view::ui::status_bar::StatusBarClickable::Lsp)
             .map(
                 |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
                     x: col_start,
@@ -921,7 +921,9 @@ impl Editor {
         // even in prompt-auto-hide mode.
         let position = self
             .active_chrome()
-            .status_bar_remote_area
+            .status_bar_clickable_area(
+                crate::view::ui::status_bar::StatusBarClickable::RemoteIndicator,
+            )
             .map(
                 |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
                     x: col_start,
@@ -971,6 +973,111 @@ impl Editor {
             .get_mut(&buffer_id)
         {
             state.popups.show(popup);
+        }
+    }
+
+    /// Show the read-only indicator menu, anchored to the status bar's
+    /// `{read_only}` segment. Offers to enable editing (which dispatches
+    /// `Action::ToggleReadOnly`). Toggles closed on a second click, mirroring
+    /// the LSP / remote menus.
+    pub fn show_read_only_popup(&mut self) {
+        use crate::view::popup::{
+            Popup, PopupContent, PopupKind, PopupListItem, PopupPosition, PopupResolver,
+        };
+        use ratatui::style::Style;
+
+        // Second click on the indicator closes the menu instead of rebuilding.
+        if self
+            .active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, PopupResolver::ReadOnly))
+        {
+            self.hide_popup();
+            return;
+        }
+        // Not a toggle-close: clear any other menu popup left open so this one
+        // never renders over a stale popup (#1941).
+        self.dismiss_menu_popups_for_prompt();
+
+        let items = vec![
+            PopupListItem::new(format!("    {}", t!("read_only.menu.enable_editing")))
+                .with_data("toggle_read_only".to_string()),
+            PopupListItem::new(format!("    {}", t!("read_only.menu.cancel")))
+                .with_data("cancel".to_string()),
+        ];
+
+        let position = self
+            .active_chrome()
+            .status_bar_clickable_area(crate::view::ui::status_bar::StatusBarClickable::ReadOnly)
+            .map(
+                |(status_row, col_start, _)| PopupPosition::AboveStatusBarAt {
+                    x: col_start,
+                    status_row,
+                },
+            )
+            .unwrap_or(PopupPosition::BottomRight);
+
+        let popup_width = (items
+            .iter()
+            .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
+            .max()
+            .unwrap_or(24)
+            + 4) as u16;
+
+        let popup = Popup {
+            kind: PopupKind::List,
+            title: Some(t!("read_only.menu.title").to_string()),
+            description: None,
+            transient: false,
+            content: PopupContent::List { items, selected: 0 },
+            position,
+            width: popup_width.clamp(28, 50),
+            max_height: 10,
+            bordered: true,
+            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
+            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            scroll_offset: 0,
+            text_selection: None,
+            accept_key_hint: None,
+            resolver: PopupResolver::ReadOnly,
+            // Explicitly invoked from the status-bar `{read_only}` element, so
+            // this popup wants the keyboard immediately.
+            focused: true,
+            focus_key_hint: None,
+        };
+
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.popups.show(popup);
+        }
+    }
+
+    /// Dispatch the action selected from the read-only indicator menu.
+    /// `"toggle_read_only"` flips the buffer's read-only state (enabling
+    /// editing); `"cancel"` is a no-op (the popup already closed).
+    pub fn handle_read_only_menu_action(&mut self, action_key: &str) {
+        match action_key {
+            "toggle_read_only" => {
+                if let Err(e) =
+                    self.handle_action(crate::input::keybindings::Action::ToggleReadOnly)
+                {
+                    tracing::warn!("read-only menu: toggling read-only failed: {}", e);
+                }
+            }
+            "cancel" => {}
+            other => {
+                tracing::warn!(
+                    "handle_read_only_menu_action: unknown action key '{}'",
+                    other
+                );
+            }
         }
     }
 

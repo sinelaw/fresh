@@ -23,6 +23,32 @@ use rust_i18n::t;
 const SSH_PREFIX: &str = "[SSH:";
 const SSH_PREFIX_TERMINATOR: &str = "] ";
 
+/// Stable identity of a *clickable* status-bar segment.
+///
+/// This is the generic rail that replaces per-element layout fields, hover
+/// enum variants, and bespoke mouse-detective branches. The renderer records
+/// each clickable element's screen area under its `StatusBarClickable` id in
+/// [`StatusBarLayout::clickable`]; the app layer (`mouse_input.rs`) runs a
+/// single hit-test over that list for both hover and click, mapping the id to
+/// an editor `Action` in one place (`dispatch_status_bar_click`).
+///
+/// Wiring a new clickable built-in element is therefore: give it an
+/// `ElementKind`, list it in [`StatusBarRenderer::clickable_for_kind`], and add
+/// one arm to the app-side dispatch. No new layout field / hover variant /
+/// chrome area / mouse loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusBarClickable {
+    LineEnding,
+    Encoding,
+    Language,
+    Lsp,
+    Warnings,
+    Messages,
+    RemoteIndicator,
+    WorkspaceTrust,
+    ReadOnly,
+}
+
 /// Categorization of how a rendered element should be styled and tracked for click detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ElementKind {
@@ -44,6 +70,8 @@ enum ElementKind {
     Palette,
     /// Status message area (clickable to show history)
     Messages,
+    /// Read-only `[RO]` indicator (clickable to open the read-only menu)
+    ReadOnly,
     /// Remote disconnected prefix (error colors)
     RemoteDisconnected,
     /// Clock element — colon rendered with hardware blink
@@ -226,7 +254,10 @@ pub struct StatusBarContext<'a> {
     pub update_available: Option<&'a str>,
     pub warning_level: WarningLevel,
     pub general_warning_count: usize,
-    pub hover: StatusBarHover,
+    /// The clickable status-bar segment the mouse is currently over, if any.
+    /// Drives hover styling generically — each element underlines/recolors when
+    /// its own `clickable_for_kind` id equals this.
+    pub hovered: Option<StatusBarClickable>,
     pub remote_connection: Option<&'a str>,
     pub session_name: Option<&'a str>,
     pub read_only: bool,
@@ -272,24 +303,11 @@ pub struct StatusBarContext<'a> {
 /// Layout information returned from status bar rendering for mouse click detection
 #[derive(Debug, Clone, Default)]
 pub struct StatusBarLayout {
-    /// LSP indicator area (row, start_col, end_col) - None if no LSP indicator shown
-    pub lsp_indicator: Option<(u16, u16, u16)>,
-    /// Warning badge area (row, start_col, end_col) - None if no warnings
-    pub warning_badge: Option<(u16, u16, u16)>,
-    /// Line ending indicator area (row, start_col, end_col)
-    pub line_ending_indicator: Option<(u16, u16, u16)>,
-    /// Encoding indicator area (row, start_col, end_col)
-    pub encoding_indicator: Option<(u16, u16, u16)>,
-    /// Language indicator area (row, start_col, end_col)
-    pub language_indicator: Option<(u16, u16, u16)>,
-    /// Status message area (row, start_col, end_col) - clickable to show full history
-    pub message_area: Option<(u16, u16, u16)>,
-    /// Remote authority indicator area (row, start_col, end_col) - clickable
-    /// to open the remote-authority context menu.
-    pub remote_indicator: Option<(u16, u16, u16)>,
-    /// Workspace-trust indicator area (row, start_col, end_col) - clickable
-    /// to open the workspace-trust prompt.
-    pub trust_indicator: Option<(u16, u16, u16)>,
+    /// Every clickable built-in segment drawn this frame, as
+    /// `(id, row, start_col, end_col)`, in render order. One generic list
+    /// instead of a field per indicator — both hover hit-testing and click
+    /// dispatch walk it (see `StatusBarClickable`).
+    pub clickable: Vec<(StatusBarClickable, u16, u16, u16)>,
     /// Plugin-registered status-bar token areas, keyed by the
     /// `"<plugin_name>:<token_name>"` registry key (same key the
     /// editor uses in `status_bar_token_registry`). Populated by the
@@ -342,29 +360,6 @@ fn element_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::Custom => "plugin",
         _ => "text",
     }
-}
-
-/// Status bar hover state for styling clickable indicators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum StatusBarHover {
-    #[default]
-    None,
-    /// Mouse is over the LSP indicator
-    LspIndicator,
-    /// Mouse is over the warning badge
-    WarningBadge,
-    /// Mouse is over the line ending indicator
-    LineEndingIndicator,
-    /// Mouse is over the encoding indicator
-    EncodingIndicator,
-    /// Mouse is over the language indicator
-    LanguageIndicator,
-    /// Mouse is over the status message area
-    MessageArea,
-    /// Mouse is over the remote authority indicator
-    RemoteIndicator,
-    /// Mouse is over the workspace-trust indicator
-    WorkspaceTrust,
 }
 
 /// Which search option checkbox is being hovered
@@ -988,7 +983,7 @@ impl StatusBarRenderer {
                 }
                 Some(RenderedElement {
                     text: "[RO]".to_string(),
-                    kind: ElementKind::Normal,
+                    kind: ElementKind::ReadOnly,
                     token_key: None,
                 })
             }
@@ -1260,11 +1255,13 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Get the style for a rendered element based on its kind, theme, and hover state.
+    /// Get the style for a rendered element based on its kind, theme, and
+    /// whether the mouse is currently over it (`is_hovering`, computed
+    /// generically by the caller from the element's `clickable_for_kind` id).
     fn element_style(
         kind: ElementKind,
         theme: &crate::view::theme::Theme,
-        hover: StatusBarHover,
+        is_hovering: bool,
         _warning_level: WarningLevel,
         lsp_state: LspIndicatorState,
     ) -> Style {
@@ -1276,7 +1273,6 @@ impl StatusBarRenderer {
                 .fg(theme.status_error_indicator_fg)
                 .bg(theme.status_error_indicator_bg),
             ElementKind::LineEnding => {
-                let is_hovering = hover == StatusBarHover::LineEndingIndicator;
                 let (fg, bg) = if is_hovering {
                     (theme.menu_hover_fg, theme.menu_hover_bg)
                 } else {
@@ -1289,7 +1285,6 @@ impl StatusBarRenderer {
                 style
             }
             ElementKind::Encoding => {
-                let is_hovering = hover == StatusBarHover::EncodingIndicator;
                 let (fg, bg) = if is_hovering {
                     (theme.menu_hover_fg, theme.menu_hover_bg)
                 } else {
@@ -1302,7 +1297,6 @@ impl StatusBarRenderer {
                 style
             }
             ElementKind::Language => {
-                let is_hovering = hover == StatusBarHover::LanguageIndicator;
                 let (fg, bg) = if is_hovering {
                     (theme.menu_hover_fg, theme.menu_hover_bg)
                 } else {
@@ -1314,8 +1308,19 @@ impl StatusBarRenderer {
                 }
                 style
             }
+            // The read-only indicator paints with the neutral status-bar
+            // palette and only underlines on hover, signalling it's clickable
+            // (opens the read-only menu) without breaking the bar's color band.
+            ElementKind::ReadOnly => {
+                let mut style = Style::default()
+                    .fg(theme.status_bar_fg)
+                    .bg(theme.status_bar_bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             ElementKind::Lsp => {
-                let is_hovering = hover == StatusBarHover::LspIndicator;
                 // Color by LSP state:
                 //   Error  → diagnostic_error_*       (red-ish; problem)
                 //   Off    → status_lsp_actionable_*  (prominent; click to act)
@@ -1349,7 +1354,6 @@ impl StatusBarRenderer {
                 style
             }
             ElementKind::WarningBadge => {
-                let is_hovering = hover == StatusBarHover::WarningBadge;
                 let (fg, bg) = if is_hovering {
                     (
                         theme.status_warning_indicator_hover_fg,
@@ -1381,7 +1385,6 @@ impl StatusBarRenderer {
                 .fg(theme.status_bar_fg)
                 .bg(theme.status_bar_bg),
             ElementKind::RemoteIndicator(state) => {
-                let is_hovering = hover == StatusBarHover::RemoteIndicator;
                 let (fg, bg) = match state {
                     // Connecting and Connected share the "help
                     // indicator" palette so the transition from one to
@@ -1409,7 +1412,6 @@ impl StatusBarRenderer {
             }
             ElementKind::WorkspaceTrust(level) => {
                 use crate::services::workspace_trust::TrustLevel;
-                let is_hovering = hover == StatusBarHover::WorkspaceTrust;
                 let (fg, bg) = match level {
                     // Gated states reuse the warning indicator palette so
                     // "execution is restricted/blocked" reads at a glance.
@@ -1443,6 +1445,7 @@ impl StatusBarRenderer {
             | ElementKind::Custom
             | ElementKind::LineEnding
             | ElementKind::Encoding
+            | ElementKind::ReadOnly
             | ElementKind::Language => ("ui.status_bar_fg", "ui.status_bar_bg"),
             ElementKind::RemoteDisconnected => (
                 "ui.status_error_indicator_fg",
@@ -1487,12 +1490,35 @@ impl StatusBarRenderer {
         }
     }
 
-    /// Map a rendered element to the layout field(s) it should populate.
-    /// Built-in indicators get their dedicated `Option<(row, start_col,
-    /// end_col)>` slot. Plugin tokens (`ElementKind::Custom` carrying a
-    /// `token_key`) get an entry in `plugin_token_areas`, keyed by the
-    /// plugin's registry key — that's what `handle_click_status_bar`
-    /// uses to dispatch clicks back to the right plugin.
+    /// The clickable identity of an element kind, or `None` for static
+    /// (non-interactive) elements. This single mapping is what makes the click
+    /// + hover rail generic: it's the *only* place that decides whether a
+    /// built-in element is clickable. Plugin tokens are handled separately
+    /// (they dispatch a hook, not a core `Action`).
+    fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
+        match kind {
+            ElementKind::LineEnding => Some(StatusBarClickable::LineEnding),
+            ElementKind::Encoding => Some(StatusBarClickable::Encoding),
+            ElementKind::Language => Some(StatusBarClickable::Language),
+            ElementKind::Lsp => Some(StatusBarClickable::Lsp),
+            ElementKind::WarningBadge => Some(StatusBarClickable::Warnings),
+            ElementKind::Messages => Some(StatusBarClickable::Messages),
+            ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
+            ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
+            ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
+            ElementKind::Normal
+            | ElementKind::RemoteDisconnected
+            | ElementKind::Update
+            | ElementKind::Palette
+            | ElementKind::Clock
+            | ElementKind::Custom => None,
+        }
+    }
+
+    /// Record an element's screen area for click/hover dispatch. Clickable
+    /// built-ins land in the generic `clickable` list keyed by their
+    /// `StatusBarClickable` id; plugin tokens (`ElementKind::Custom` carrying a
+    /// `token_key`) land in `plugin_token_areas` keyed by their registry key.
     fn update_layout_for_element(
         layout: &mut StatusBarLayout,
         kind: ElementKind,
@@ -1501,29 +1527,15 @@ impl StatusBarRenderer {
         start_col: u16,
         end_col: u16,
     ) {
-        match kind {
-            ElementKind::LineEnding => {
-                layout.line_ending_indicator = Some((row, start_col, end_col))
+        if let Some(id) = Self::clickable_for_kind(kind) {
+            layout.clickable.push((id, row, start_col, end_col));
+        }
+        if kind == ElementKind::Custom {
+            if let Some(key) = token_key {
+                layout
+                    .plugin_token_areas
+                    .insert(key.to_string(), (row, start_col, end_col));
             }
-            ElementKind::Encoding => layout.encoding_indicator = Some((row, start_col, end_col)),
-            ElementKind::Language => layout.language_indicator = Some((row, start_col, end_col)),
-            ElementKind::Lsp => layout.lsp_indicator = Some((row, start_col, end_col)),
-            ElementKind::WarningBadge => layout.warning_badge = Some((row, start_col, end_col)),
-            ElementKind::Messages => layout.message_area = Some((row, start_col, end_col)),
-            ElementKind::RemoteIndicator(_) => {
-                layout.remote_indicator = Some((row, start_col, end_col))
-            }
-            ElementKind::WorkspaceTrust(_) => {
-                layout.trust_indicator = Some((row, start_col, end_col))
-            }
-            ElementKind::Custom => {
-                if let Some(key) = token_key {
-                    layout
-                        .plugin_token_areas
-                        .insert(key.to_string(), (row, start_col, end_col));
-                }
-            }
-            _ => {}
         }
     }
 
@@ -1534,10 +1546,12 @@ impl StatusBarRenderer {
     fn element_spans(
         rendered: &RenderedElement,
         theme: &crate::view::theme::Theme,
-        hover: StatusBarHover,
+        hovered: Option<StatusBarClickable>,
         warning_level: WarningLevel,
         lsp_state: LspIndicatorState,
     ) -> (Vec<Span<'static>>, usize) {
+        let is_hovering =
+            Self::clickable_for_kind(rendered.kind).is_some_and(|c| Some(c) == hovered);
         let base_style = Style::default()
             .fg(theme.status_bar_fg)
             .bg(theme.status_bar_bg);
@@ -1576,7 +1590,8 @@ impl StatusBarRenderer {
             );
         }
 
-        let style = Self::element_style(rendered.kind, theme, hover, warning_level, lsp_state);
+        let style =
+            Self::element_style(rendered.kind, theme, is_hovering, warning_level, lsp_state);
         let mut spans = vec![Span::styled(" ", style)];
         if rendered.kind == ElementKind::Clock {
             // "HH:MM" — blink the colon via terminal hardware (SGR 5)
@@ -1610,7 +1625,7 @@ impl StatusBarRenderer {
             .collect();
 
         let theme = ctx.theme;
-        let hover = ctx.hover;
+        let hovered = ctx.hovered;
         let warning_level = ctx.warning_level;
         let lsp_state = ctx.lsp_indicator_state;
         rendered
@@ -1619,7 +1634,7 @@ impl StatusBarRenderer {
                 let kind = r.kind;
                 let token_key = r.token_key.clone();
                 let (spans, width) =
-                    Self::element_spans(&r, theme, hover, warning_level, lsp_state);
+                    Self::element_spans(&r, theme, hovered, warning_level, lsp_state);
                 (spans, width, kind, token_key)
             })
             .collect()
@@ -1802,10 +1817,12 @@ impl StatusBarRenderer {
                 let group_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
                 let truncated = truncate_to_width(&group_text, remaining);
                 let truncated_width = str_width(&truncated);
+                let overflow_is_hovering =
+                    Self::clickable_for_kind(kind).is_some_and(|c| Some(c) == ctx.hovered);
                 let overflow_style = Self::element_style(
                     kind,
                     ctx.theme,
-                    ctx.hover,
+                    overflow_is_hovering,
                     ctx.warning_level,
                     ctx.lsp_indicator_state,
                 );
@@ -2489,7 +2506,7 @@ mod tests {
         let palette_style = StatusBarRenderer::element_style(
             ElementKind::Palette,
             &theme,
-            StatusBarHover::None,
+            false,
             WarningLevel::None,
             LspIndicatorState::None,
         );
@@ -2499,7 +2516,7 @@ mod tests {
         let lsp_on_style = StatusBarRenderer::element_style(
             ElementKind::Lsp,
             &theme,
-            StatusBarHover::None,
+            false,
             WarningLevel::None,
             LspIndicatorState::On,
         );
@@ -2511,7 +2528,7 @@ mod tests {
         let lsp_off_style = StatusBarRenderer::element_style(
             ElementKind::Lsp,
             &theme,
-            StatusBarHover::None,
+            false,
             WarningLevel::None,
             LspIndicatorState::Off,
         );
@@ -2521,7 +2538,7 @@ mod tests {
         let lsp_error_style = StatusBarRenderer::element_style(
             ElementKind::Lsp,
             &theme,
-            StatusBarHover::None,
+            false,
             WarningLevel::None,
             LspIndicatorState::Error,
         );

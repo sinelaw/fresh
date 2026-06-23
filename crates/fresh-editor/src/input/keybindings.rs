@@ -535,6 +535,7 @@ pub enum Action {
     ShowStatusLog,
     ShowLspStatus,
     ShowRemoteIndicatorMenu,
+    ShowReadOnlyMenu,
     ClearWarnings,
     CommandPalette, // Alias for QuickOpen — kept for keymap/plugin compatibility
     /// Quick Open - unified prompt with prefix-based provider routing
@@ -1058,6 +1059,7 @@ impl Action {
             "show_status_log" => ShowStatusLog,
             "show_lsp_status" => ShowLspStatus,
             "show_remote_indicator_menu" => ShowRemoteIndicatorMenu,
+            "show_read_only_menu" => ShowReadOnlyMenu,
             "clear_warnings" => ClearWarnings,
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
@@ -2518,6 +2520,7 @@ impl KeybindingResolver {
             Action::ShowStatusLog => t!("action.show_status_log"),
             Action::ShowLspStatus => t!("action.show_lsp_status"),
             Action::ShowRemoteIndicatorMenu => t!("action.show_remote_indicator_menu"),
+            Action::ShowReadOnlyMenu => t!("action.show_read_only_menu"),
             Action::ClearWarnings => t!("action.clear_warnings"),
             Action::CommandPalette => t!("action.command_palette"),
             Action::QuickOpen => t!("action.quick_open"),

@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Sair (%{key})",
   "statusbar.trust.trusted": "Confiável",
   "statusbar.trust.restricted": "Restrito",
-  "statusbar.trust.blocked": "Bloqueado"
+  "statusbar.trust.blocked": "Bloqueado",
+  "action.show_read_only_menu": "Mostrar menu somente leitura",
+  "read_only.menu.title": "Buffer somente leitura",
+  "read_only.menu.enable_editing": "Ativar edição",
+  "read_only.menu.cancel": "Cancelar"
 }

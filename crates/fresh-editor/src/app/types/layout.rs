@@ -126,24 +126,17 @@ pub(crate) struct ChromeLayout {
     pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
     /// Status bar area (row, x, width)
     pub status_bar_area: Option<(u16, u16, u16)>,
-    /// Status bar LSP indicator area (row, start_col, end_col)
-    pub status_bar_lsp_area: Option<(u16, u16, u16)>,
-    /// Status bar warning badge area (row, start_col, end_col)
-    pub status_bar_warning_area: Option<(u16, u16, u16)>,
-    /// Status bar line ending indicator area (row, start_col, end_col)
-    pub status_bar_line_ending_area: Option<(u16, u16, u16)>,
-    /// Status bar encoding indicator area (row, start_col, end_col)
-    pub status_bar_encoding_area: Option<(u16, u16, u16)>,
-    /// Status bar language indicator area (row, start_col, end_col)
-    pub status_bar_language_area: Option<(u16, u16, u16)>,
-    /// Status bar message area (row, start_col, end_col) - clickable to show status log
-    pub status_bar_message_area: Option<(u16, u16, u16)>,
-    /// Status bar remote-authority indicator area (row, start_col, end_col)
-    /// — clickable to open the remote-authority context menu.
-    pub status_bar_remote_area: Option<(u16, u16, u16)>,
-    /// Status bar workspace-trust indicator area (row, start_col, end_col)
-    /// — clickable to open the workspace-trust prompt.
-    pub status_bar_trust_area: Option<(u16, u16, u16)>,
+    /// Every clickable built-in status-bar segment drawn last frame, as
+    /// `(id, row, start_col, end_col)`. One generic list (mirroring
+    /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
+    /// `handle_click_status_bar` — no per-indicator field. See
+    /// `StatusBarClickable`.
+    pub status_bar_clickable: Vec<(
+        crate::view::ui::status_bar::StatusBarClickable,
+        u16,
+        u16,
+        u16,
+    )>,
     /// Plugin-registered status-bar token areas, keyed by
     /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
     /// by `handle_click_status_bar` which fires the
@@ -169,6 +162,19 @@ pub(crate) struct ChromeLayout {
 }
 
 impl ChromeLayout {
+    /// Screen area `(row, start_col, end_col)` of a given clickable status-bar
+    /// segment from the last frame, if it was drawn. Used to anchor popups to
+    /// their indicator (e.g. the LSP / remote / read-only menus).
+    pub fn status_bar_clickable_area(
+        &self,
+        id: crate::view::ui::status_bar::StatusBarClickable,
+    ) -> Option<(u16, u16, u16)> {
+        self.status_bar_clickable
+            .iter()
+            .find(|(cid, _, _, _)| *cid == id)
+            .map(|(_, row, start, end)| (*row, *start, *end))
+    }
+
     /// Reset the cell theme map for a new frame
     pub fn reset_cell_theme_map(&mut self) {
         let total = self.last_frame_width as usize * self.last_frame_height as usize;

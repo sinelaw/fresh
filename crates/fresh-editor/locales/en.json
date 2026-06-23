@@ -1553,5 +1553,9 @@
   "trust.dialog.btn_quit_key": "Quit (%{key})",
   "statusbar.trust.trusted": "Trusted",
   "statusbar.trust.restricted": "Restricted",
-  "statusbar.trust.blocked": "Blocked"
+  "statusbar.trust.blocked": "Blocked",
+  "action.show_read_only_menu": "Show read-only menu",
+  "read_only.menu.title": "Read-only buffer",
+  "read_only.menu.enable_editing": "Enable editing",
+  "read_only.menu.cancel": "Cancel"
 }

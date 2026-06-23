@@ -1283,44 +1283,13 @@ impl Editor {
             }
         }
 
-        // Check status bar indicators
+        // Check status bar indicators — one generic hit-test over every
+        // clickable segment recorded last frame (encoding, LSP, remote, …).
         if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar_area {
             if row == status_row {
-                let indicators = [
-                    (
-                        self.active_chrome().status_bar_line_ending_area,
-                        HoverTarget::StatusBarLineEndingIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_encoding_area,
-                        HoverTarget::StatusBarEncodingIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_language_area,
-                        HoverTarget::StatusBarLanguageIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_lsp_area,
-                        HoverTarget::StatusBarLspIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_remote_area,
-                        HoverTarget::StatusBarRemoteIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_trust_area,
-                        HoverTarget::StatusBarTrustIndicator,
-                    ),
-                    (
-                        self.active_chrome().status_bar_warning_area,
-                        HoverTarget::StatusBarWarningBadge,
-                    ),
-                ];
-                for (area, target) in indicators {
-                    if let Some((indicator_row, start, end)) = area {
-                        if row == indicator_row && col >= start && col < end {
-                            return Some(target);
-                        }
+                for (id, indicator_row, start, end) in &self.active_chrome().status_bar_clickable {
+                    if row == *indicator_row && col >= *start && col < *end {
+                        return Some(HoverTarget::StatusBarClickable(*id));
                     }
                 }
             }
@@ -2416,73 +2385,65 @@ impl Editor {
         Some(Ok(()))
     }
 
+    /// Map a click on a status-bar segment to its editor `Action`. This is the
+    /// single id→action table for the generic click rail; adding a clickable
+    /// element means adding one arm here (plus listing it in
+    /// `StatusBarRenderer::clickable_for_kind`).
+    ///
+    /// Most segments dismiss any open menu-style popup first (the #1941
+    /// follow-up: otherwise a stale popup overlaps the new prompt). The LSP,
+    /// remote, and read-only menus are the exceptions — each owns a toggle
+    /// (a second click closes it), so dismissing first would defeat the toggle;
+    /// they clear other popups themselves after their toggle check.
+    fn dispatch_status_bar_click(
+        &mut self,
+        id: crate::view::ui::status_bar::StatusBarClickable,
+    ) -> AnyhowResult<()> {
+        use crate::view::ui::status_bar::StatusBarClickable as C;
+        match id {
+            C::LineEnding => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::SetLineEnding)
+            }
+            C::Encoding => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::SetEncoding)
+            }
+            C::Language => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::SetLanguage)
+            }
+            // Owns its own toggle (second click closes the popup).
+            C::Lsp => self.handle_action(Action::ShowLspStatus),
+            // Owns its own toggle; clears other popups itself after the check.
+            C::RemoteIndicator => self.handle_action(Action::ShowRemoteIndicatorMenu),
+            C::WorkspaceTrust => {
+                // Opens the (cancellable) workspace-trust prompt.
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::WorkspaceTrustPrompt)
+            }
+            C::Warnings => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::ShowWarnings)
+            }
+            C::Messages => self.handle_action(Action::ShowStatusLog),
+            // Owns its own toggle (second click closes the read-only menu).
+            C::ReadOnly => self.handle_action(Action::ShowReadOnlyMenu),
+        }
+    }
+
     fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
         let (status_row, _status_x, _status_width) = self.active_chrome().status_bar_area?;
         if row != status_row {
             return None;
         }
-        // Helper: dismiss any open menu-style popup (LSP-Servers, plugin
-        // action popups, etc.) before opening a new modal UI. Without
-        // this, clicking a different status-bar indicator while a
-        // popup is up leaves the popup overlapping the new prompt or
-        // picker — the user-reported #1941 follow-up.
-        //
-        // Skipped for the LSP indicator itself: it has its own toggle
-        // semantics inside `show_lsp_status_popup` (second click closes
-        // the popup), which we don't want to undermine.
-        if let Some((r, s, e)) = self.active_chrome().status_bar_line_ending_area {
+        // Generic click rail: one hit-test over every clickable segment drawn
+        // last frame. The id→Action mapping (and each element's popup-dismiss
+        // nuance) lives in `dispatch_status_bar_click`.
+        let clickables = self.active_chrome().status_bar_clickable.clone();
+        for (id, r, s, e) in clickables {
             if row == r && col >= s && col < e {
-                self.dismiss_menu_popups_for_prompt();
-                return Some(self.handle_action(Action::SetLineEnding));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_encoding_area {
-            if row == r && col >= s && col < e {
-                self.dismiss_menu_popups_for_prompt();
-                return Some(self.handle_action(Action::SetEncoding));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_language_area {
-            if row == r && col >= s && col < e {
-                self.dismiss_menu_popups_for_prompt();
-                return Some(self.handle_action(Action::SetLanguage));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_lsp_area {
-            if row == r && col >= s && col < e {
-                // Intentionally NOT calling `dismiss_menu_popups_for_prompt`
-                // here — `show_lsp_status_popup` owns the toggle.
-                return Some(self.handle_action(Action::ShowLspStatus));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_remote_area {
-            if row == r && col >= s && col < e {
-                // Intentionally NOT calling `dismiss_menu_popups_for_prompt`
-                // here — `show_remote_indicator_popup` owns the toggle (a
-                // second click closes it). Dismissing first would close the
-                // popup, then the action would find nothing open and re-open
-                // it, so it could never be toggled shut. It clears any *other*
-                // menu popup itself, after its toggle check.
-                return Some(self.handle_action(Action::ShowRemoteIndicatorMenu));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_trust_area {
-            if row == r && col >= s && col < e {
-                // Clicking the trust indicator opens the (cancellable)
-                // workspace-trust prompt so the user can change the decision.
-                self.dismiss_menu_popups_for_prompt();
-                return Some(self.handle_action(Action::WorkspaceTrustPrompt));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_warning_area {
-            if row == r && col >= s && col < e {
-                self.dismiss_menu_popups_for_prompt();
-                return Some(self.handle_action(Action::ShowWarnings));
-            }
-        }
-        if let Some((r, s, e)) = self.active_chrome().status_bar_message_area {
-            if row == r && col >= s && col < e {
-                return Some(self.handle_action(Action::ShowStatusLog));
+                return Some(self.dispatch_status_bar_click(id));
             }
         }
         // Plugin-registered tokens. Walk the per-frame map produced by
