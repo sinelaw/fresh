@@ -485,22 +485,92 @@ impl Editor {
         self.load_file_open_shortcuts_async();
     }
 
-    /// Change the working directory to a new path
+    /// Change the active window's project root to a new path (Switch Project).
     ///
-    /// This requests a full editor restart with the new working directory.
-    /// The main loop will drop the current editor instance and create a fresh
-    /// one pointing to the new directory. This ensures:
-    /// - All buffers are cleanly closed
-    /// - LSP servers are properly shut down and restarted with new root
-    /// - Plugins are cleanly restarted
-    /// - No state leaks between projects
+    /// Re-roots ONLY the active window — opens the new project in a fresh
+    /// window, dives into it, and closes the window it was invoked from. It
+    /// deliberately does **not** restart the editor: the previous
+    /// implementation requested a full process restart that tore down and
+    /// rebuilt *every* window from disk, which discarded the live state of all
+    /// other open workspaces (terminals, agents, LSP) and silently downgraded
+    /// remote siblings to a local backend. With the create→dive→close flow,
+    /// every other window and the Orchestrator dock are left untouched.
+    ///
+    /// A remote active window carries its connected backend (and connection
+    /// keepalive) onto the new project so the new root opens on the same
+    /// container / SSH host; a local window gets a fresh local authority
+    /// scoped to the new root.
     pub fn change_working_dir(&mut self, new_path: PathBuf) {
         // Canonicalize the path to resolve symlinks and normalize
         let new_path = new_path.canonicalize().unwrap_or(new_path);
+        let old_id = self.active_window;
 
-        // Request a restart with the new working directory
-        // The main loop will handle creating a fresh editor instance
-        self.request_restart(new_path);
+        // Already showing this root in the active window — nothing to do.
+        if self
+            .find_window_by_root(&new_path)
+            .is_some_and(|w| w == old_id)
+        {
+            return;
+        }
+
+        // Persist the outgoing project's layout first so a later switch back
+        // restores its buffers/splits.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = self.save_workspace_for(old_id);
+
+        let new_id = if let Some(existing) = self.find_window_by_root(&new_path) {
+            // The new project is already open in another window — re-home onto
+            // it rather than spawning a duplicate session for the same dir.
+            existing
+        } else {
+            let label = new_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| new_path.to_string_lossy().into_owned());
+
+            if self
+                .windows
+                .get(&old_id)
+                .is_some_and(|w| w.authority_spec.is_remote())
+            {
+                // Carry the active window's connected backend onto the new
+                // project so it opens on the same container / SSH host (the
+                // Switch Project browser listed that backend's filesystem, so
+                // the picked path lives there). `Authority` is non-`Clone`
+                // (one per window, issue #2280), so move it out of the old
+                // window — which is closed moments later — and move the
+                // connection keepalive across so closing the old window can't
+                // tear the backend down.
+                let spec = self
+                    .windows
+                    .get(&old_id)
+                    .map(|w| w.authority_spec.clone())
+                    .unwrap_or_default();
+                let authority = self.take_active_authority();
+                let id = self.create_window_with_authority(new_path.clone(), label, authority);
+                if let Some(w) = self.windows.get_mut(&id) {
+                    w.authority_spec = spec;
+                }
+                if let Some(keepalive) = self.session_keepalives.remove(&old_id) {
+                    self.session_keepalives.insert(id, keepalive);
+                }
+                id
+            } else {
+                // Local window: the new project gets its own fresh local
+                // authority scoped to the new root (its own per-session trust).
+                self.create_window_at(new_path.clone(), label)
+            }
+        };
+
+        if new_id == old_id {
+            return;
+        }
+
+        self.set_active_window(new_id);
+        self.close_window(old_id);
+
+        // Re-evaluate workspace trust for the freshly-rooted project.
+        self.maybe_prompt_workspace_trust();
     }
 
     /// Load directory contents for the file open dialog

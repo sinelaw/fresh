@@ -169,22 +169,21 @@ fn test_switch_project_changes_working_dir() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    tracing::info!("Pressed Enter, checking for restart request");
+    tracing::info!("Pressed Enter, checking active window re-root");
 
-    // The editor should signal a restart is needed (actual restart happens in main.rs)
+    // Switch Project re-roots the ACTIVE window in place — it must NOT restart
+    // the editor (the old design tore the whole process down and rebuilt every
+    // window).
     assert!(
-        harness.editor().should_restart(),
-        "Editor should signal restart is needed after selecting project"
+        !harness.editor().should_restart(),
+        "Switch Project must not request an editor restart"
     );
 
-    // Verify the restart directory is set to our subdir
-    let restart_dir = harness
-        .editor_mut()
-        .take_restart_dir()
-        .expect("Restart directory should be set");
+    // The active window's project root is now the selected subdirectory.
     assert_eq!(
-        restart_dir, subdir,
-        "Restart directory should match selected directory (myproject)"
+        harness.editor().working_dir(),
+        subdir.as_path(),
+        "Active window should be re-rooted to the selected directory (myproject)"
     );
     tracing::info!("Test completed successfully");
 }
@@ -252,22 +251,18 @@ fn test_switch_project_select_current_directory() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    tracing::info!("Pressed Enter, checking for restart request");
+    tracing::info!("Pressed Enter, checking active window");
 
-    // The editor should signal a restart is needed (actual restart happens in main.rs)
+    // Selecting the directory the active window is already rooted at is a
+    // no-op: nothing to re-root, and certainly no editor restart.
     assert!(
-        harness.editor().should_restart(),
-        "Editor should signal restart is needed after selecting project"
+        !harness.editor().should_restart(),
+        "Selecting the current directory must not request an editor restart"
     );
-
-    // Verify the restart directory is set to our subdir
-    let restart_dir = harness
-        .editor_mut()
-        .take_restart_dir()
-        .expect("Restart directory should be set");
     assert_eq!(
-        restart_dir, subdir,
-        "Restart directory should match selected directory"
+        harness.editor().working_dir(),
+        subdir.as_path(),
+        "Active window stays rooted at the current directory"
     );
     tracing::info!("Test completed successfully");
 }
@@ -407,7 +402,7 @@ fn test_switch_project_in_file_menu() {
 /// Test the full folder switching flow with session handling
 ///
 /// This test verifies:
-/// 1. Editor requests restart when switching folders (via should_quit + take_restart_dir)
+/// 1. Switch Project re-roots the active window in place (no editor restart)
 /// 2. Sessions are saved per-working-directory
 /// 3. Sessions are restored when starting in the same directory
 /// 4. Switching folders provides a clean slate (no old buffers)
@@ -520,25 +515,21 @@ fn test_switch_project_restart_flow_with_sessions() {
             .unwrap();
         harness.render().unwrap();
 
-        // Verify editor requested restart (should_quit should be true after folder switch)
+        // Switch Project re-roots the active window in place — no restart.
         assert!(
-            harness.should_quit(),
-            "Editor should request quit/restart after folder switch"
+            !harness.should_quit() && !harness.editor().should_restart(),
+            "Switch Project must not quit/restart the editor"
         );
-
-        // Verify restart was requested with the new directory
-        let restart_dir = harness.editor_mut().take_restart_dir();
+        // The active window is now rooted at project_b...
         assert!(
-            restart_dir.is_some(),
-            "Editor should have a restart directory set"
-        );
-        let restart_dir = restart_dir.unwrap();
-        assert!(
-            restart_dir.starts_with(&project_b) || project_b.starts_with(&restart_dir),
-            "Restart directory should be project_b: got {:?}, expected {:?}",
-            restart_dir,
+            harness.editor().working_dir().starts_with(&project_b)
+                || project_b.starts_with(harness.editor().working_dir()),
+            "Active window should be re-rooted to project_b: got {:?}, expected {:?}",
+            harness.editor().working_dir(),
             project_b
         );
+        // ...and gives a clean slate — project_a's restored file is gone.
+        harness.assert_screen_not_contains("main_a.txt");
     }
 
     // Phase 4: Simulate main loop restart - create new editor in project_b
@@ -702,13 +693,18 @@ fn test_session_persistence_across_project_switches() {
         // Switch to project B
         switch_to_project(&mut harness, &project_b);
 
-        // Verify editor requested restart
+        // Switch Project re-roots in place — no restart — and the active
+        // window is now rooted at project_b.
         assert!(
-            harness.should_quit(),
-            "Editor should request restart after switching project"
+            !harness.should_quit() && !harness.editor().should_restart(),
+            "Switch Project must not restart the editor"
         );
-        let restart_dir = harness.editor_mut().take_restart_dir();
-        assert!(restart_dir.is_some(), "Restart directory should be set");
+        assert!(
+            harness.editor().working_dir().starts_with(&project_b)
+                || project_b.starts_with(harness.editor().working_dir()),
+            "Active window should be re-rooted to project_b: got {:?}",
+            harness.editor().working_dir()
+        );
     }
 
     // Phase 2: Start in project B (simulating restart), open file
@@ -733,10 +729,17 @@ fn test_session_persistence_across_project_switches() {
         // Switch back to project A
         switch_to_project(&mut harness, &project_a);
 
-        // Verify editor requested restart
+        // Switch Project re-roots in place — no restart — and the active
+        // window is now rooted at project_a.
         assert!(
-            harness.should_quit(),
-            "Editor should request restart after switching project"
+            !harness.should_quit() && !harness.editor().should_restart(),
+            "Switch Project must not restart the editor"
+        );
+        assert!(
+            harness.editor().working_dir().starts_with(&project_a)
+                || project_a.starts_with(harness.editor().working_dir()),
+            "Active window should be re-rooted to project_a: got {:?}",
+            harness.editor().working_dir()
         );
     }
 
@@ -764,7 +767,10 @@ fn test_session_persistence_across_project_switches() {
         // Save session and switch to project B
         harness.editor_mut().save_workspace().unwrap();
         switch_to_project(&mut harness, &project_b);
-        assert!(harness.should_quit());
+        assert!(
+            !harness.should_quit() && !harness.editor().should_restart(),
+            "Switch Project must not restart the editor"
+        );
     }
 
     // Phase 4: Return to project B - session should restore file_b.txt
@@ -791,7 +797,10 @@ fn test_session_persistence_across_project_switches() {
         // Switch back to project A for one more verification
         harness.editor_mut().save_workspace().unwrap();
         switch_to_project(&mut harness, &project_a);
-        assert!(harness.should_quit());
+        assert!(
+            !harness.should_quit() && !harness.editor().should_restart(),
+            "Switch Project must not restart the editor"
+        );
     }
 
     // Phase 5: Final return to project A - verify persistence

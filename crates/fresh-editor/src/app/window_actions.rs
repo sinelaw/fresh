@@ -94,19 +94,38 @@ impl crate::app::Editor {
         if let Some(existing) = self.find_window_by_root(&root) {
             return existing;
         }
-        let id = WindowId(self.next_window_id);
-        self.next_window_id += 1;
-
         // A new window for `root` is its own local session with its **own**
         // per-session trust scoped to that root — not a clone of the active
         // session's authority/trust (which would leak a trust decision across
         // projects). Its `fs_manager` rides the same (host) filesystem.
         let local_authority = self.local_session_authority(&root);
+        self.create_window_with_authority(root, label, local_authority)
+    }
+
+    /// Create a new window rooted at `root` under an explicit `authority`,
+    /// seeded with an empty scratch buffer + minimal split layout (so it is
+    /// renderable immediately) and announced via `window_created`.
+    ///
+    /// Unlike [`Self::create_window_at`] this does **not** dedup by root or
+    /// mint a fresh local authority — the caller supplies the backend. That
+    /// lets Switch Project (`change_working_dir`) carry a remote window's
+    /// already-connected authority onto the new project so the new root opens
+    /// on the same container / SSH host, while local callers pass a fresh
+    /// [`Self::local_session_authority`].
+    pub(crate) fn create_window_with_authority(
+        &mut self,
+        root: PathBuf,
+        label: String,
+        authority: crate::services::authority::Authority,
+    ) -> WindowId {
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
+
         let mut resources = self.window_resources();
         resources.fs_manager = std::sync::Arc::new(crate::services::fs::FsManager::new(
-            std::sync::Arc::clone(&local_authority.filesystem),
+            std::sync::Arc::clone(&authority.filesystem),
         ));
-        let mut session = Window::new(id, label, root.clone(), local_authority, resources);
+        let mut session = Window::new(id, label, root.clone(), authority, resources);
         session.terminal_width = self.terminal_width;
         session.terminal_height = self.terminal_height;
         let resolved_label = session.label.clone();
