@@ -1572,7 +1572,7 @@ impl JsEditorApi {
                 height: 0,
             }
         };
-        rquickjs_serde::to_value(ctx, &size)
+        rquickjs_serde::to_value(ctx, size)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
@@ -6701,191 +6701,16 @@ impl Drop for QuickJsBackend {
     }
 }
 
-impl QuickJsBackend {
-    /// Create a new QuickJS backend (standalone, for testing)
-    pub fn new() -> Result<Self> {
-        let (tx, _rx) = mpsc::channel();
-        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
-        let services = Arc::new(fresh_core::services::NoopServiceBridge);
-        Self::with_state(state_snapshot, tx, services)
-    }
+/// JS bootstrap installed into every plugin context: defines the `getEditor()`
+/// and `registerHandler(name, fn)` globals.
+const EDITOR_GLOBALS_BOOTSTRAP: &str = "globalThis.getEditor = function() { return editor; };\nglobalThis.registerHandler = function(name, fn) { globalThis[name] = fn; };";
 
-    /// Create a new QuickJS backend with editor state
-    pub fn with_state(
-        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
-        command_sender: mpsc::Sender<PluginCommand>,
-        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
-    ) -> Result<Self> {
-        let pending_responses: PendingResponses = Arc::new(std::sync::Mutex::new(HashMap::new()));
-        Self::with_state_and_responses(state_snapshot, command_sender, pending_responses, services)
-    }
-
-    /// Create a new QuickJS backend with editor state and shared pending responses
-    pub fn with_state_and_responses(
-        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
-        command_sender: mpsc::Sender<PluginCommand>,
-        pending_responses: PendingResponses,
-        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
-    ) -> Result<Self> {
-        let async_resource_owners: AsyncResourceOwners =
-            Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let search_handles: SearchHandleRegistry = Arc::new(std::sync::Mutex::new(HashMap::new()));
-        let event_handlers: EventHandlerRegistry = Arc::new(RwLock::new(HashMap::new()));
-        Self::with_state_responses_and_resources(
-            state_snapshot,
-            command_sender,
-            pending_responses,
-            services,
-            async_resource_owners,
-            search_handles,
-            event_handlers,
-        )
-    }
-
-    /// Create a new QuickJS backend with editor state, shared pending responses,
-    /// and a shared async resource owner map
-    pub fn with_state_responses_and_resources(
-        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
-        command_sender: mpsc::Sender<PluginCommand>,
-        pending_responses: PendingResponses,
-        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
-        async_resource_owners: AsyncResourceOwners,
-        search_handles: SearchHandleRegistry,
-        event_handlers: EventHandlerRegistry,
-    ) -> Result<Self> {
-        tracing::debug!("QuickJsBackend::new: creating QuickJS runtime");
-
-        let runtime =
-            Runtime::new().map_err(|e| anyhow!("Failed to create QuickJS runtime: {}", e))?;
-
-        // Set up promise rejection tracker to catch unhandled rejections
-        runtime.set_host_promise_rejection_tracker(Some(Box::new(
-            |_ctx, _promise, reason, is_handled| {
-                if !is_handled {
-                    // Format the rejection reason
-                    let error_msg = if let Some(exc) = reason.as_exception() {
-                        format!(
-                            "{}: {}",
-                            exc.message().unwrap_or_default(),
-                            exc.stack().unwrap_or_default()
-                        )
-                    } else {
-                        format!("{:?}", reason)
-                    };
-
-                    tracing::error!("Unhandled Promise rejection: {}", error_msg);
-
-                    if should_panic_on_js_errors() {
-                        // Don't panic here - we're inside an FFI callback and rquickjs catches panics.
-                        // Instead, set a fatal error flag that the plugin thread loop will check.
-                        let full_msg = format!("Unhandled Promise rejection: {}", error_msg);
-                        set_fatal_js_error(full_msg);
-                    }
-                }
-            },
-        )));
-
-        let main_context = Context::full(&runtime)
-            .map_err(|e| anyhow!("Failed to create QuickJS context: {}", e))?;
-
-        let plugin_contexts = Rc::new(RefCell::new(HashMap::new()));
-        let registered_actions = Rc::new(RefCell::new(HashMap::new()));
-        let next_request_id = Rc::new(RefCell::new(1u64));
-        let callback_contexts = Rc::new(RefCell::new(HashMap::new()));
-        let plugin_tracked_state = Rc::new(RefCell::new(HashMap::new()));
-        let registered_command_names = Rc::new(RefCell::new(HashMap::new()));
-        let registered_grammar_languages = Rc::new(RefCell::new(HashMap::new()));
-        let registered_language_configs = Rc::new(RefCell::new(HashMap::new()));
-        let registered_lsp_servers = Rc::new(RefCell::new(HashMap::new()));
-        let plugin_api_exports = Rc::new(RefCell::new(HashMap::new()));
-
-        let backend = Self {
-            runtime,
-            main_context,
-            plugin_contexts,
-            event_handlers,
-            registered_actions,
-            state_snapshot,
-            command_sender,
-            pending_responses,
-            next_request_id,
-            callback_contexts,
-            services,
-            plugin_tracked_state,
-            async_resource_owners,
-            registered_command_names,
-            registered_grammar_languages,
-            registered_language_configs,
-            registered_lsp_servers,
-            plugin_api_exports,
-            search_handles,
-        };
-
-        // Initialize main context (for internal utilities if needed)
-        backend.setup_context_api(&backend.main_context.clone(), "internal")?;
-
-        tracing::debug!("QuickJsBackend::new: runtime created successfully");
-        Ok(backend)
-    }
-
-    /// Set up the editor API in a specific JavaScript context
-    fn setup_context_api(&self, context: &Context, plugin_name: &str) -> Result<()> {
-        let state_snapshot = Arc::clone(&self.state_snapshot);
-        let command_sender = self.command_sender.clone();
-        let event_handlers = Arc::clone(&self.event_handlers);
-        let registered_actions = Rc::clone(&self.registered_actions);
-        let next_request_id = Rc::clone(&self.next_request_id);
-        let registered_command_names = Rc::clone(&self.registered_command_names);
-        let registered_grammar_languages = Rc::clone(&self.registered_grammar_languages);
-        let registered_language_configs = Rc::clone(&self.registered_language_configs);
-        let registered_lsp_servers = Rc::clone(&self.registered_lsp_servers);
-        let plugin_api_exports = Rc::clone(&self.plugin_api_exports);
-
-        context.with(|ctx| {
-            let globals = ctx.globals();
-
-            // Set the plugin name global
-            globals.set("__pluginName__", plugin_name)?;
-
-            // Create the editor object using JsEditorApi class
-            // This provides proper lifetime handling for methods returning JS values
-            let js_api = JsEditorApi {
-                state_snapshot: Arc::clone(&state_snapshot),
-                command_sender: command_sender.clone(),
-                registered_actions: Rc::clone(&registered_actions),
-                event_handlers: Arc::clone(&event_handlers),
-                next_request_id: Rc::clone(&next_request_id),
-                callback_contexts: Rc::clone(&self.callback_contexts),
-                services: self.services.clone(),
-                plugin_tracked_state: Rc::clone(&self.plugin_tracked_state),
-                async_resource_owners: Arc::clone(&self.async_resource_owners),
-                registered_command_names: Rc::clone(&registered_command_names),
-                registered_grammar_languages: Rc::clone(&registered_grammar_languages),
-                registered_language_configs: Rc::clone(&registered_language_configs),
-                registered_lsp_servers: Rc::clone(&registered_lsp_servers),
-                plugin_api_exports: Rc::clone(&plugin_api_exports),
-                search_handles: Arc::clone(&self.search_handles),
-                plugin_name: plugin_name.to_string(),
-            };
-            let editor = rquickjs::Class::<JsEditorApi>::instance(ctx.clone(), js_api)?;
-
-            // All methods are now in JsEditorApi - export editor as global
-            globals.set("editor", editor)?;
-
-            // Define getEditor() globally
-            ctx.eval::<(), _>("globalThis.getEditor = function() { return editor; };")?;
-
-            // Define registerHandler() for strict-mode-compatible handler registration
-            ctx.eval::<(), _>("globalThis.registerHandler = function(name, fn) { globalThis[name] = fn; };")?;
-
-// Closure-friendly overload for `editor.on(event, fn)` (design M2).
-            // The existing method takes a string handler name registered on
-            // globalThis. This shim wraps it so callers can pass a function
-            // directly — we synthesize a unique name, stash the function on
-            // globalThis (mirroring registerHandler), and subscribe via the
-            // original path. Pass-through for the legacy string form.
-            ctx.eval::<(), _>(
-                r#"
+/// Closure-friendly overload for `editor.on(event, fn)` / `editor.off` (design
+/// M2). The Rust methods take a string handler name registered on `globalThis`;
+/// this shim lets callers pass a function directly by synthesizing a unique
+/// name, stashing the function on `globalThis`, and delegating to the original
+/// path. The legacy string form passes through unchanged.
+const EDITOR_ON_OFF_SHIM: &str = r#"
                 (function() {
                     const originalOn = editor.on.bind(editor);
                     const originalOff = editor.off.bind(editor);
@@ -6912,28 +6737,12 @@ impl QuickJsBackend {
                         return originalOff(eventName, handlerOrName);
                     };
                 })();
-                "#,
-            )?;
+                "#;
 
-            // Provide console.log for debugging
-            // Use Rest<T> to handle variadic arguments like console.log('a', 'b', obj)
-            let console = Object::new(ctx.clone())?;
-            console.set("log", Function::new(ctx.clone(), |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
-                let parts: Vec<String> = args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
-                tracing::info!("console.log: {}", parts.join(" "));
-            })?)?;
-            console.set("warn", Function::new(ctx.clone(), |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
-                let parts: Vec<String> = args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
-                tracing::warn!("console.warn: {}", parts.join(" "));
-            })?)?;
-            console.set("error", Function::new(ctx.clone(), |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
-                let parts: Vec<String> = args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
-                tracing::error!("console.error: {}", parts.join(" "));
-            })?)?;
-            globals.set("console", console)?;
-
-            // Bootstrap: Promise infrastructure (getEditor is defined per-plugin in execute_js)
-            ctx.eval::<(), _>(r#"
+/// Promise infrastructure plus the per-method async wrappers (`_wrapAsync`,
+/// `spawnProcess`, `beginSearch`, …) that turn the host's callback-id returning
+/// `_*Start` methods into promise-returning `editor.*` methods.
+const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 // Pending promise callbacks: callbackId -> { resolve, reject }
                 globalThis._pendingCallbacks = new Map();
 
@@ -7176,10 +6985,232 @@ impl QuickJsBackend {
                         }
                     });
                 };
-            "#.as_bytes())?;
+            "#;
 
-            Ok::<_, rquickjs::Error>(())
-        }).map_err(|e| anyhow!("Failed to set up global API: {}", e))?;
+/// Install a `console` object (`log` / `warn` / `error`) that forwards to
+/// `tracing`, stringifying each variadic argument via `js_value_to_string`.
+fn install_console<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    globals: &rquickjs::Object<'js>,
+) -> rquickjs::Result<()> {
+    let console = Object::new(ctx.clone())?;
+    console.set(
+        "log",
+        Function::new(
+            ctx.clone(),
+            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+                let parts: Vec<String> =
+                    args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
+                tracing::info!("console.log: {}", parts.join(" "));
+            },
+        )?,
+    )?;
+    console.set(
+        "warn",
+        Function::new(
+            ctx.clone(),
+            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+                let parts: Vec<String> =
+                    args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
+                tracing::warn!("console.warn: {}", parts.join(" "));
+            },
+        )?,
+    )?;
+    console.set(
+        "error",
+        Function::new(
+            ctx.clone(),
+            |ctx: rquickjs::Ctx, args: rquickjs::function::Rest<rquickjs::Value>| {
+                let parts: Vec<String> =
+                    args.0.iter().map(|v| js_value_to_string(&ctx, v)).collect();
+                tracing::error!("console.error: {}", parts.join(" "));
+            },
+        )?,
+    )?;
+    globals.set("console", console)?;
+    Ok(())
+}
+
+impl QuickJsBackend {
+    /// Create a new QuickJS backend (standalone, for testing)
+    pub fn new() -> Result<Self> {
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let services = Arc::new(fresh_core::services::NoopServiceBridge);
+        Self::with_state(state_snapshot, tx, services)
+    }
+
+    /// Create a new QuickJS backend with editor state
+    pub fn with_state(
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+        command_sender: mpsc::Sender<PluginCommand>,
+        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+    ) -> Result<Self> {
+        let pending_responses: PendingResponses = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        Self::with_state_and_responses(state_snapshot, command_sender, pending_responses, services)
+    }
+
+    /// Create a new QuickJS backend with editor state and shared pending responses
+    pub fn with_state_and_responses(
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+        command_sender: mpsc::Sender<PluginCommand>,
+        pending_responses: PendingResponses,
+        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+    ) -> Result<Self> {
+        let async_resource_owners: AsyncResourceOwners =
+            Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let search_handles: SearchHandleRegistry = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let event_handlers: EventHandlerRegistry = Arc::new(RwLock::new(HashMap::new()));
+        Self::with_state_responses_and_resources(
+            state_snapshot,
+            command_sender,
+            pending_responses,
+            services,
+            async_resource_owners,
+            search_handles,
+            event_handlers,
+        )
+    }
+
+    /// Create a new QuickJS backend with editor state, shared pending responses,
+    /// and a shared async resource owner map
+    pub fn with_state_responses_and_resources(
+        state_snapshot: Arc<RwLock<EditorStateSnapshot>>,
+        command_sender: mpsc::Sender<PluginCommand>,
+        pending_responses: PendingResponses,
+        services: Arc<dyn fresh_core::services::PluginServiceBridge>,
+        async_resource_owners: AsyncResourceOwners,
+        search_handles: SearchHandleRegistry,
+        event_handlers: EventHandlerRegistry,
+    ) -> Result<Self> {
+        tracing::debug!("QuickJsBackend::new: creating QuickJS runtime");
+
+        let runtime =
+            Runtime::new().map_err(|e| anyhow!("Failed to create QuickJS runtime: {}", e))?;
+
+        // Set up promise rejection tracker to catch unhandled rejections
+        runtime.set_host_promise_rejection_tracker(Some(Box::new(
+            |_ctx, _promise, reason, is_handled| {
+                if !is_handled {
+                    // Format the rejection reason
+                    let error_msg = if let Some(exc) = reason.as_exception() {
+                        format!(
+                            "{}: {}",
+                            exc.message().unwrap_or_default(),
+                            exc.stack().unwrap_or_default()
+                        )
+                    } else {
+                        format!("{:?}", reason)
+                    };
+
+                    tracing::error!("Unhandled Promise rejection: {}", error_msg);
+
+                    if should_panic_on_js_errors() {
+                        // Don't panic here - we're inside an FFI callback and rquickjs catches panics.
+                        // Instead, set a fatal error flag that the plugin thread loop will check.
+                        let full_msg = format!("Unhandled Promise rejection: {}", error_msg);
+                        set_fatal_js_error(full_msg);
+                    }
+                }
+            },
+        )));
+
+        let main_context = Context::full(&runtime)
+            .map_err(|e| anyhow!("Failed to create QuickJS context: {}", e))?;
+
+        let plugin_contexts = Rc::new(RefCell::new(HashMap::new()));
+        let registered_actions = Rc::new(RefCell::new(HashMap::new()));
+        let next_request_id = Rc::new(RefCell::new(1u64));
+        let callback_contexts = Rc::new(RefCell::new(HashMap::new()));
+        let plugin_tracked_state = Rc::new(RefCell::new(HashMap::new()));
+        let registered_command_names = Rc::new(RefCell::new(HashMap::new()));
+        let registered_grammar_languages = Rc::new(RefCell::new(HashMap::new()));
+        let registered_language_configs = Rc::new(RefCell::new(HashMap::new()));
+        let registered_lsp_servers = Rc::new(RefCell::new(HashMap::new()));
+        let plugin_api_exports = Rc::new(RefCell::new(HashMap::new()));
+
+        let backend = Self {
+            runtime,
+            main_context,
+            plugin_contexts,
+            event_handlers,
+            registered_actions,
+            state_snapshot,
+            command_sender,
+            pending_responses,
+            next_request_id,
+            callback_contexts,
+            services,
+            plugin_tracked_state,
+            async_resource_owners,
+            registered_command_names,
+            registered_grammar_languages,
+            registered_language_configs,
+            registered_lsp_servers,
+            plugin_api_exports,
+            search_handles,
+        };
+
+        // Initialize main context (for internal utilities if needed)
+        backend.setup_context_api(&backend.main_context.clone(), "internal")?;
+
+        tracing::debug!("QuickJsBackend::new: runtime created successfully");
+        Ok(backend)
+    }
+
+    /// Set up the editor API in a specific JavaScript context
+    /// Build a fresh [`JsEditorApi`] handle for `plugin_name`, cloning the
+    /// shared runtime state this backend hands to every plugin context.
+    fn build_editor_api(&self, plugin_name: &str) -> JsEditorApi {
+        JsEditorApi {
+            state_snapshot: Arc::clone(&self.state_snapshot),
+            command_sender: self.command_sender.clone(),
+            registered_actions: Rc::clone(&self.registered_actions),
+            event_handlers: Arc::clone(&self.event_handlers),
+            next_request_id: Rc::clone(&self.next_request_id),
+            callback_contexts: Rc::clone(&self.callback_contexts),
+            services: self.services.clone(),
+            plugin_tracked_state: Rc::clone(&self.plugin_tracked_state),
+            async_resource_owners: Arc::clone(&self.async_resource_owners),
+            registered_command_names: Rc::clone(&self.registered_command_names),
+            registered_grammar_languages: Rc::clone(&self.registered_grammar_languages),
+            registered_language_configs: Rc::clone(&self.registered_language_configs),
+            registered_lsp_servers: Rc::clone(&self.registered_lsp_servers),
+            plugin_api_exports: Rc::clone(&self.plugin_api_exports),
+            search_handles: Arc::clone(&self.search_handles),
+            plugin_name: plugin_name.to_string(),
+        }
+    }
+
+    fn setup_context_api(&self, context: &Context, plugin_name: &str) -> Result<()> {
+        context
+            .with(|ctx| {
+                let globals = ctx.globals();
+
+                // Set the plugin name global.
+                globals.set("__pluginName__", plugin_name)?;
+
+                // Create the `editor` object from the JsEditorApi class (which
+                // gives proper lifetime handling for methods returning JS
+                // values) and export it as a global.
+                let editor = rquickjs::Class::<JsEditorApi>::instance(
+                    ctx.clone(),
+                    self.build_editor_api(plugin_name),
+                )?;
+                globals.set("editor", editor)?;
+
+                // Bootstrap, in order: the getEditor()/registerHandler()
+                // globals, the closure-friendly editor.on/off shim, a console
+                // that forwards to tracing, then the Promise/async-wrapper
+                // infrastructure.
+                ctx.eval::<(), _>(EDITOR_GLOBALS_BOOTSTRAP)?;
+                ctx.eval::<(), _>(EDITOR_ON_OFF_SHIM)?;
+                install_console(&ctx, &globals)?;
+                ctx.eval::<(), _>(EDITOR_PROMISE_BOOTSTRAP.as_bytes())?;
+
+                Ok::<_, rquickjs::Error>(())
+            })
+            .map_err(|e| anyhow!("Failed to set up global API: {}", e))?;
 
         Ok(())
     }
