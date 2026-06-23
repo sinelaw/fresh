@@ -571,6 +571,20 @@ function enableMarkdownCompose(bufferId: number): void {
 function disableMarkdownCompose(bufferId: number): void {
   if (isComposing(bufferId)) {
     editor.setViewState(bufferId, "last-cursor-line", null);
+
+    // Clear table border virtual lines BEFORE discarding the cached widths.
+    // Each table row owns the namespace `md-tb-${lineNumber}`, and the width
+    // map is keyed by those same line numbers — so its keys enumerate exactly
+    // the rows that may carry a `┌─┬─┐` / `├─┼─┤` / `└─┴─┘` border.  Unlike the
+    // conceal/overlay/soft-break namespaces (cleared in bulk below), there is
+    // no single namespace covering every border, so without this the frame
+    // lingers as orphaned virtual lines after compose mode is toggled off.
+    const widthMap = getTableWidths(bufferId);
+    if (widthMap) {
+      for (const lineNumber of widthMap.keys()) {
+        editor.clearVirtualTextNamespace(bufferId, `md-tb-${lineNumber}`);
+      }
+    }
     clearTableWidths(bufferId);
 
     // Tell Rust side this buffer is back in source mode

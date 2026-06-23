@@ -2724,6 +2724,96 @@ Line after table.
     );
 }
 
+/// Regression test for the table-border cleanup bug: toggling compose mode
+/// OFF must remove the injected table-border virtual lines (`┌─┬─┐`,
+/// `├─┼─┤`, `└─┴─┘`).
+///
+/// The borders live in per-row virtual-text namespaces (`md-tb-${line}`),
+/// which are NOT covered by the bulk conceal/overlay/soft-break clears in
+/// `disableMarkdownCompose`.  The original bug left them on screen as
+/// orphaned virtual lines after compose mode was switched off.
+#[test]
+fn test_compose_mode_disable_removes_table_borders() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    let md_content = "\
+# Table
+
+| A | B | C |
+|---|---|---|
+| 1 | 2 | 3 |
+| 4 | 5 | 6 |
+
+Trailing text.
+";
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("disable_clears_borders.md");
+    std::fs::write(&md_path, md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Helper: toggle compose mode via the command palette.
+    let toggle_compose = |h: &mut EditorTestHarness| {
+        h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+            .unwrap();
+        h.wait_for_prompt().unwrap();
+        h.type_text("Toggle Compose").unwrap();
+        h.wait_for_screen_contains("Toggle Compose").unwrap();
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        h.wait_for_prompt_closed().unwrap();
+    };
+
+    // Enable compose mode and wait for the border virtual lines to appear.
+    toggle_compose(&mut harness);
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains('┌') && s.contains('┐') && s.contains('└') && s.contains('┘')
+        })
+        .unwrap();
+
+    // Disable compose mode — the border glyphs must disappear.
+    toggle_compose(&mut harness);
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            !s.contains('┌')
+                && !s.contains('┐')
+                && !s.contains('└')
+                && !s.contains('┘')
+                && !s.contains('┬')
+                && !s.contains('┴')
+                && !s.contains('├')
+                && !s.contains('┤')
+        })
+        .unwrap();
+
+    // Sanity: the raw markdown source is back (pipes visible again).
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("| A | B | C |"),
+        "After disabling compose mode the raw table source should be visible, \
+         but the screen was:\n{screen}"
+    );
+}
+
 /// Regression test: pressing Down through a document with tables (in compose mode)
 /// and then Up all the way back must produce monotonically increasing then
 /// monotonically decreasing cursor byte positions.  A jump to byte 0 mid-sequence
