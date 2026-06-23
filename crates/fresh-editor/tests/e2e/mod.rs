@@ -137,6 +137,7 @@ pub mod mark_mode_actions;
 pub mod markdown_compose;
 pub mod markdown_compose_diagnostics;
 pub mod markdown_compose_scroll_reach;
+pub mod markdown_compose_table_border;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;

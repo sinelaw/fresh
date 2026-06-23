@@ -1722,7 +1722,29 @@ editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
 });
-editor.on("cursor_moved", (data) => {
+/**
+ * Recompute conceals + soft-breaks for a single 0-indexed source line.
+ *
+ * Used by `cursor_moved` for span-level auto-expose.  Fetches the line's
+ * current byte range and content directly (so it is correct even right after
+ * an edit shifted byte offsets) and re-runs the same per-line pipeline that
+ * `lines_changed` uses — scoped to exactly one line.
+ */
+async function recomposeCursorLine(
+  bufferId: number,
+  line0: number,
+  cursors: number[],
+): Promise<void> {
+  if (line0 < 0) return;
+  const start = await editor.getLineStartPosition(line0);
+  const end = await editor.getLineEndPosition(line0);
+  if (start === null || end === null) return;
+  const content = await editor.getBufferText(bufferId, start, end);
+  processLineConceals(bufferId, content, start, end, cursors, line0);
+  processLineSoftBreaks(bufferId, content, start, end, cursors, line0);
+}
+
+editor.on("cursor_moved", async (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
 
   const prevLine = editor.getViewState(data.buffer_id, "last-cursor-line") as number | undefined;
@@ -1730,10 +1752,27 @@ editor.on("cursor_moved", (data) => {
 
   editor.debug(`[mc] cursor_moved: old_pos=${data.old_position} new_pos=${data.new_position} line=${data.line} prevLine=${prevLine}`);
 
-  // Always refresh: even intra-line movements need conceal updates because
-  // auto-expose is span-level (cursor entering/leaving an emphasis or link
-  // span within the same line must toggle its syntax markers).
-  editor.refreshLines(data.buffer_id);
+  // Span-level auto-expose only changes the reveal state of the line the cursor
+  // LEFT and the line it ENTERED — moving the cursor never changes any other
+  // line's markup.  Recompute conceals/soft-breaks for just those two lines
+  // instead of clearing the whole buffer's seen_byte_ranges (the old
+  // `editor.refreshLines` sledgehammer).
+  //
+  // A global refresh re-fires `lines_changed` for the *entire* viewport,
+  // re-running the table border/alignment pass against freshly renumbered lines
+  // every time the cursor moves.  Because the buffer already shifts decoration
+  // anchors on edit, that buffer-wide rebuild is pure waste — and it corrupts
+  // tables: inserting a line above a table (Enter at the top of a doc) moved the
+  // cursor, which nuked the seen set, which re-bordered the unchanged table with
+  // stale line-number state and turned its top border into a separator.
+  //
+  // data.line is 1-indexed; getLineStartPosition / LineInfo.line_number are
+  // 0-indexed.
+  const cursors = isComposing(data.buffer_id) ? [data.new_position] : [];
+  await recomposeCursorLine(data.buffer_id, data.line - 1, cursors);
+  if (prevLine !== undefined && prevLine !== data.line) {
+    await recomposeCursorLine(data.buffer_id, prevLine - 1, cursors);
+  }
 });
 // view_transform_request hook no longer needed — wrapping is handled by soft breaks
 editor.on("buffer_closed", (data) => {
