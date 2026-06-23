@@ -43,6 +43,14 @@ pub(crate) enum LayerKind {
     Menu,
     Prompt,
     Popup,
+    /// The tab bar's "+" new-tab popup (`active_window().new_tab_menu`). A
+    /// modal chrome menu with a custom key dispatcher
+    /// (`handle_new_tab_menu_key`), so it's transparent to `KeyContext`
+    /// resolution but still blocks PTY routing while open.
+    NewTabMenu,
+    /// The tab right-click context menu (`active_window().tab_context_menu`),
+    /// same treatment as `NewTabMenu`.
+    TabContextMenu,
     /// The centered widget modal (`floating_widget_panel`).
     FloatingModal,
     /// The editor-global left dock (`dock`).

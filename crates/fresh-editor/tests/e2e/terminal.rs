@@ -43,6 +43,98 @@ macro_rules! harness_or_return {
     };
 }
 
+/// Locate the 0-based column of `needle` on the (0-based) tab row (row 1).
+fn tab_row_col_of(screen: &str, needle: char) -> Option<u16> {
+    screen
+        .lines()
+        .nth(1)?
+        .chars()
+        .position(|c| c == needle)
+        .map(|p| p as u16)
+}
+
+/// Locate the 0-based column where `needle` begins on the tab row (row 1).
+fn tab_row_col_of_str(screen: &str, needle: &str) -> Option<u16> {
+    let line = screen.lines().nth(1)?;
+    let byte_idx = line.find(needle)?;
+    Some(line[..byte_idx].chars().count() as u16)
+}
+
+/// Regression: with the keyboard focused on an *active terminal* buffer
+/// (terminal mode owns the keyboard), opening the tab bar's "+" popup must
+/// still hand the keyboard to the popup. Its navigation keys drive the menu
+/// instead of leaking into the terminal's PTY child.
+///
+/// Without the popup being registered as a terminal-blocking overlay,
+/// `dispatch_terminal_input` (which runs before the popup's key handler)
+/// would swallow the keys: Enter would reach the shell, the popup would stay
+/// open, and no new buffer would be created.
+#[test]
+fn plus_button_menu_grabs_keyboard_from_active_terminal() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Focus an active terminal buffer.
+    harness.editor_mut().open_terminal();
+    assert!(harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+
+    // Open the tab bar's trailing "+" popup (a left-click on chrome that
+    // leaves the terminal the active, focused buffer).
+    let screen = harness.screen_to_string();
+    let plus_col = tab_row_col_of(&screen, '+').unwrap_or_else(|| {
+        panic!("expected a '+' new-tab button on the tab row. Screen:\n{screen}")
+    });
+    harness.mouse_click(plus_col, 1).unwrap();
+    harness.assert_screen_contains("New Terminal");
+    harness.assert_screen_contains("New File");
+
+    // Drive the popup from the keyboard: Down highlights "New File", Enter
+    // activates it. If the keys leaked into the terminal, the popup would
+    // stay open and no new file buffer would appear.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("New Terminal"),
+        "popup should close once Enter selects an item. Screen:\n{screen}"
+    );
+    harness.assert_screen_contains("[No Name] 2");
+}
+
+/// Regression: the tab right-click context menu must likewise grab the
+/// keyboard from an active terminal. Opened over the terminal's own tab,
+/// Esc dismisses it — without the fix Esc would reach the PTY instead and
+/// the menu would stay open.
+#[test]
+fn tab_context_menu_grabs_keyboard_from_active_terminal() {
+    let mut harness = harness_or_return!(120, 30);
+
+    harness.editor_mut().open_terminal();
+    assert!(harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+
+    // Right-click the terminal's own tab so the terminal stays the active
+    // buffer (and terminal mode keeps the keyboard).
+    let screen = harness.screen_to_string();
+    let term_col = tab_row_col_of_str(&screen, "Terminal").unwrap_or_else(|| {
+        panic!("expected the '*Terminal 0*' tab on the tab row. Screen:\n{screen}")
+    });
+    harness.mouse_right_click(term_col, 1).unwrap();
+    harness.assert_screen_contains("Close Others");
+
+    // Esc must dismiss the menu rather than leak into the terminal.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Close Others"),
+        "Esc should dismiss the tab context menu opened over a terminal. Screen:\n{screen}"
+    );
+}
+
 /// Test opening a terminal creates a buffer and switches to it
 #[test]
 fn test_open_terminal() {

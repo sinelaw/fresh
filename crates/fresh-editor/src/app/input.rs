@@ -355,6 +355,31 @@ impl Editor {
                 blocks_terminal_input: true,
             });
         }
+        // The tab-bar popups (the "+" new-tab menu and the tab right-click
+        // context menu) are modal chrome: while one is open it owns the
+        // keyboard via a custom dispatcher (`handle_new_tab_menu_key` /
+        // `handle_tab_context_menu_key`, run from `handle_key` ahead of
+        // `KeyContext` resolution), so they expose no `KeyContext` here.
+        // Like any covering overlay they block PTY routing — otherwise keys
+        // would leak into an active terminal buffer underneath instead of
+        // driving the menu. Ranked below `Popup` so the unfocused-popup
+        // `take_while` guard above is unaffected.
+        if self.active_window().new_tab_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::NewTabMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        if self.active_window().tab_context_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::TabContextMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
         // The centered widget modal (picker / new-session form / plugin
         // overlay) owns the keyboard when focused. It resolves as `Normal`
         // regardless of the underlying buffer's (possibly stale) context so
