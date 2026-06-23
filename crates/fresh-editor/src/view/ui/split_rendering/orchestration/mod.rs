@@ -49,6 +49,26 @@ pub(super) use render_buffer::render_buffer_in_split;
 use render_composite::render_composite_buffer;
 use std::collections::HashMap;
 
+/// How a single visible split should be rendered. Computed up-front by
+/// [`expand_visible_buffers`], which expands any active buffer-group tab into
+/// its inner panels.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum RenderKind {
+    /// Regular split: render the tab bar and the buffer content.
+    Normal,
+    /// Main split whose buffer group is active: render the tab bar (to show
+    /// the group tab) but skip buffer content — the group's inner leaves fill
+    /// it instead.
+    GroupTabBarOnly,
+    /// A leaf inside a Grouped subtree. `split_area` is already the content
+    /// rect for this inner leaf; no tab bar is rendered.
+    InnerLeaf,
+}
+
+/// One visible split to render: `(tab_bar_owner_split, effective_leaf_id,
+/// buffer_id, split_area, kind)`.
+type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
+
 /// # Returns
 /// * Vec of (split_id, buffer_id, content_rect, scrollbar_rect, thumb_start, thumb_end) for mouse handling
 #[allow(clippy::too_many_arguments)]
@@ -122,93 +142,19 @@ pub(crate) fn render_content(
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
-    // Get all visible splits with their areas.
-    //
-    // Each entry in `visible_buffers` is
-    //   (tab_bar_owner_split, effective_leaf_id, buffer_id, split_area, kind)
-    //
-    // where `kind` is:
-    //   - `Normal`: regular split. Render tab bar + buffer content.
-    //   - `GroupTabBarOnly`: main split where a group is active. Render
-    //     the tab bar (to show the group tab) but skip buffer content
-    //     (the group's inner leaves will fill it).
-    //   - `InnerLeaf`: a leaf inside a Grouped subtree. `split_area` is
-    //     the already-computed content rect for this inner leaf; no tab
-    //     bar is rendered.
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    enum RenderKind {
-        Normal,
-        GroupTabBarOnly,
-        InnerLeaf,
-    }
-
     let base_visible = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
     let has_multiple_splits = base_visible.len() > 1;
 
-    // Expand groups: for each main leaf, if its SplitViewState has an
-    // active group tab, emit a tab-bar-only entry for the main split
-    // followed by one InnerLeaf entry per panel.
-    let mut visible_buffers: Vec<(LeafId, LeafId, BufferId, Rect, RenderKind)> = Vec::new();
-    for (main_split_id, main_buffer_id, split_area) in &base_visible {
-        let active_group = split_view_states
-            .as_deref()
-            .and_then(|svs| svs.get(main_split_id))
-            .and_then(|vs| vs.active_group_tab);
-
-        if let Some(group_leaf) = active_group {
-            if let Some(grouped) = grouped_subtrees.get(&group_leaf) {
-                // Compute the content rect for this main split (after tab bar).
-                let split_tab_bar_visible = tab_bar_visible
-                    && !split_view_states
-                        .as_deref()
-                        .and_then(|svs| svs.get(main_split_id))
-                        .is_some_and(|vs| vs.suppress_chrome);
-                let main_layout = split_layout(
-                    *split_area,
-                    split_tab_bar_visible,
-                    show_vertical_scrollbar,
-                    show_horizontal_scrollbar,
-                );
-                let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
-                visible_buffers.push((
-                    *main_split_id,
-                    *main_split_id,
-                    *main_buffer_id,
-                    *split_area,
-                    RenderKind::GroupTabBarOnly,
-                ));
-                for (inner_leaf, inner_buffer, inner_rect) in &inner_leaves {
-                    // Keep inner panel viewports in sync with their actual
-                    // rendered dimensions. This ensures editor.getViewport()
-                    // returns the correct panel size (not the terminal size)
-                    // and fixes resize-timing issues since the viewport is
-                    // updated synchronously during rendering.
-                    if let Some(svs) = split_view_states.as_deref_mut() {
-                        if let Some(vs) = svs.get_mut(inner_leaf) {
-                            vs.viewport.resize(inner_rect.width, inner_rect.height);
-                        }
-                    }
-                    visible_buffers.push((
-                        *main_split_id,
-                        *inner_leaf,
-                        *inner_buffer,
-                        *inner_rect,
-                        RenderKind::InnerLeaf,
-                    ));
-                }
-                continue;
-            }
-        }
-
-        visible_buffers.push((
-            *main_split_id,
-            *main_split_id,
-            *main_buffer_id,
-            *split_area,
-            RenderKind::Normal,
-        ));
-    }
+    // Expand any active buffer-group tabs into their inner panels.
+    let visible_buffers = expand_visible_buffers(
+        &base_visible,
+        split_view_states.as_deref_mut(),
+        grouped_subtrees,
+        tab_bar_visible,
+        show_vertical_scrollbar,
+        show_horizontal_scrollbar,
+    );
 
     // Collect areas for mouse handling
     let mut split_areas = Vec::new();
@@ -325,100 +271,33 @@ pub(crate) fn render_content(
 
         // Only render tabs and split control buttons when tab bar is visible
         if split_tab_bar_visible {
-            // Determine the active target for this split's tab bar.
-            // If the split's SplitViewState marks a group tab as active,
-            // that's the active target; otherwise the currently displayed
-            // buffer.
-            let active_target = split_view_states
-                .as_deref()
-                .and_then(|svs| svs.get(&split_id))
-                .map(|vs| vs.active_target())
-                .unwrap_or(crate::view::split::TabTarget::Buffer(buffer_id));
-            // Collect group names from the stashed Grouped subtrees.
-            let group_names: HashMap<LeafId, String> = grouped_subtrees
-                .iter()
-                .filter_map(|(leaf_id, node)| {
-                    if let crate::view::split::SplitNode::Grouped { name, .. } = node {
-                        Some((*leaf_id, name.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            // Render tabs for this split and collect hit areas. The tab bar
-            // records its theme-key runs into a local vec as it paints; apply
-            // them to the per-cell map afterward (the map isn't borrowed here).
-            let mut tab_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            let tab_layout = {
-                let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
-                TabsRenderer::render_for_split(
-                    frame,
-                    layout.tabs_rect,
-                    &split_buffers,
-                    buffers,
-                    buffer_metadata,
-                    composite_buffers,
-                    active_target,
-                    theme,
-                    is_active,
-                    tab_scroll_offset,
-                    tab_hover_for_split,
-                    &group_names,
-                    preview_buffer,
-                    Some(&mut rec),
-                    draw_tab_bar,
-                )
-            };
-            crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &tab_runs);
-
-            // Store the tab layout for this split
-            tab_layouts.insert(split_id, tab_layout);
-            let tab_row = layout.tabs_rect.y;
-
-            // Render split control buttons at the right side of tabs row
-            // Show maximize/unmaximize button when: multiple splits exist OR we're currently maximized
-            // Show close button when: multiple splits exist AND we're not maximized
-            let show_maximize_btn = has_multiple_splits || is_maximized;
-            let show_close_btn = has_multiple_splits && !is_maximized;
-
-            if show_maximize_btn || show_close_btn {
-                // Calculate button positions from right edge
-                // Layout: [maximize] [space] [close] |
-                let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
-
-                // Render close button first (rightmost) if visible
-                if show_close_btn {
-                    let is_hovered = hovered_close_split == Some(split_id);
-                    let close_fg = if is_hovered {
-                        theme.tab_close_hover_fg
-                    } else {
-                        theme.line_number_fg
-                    };
-                    let close_button = Paragraph::new("×")
-                        .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-                    let close_area = Rect::new(btn_x, tab_row, 1, 1);
-                    frame.render_widget(close_button, close_area);
-                    close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-                    btn_x = btn_x.saturating_sub(2); // Move left with 1 space for next button
-                }
-
-                // Render maximize/unmaximize button
-                if show_maximize_btn {
-                    let is_hovered = hovered_maximize_split == Some(split_id);
-                    let max_fg = if is_hovered {
-                        theme.tab_close_hover_fg
-                    } else {
-                        theme.line_number_fg
-                    };
-                    // Use □ for maximize, ⧉ for unmaximize (restore)
-                    let icon = if is_maximized { "⧉" } else { "□" };
-                    let max_button = Paragraph::new(icon)
-                        .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-                    let max_area = Rect::new(btn_x, tab_row, 1, 1);
-                    frame.render_widget(max_button, max_area);
-                    maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-                }
-            }
+            render_split_tab_bar(
+                frame,
+                &layout,
+                split_id,
+                buffer_id,
+                buffers,
+                buffer_metadata,
+                composite_buffers,
+                split_view_states.as_deref(),
+                grouped_subtrees,
+                &split_buffers,
+                theme,
+                is_active,
+                tab_scroll_offset,
+                tab_hover_for_split,
+                preview_buffer,
+                draw_tab_bar,
+                has_multiple_splits,
+                is_maximized,
+                hovered_close_split,
+                hovered_maximize_split,
+                cell_theme_map,
+                screen_width,
+                &mut tab_layouts,
+                &mut close_split_areas,
+                &mut maximize_split_areas,
+            );
         }
 
         // For GroupTabBarOnly entries we've already rendered the tab bar;
@@ -442,122 +321,41 @@ pub(crate) fn render_content(
             continue;
         }
 
+        // Composite buffers (side-by-side diff/compare panes) render through a
+        // separate pipeline; dispatch them to their own helper.
+        if buffers
+            .get(&buffer_id)
+            .is_some_and(|s| s.is_composite_buffer)
+        {
+            render_composite_split(
+                frame,
+                &layout,
+                split_id,
+                buffer_id,
+                buffers,
+                composite_buffers,
+                composite_view_states,
+                split_view_states.as_deref_mut(),
+                theme,
+                panel_focused,
+                use_terminal_bg,
+                split_show_tilde,
+                show_vertical_scrollbar,
+                is_non_scrollable,
+                is_active,
+                show_horizontal_scrollbar,
+                &mut split_areas,
+                &mut horizontal_scrollbar_areas,
+            );
+            view_line_mappings.insert(split_id, Vec::new());
+            continue;
+        }
+
         // Get references separately to avoid double borrow
         let state_opt = buffers.get_mut(&buffer_id);
         let event_log_opt = event_logs.get_mut(&buffer_id);
 
         if let Some(state) = state_opt {
-            // Check if this is a composite buffer - render differently
-            if state.is_composite_buffer {
-                // Take initial_focus_hunk before borrowing composite immutably
-                let initial_focus_hunk = composite_buffers
-                    .get_mut(&buffer_id)
-                    .and_then(|c| c.initial_focus_hunk.take());
-                if let Some(composite) = composite_buffers.get(&buffer_id) {
-                    // Update SplitViewState viewport to match actual rendered area
-                    // This ensures cursor movement uses correct viewport height after resize
-                    if let Some(ref mut svs) = split_view_states {
-                        if let Some(split_vs) = svs.get_mut(&split_id) {
-                            if split_vs.viewport.width != layout.content_rect.width
-                                || split_vs.viewport.height != layout.content_rect.height
-                            {
-                                split_vs
-                                    .viewport
-                                    .resize(layout.content_rect.width, layout.content_rect.height);
-                            }
-                        }
-                    }
-
-                    // Get or create composite view state
-                    let pane_count = composite.pane_count();
-                    let view_state = composite_view_states
-                        .entry((split_id, buffer_id))
-                        .or_insert_with(|| {
-                            crate::view::composite_view::CompositeViewState::new(
-                                buffer_id, pane_count,
-                            )
-                        });
-
-                    // Apply deferred initial focus hunk (first render only).
-                    // This runs here because it's the only place where both the
-                    // CompositeViewState and the correct viewport height exist.
-                    if let Some(hunk_index) = initial_focus_hunk {
-                        let mut target_row = None;
-                        // Walk hunk headers to find the Nth one
-                        let mut hunk_count = 0usize;
-                        for (row_idx, row) in composite.alignment.rows.iter().enumerate() {
-                            if row.row_type == crate::model::composite_buffer::RowType::HunkHeader {
-                                if hunk_count == hunk_index {
-                                    target_row = Some(row_idx);
-                                    break;
-                                }
-                                hunk_count += 1;
-                            }
-                        }
-                        if let Some(row) = target_row {
-                            let viewport_height =
-                                layout.content_rect.height.saturating_sub(1) as usize;
-                            let context_above = viewport_height / 3;
-                            view_state.cursor_row = row;
-                            view_state.scroll_row = row.saturating_sub(context_above);
-                        }
-                    }
-
-                    // Render composite buffer with side-by-side panes
-                    render_composite_buffer(
-                        frame,
-                        layout.content_rect,
-                        composite,
-                        buffers,
-                        theme,
-                        panel_focused,
-                        view_state,
-                        use_terminal_bg,
-                        split_show_tilde,
-                    );
-
-                    // Render scrollbar for composite buffer
-                    let total_rows = composite.row_count();
-                    let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
-                    let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable
-                    {
-                        render_composite_scrollbar(
-                            frame,
-                            layout.scrollbar_rect,
-                            total_rows,
-                            view_state.scroll_row,
-                            content_height,
-                            is_active,
-                            theme,
-                        )
-                    } else {
-                        (0, 0)
-                    };
-
-                    // Store the areas for mouse handling
-                    split_areas.push((
-                        split_id,
-                        buffer_id,
-                        layout.content_rect,
-                        layout.scrollbar_rect,
-                        thumb_start,
-                        thumb_end,
-                    ));
-                    if show_horizontal_scrollbar {
-                        horizontal_scrollbar_areas.push((
-                            split_id,
-                            buffer_id,
-                            layout.horizontal_scrollbar_rect,
-                            0, // composite buffers don't horizontal-scroll
-                            0,
-                            0,
-                        ));
-                    }
-                }
-                view_line_mappings.insert(split_id, Vec::new());
-                continue;
-            }
-
             // Get viewport from SplitViewState (authoritative source)
             // We need to get it mutably for sync operations
             // Use as_deref() to get Option<&HashMap> for read-only operations
@@ -783,76 +581,23 @@ pub(crate) fn render_content(
     for (direction, x, y, length) in separators {
         render_separator(frame, direction, x, y, length, theme);
     }
-    // Walk base_visible again to render internal separators of active
-    // groups (the group's Split nodes live in the side-map, not in the
-    // main split tree, so split_manager doesn't know about them).
-    // Collect these separators with their container IDs so the hit-test
-    // path in `app::render` can wire up dragging.
-    let mut grouped_separator_areas: Vec<(
-        crate::model::event::ContainerId,
-        SplitDirection,
-        u16,
-        u16,
-        u16,
-    )> = Vec::new();
-    for (main_split_id, _main_buffer_id, split_area) in &base_visible {
-        let active_group = split_view_states
-            .as_deref()
-            .and_then(|svs| svs.get(main_split_id))
-            .and_then(|vs| vs.active_group_tab);
-        if let Some(group_leaf) = active_group {
-            if let Some(grouped) = grouped_subtrees.get(&group_leaf) {
-                let split_tab_bar_visible = tab_bar_visible
-                    && !split_view_states
-                        .as_deref()
-                        .and_then(|svs| svs.get(main_split_id))
-                        .is_some_and(|vs| vs.suppress_chrome);
-                let main_layout = split_layout(
-                    *split_area,
-                    split_tab_bar_visible,
-                    show_vertical_scrollbar,
-                    show_horizontal_scrollbar,
-                );
-                if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
-                    for (id, direction, x, y, length) in
-                        layout.get_separators_with_ids(main_layout.content_rect)
-                    {
-                        render_separator(frame, direction, x, y, length, theme);
-                        grouped_separator_areas.push((id, direction, x, y, length));
-                    }
-                }
-            }
-        }
-    }
+    // Walk the visible splits again to render internal separators of any
+    // active buffer groups (their Split nodes live in the side-map, not the
+    // main split tree, so `split_manager` doesn't know about them).
+    let grouped_separator_areas = render_grouped_separators(
+        frame,
+        &base_visible,
+        split_view_states.as_deref(),
+        grouped_subtrees,
+        theme,
+        tab_bar_visible,
+        show_vertical_scrollbar,
+        show_horizontal_scrollbar,
+    );
 
     // Record vertical-scrollbar theme keys for the inspector, from the
-    // thumb/track geometry just computed for each split. Done here (in the
-    // render pass that painted them) rather than a post-hoc pass.
-    {
-        let mut sb_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-        for (_, _, _, scrollbar_rect, thumb_start, thumb_end) in &split_areas {
-            for row in 0..scrollbar_rect.height {
-                let is_thumb = (row as usize) >= *thumb_start && (row as usize) < *thumb_end;
-                sb_runs.push(crate::app::types::ThemeRun {
-                    x: scrollbar_rect.x,
-                    y: scrollbar_rect.y + row,
-                    w: scrollbar_rect.width,
-                    fg_key: Some(if is_thumb {
-                        "ui.scrollbar_thumb_fg"
-                    } else {
-                        "ui.scrollbar_track_fg"
-                    }),
-                    bg_key: Some("editor.bg"),
-                    region: if is_thumb {
-                        "Scrollbar Thumb"
-                    } else {
-                        "Scrollbar Track"
-                    },
-                });
-            }
-        }
-        crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &sb_runs);
-    }
+    // thumb/track geometry just computed for each split.
+    record_scrollbar_theme_runs(&split_areas, cell_theme_map, screen_width);
 
     (
         split_areas,
@@ -864,6 +609,406 @@ pub(crate) fn render_content(
         grouped_separator_areas,
     )
 }
+
+/// Build the list of splits to render, expanding any active buffer-group tab
+/// into a [`RenderKind::GroupTabBarOnly`] entry for the main split followed by
+/// one [`RenderKind::InnerLeaf`] entry per panel. Inner-panel viewports are
+/// resized to their rendered rects so `editor.getViewport()` reports the panel
+/// size (not the terminal size) and resize timing stays correct.
+fn expand_visible_buffers(
+    base_visible: &[(LeafId, BufferId, Rect)],
+    mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+    grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
+    tab_bar_visible: bool,
+    show_vertical_scrollbar: bool,
+    show_horizontal_scrollbar: bool,
+) -> Vec<VisibleBuffer> {
+    let mut visible_buffers: Vec<VisibleBuffer> = Vec::new();
+    for (main_split_id, main_buffer_id, split_area) in base_visible {
+        let active_group = split_view_states
+            .as_deref()
+            .and_then(|svs| svs.get(main_split_id))
+            .and_then(|vs| vs.active_group_tab);
+
+        let grouped = active_group.and_then(|leaf| grouped_subtrees.get(&leaf));
+        let Some(grouped) = grouped else {
+            visible_buffers.push((
+                *main_split_id,
+                *main_split_id,
+                *main_buffer_id,
+                *split_area,
+                RenderKind::Normal,
+            ));
+            continue;
+        };
+
+        // Compute the content rect for this main split (after its tab bar),
+        // then lay the group's leaves out within it.
+        let split_tab_bar_visible = tab_bar_visible
+            && !split_view_states
+                .as_deref()
+                .and_then(|svs| svs.get(main_split_id))
+                .is_some_and(|vs| vs.suppress_chrome);
+        let main_layout = split_layout(
+            *split_area,
+            split_tab_bar_visible,
+            show_vertical_scrollbar,
+            show_horizontal_scrollbar,
+        );
+        let inner_leaves = grouped.get_leaves_with_rects(main_layout.content_rect);
+        visible_buffers.push((
+            *main_split_id,
+            *main_split_id,
+            *main_buffer_id,
+            *split_area,
+            RenderKind::GroupTabBarOnly,
+        ));
+        for (inner_leaf, inner_buffer, inner_rect) in &inner_leaves {
+            // Keep inner panel viewports in sync with their actual rendered
+            // dimensions (updated synchronously during rendering).
+            if let Some(svs) = split_view_states.as_deref_mut() {
+                if let Some(vs) = svs.get_mut(inner_leaf) {
+                    vs.viewport.resize(inner_rect.width, inner_rect.height);
+                }
+            }
+            visible_buffers.push((
+                *main_split_id,
+                *inner_leaf,
+                *inner_buffer,
+                *inner_rect,
+                RenderKind::InnerLeaf,
+            ));
+        }
+    }
+    visible_buffers
+}
+
+/// Render one split's tab bar and its split-control (close / maximize) buttons,
+/// recording the resulting tab layout and button hit areas for mouse handling.
+#[allow(clippy::too_many_arguments)]
+fn render_split_tab_bar(
+    frame: &mut Frame,
+    layout: &SplitLayout,
+    split_id: LeafId,
+    buffer_id: BufferId,
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
+    grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
+    split_buffers: &[crate::view::split::TabTarget],
+    theme: &crate::view::theme::Theme,
+    is_active: bool,
+    tab_scroll_offset: usize,
+    tab_hover_for_split: Option<(crate::view::split::TabTarget, bool)>,
+    preview_buffer: Option<BufferId>,
+    draw_tab_bar: bool,
+    has_multiple_splits: bool,
+    is_maximized: bool,
+    hovered_close_split: Option<LeafId>,
+    hovered_maximize_split: Option<LeafId>,
+    cell_theme_map: &mut [crate::app::types::CellThemeInfo],
+    screen_width: u16,
+    tab_layouts: &mut HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
+    close_split_areas: &mut Vec<(LeafId, u16, u16, u16)>,
+    maximize_split_areas: &mut Vec<(LeafId, u16, u16, u16)>,
+) {
+    // Determine the active target for this split's tab bar: the marked group
+    // tab if any, otherwise the currently displayed buffer.
+    let active_target = split_view_states
+        .and_then(|svs| svs.get(&split_id))
+        .map(|vs| vs.active_target())
+        .unwrap_or(crate::view::split::TabTarget::Buffer(buffer_id));
+    // Collect group names from the stashed Grouped subtrees.
+    let group_names: HashMap<LeafId, String> = grouped_subtrees
+        .iter()
+        .filter_map(|(leaf_id, node)| {
+            if let crate::view::split::SplitNode::Grouped { name, .. } = node {
+                Some((*leaf_id, name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    // Render tabs for this split and collect hit areas. The tab bar records its
+    // theme-key runs into a local vec as it paints; apply them to the per-cell
+    // map afterward (the map isn't borrowed here).
+    let mut tab_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+    let tab_layout = {
+        let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
+        TabsRenderer::render_for_split(
+            frame,
+            layout.tabs_rect,
+            split_buffers,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            active_target,
+            theme,
+            is_active,
+            tab_scroll_offset,
+            tab_hover_for_split,
+            &group_names,
+            preview_buffer,
+            Some(&mut rec),
+            draw_tab_bar,
+        )
+    };
+    crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &tab_runs);
+
+    tab_layouts.insert(split_id, tab_layout);
+    let tab_row = layout.tabs_rect.y;
+
+    // Split control buttons at the right side of the tabs row.
+    //   Maximize/unmaximize: shown when multiple splits exist OR maximized.
+    //   Close: shown when multiple splits exist AND not maximized.
+    let show_maximize_btn = has_multiple_splits || is_maximized;
+    let show_close_btn = has_multiple_splits && !is_maximized;
+    if !show_maximize_btn && !show_close_btn {
+        return;
+    }
+
+    // Layout from the right edge: [maximize] [space] [close] |
+    let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
+    if show_close_btn {
+        let is_hovered = hovered_close_split == Some(split_id);
+        let close_fg = if is_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        let close_button =
+            Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
+        frame.render_widget(close_button, Rect::new(btn_x, tab_row, 1, 1));
+        close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+        btn_x = btn_x.saturating_sub(2); // 1 space before the next button
+    }
+    if show_maximize_btn {
+        let is_hovered = hovered_maximize_split == Some(split_id);
+        let max_fg = if is_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        // □ = maximize, ⧉ = unmaximize (restore).
+        let icon = if is_maximized { "⧉" } else { "□" };
+        let max_button =
+            Paragraph::new(icon).style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
+        frame.render_widget(max_button, Rect::new(btn_x, tab_row, 1, 1));
+        maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+    }
+}
+
+/// Render a composite (side-by-side panes) buffer for one split, plus its
+/// scrollbar, and record the content/scrollbar areas for mouse handling.
+#[allow(clippy::too_many_arguments)]
+fn render_composite_split(
+    frame: &mut Frame,
+    layout: &SplitLayout,
+    split_id: LeafId,
+    buffer_id: BufferId,
+    buffers: &mut HashMap<BufferId, EditorState>,
+    composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    composite_view_states: &mut HashMap<
+        (LeafId, BufferId),
+        crate::view::composite_view::CompositeViewState,
+    >,
+    split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
+    theme: &crate::view::theme::Theme,
+    panel_focused: bool,
+    use_terminal_bg: bool,
+    split_show_tilde: bool,
+    show_vertical_scrollbar: bool,
+    is_non_scrollable: bool,
+    is_active: bool,
+    show_horizontal_scrollbar: bool,
+    split_areas: &mut Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
+    horizontal_scrollbar_areas: &mut Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
+) {
+    // Take initial_focus_hunk before borrowing composite immutably.
+    let initial_focus_hunk = composite_buffers
+        .get_mut(&buffer_id)
+        .and_then(|c| c.initial_focus_hunk.take());
+    let Some(composite) = composite_buffers.get(&buffer_id) else {
+        return;
+    };
+
+    // Update SplitViewState viewport to match the actual rendered area so
+    // cursor movement uses the correct viewport height after a resize.
+    if let Some(svs) = split_view_states {
+        if let Some(split_vs) = svs.get_mut(&split_id) {
+            if split_vs.viewport.width != layout.content_rect.width
+                || split_vs.viewport.height != layout.content_rect.height
+            {
+                split_vs
+                    .viewport
+                    .resize(layout.content_rect.width, layout.content_rect.height);
+            }
+        }
+    }
+
+    // Get or create the composite view state.
+    let pane_count = composite.pane_count();
+    let view_state = composite_view_states
+        .entry((split_id, buffer_id))
+        .or_insert_with(|| {
+            crate::view::composite_view::CompositeViewState::new(buffer_id, pane_count)
+        });
+
+    // Apply the deferred initial focus hunk (first render only). This runs here
+    // because it's the only place where both the CompositeViewState and the
+    // correct viewport height exist.
+    if let Some(hunk_index) = initial_focus_hunk {
+        let mut hunk_count = 0usize;
+        let target_row = composite.alignment.rows.iter().position(|row| {
+            if row.row_type == crate::model::composite_buffer::RowType::HunkHeader {
+                let hit = hunk_count == hunk_index;
+                hunk_count += 1;
+                hit
+            } else {
+                false
+            }
+        });
+        if let Some(row) = target_row {
+            let viewport_height = layout.content_rect.height.saturating_sub(1) as usize;
+            let context_above = viewport_height / 3;
+            view_state.cursor_row = row;
+            view_state.scroll_row = row.saturating_sub(context_above);
+        }
+    }
+
+    render_composite_buffer(
+        frame,
+        layout.content_rect,
+        composite,
+        buffers,
+        theme,
+        panel_focused,
+        view_state,
+        use_terminal_bg,
+        split_show_tilde,
+    );
+
+    let total_rows = composite.row_count();
+    let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
+    let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
+        render_composite_scrollbar(
+            frame,
+            layout.scrollbar_rect,
+            total_rows,
+            view_state.scroll_row,
+            content_height,
+            is_active,
+            theme,
+        )
+    } else {
+        (0, 0)
+    };
+
+    split_areas.push((
+        split_id,
+        buffer_id,
+        layout.content_rect,
+        layout.scrollbar_rect,
+        thumb_start,
+        thumb_end,
+    ));
+    if show_horizontal_scrollbar {
+        horizontal_scrollbar_areas.push((
+            split_id,
+            buffer_id,
+            layout.horizontal_scrollbar_rect,
+            0, // composite buffers don't horizontal-scroll
+            0,
+            0,
+        ));
+    }
+}
+
+/// Render the internal separators of any active buffer groups and return their
+/// hit areas (with container IDs) so the hit-test path can wire up dragging.
+/// A group's Split nodes live in the side-map, not the main split tree, so
+/// `split_manager` doesn't know about them.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+fn render_grouped_separators(
+    frame: &mut Frame,
+    base_visible: &[(LeafId, BufferId, Rect)],
+    split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
+    grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
+    theme: &crate::view::theme::Theme,
+    tab_bar_visible: bool,
+    show_vertical_scrollbar: bool,
+    show_horizontal_scrollbar: bool,
+) -> Vec<(
+    crate::model::event::ContainerId,
+    SplitDirection,
+    u16,
+    u16,
+    u16,
+)> {
+    let mut grouped_separator_areas = Vec::new();
+    for (main_split_id, _main_buffer_id, split_area) in base_visible {
+        let active_group = split_view_states
+            .and_then(|svs| svs.get(main_split_id))
+            .and_then(|vs| vs.active_group_tab);
+        let Some(grouped) = active_group.and_then(|leaf| grouped_subtrees.get(&leaf)) else {
+            continue;
+        };
+        let split_tab_bar_visible = tab_bar_visible
+            && !split_view_states
+                .and_then(|svs| svs.get(main_split_id))
+                .is_some_and(|vs| vs.suppress_chrome);
+        let main_layout = split_layout(
+            *split_area,
+            split_tab_bar_visible,
+            show_vertical_scrollbar,
+            show_horizontal_scrollbar,
+        );
+        if let crate::view::split::SplitNode::Grouped { layout, .. } = grouped {
+            for (id, direction, x, y, length) in
+                layout.get_separators_with_ids(main_layout.content_rect)
+            {
+                render_separator(frame, direction, x, y, length, theme);
+                grouped_separator_areas.push((id, direction, x, y, length));
+            }
+        }
+    }
+    grouped_separator_areas
+}
+
+/// Record vertical-scrollbar theme keys (thumb vs. track) for the theme
+/// inspector, from the geometry computed for each split during rendering.
+fn record_scrollbar_theme_runs(
+    split_areas: &[(LeafId, BufferId, Rect, Rect, usize, usize)],
+    cell_theme_map: &mut [crate::app::types::CellThemeInfo],
+    screen_width: u16,
+) {
+    let mut sb_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+    for (_, _, _, scrollbar_rect, thumb_start, thumb_end) in split_areas {
+        for row in 0..scrollbar_rect.height {
+            let is_thumb = (row as usize) >= *thumb_start && (row as usize) < *thumb_end;
+            sb_runs.push(crate::app::types::ThemeRun {
+                x: scrollbar_rect.x,
+                y: scrollbar_rect.y + row,
+                w: scrollbar_rect.width,
+                fg_key: Some(if is_thumb {
+                    "ui.scrollbar_thumb_fg"
+                } else {
+                    "ui.scrollbar_track_fg"
+                }),
+                bg_key: Some("editor.bg"),
+                region: if is_thumb {
+                    "Scrollbar Thumb"
+                } else {
+                    "Scrollbar Track"
+                },
+            });
+        }
+    }
+    crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &sb_runs);
+}
+
 /// Layout-only path: computes view_line_mappings for all visible splits
 /// without drawing anything. Used by macro replay to keep the cached layout
 /// fresh between actions without paying the cost of full rendering.
