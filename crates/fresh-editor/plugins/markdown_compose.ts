@@ -110,16 +110,34 @@ function toBlock(m: { id: string; start: number; end: number; payload: unknown }
   };
 }
 
-// Upsert a block as a core marker (start/end + payload). The editor keeps
-// start/end shifted across edits from here on. Row positions are stored
-// relative to start (see toBlock).
-function saveBlock(bufferId: number, b: TableBlock): void {
-  editor.createMarker(bufferId, b.id, b.startByte, b.endByte, {
+// The marker payload for a block (row positions RELATIVE to start; see toBlock).
+function blockPayload(b: TableBlock): {
+  rows: number[]; sepRows: number[]; maxW: number[]; allocated: number[];
+} {
+  return {
     rows: b.rows.map((r) => r - b.startByte),
     sepRows: b.sepRows.map((r) => r - b.startByte),
     maxW: b.maxW,
     allocated: b.allocated,
-  });
+  };
+}
+
+// Create (or re-create) a block's marker, SETTING its byte coordinates. Use
+// only when a marker doesn't exist yet or its extent genuinely changed — never
+// on every render. createMarker write-throughs start/end, so calling it while
+// the editor is concurrently shifting the marker for an edit can clobber the
+// shift with a stale coordinate (off-by-one borders under rapid edits). The
+// editor owns start/end after creation and shifts them across edits.
+function saveBlock(bufferId: number, b: TableBlock): void {
+  editor.createMarker(bufferId, b.id, b.startByte, b.endByte, blockPayload(b));
+}
+
+// Update ONLY a block's payload, leaving the editor's start/end untouched. This
+// is the steady-state write: row positions are stored relative to start, so the
+// editor's shifts keep them correct without the plugin ever re-sending (and
+// possibly staling) the coordinates. Safe to call on every render.
+function savePayload(bufferId: number, b: TableBlock): void {
+  editor.updateMarker(bufferId, b.id, blockPayload(b));
 }
 
 function queryBlocks(bufferId: number, start: number, end: number): TableBlock[] {
@@ -1561,26 +1579,54 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     // queryMarkers reflects same-pass creates (write-through), so two groups of
     // one table in the same batch merge into one marker.
     const near = queryBlocks(bufferId, gStart - 1, gEnd + 1);
-    let block = near.length ? near[0] : undefined;
-    if (!block) {
-      block = {
-        id: `t${nextTableBlockId++}`,
-        startByte: gStart,
-        endByte: gEnd,
-        rows: [],
-        sepRows: [],
-        maxW: [],
-        allocated: [],
-      };
+    const existing = near.length ? near[0] : undefined;
+    // Consolidate accidental duplicates: if more than one marker overlaps this
+    // group (can happen if a prior pass missed the marker under a query lag and
+    // minted a second one), keep the first and drop the rest plus their border
+    // namespaces. Without this, every duplicate draws its own border frame.
+    for (let k = 1; k < near.length; k++) {
+      editor.clearVirtualTextNamespace(bufferId, `md-tb-${near[k].id}`);
+      editor.deleteMarker(bufferId, near[k].id);
     }
 
-    block.startByte = Math.min(block.startByte, gStart);
-    block.endByte = Math.max(block.endByte, gEnd);
+    // The editor owns the marker's byte coordinates and shifts them on every
+    // edit. The `lines_changed` event, however, carries row byte positions from
+    // the buffer state at the moment the batch was computed, which under rapid
+    // edits can LAG the live marker coords the plugin reads from the shared
+    // snapshot. Reconcile the two frames up front: translate every event row
+    // position into the marker's (authoritative) coordinate frame by the
+    // observed offset between the marker start and the group start. For an
+    // existing marker the group's first row IS the marker start, so this offset
+    // is exactly the lag; positions then line up with the editor's shifts and
+    // no stale anchor can survive.
+    const origStart = existing ? existing.startByte : gStart;
+    const origEnd = existing ? existing.endByte : gEnd;
+    const frameShift = existing ? origStart - gStart : 0;
+    const groupStart = gStart + frameShift; // == origStart when existing
+    const groupEnd = gEnd + frameShift;
 
+    const block: TableBlock = existing ?? {
+      id: `t${nextTableBlockId++}`,
+      startByte: gStart,
+      endByte: gEnd,
+      rows: [],
+      sepRows: [],
+      maxW: [],
+      allocated: [],
+    };
+
+    // Rebuild the rows this group covers from the (internally consistent) event
+    // data, translated into the marker frame. Drop any persisted rows inside the
+    // group's span first so stale anchors from an earlier, laggier frame can't
+    // accumulate; rows OUTSIDE the span (off-screen rows from prior scrolls)
+    // are kept.
+    block.rows = block.rows.filter((r) => r < groupStart || r >= groupEnd);
+    block.sepRows = block.sepRows.filter((r) => r < groupStart || r >= groupEnd);
     for (const line of group) {
-      if (!block.rows.includes(line.byte_start)) block.rows.push(line.byte_start);
+      const r = line.byte_start + frameShift;
+      if (!block.rows.includes(r)) block.rows.push(r);
       const isSep = isSepRowContent(line.content);
-      if (isSep && !block.sepRows.includes(line.byte_start)) block.sepRows.push(line.byte_start);
+      if (isSep && !block.sepRows.includes(r)) block.sepRows.push(r);
       const cells = tableCells(line.content);
       for (let c = 0; c < cells.length; c++) {
         // Separator-row cells (`---`) adapt to data rows: width 0. Use RAW
@@ -1592,14 +1638,29 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     }
     block.rows.sort((a, b) => a - b);
     block.sepRows.sort((a, b) => a - b);
+    block.startByte = block.rows[0];
+    // Keep the editor-owned end when off-screen rows below remain; otherwise the
+    // group's end is the table end. (For a full-table batch these are equal, so
+    // an existing marker's extent is unchanged and we never rewrite its coords.)
+    const hasBelow = block.rows.some((r) => r >= groupEnd);
+    block.endByte = hasBelow ? Math.max(origEnd, groupEnd) : groupEnd;
 
     const prevAlloc = block.allocated.slice();
     rebuildAllocatedWidths(block);
     if (block.allocated.some((w, i) => w > (prevAlloc[i] ?? 0))) grew = true;
 
-    // Upsert into the core marker store (write-through: visible to later
-    // queries in this same pass).
-    saveBlock(bufferId, block);
+    // Upsert into the core marker store (write-through: visible to later queries
+    // in this same pass). Only SET coordinates (createMarker) for a brand-new
+    // marker or a genuine extent change; otherwise update the payload only
+    // (updateMarker) so the editor stays the sole writer of start/end and a
+    // concurrent edit-shift can't be clobbered by a stale coordinate. Row
+    // positions are stored relative to the (editor-owned) start, so they remain
+    // correct across the editor's shifts without the plugin re-sending coords.
+    if (!existing || block.startByte !== origStart || block.endByte !== origEnd) {
+      saveBlock(bufferId, block);
+    } else {
+      savePayload(bufferId, block);
+    }
   }
 
   return grew;

@@ -2613,6 +2613,46 @@ impl EditorTestHarness {
         })
     }
 
+    /// Drive editor ticks until the editor reports no async work for several
+    /// consecutive ticks, i.e. the plugin thread has drained its hook backlog
+    /// and emitted all resulting commands.
+    ///
+    /// Unlike the screen-stability waits, this observes the editor's own
+    /// "did work this tick" signal rather than the rendered output. That
+    /// matters for plugins whose decorations are produced asynchronously: under
+    /// heavy parallel load the plugin thread can fall behind and emit a *run of
+    /// identical, still-stale* frames, which satisfies a screen-stability streak
+    /// even though the plugin has not yet caught up to the final buffer state.
+    /// Waiting for the async pipeline itself to go quiet observes the converged
+    /// frame instead.
+    ///
+    /// `idle_ticks` is the number of consecutive no-work ticks required; with
+    /// the ~50ms real sleep per tick this is a window of genuine silence.
+    pub fn wait_for_async_quiescence(&mut self, idle_ticks: usize) -> anyhow::Result<()> {
+        const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
+        // Bound the wait so a genuinely stuck pipeline fails loudly instead of
+        // hanging the suite. Matches the spirit of the other wait_* helpers.
+        const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+        let start = std::time::Instant::now();
+        let mut consecutive_idle = 0usize;
+        while consecutive_idle < idle_ticks {
+            let did_work = fresh::app::editor_tick(&mut self.editor, || Ok(()))?;
+            self.render()?;
+            if did_work {
+                consecutive_idle = 0;
+            } else {
+                consecutive_idle += 1;
+            }
+            std::thread::sleep(WAIT_SLEEP);
+            self.advance_time(WAIT_SLEEP);
+            if start.elapsed() > MAX_WAIT {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     // ===== File Explorer Wait Helpers =====
 
     /// Wait for file explorer to be initialized (has a view)

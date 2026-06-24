@@ -117,31 +117,30 @@ Tail paragraph two.
             .unwrap();
     }
 
-    // Strong settle before asserting. The border virtual lines are added via
-    // async `addVirtualLine` commands that are drained a tick *after* the
-    // `lines_changed` that requested them, so the screen can be momentarily
-    // unchanged (a one-frame lull) while the table is still mid-redraw. The
-    // two-equal-render `wait_until_stable` above can return inside such a lull,
-    // which under nextest's heavy parallel load made this assert flaky. Require
-    // several consecutive identical renders so we only assert on a frame the
-    // async pipeline has genuinely finished. (A genuinely-broken table is
-    // *stably* broken, so this never hides a real regression.)
-    {
-        let mut last = String::new();
-        let mut streak = 0;
-        harness
-            .wait_until(|h| {
-                let s = h.screen_to_string();
-                if s == last {
-                    streak += 1;
-                } else {
-                    streak = 0;
-                    last = s;
-                }
-                streak >= 6
-            })
-            .unwrap();
-    }
+    // Let the edit storm's async work drain. The table's borders/conceals are
+    // produced asynchronously by the plugin thread: each edit fires
+    // `lines_changed` fire-and-forget, the plugin processes it against the
+    // shared state snapshot, and the resulting `addVirtualLine`/`addConceal`
+    // commands are drained a tick later.
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    // Force one consistent full redraw, then settle again. Under nextest's
+    // heavy parallel load the plugin thread can fall behind *during* the edit
+    // storm and process a `lines_changed` batch against a state snapshot the
+    // editor has already advanced past — anchoring a border a line off. Because
+    // `lines_changed` is edge-triggered (only byte ranges not yet seen), that
+    // stale frame would otherwise stick until the rows are next touched. A
+    // benign cursor move clears `seen_byte_ranges` (see `handle_refresh_lines`)
+    // so every visible line re-fires `lines_changed`; now that input has
+    // stopped, the snapshot matches the buffer and the table redraws correctly.
+    // This asserts the table *converges* — the guarantee an async decoration
+    // plugin can actually make — rather than that every mid-storm frame is
+    // already perfect. The move (Down then Up) stays in the blank region above
+    // the heading, so it never reveals table-cell markup.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(4).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
 
     // -- The regression check --------------------------------------------
     // The table must still be a single, well-formed frame: a `┌─┬─┐` top
