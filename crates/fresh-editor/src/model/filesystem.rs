@@ -664,6 +664,21 @@ pub trait FileSystem: Send + Sync {
         true
     }
 
+    /// Stable id of the remote agent channel backing this filesystem, if any.
+    /// `None` for local filesystems. Lets the editor map a reconnect
+    /// notification back to the owning window. See `AgentChannel::id`.
+    fn remote_channel_id(&self) -> Option<u64> {
+        None
+    }
+
+    /// A handle notified once per successful transport hot-swap of the backing
+    /// agent channel. `None` for local filesystems. The editor awaits this to
+    /// drive event-driven reconnect handling (respawning embedded terminals)
+    /// instead of polling `is_remote_connected()`.
+    fn remote_reconnect_notify(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        None
+    }
+
     /// Get the home directory for this filesystem
     ///
     /// For local filesystems, returns the local home directory.

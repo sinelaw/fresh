@@ -537,6 +537,14 @@ pub struct Editor {
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,
 
+    /// Connection ids (`AgentChannel::id`) for which a reconnect-forwarder task
+    /// has already been spawned. The forwarder awaits each channel's
+    /// `reconnect_notify` and turns a hot-swap into an
+    /// `AsyncMessage::RemoteReconnected`, so reconnect handling is event-driven
+    /// rather than polled. `ensure_remote_reconnect_forwarders` registers one
+    /// lazily per remote window; this set makes that idempotent.
+    remote_reconnect_forwarders: std::collections::HashSet<u64>,
+
     /// In-flight async system-clipboard reads, keyed by `request_id`.
     /// Each entry owns an anchor (`VirtualText("▍")`) in some buffer
     /// that floats with edits via the marker tree; when the matching

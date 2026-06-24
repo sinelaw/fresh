@@ -480,6 +480,14 @@ impl FileSystem for RemoteFileSystem {
         self.channel.is_connected()
     }
 
+    fn remote_channel_id(&self) -> Option<u64> {
+        Some(self.channel.id())
+    }
+
+    fn remote_reconnect_notify(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        Some(self.channel.reconnect_notify())
+    }
+
     fn home_dir(&self) -> io::Result<PathBuf> {
         let result = self
             .channel

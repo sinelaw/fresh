@@ -463,6 +463,7 @@ impl Editor {
             key_translator: parts.key_translator,
 
             // Trivial defaults (no external dependencies):
+            remote_reconnect_forwarders: std::collections::HashSet::new(),
             materialize_pending: std::collections::HashSet::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
@@ -1139,6 +1140,17 @@ impl Editor {
                     crate::services::authority::SessionAuthoritySpec::Local,
                 )
             });
+        // A plain `fresh ssh://…` (or `user@host:path`) launch installs a remote
+        // authority but has no persisted window to carry a spec, so the default
+        // above is `Local` — which left persistence and manual reconnect inert
+        // for CLI remote sessions. Derive the real spec from the live authority
+        // when the resolved one is `Local` but the backend isn't. Never
+        // downgrades an already-remote spec (e.g. a restored dormant session
+        // booted on a local placeholder), since that path is `RemoteAgent` here.
+        let active_authority_spec = match active_authority_spec {
+            crate::services::authority::SessionAuthoritySpec::Local => authority.session_spec(),
+            spec => spec,
+        };
 
         // The active window owns the editor's boot authority outright — moved
         // in, not cloned (there is no editor-wide copy).

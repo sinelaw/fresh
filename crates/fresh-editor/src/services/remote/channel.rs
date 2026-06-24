@@ -64,8 +64,23 @@ type BoxedReader = Box<dyn AsyncBufRead + Unpin + Send>;
 /// Boxed async writer type used by the write task.
 type BoxedWriter = Box<dyn AsyncWrite + Unpin + Send>;
 
+/// Process-global source of stable per-channel ids. Lets the editor map an
+/// `AsyncMessage::RemoteReconnected` back to the window whose authority owns
+/// this channel, without the channel knowing anything about windows.
+static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Communication channel with the remote agent
 pub struct AgentChannel {
+    /// Stable identity for this channel, assigned at creation. Survives
+    /// transport hot-swaps (the channel object is reused across reconnects),
+    /// so it's a durable key for "this remote session".
+    id: u64,
+    /// Notified once each time the transport is hot-swapped back in
+    /// (`replace_transport`). The editor spawns a forwarder that turns each
+    /// notification into an `AsyncMessage::RemoteReconnected`, so a silent
+    /// background reconnect reaches the app event-driven rather than by
+    /// polling `is_connected()`.
+    reconnect_notify: Arc<tokio::sync::Notify>,
     /// Sender to the write task
     write_tx: mpsc::Sender<String>,
     /// Pending requests awaiting responses
@@ -154,6 +169,8 @@ impl AgentChannel {
         ));
 
         Self {
+            id: NEXT_CHANNEL_ID.fetch_add(1, Ordering::Relaxed),
+            reconnect_notify: Arc::new(tokio::sync::Notify::new()),
             write_tx,
             pending,
             next_id: AtomicU64::new(1),
@@ -357,8 +374,31 @@ impl AgentChannel {
         if self.new_reader_tx.send(Box::new(reader)).await.is_err() {
             warn!("replace_transport: read task is gone, cannot reconnect");
         }
+        // The carrier was just hot-swapped back in: wake anyone watching for a
+        // reconnect (the editor's forwarder → `AsyncMessage::RemoteReconnected`,
+        // which respawns embedded terminals that died with the old carrier).
+        // Fired here rather than when `connected` flips true because the
+        // terminal respawn opens its own fresh carrier and doesn't depend on
+        // the agent channel's drain completing.
+        //
+        // `notify_one` (not `notify_waiters`) so a swap that lands in the gap
+        // between the forwarder's send and its next `notified()` still stores a
+        // permit and is delivered — reconnect events can't be dropped. Multiple
+        // swaps coalesce to one permit, which is fine: reattach is idempotent.
+        self.reconnect_notify.notify_one();
         // Note: connected is set to true by the read task after it drains
         // stale pending requests and switches to the new reader.
+    }
+
+    /// Stable identity for this channel (see the `id` field).
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// A handle that is notified once per successful transport hot-swap. The
+    /// editor awaits it to drive event-driven reconnect handling.
+    pub fn reconnect_notify(&self) -> Arc<tokio::sync::Notify> {
+        self.reconnect_notify.clone()
     }
 
     /// Replace the underlying transport (blocking version for non-async contexts).

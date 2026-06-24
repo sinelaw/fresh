@@ -396,6 +396,56 @@ impl Authority {
         Self::local(scope.trust, scope.env)
     }
 
+    /// The persistable backend descriptor for this *live* authority, derived
+    /// from its [`CommandWrap`]. This is the single source of truth a window's
+    /// `authority_spec` should reflect: it makes a plain `fresh ssh://…` launch
+    /// carry a real `RemoteAgent` spec (so persistence, the dormancy model, and
+    /// the manual-reconnect rebuild in `start_remote_reconnect` all work)
+    /// instead of the historical `Local` default that left those paths inert.
+    ///
+    /// `Direct` (local) and `Prefix` (container — its spec is owned by the
+    /// plugin that built it) map to `Local`; the SSH and Kube wraps reconstruct
+    /// their transport spec from the connection params they already hold.
+    pub fn session_spec(&self) -> SessionAuthoritySpec {
+        match &self.command_wrap {
+            CommandWrap::Ssh { params, remote_dir } => {
+                SessionAuthoritySpec::RemoteAgent(RemoteAgentSpec {
+                    transport: RemoteTransportSpec::Ssh {
+                        user: params.user.clone(),
+                        host: params.host.clone(),
+                        port: params.port,
+                        identity_file: params
+                            .identity_file
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().into_owned()),
+                        remote_path: remote_dir.clone(),
+                        extra_args: params.extra_args.clone(),
+                    },
+                    base_env: Vec::new(),
+                    window: false,
+                    label: None,
+                    command: None,
+                })
+            }
+            CommandWrap::Kube { target, base_env } => {
+                SessionAuthoritySpec::RemoteAgent(RemoteAgentSpec {
+                    transport: RemoteTransportSpec::KubectlExec {
+                        context: target.context.clone(),
+                        namespace: target.namespace.clone(),
+                        pod: target.pod.clone(),
+                        container: target.container.clone(),
+                        workspace: target.workspace.clone(),
+                    },
+                    base_env: base_env.clone(),
+                    window: false,
+                    label: None,
+                    command: None,
+                })
+            }
+            CommandWrap::Direct | CommandWrap::Prefix(_) => SessionAuthoritySpec::Local,
+        }
+    }
+
     /// Build a [`TerminalWrapper`] that runs `argv` as an interactive PTY
     /// child **inside this authority's backend**, rooted at the session's
     /// workspace dir. Local runs it directly; container/remote authorities wrap

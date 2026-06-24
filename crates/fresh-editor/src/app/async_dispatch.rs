@@ -91,12 +91,11 @@ impl Editor {
         // This ensures plugin errors surface quickly instead of causing silent hangs
         self.plugin_manager.write().unwrap().check_thread_health();
 
-        // Catch silent agent-channel reconnects (the background transport
-        // hot-swap in `spawn_reconnect_task`) and respawn any terminals that
-        // died with the dropped carrier. The app-level `RemoteAttachMode::
-        // Reconnect` path handles the dive-into-dormant / manual-reconnect
-        // cases; this covers the automatic recovery that never goes through it.
-        self.detect_remote_terminal_reconnects();
+        // Lazily wire an event-driven reconnect forwarder for each remote
+        // window (idempotent; cheap when already wired). This replaces the old
+        // per-frame connection-state poll: the forwarder awaits the channel's
+        // reconnect notification and posts `RemoteReconnected`.
+        self.ensure_remote_reconnect_forwarders();
 
         let Some(bridge) = &self.async_bridge else {
             return false;
@@ -391,6 +390,9 @@ impl Editor {
                 }
                 AsyncMessage::RemoteAttachReady(ready) => {
                     self.handle_remote_attach_ready(ready);
+                }
+                AsyncMessage::RemoteReconnected { connection_id } => {
+                    self.handle_remote_reconnected(connection_id);
                 }
                 AsyncMessage::RemoteAttachFailed {
                     error,
@@ -803,38 +805,100 @@ impl Editor {
     /// on the automatic recovery path, would otherwise stay dead even though
     /// the filesystem/LSP came back.
     ///
-    /// We sample each remote-agent window's `is_remote_connected()` every
-    /// frame and, on a `false → true` edge, respawn its dead terminals through
-    /// the (already recovered) authority — the same `respawn_terminals_through_
-    /// authority` the manual reconnect handler calls.
-    fn detect_remote_terminal_reconnects(&mut self) {
-        // Gather the reconnected windows without holding a `windows` borrow
-        // across `set_status_message` (which needs `&mut self`).
-        let mut reconnected: Vec<String> = Vec::new();
-        for window in self.windows.values_mut() {
-            // Gate on the *live authority* being remote (an SSH / kube
-            // filesystem), not `authority_spec` — a plain `fresh ssh://…`
-            // launch leaves the spec `Local`. A dormant window's placeholder
-            // authority is local, so `remote_connection_info()` is `None` and
-            // it never produces a spurious edge here; its revival is owned by
-            // the `RemoteAttachMode::Reconnect` path.
+    /// Bring `window_id`'s remote session back to life after its carrier
+    /// reconnected. The single convergence point for *every* reconnect path:
+    ///
+    ///   * the silent background transport hot-swap (`spawn_reconnect_task`),
+    ///     which keeps the existing authority and notifies via
+    ///     `AsyncMessage::RemoteReconnected`; and
+    ///   * the app-level rebuild (`RemoteAttachMode::Reconnect`), which installs
+    ///     a fresh authority first and then calls this.
+    ///
+    /// Either way the embedded terminal PTYs died with the old carrier (a
+    /// separate `ssh -t` / `kubectl exec` from the agent channel), so we respawn
+    /// them in place through the now-live authority, reusing each backing file
+    /// so scrollback continues. `respawn_terminals_through_authority` skips
+    /// still-live terminals, so this is idempotent under duplicate signals.
+    pub(crate) fn reattach_window(&mut self, window_id: fresh_core::WindowId) {
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        window.remote_reconnect_error = None;
+        let revived = window.respawn_terminals_through_authority();
+        if revived > 0 {
+            let label = window.label.clone();
+            self.set_status_message(format!("Reconnected: {label}"));
+        }
+    }
+
+    /// Ensure each remote window has a background task forwarding its agent
+    /// channel's reconnect notifications onto the bridge as
+    /// `AsyncMessage::RemoteReconnected`. Idempotent and cheap: it only spawns
+    /// for channels not already in `remote_reconnect_forwarders`. Called every
+    /// frame so windows born/reconnected after startup are covered without
+    /// hooking each authority-install site.
+    ///
+    /// The forwarder loops (`notified().await` → `send`) so it survives many
+    /// reconnects. A window whose authority is later rebuilt gets a *new*
+    /// channel id and a fresh forwarder; the old forwarder parks forever on a
+    /// notify that can no longer fire (its channel is dropped) — a single idle
+    /// task per rebuild, which is rare. Cleaning those up is a future refinement.
+    fn ensure_remote_reconnect_forwarders(&mut self) {
+        let (Some(runtime), Some(bridge)) =
+            (self.tokio_runtime.as_ref(), self.async_bridge.as_ref())
+        else {
+            return;
+        };
+        // Collect first to avoid spawning while holding the `windows` borrow.
+        let mut to_spawn: Vec<(u64, std::sync::Arc<tokio::sync::Notify>)> = Vec::new();
+        for window in self.windows.values() {
             let fs = &window.authority().filesystem;
-            let is_remote = fs.remote_connection_info().is_some();
-            let connected = fs.is_remote_connected();
-            let was = window.remote_was_connected;
-            window.remote_was_connected = connected;
-            // Only a genuine drop→recover edge on a live remote window.
-            if is_remote && connected && !was {
-                let revived = window.respawn_terminals_through_authority();
-                if revived > 0 {
-                    reconnected.push(window.label.clone());
+            if let (Some(id), Some(notify)) = (fs.remote_channel_id(), fs.remote_reconnect_notify())
+            {
+                if !self.remote_reconnect_forwarders.contains(&id) {
+                    to_spawn.push((id, notify));
                 }
             }
         }
-        // One line is enough even if several windows recovered at once.
-        if let Some(label) = reconnected.first() {
-            self.set_status_message(format!("Reconnected: {label}"));
+        for (id, notify) in to_spawn {
+            self.remote_reconnect_forwarders.insert(id);
+            let sender = bridge.sender();
+            runtime.spawn(async move {
+                loop {
+                    notify.notified().await;
+                    if sender
+                        .send(AsyncMessage::RemoteReconnected { connection_id: id })
+                        .is_err()
+                    {
+                        break; // editor/bridge gone
+                    }
+                }
+            });
         }
+    }
+
+    /// Test-only seam: drive the reconnect dispatch directly, as if a
+    /// `RemoteReconnected` event for `connection_id` had arrived on the bridge.
+    /// Lets component tests exercise the id→window→reattach mapping without a
+    /// live agent channel or tokio runtime.
+    #[doc(hidden)]
+    pub fn test_dispatch_remote_reconnected(&mut self, connection_id: u64) {
+        self.handle_remote_reconnected(connection_id);
+    }
+
+    /// Map a reconnected agent channel (identified by its stable connection id)
+    /// back to the window whose live authority owns it, and reattach. Driven by
+    /// the background reconnect task via `AsyncMessage::RemoteReconnected`.
+    fn handle_remote_reconnected(&mut self, connection_id: u64) {
+        let Some(window_id) = self.windows.iter().find_map(|(id, w)| {
+            (w.authority().filesystem.remote_channel_id() == Some(connection_id)).then_some(*id)
+        }) else {
+            // The window was closed, or its authority was swapped out from under
+            // this connection — nothing to reattach.
+            return;
+        };
+        tracing::info!("agent channel {connection_id} reconnected; reattaching window {window_id}");
+        self.reattach_window(window_id);
     }
 
     fn handle_terminal_exited(
@@ -1070,37 +1134,16 @@ impl Editor {
                         "Reconnected dormant session {window_id} ({})",
                         authority.display_label
                     );
-                    // Clear any prior FailedAttach now the reconnect
-                    // succeeded, so the indicator drops back to
-                    // Connected for this workspace.
-                    if let Some(w) = self.windows.get_mut(&window_id) {
-                        w.remote_reconnect_error = None;
-                    }
+                    // This path *rebuilt* the authority, so install it first,
+                    // then reattach: `reattach_window` clears the FailedAttach
+                    // indicator and respawns the embedded terminal(s) that died
+                    // with the old carrier, through the freshly-installed
+                    // authority. The silent hot-swap path keeps the existing
+                    // authority and reaches the same `reattach_window` via
+                    // `AsyncMessage::RemoteReconnected`.
                     self.set_session_authority(window_id, authority);
                     self.session_keepalives.insert(window_id, keepalive);
-                    // The window's embedded terminal(s) ran over the
-                    // old `ssh -t` carrier, which died with the link
-                    // — the agent-channel reconnect doesn't revive
-                    // them. Respawn each dead PTY through the
-                    // freshly-installed authority so it runs on the
-                    // remote backend again, reusing its backing file
-                    // so scrollback continues.
-                    if let Some(w) = self.windows.get_mut(&window_id) {
-                        w.respawn_terminals_through_authority();
-                        // We just respawned through the freshly-installed
-                        // authority; record the connected state so the
-                        // per-frame `detect_remote_terminal_reconnects` edge
-                        // detector doesn't see a `false → true` transition and
-                        // respawn a second time on the next tick.
-                        w.remote_was_connected = w.authority().filesystem.is_remote_connected();
-                    }
-                    self.set_status_message(format!(
-                        "Reconnected: {}",
-                        self.windows
-                            .get(&window_id)
-                            .map(|w| w.label.clone())
-                            .unwrap_or_default()
-                    ));
+                    self.reattach_window(window_id);
                 } else {
                     // The window was closed while the connect was in
                     // flight — drop the backend we just built.

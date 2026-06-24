@@ -12,15 +12,19 @@
 //!
 //! The second path is what `fresh ssh://…` actually uses, and it used to leave
 //! embedded terminals dead even after the filesystem/LSP came back — nothing
-//! respawned them. `Editor::detect_remote_terminal_reconnects` closes that gap:
-//! it samples each remote window's connection state every tick (via
-//! `process_async_messages`) and, on a `disconnected → connected` edge, revives
-//! the dead PTYs in place.
+//! respawned them. The channel now fires a `reconnect_notify` on each transport
+//! hot-swap; a per-window forwarder turns that into an
+//! `AsyncMessage::RemoteReconnected { connection_id }`, and
+//! `Editor::handle_remote_reconnected` maps the id back to its window and
+//! reattaches — respawning the dead PTYs in place.
 //!
-//! This drives that detector directly with a filesystem whose connected state
-//! is a runtime-flippable flag, asserting (a) no respawn while down, (b) respawn
-//! on the recover edge, and (c) no double-respawn on a subsequent steady tick.
-//! Requires a working PTY (`/dev/ptmx`); skips when unavailable.
+//! This drives the reconnect *dispatch* directly (via the
+//! `test_dispatch_remote_reconnected` seam, standing in for the bridge event a
+//! channel's reconnect forwarder posts), with a filesystem that advertises a
+//! fixed remote channel id. It asserts the id→window→reattach mapping revives a
+//! dead terminal, that an event for an unrelated id is a no-op, and that a
+//! repeat event is idempotent (no orphaned re-respawn). Requires a working PTY
+//! (`/dev/ptmx`); skips when unavailable.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::model::filesystem::{
@@ -45,12 +49,15 @@ fn pty_available() -> bool {
 }
 
 /// A filesystem that advertises a remote backend (so `remote_connection_info()`
-/// is `Some`) whose link state is a shared, flippable flag. Real I/O delegates
-/// to `StdFileSystem`; only the connection-state answers are synthetic, so the
-/// detector can be driven across a disconnect/reconnect with no network.
+/// is `Some`) with a fixed channel id and a flippable connected flag. Real I/O
+/// delegates to `StdFileSystem`; only the connection-state and channel-id
+/// answers are synthetic, so the reconnect dispatch can be driven with no
+/// network. `remote_reconnect_notify` is left at its `None` default — the test
+/// drives the dispatch directly rather than through a live forwarder.
 struct ToggleRemoteFs {
     inner: StdFileSystem,
     connected: Arc<AtomicBool>,
+    channel_id: u64,
 }
 
 impl FileSystem for ToggleRemoteFs {
@@ -154,6 +161,9 @@ impl FileSystem for ToggleRemoteFs {
     fn is_remote_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
     }
+    fn remote_channel_id(&self) -> Option<u64> {
+        Some(self.channel_id)
+    }
 }
 
 /// A silent agent-channel reconnect (background transport hot-swap) must revive
@@ -167,11 +177,13 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
         return;
     }
 
+    const CHANNEL_ID: u64 = 4242;
     let temp = tempfile::tempdir().unwrap();
     let connected = Arc::new(AtomicBool::new(true));
     let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(ToggleRemoteFs {
         inner: StdFileSystem,
         connected: connected.clone(),
+        channel_id: CHANNEL_ID,
     });
     let mut harness = EditorTestHarness::create(
         120,
@@ -199,19 +211,6 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
         .active_window_mut()
         .terminal_manager
         .close(old_id);
-
-    // A tick while still disconnected records the down edge and must NOT
-    // respawn — the link is dead, a new `ssh -t` would just fail.
-    harness.editor_mut().process_async_messages();
-    assert_eq!(
-        harness
-            .editor()
-            .active_window()
-            .terminal_buffers
-            .get(&buffer_id),
-        Some(&old_id),
-        "binding is preserved across the drop, still awaiting respawn"
-    );
     assert!(
         harness
             .editor()
@@ -219,23 +218,41 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
             .terminal_manager
             .get(old_id)
             .is_none(),
-        "no respawn happens while the link is still down"
+        "dead terminal's handle is torn down on the drop"
     );
 
-    // The link comes back via the silent hot-swap. The next tick's detector
-    // should see the disconnected → connected edge and revive the terminal.
+    // A reconnect event for an *unrelated* channel id must not touch this
+    // window — guards the id→window mapping against reattaching the wrong one.
+    harness
+        .editor_mut()
+        .test_dispatch_remote_reconnected(CHANNEL_ID + 1);
+    assert!(
+        harness
+            .editor()
+            .active_window()
+            .terminal_manager
+            .get(old_id)
+            .is_none(),
+        "an event for a different channel id leaves the window untouched"
+    );
+
+    // The link comes back: the channel's reconnect forwarder posts
+    // `RemoteReconnected { connection_id: CHANNEL_ID }`. Dispatching it maps to
+    // this window and revives the terminal in place.
     connected.store(true, Ordering::SeqCst);
-    harness.editor_mut().process_async_messages();
+    harness
+        .editor_mut()
+        .test_dispatch_remote_reconnected(CHANNEL_ID);
 
     let new_id = *harness
         .editor()
         .active_window()
         .terminal_buffers
         .get(&buffer_id)
-        .expect("buffer is still bound to a terminal after auto-reconnect");
+        .expect("buffer is still bound to a terminal after reconnect");
     assert_ne!(
         new_id, old_id,
-        "auto-reconnect respawns into a fresh terminal id, not the dead one"
+        "reconnect respawns into a fresh terminal id, not the dead one"
     );
     assert!(
         harness
@@ -244,13 +261,15 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
             .terminal_manager
             .get(new_id)
             .is_some_and(|h| h.is_alive()),
-        "the auto-respawned terminal is live"
+        "the respawned terminal is live"
     );
 
-    // A subsequent steady-state tick (still connected) must not respawn again —
-    // the edge detector only fires on the transition, not on every connected
-    // tick. Guards against a flip-flop that would orphan PTYs every frame.
-    harness.editor_mut().process_async_messages();
+    // A duplicate reconnect event (coalesced notifies, a second forwarder tick)
+    // must be idempotent: the now-live terminal is left alone, not orphaned by a
+    // second respawn.
+    harness
+        .editor_mut()
+        .test_dispatch_remote_reconnected(CHANNEL_ID);
     assert_eq!(
         harness
             .editor()
@@ -258,6 +277,6 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
             .terminal_buffers
             .get(&buffer_id),
         Some(&new_id),
-        "no second respawn on a steady connected tick"
+        "a duplicate reconnect event does not respawn an already-live terminal"
     );
 }

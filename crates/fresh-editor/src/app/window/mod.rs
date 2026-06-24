@@ -360,16 +360,6 @@ pub struct Window {
     /// another window's indicator.
     pub remote_reconnect_error: Option<String>,
 
-    /// Last observed remote-connection state for this window's authority,
-    /// sampled each frame by `Editor::detect_remote_terminal_reconnects`. A
-    /// `false → true` transition means the agent channel's background
-    /// transport hot-swap (`spawn_reconnect_task`) silently re-established the
-    /// link — the embedded `ssh -t` / `kubectl exec` terminal PTYs died with
-    /// the old carrier and need respawning, exactly as the app-level
-    /// `RemoteAttachMode::Reconnect` path does. Initialised `true` so a window
-    /// born connected doesn't read as a spurious reconnect on its first frame.
-    pub remote_was_connected: bool,
-
     /// Window-scoped layout hit-test cache: split-leaf rects, tab
     /// rects, the file-explorer rect, separators, scrollbars, and
     /// per-leaf `view_line_mappings` that mouse positioning and
@@ -1785,7 +1775,6 @@ impl Window {
             plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,
             remote_reconnect_error: None,
-            remote_was_connected: true,
             lsp,
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),

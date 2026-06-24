@@ -90,6 +90,14 @@ pub enum AsyncMessage {
     /// authority + keepalive and restart.
     RemoteAttachReady(RemoteAttachReady),
 
+    /// A remote agent channel's transport was silently hot-swapped back in by
+    /// the background reconnect task (`spawn_reconnect_task`). Carries the
+    /// channel's stable id (`AgentChannel::id`); the editor maps it to the
+    /// owning window and reattaches — respawning the embedded terminals that
+    /// died with the dropped carrier. This is the event-driven counterpart to
+    /// the app-level `RemoteAttachMode::Reconnect` rebuild path.
+    RemoteReconnected { connection_id: u64 },
+
     /// An async `attachRemoteAgent` connect failed — reject the plugin's
     /// promise with `error` (the plugin shows it and creates no window); the
     /// editor stays on its current authority. `reconnect_window` is `Some(id)`
