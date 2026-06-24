@@ -91,6 +91,13 @@ impl Editor {
         // This ensures plugin errors surface quickly instead of causing silent hangs
         self.plugin_manager.write().unwrap().check_thread_health();
 
+        // Catch silent agent-channel reconnects (the background transport
+        // hot-swap in `spawn_reconnect_task`) and respawn any terminals that
+        // died with the dropped carrier. The app-level `RemoteAttachMode::
+        // Reconnect` path handles the dive-into-dormant / manual-reconnect
+        // cases; this covers the automatic recovery that never goes through it.
+        self.detect_remote_terminal_reconnects();
+
         let Some(bridge) = &self.async_bridge else {
             return false;
         };
@@ -785,6 +792,51 @@ impl Editor {
 
     /// Tear down (or preserve, for a pending remote reconnect) a terminal whose
     /// process exited, then fire the `terminal_exit` hook.
+    /// Per-frame detector for *silent* agent-channel reconnects.
+    ///
+    /// The SSH / Kubernetes agent channel re-establishes itself in the
+    /// background by hot-swapping its transport (`spawn_reconnect_task`),
+    /// without ever routing through the app-level `RemoteAttachMode::Reconnect`
+    /// flow — and that flow is the only thing that respawns the embedded
+    /// terminal PTYs. Those PTYs are a *separate* `ssh -t` / `kubectl exec`
+    /// carrier from the agent channel, so they die when the link drops and,
+    /// on the automatic recovery path, would otherwise stay dead even though
+    /// the filesystem/LSP came back.
+    ///
+    /// We sample each remote-agent window's `is_remote_connected()` every
+    /// frame and, on a `false → true` edge, respawn its dead terminals through
+    /// the (already recovered) authority — the same `respawn_terminals_through_
+    /// authority` the manual reconnect handler calls.
+    fn detect_remote_terminal_reconnects(&mut self) {
+        // Gather the reconnected windows without holding a `windows` borrow
+        // across `set_status_message` (which needs `&mut self`).
+        let mut reconnected: Vec<String> = Vec::new();
+        for window in self.windows.values_mut() {
+            // Gate on the *live authority* being remote (an SSH / kube
+            // filesystem), not `authority_spec` — a plain `fresh ssh://…`
+            // launch leaves the spec `Local`. A dormant window's placeholder
+            // authority is local, so `remote_connection_info()` is `None` and
+            // it never produces a spurious edge here; its revival is owned by
+            // the `RemoteAttachMode::Reconnect` path.
+            let fs = &window.authority().filesystem;
+            let is_remote = fs.remote_connection_info().is_some();
+            let connected = fs.is_remote_connected();
+            let was = window.remote_was_connected;
+            window.remote_was_connected = connected;
+            // Only a genuine drop→recover edge on a live remote window.
+            if is_remote && connected && !was {
+                let revived = window.respawn_terminals_through_authority();
+                if revived > 0 {
+                    reconnected.push(window.label.clone());
+                }
+            }
+        }
+        // One line is enough even if several windows recovered at once.
+        if let Some(label) = reconnected.first() {
+            self.set_status_message(format!("Reconnected: {label}"));
+        }
+    }
+
     fn handle_terminal_exited(
         &mut self,
         terminal: fresh_core::WindowTerminalId,
@@ -796,24 +848,24 @@ impl Editor {
         let terminal_id = terminal.terminal;
         let exited_window_id = terminal.window;
         tracing::info!("Terminal {} exited", terminal);
-        // A remote-agent window whose carrier just dropped: its
-        // embedded PTY (a separate `ssh -t` from the agent channel)
-        // died with the link, not because the user exited the shell.
-        // Keep the buffer↔terminal binding (and the backing/command
-        // maps, which this handler already leaves intact) so a later
-        // reconnect can respawn it in place over the new authority
-        // (`respawn_terminals_through_authority`). Removing it here
-        // would strand the buffer as a dead read-only tab with no way
-        // back. A normal exit (remote still connected, or any local
-        // terminal) falls through to the usual permanent teardown.
-        let preserve_for_reconnect = matches!(
-            self.active_window().authority_spec,
-            crate::services::authority::SessionAuthoritySpec::RemoteAgent(_)
-        ) && !self
-            .active_window()
-            .authority()
-            .filesystem
-            .is_remote_connected();
+        // A remote window whose carrier just dropped: its embedded PTY (a
+        // separate `ssh -t` / `kubectl exec` from the agent channel) died with
+        // the link, not because the user exited the shell. Keep the
+        // buffer↔terminal binding (and the backing/command maps, which this
+        // handler already leaves intact) so a reconnect can respawn it in
+        // place (`respawn_terminals_through_authority`, driven on the automatic
+        // path by `detect_remote_terminal_reconnects`). Removing it here would
+        // strand the buffer as a dead read-only tab with no way back.
+        //
+        // The signal is the *live authority*: a remote filesystem that is
+        // currently disconnected. Gating on `authority_spec` instead would
+        // miss a plain `fresh ssh://…` launch, whose spec stays `Local`. A
+        // normal exit (remote still connected, or any local terminal) falls
+        // through to the usual permanent teardown.
+        let preserve_for_reconnect = {
+            let fs = &self.active_window().authority().filesystem;
+            fs.remote_connection_info().is_some() && !fs.is_remote_connected()
+        };
         // Find the buffer associated with this terminal
         if let Some((&buffer_id, _)) = self
             .active_window()
@@ -1035,6 +1087,12 @@ impl Editor {
                     // so scrollback continues.
                     if let Some(w) = self.windows.get_mut(&window_id) {
                         w.respawn_terminals_through_authority();
+                        // We just respawned through the freshly-installed
+                        // authority; record the connected state so the
+                        // per-frame `detect_remote_terminal_reconnects` edge
+                        // detector doesn't see a `false → true` transition and
+                        // respawn a second time on the next tick.
+                        w.remote_was_connected = w.authority().filesystem.is_remote_connected();
                     }
                     self.set_status_message(format!(
                         "Reconnected: {}",

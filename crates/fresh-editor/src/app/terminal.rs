@@ -809,7 +809,11 @@ impl Window {
     /// so every terminal-id-keyed entry (buffer→terminal binding, backing/log
     /// files, launch/resume commands, ephemeral marker) is remapped to the new
     /// id and the dead handle is torn down.
-    pub fn respawn_terminals_through_authority(&mut self) {
+    ///
+    /// Returns the number of terminals actually revived (dead handles that were
+    /// respawned), so callers can tailor a status message and skip it when the
+    /// window had no terminals to restore.
+    pub fn respawn_terminals_through_authority(&mut self) -> usize {
         // Snapshot the (buffer, old terminal id) pairs up front — the loop
         // mutates `terminal_buffers` as it remaps ids.
         let bindings: Vec<(BufferId, TerminalId)> = self
@@ -818,6 +822,7 @@ impl Window {
             .map(|(b, t)| (*b, *t))
             .collect();
 
+        let mut revived = 0usize;
         for (buffer_id, old_id) in bindings {
             // Leave a still-live terminal alone; only revive the dead ones.
             let handle = self.terminal_manager.get(old_id);
@@ -903,10 +908,14 @@ impl Window {
                 self.process_groups
                     .register(pid, format!("terminal #{}", new_id.0));
             }
+
+            revived += 1;
         }
 
         // Size the freshly-spawned PTYs to their splits' content areas.
         self.resize_visible_terminals();
+
+        revived
     }
 }
 
