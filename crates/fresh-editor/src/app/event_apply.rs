@@ -609,6 +609,11 @@ impl Editor {
                     *seen = adjusted;
                 }
 
+                // Shift plugin interval markers so they ride the inserted text
+                // (the editor owns shifting; plugins never track byte offsets).
+                #[cfg(feature = "plugins")]
+                self.shift_plugin_markers_for_edit(buffer_id, insert_position, 0, insert_len);
+
                 Some((
                     "after_insert",
                     crate::services::plugins::hooks::HookArgs::AfterInsert {
@@ -661,6 +666,11 @@ impl Editor {
                         .collect();
                     *seen = adjusted;
                 }
+
+                // Shift plugin interval markers for the deletion (editor owns
+                // shifting; the plugin re-discovers markers whose interior was hit).
+                #[cfg(feature = "plugins")]
+                self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
 
                 Some((
                     "after_delete",

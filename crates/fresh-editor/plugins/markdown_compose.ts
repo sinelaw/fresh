@@ -47,23 +47,27 @@ function isComposingInAnySplit(bufferId: number): boolean {
 }
 
 // =============================================================================
-// Table blocks (byte-range, stable identity — NO line-number bookkeeping)
+// Table blocks via core interval markers (byte-range, stable id, NO line numbers)
 // =============================================================================
 //
-// Each table is tracked as one contiguous byte range `[startByte, endByte]`
-// with a STABLE integer `id`.  The id — not the line number — is the border
-// namespace (`md-tb-${id}`) and the identity used to find/update the table.
+// Each table is one editor interval marker: a byte range `[start, end)` keyed by
+// a stable string id, carrying a payload `{ rows, sepRows, maxW, allocated }`.
+// The EDITOR owns the byte coordinates — it shifts the marker on every edit —
+// so this plugin never tracks or shifts byte offsets itself. The marker id is
+// also the border namespace (`md-tb-${id}`).
 //
-//   * Discovery / width accumulation happens from the `lines_changed` batch
-//     (`updateTableBlocks`): consecutive table rows are merged into the block
-//     whose byte range they touch (or a new block is created).
-//   * Edits shift the block's byte coordinates (`shiftTableBlocks`, driven by
-//     `after_insert` / `after_delete`).  An edit *inside* a block drops it so
-//     the next render re-discovers it.  Edits *outside* every block are a
-//     no-op — the marker-anchored borders ride the text on their own.
-//   * Borders are drawn from the block's own row positions
-//     (`redrawBlockBorders`), so a partial `lines_changed` batch still renders
-//     the whole frame, and clearing `md-tb-${id}` can never strand a row.
+//   * `updateTableBlocks` discovers/accumulates from the `lines_changed` batch:
+//     it finds the marker a group of rows belongs to (spatial query) or mints a
+//     new id, merges widths/rows into the payload, and upserts via createMarker.
+//   * Edits are handled by the core shift; the plugin only reacts when an edit
+//     lands *inside* a table (after_insert/after_delete -> delete the marker so
+//     the next render re-discovers it). Edits outside are a no-op.
+//   * Borders are drawn from the marker payload's row positions, so a partial
+//     batch still renders the whole frame and clearing `md-tb-${id}` is safe.
+//
+// createMarker/queryMarkers write through to / read from the shared state
+// snapshot, so a marker created earlier in a pass is visible to a query later in
+// the same pass (no one-frame gap).
 
 type LineInfoLike = {
   line_number: number;
@@ -73,48 +77,76 @@ type LineInfoLike = {
 };
 
 interface TableBlock {
-  id: number;
-  startByte: number; // byte_start of the first row
-  endByte: number; // byte_end (exclusive) of the last row's content
+  id: string;
+  startByte: number;
+  endByte: number;
   rows: number[]; // byte_start of each known row, ascending
   sepRows: number[]; // byte_start of source-separator rows (`|---|`)
   maxW: number[]; // accumulated max raw cell width per column
   allocated: number[]; // viewport-constrained per-column widths used to draw
 }
 
-const tableBlocks = new Map<number, TableBlock[]>(); // bufferId -> blocks, ascending by startByte
 let nextTableBlockId = 1;
 
-function blocksFor(bufferId: number): TableBlock[] {
-  let b = tableBlocks.get(bufferId);
-  if (!b) {
-    b = [];
-    tableBlocks.set(bufferId, b);
-  }
-  return b;
+// A queryMarkers/getMarker result -> our working TableBlock.
+//
+// `rows`/`sepRows` are persisted in the payload RELATIVE to the marker start.
+// The editor shifts the marker's start/end on every edit, but it cannot shift
+// byte positions buried in the opaque payload — so storing them relative and
+// reconstructing absolute from the (already-shifted) start keeps them correct
+// across edits without the plugin tracking byte offsets.
+function toBlock(m: { id: string; start: number; end: number; payload: unknown }): TableBlock {
+  const p = (m.payload || {}) as {
+    rows?: number[]; sepRows?: number[]; maxW?: number[]; allocated?: number[];
+  };
+  return {
+    id: m.id,
+    startByte: m.start,
+    endByte: m.end,
+    rows: (p.rows ?? []).map((r) => r + m.start),
+    sepRows: (p.sepRows ?? []).map((r) => r + m.start),
+    maxW: p.maxW ?? [],
+    allocated: p.allocated ?? [],
+  };
 }
 
-// Drop all blocks for a buffer and clear their border namespaces.
-function clearTableBlocks(bufferId: number): void {
-  const blocks = tableBlocks.get(bufferId);
-  if (blocks) {
-    for (const b of blocks) editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
-  }
-  tableBlocks.set(bufferId, []);
+// Upsert a block as a core marker (start/end + payload). The editor keeps
+// start/end shifted across edits from here on. Row positions are stored
+// relative to start (see toBlock).
+function saveBlock(bufferId: number, b: TableBlock): void {
+  editor.createMarker(bufferId, b.id, b.startByte, b.endByte, {
+    rows: b.rows.map((r) => r - b.startByte),
+    sepRows: b.sepRows.map((r) => r - b.startByte),
+    maxW: b.maxW,
+    allocated: b.allocated,
+  });
 }
 
-// Find the block whose byte range contains `byte` (a row's byte_start).
+function queryBlocks(bufferId: number, start: number, end: number): TableBlock[] {
+  const res = editor.queryMarkers(bufferId, start, end) as Array<{
+    id: string; start: number; end: number; payload: unknown;
+  }>;
+  return (res || []).map(toBlock);
+}
+
+// The table block covering `byte` (a row's byte_start), if any.
 function blockAt(bufferId: number, byte: number): TableBlock | undefined {
-  for (const b of blocksFor(bufferId)) {
-    if (byte >= b.startByte && byte <= b.endByte) return b;
-  }
-  return undefined;
+  const res = queryBlocks(bufferId, byte, byte);
+  return res.length ? res[0] : undefined;
 }
 
 // Allocated column widths for the table covering `byte`, if any.
 function allocatedWidthsAt(bufferId: number, byte: number): number[] | undefined {
   const b = blockAt(bufferId, byte);
   return b && b.allocated.length ? b.allocated : undefined;
+}
+
+// Drop all table markers for a buffer and clear their border namespaces.
+function clearTableBlocks(bufferId: number): void {
+  for (const b of queryBlocks(bufferId, 0, 0x7fffffff)) {
+    editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
+    editor.deleteMarker(bufferId, b.id);
+  }
 }
 
 function isTableRowContent(content: string): boolean {
@@ -139,35 +171,6 @@ function rebuildAllocatedWidths(block: TableBlock): void {
   const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
   const available = composeW - (block.maxW.length + 1);
   block.allocated = distributeColumnWidths(block.maxW, available);
-}
-
-// Shift / invalidate blocks for an edit at [pos, pos+removed) -> +inserted bytes.
-// Used by after_insert (removed=0) and after_delete (inserted=0).
-function shiftTableBlocks(bufferId: number, pos: number, removed: number, inserted: number): void {
-  const blocks = tableBlocks.get(bufferId);
-  if (!blocks || blocks.length === 0) return;
-  const delEnd = pos + removed;
-  const delta = inserted - removed;
-  const kept: TableBlock[] = [];
-  for (const b of blocks) {
-    // Edit touches the block's interior -> content/extent may have changed.
-    // Drop it (and its borders); the next render re-discovers and redraws it.
-    const touchesInterior = delEnd > b.startByte && pos < b.endByte;
-    if (touchesInterior) {
-      editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
-      continue;
-    }
-    // Pure displacement: shift any coordinate at/after the edit point. Using
-    // `>= pos` gives the start right-gravity (an insert just above pushes the
-    // whole table down); coordinates before `pos` are untouched.
-    const map = (x: number) => (x >= pos ? x + delta : x);
-    b.startByte = map(b.startByte);
-    b.endByte = map(b.endByte);
-    b.rows = b.rows.map(map);
-    b.sepRows = b.sepRows.map(map);
-    kept.push(b);
-  }
-  tableBlocks.set(bufferId, kept);
 }
 
 // Static map of named HTML entities to their Unicode replacements
@@ -280,13 +283,13 @@ function redrawBlockBorders(bufferId: number, block: TableBlock): void {
 
 /** Redraw borders for every block touched by the rows in `lines`. */
 function drawTableBorders(bufferId: number, lines: LineInfoLike[]): void {
-  const touched = new Set<TableBlock>();
+  const touched = new Map<string, TableBlock>();
   for (const line of lines) {
     if (!isTableRowContent(line.content)) continue;
     const b = blockAt(bufferId, line.byte_start);
-    if (b) touched.add(b);
+    if (b) touched.set(b.id, b);
   }
-  for (const block of touched) redrawBlockBorders(bufferId, block);
+  for (const block of touched.values()) redrawBlockBorders(bufferId, block);
 }
 
 // =============================================================================
@@ -1528,7 +1531,6 @@ function processLineSoftBreaks(
  * the caller forces a refresh of already-visible rows).
  */
 function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
-  const blocks = blocksFor(bufferId);
   let grew = false;
 
   // Group consecutive table rows in this batch (adjacency by line_number).
@@ -1553,13 +1555,16 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     const gStart = group[0].byte_start;
     const gEnd = group[group.length - 1].byte_end;
 
-    // Find the block this group belongs to: byte-overlapping or byte-adjacent
-    // (the single `\n` between two rows is a 1-byte gap). A blank line between
-    // two tables is a >1-byte gap, so distinct tables stay separate.
-    let block = blocks.find((b) => !(gEnd < b.startByte - 1 || gStart > b.endByte + 1));
+    // Find the table marker this group belongs to: byte-overlapping or
+    // byte-adjacent (the single `\n` between two rows is a 1-byte gap). A blank
+    // line between two tables is a >1-byte gap, so distinct tables stay separate.
+    // queryMarkers reflects same-pass creates (write-through), so two groups of
+    // one table in the same batch merge into one marker.
+    const near = queryBlocks(bufferId, gStart - 1, gEnd + 1);
+    let block = near.length ? near[0] : undefined;
     if (!block) {
       block = {
-        id: nextTableBlockId++,
+        id: `t${nextTableBlockId++}`,
         startByte: gStart,
         endByte: gEnd,
         rows: [],
@@ -1567,8 +1572,6 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
         maxW: [],
         allocated: [],
       };
-      blocks.push(block);
-      blocks.sort((a, b) => a.startByte - b.startByte);
     }
 
     block.startByte = Math.min(block.startByte, gStart);
@@ -1593,6 +1596,10 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     const prevAlloc = block.allocated.slice();
     rebuildAllocatedWidths(block);
     if (block.allocated.some((w, i) => w > (prevAlloc[i] ?? 0))) grew = true;
+
+    // Upsert into the core marker store (write-through: visible to later
+    // queries in this same pass).
+    saveBlock(bufferId, block);
   }
 
   return grew;
@@ -1664,18 +1671,32 @@ editor.on("lines_changed", (data) => {
     editor.refreshLines(data.buffer_id);
   }
 });
+// Drop any table marker whose *interior* was edited, so the next render
+// re-discovers and redraws it from the new text. The editor has already shifted
+// every marker for the edit (so pure displacement — e.g. an insert above the
+// table — needs nothing here); we only react when the edit landed inside a
+// table's range, which the core shift can't reinterpret structurally.
+function invalidateEditedTableBlocks(bufferId: number, affStart: number, affEnd: number): void {
+  for (const b of queryBlocks(bufferId, affStart, affEnd)) {
+    // Strict interior overlap (boundary-above / boundary-after are excluded,
+    // so they remain pure shifts).
+    if (affStart < b.endByte && affEnd > b.startByte) {
+      editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
+      editor.deleteMarker(bufferId, b.id);
+    }
+  }
+}
+
 editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
-  // Shift table blocks for the inserted bytes. Edits outside every block are a
-  // pure coordinate shift (the marker-anchored borders ride the text); an edit
-  // inside a block drops it so the next render re-discovers and redraws it.
-  shiftTableBlocks(data.buffer_id, data.affected_start, 0, data.affected_end - data.affected_start);
+  invalidateEditedTableBlocks(data.buffer_id, data.affected_start, data.affected_end);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
-  shiftTableBlocks(data.buffer_id, data.affected_start, data.deleted_len, 0);
+  // After a deletion the affected range is a single point at affected_start.
+  invalidateEditedTableBlocks(data.buffer_id, data.affected_start, data.affected_start);
 });
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
@@ -1708,8 +1729,9 @@ editor.on("viewport_changed", (data) => {
 
   // Recompute allocated column widths for the new viewport width, then redraw
   // each table's borders (the row text is re-rendered by refreshLines below).
-  for (const block of blocksFor(data.buffer_id)) {
+  for (const block of queryBlocks(data.buffer_id, 0, 0x7fffffff)) {
     rebuildAllocatedWidths(block);
+    saveBlock(data.buffer_id, block);
     redrawBlockBorders(data.buffer_id, block);
   }
   editor.refreshLines(data.buffer_id);

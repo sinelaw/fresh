@@ -123,6 +123,55 @@ impl Editor {
     /// owns (clipboard, the full `windows` list, the memoized config
     /// JSON cache, `user_config_raw`, and `plugin_global_state`).
     #[cfg(feature = "plugins")]
+    /// Shift plugin interval markers for one buffer to track an edit at `pos`
+    /// that removed `removed` bytes and inserted `inserted` bytes. Called from
+    /// the edit-apply path *before* the post-edit snapshot refresh + hook, so a
+    /// plugin querying markers in after_insert/after_delete sees current
+    /// coordinates. Insert gives `start` right-gravity / `end` left-gravity at
+    /// the boundary; delete clamps into the deletion. Markers whose interior is
+    /// touched keep shifting here (the plugin deletes + re-discovers them).
+    pub(crate) fn shift_plugin_markers_for_edit(
+        &self,
+        buffer_id: BufferId,
+        pos: usize,
+        removed: usize,
+        inserted: usize,
+    ) {
+        let Some(handle) = self.plugin_manager.read().unwrap().state_snapshot_handle() else {
+            return;
+        };
+        let Ok(mut snapshot) = handle.write() else {
+            return;
+        };
+        let Some(markers) = snapshot.plugin_markers.get_mut(&buffer_id) else {
+            return;
+        };
+        for m in markers.values_mut() {
+            if removed == 0 {
+                if m.start >= pos {
+                    m.start += inserted;
+                }
+                if m.end > pos {
+                    m.end += inserted;
+                }
+            } else {
+                let d0 = pos;
+                let d1 = pos + removed;
+                let clamp = |x: usize| {
+                    if x <= d0 {
+                        x
+                    } else if x >= d1 {
+                        x - removed
+                    } else {
+                        d0
+                    }
+                };
+                m.start = clamp(m.start);
+                m.end = clamp(m.end);
+            }
+        }
+    }
+
     pub fn update_plugin_state_snapshot(&mut self) {
         let Some(snapshot_handle) = self.plugin_manager.read().unwrap().state_snapshot_handle()
         else {
@@ -5737,6 +5786,10 @@ impl Window {
             let open_bids: Vec<_> = snapshot.buffers.keys().copied().collect();
             snapshot
                 .plugin_view_states
+                .retain(|bid, _| open_bids.contains(bid));
+            // Plugin markers live only in the snapshot; drop closed buffers'.
+            snapshot
+                .plugin_markers
                 .retain(|bid, _| open_bids.contains(bid));
         }
 

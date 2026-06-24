@@ -1,23 +1,31 @@
 # Markdown Compose: Marker-Based Block Design
 
-Status: tables implemented (plugin-side). Plugin: `crates/fresh-editor/plugins/markdown_compose.ts`.
+Status: tables implemented via the core marker API (Route B / §5). Plugin:
+`crates/fresh-editor/plugins/markdown_compose.ts`.
 
-> **Implementation note.** Tables now use a byte-range, stable-id block index
-> that lives **in the plugin** (`tableBlocks` / `TableBlock`), shifted on the
-> existing `after_insert` / `after_delete` blast-radius hooks. This realizes the
-> design (byte-range blocks, stable identity, edit-driven invalidation, spatial
-> render lookup, no line numbers) without the core marker API of §5. The
-> core-backed variant in §5 was deferred because fresh's plugin runs on a
-> separate thread reading a periodically-refreshed `state_snapshot`, so a
-> *synchronous* `queryMarkers` in the render path has an edit→shift→snapshot→read
-> timing hazard; the plugin-owned index sidesteps it and needs no breaking API
-> change. §5 remains the path to make the plugin thinner later. Fenced-code and
-> other Tier-2 blocks (§7) are not yet migrated.
+> **Implementation note.** Tables are tracked by a core interval-marker API
+> (`createMarker`/`updateMarker`/`deleteMarker`/`queryMarkers`/`getMarker`,
+> backed by `EditorStateSnapshot::plugin_markers` of `PluginMarker { start, end,
+> payload }`). The editor owns the byte coordinates and shifts every marker on
+> each edit (`shift_plugin_markers_for_edit`, called from the edit-apply path
+> *before* the post-edit snapshot refresh + hook), so the plugin never tracks or
+> shifts byte offsets.
 >
-> With the block index making border redraws idempotent, `cursor_moved` returns
-> to a single `refreshLines` (the targeted-recompute experiment broke table-cell
-> wrap/reveal during cursor motion); correctness now comes from the block design,
-> not from limiting how often decorations are rebuilt.
+> The timing analysis that made this safe: (1) the snapshot is refreshed *before*
+> every hook (`event_apply.rs`), so a `queryMarkers` in an edit/cursor hook sees
+> current coordinates; (2) CRUD **writes through** to the shared snapshot (like
+> `setViewState`), so a marker created earlier in a `lines_changed` pass is
+> visible to a query later in the same pass — no one-frame gap; (3) the snapshot
+> is mutated in place, so marker state persists across frames.
+>
+> Two details worth noting: the payload stores `rows`/`sepRows` **relative to the
+> marker start** (the editor shifts start/end but cannot shift bytes buried in an
+> opaque payload, so absolute offsets are reconstructed from the shifted start on
+> read); and border cleanup uses the stable per-marker namespace `md-tb-${id}`
+> with the existing whole-namespace clear, so no range-clear primitive was
+> needed. `cursor_moved` uses a single `refreshLines` — safe because the marker
+> design makes border redraws idempotent. Fenced-code and other Tier-2 blocks
+> (§7) are not yet migrated.
 
 This document describes the move from **line-number bookkeeping** to
 **byte-range interval markers** for the multi-line constructs in the markdown

@@ -3006,6 +3006,32 @@ interface EditorAPI {
 	*/
 	getViewState(bufferId: number, key: string): unknown;
 	/**
+	* Create or replace an interval marker `[start, end)` with `payload`,
+	* keyed by `key`, on the given buffer. The editor keeps `start`/`end`
+	* shifted across edits; an edit inside the range is the plugin's signal
+	* (via after_insert/after_delete) to re-parse and update or delete it.
+	*/
+	createMarker(bufferId: number, key: string, start: number, end: number, payload: unknown): boolean;
+	/**
+	* Update an existing marker's payload (keeping its current byte range).
+	* Returns false if no marker with `key` exists on the buffer.
+	*/
+	updateMarker(bufferId: number, key: string, payload: unknown): boolean;
+	/**
+	* Delete a marker by key. Returns false if it did not exist.
+	*/
+	deleteMarker(bufferId: number, key: string): boolean;
+	/**
+	* Return all markers on the buffer whose range overlaps `[start, end)`,
+	* as an array of `{ id, start, end, payload }`. O(n) over the buffer's
+	* markers (a handful for typical documents).
+	*/
+	queryMarkers(bufferId: number, start: number, end: number): unknown;
+	/**
+	* Return a single marker by key as `{ id, start, end, payload }`, or null.
+	*/
+	getMarker(bufferId: number, key: string): unknown;
+	/**
 	* Set plugin-managed global state (write-through to snapshot + command for persistence).
 	* State is automatically isolated per plugin using the plugin's name.
 	* TODO: Need to think about plugin isolation / namespacing strategy for these APIs.

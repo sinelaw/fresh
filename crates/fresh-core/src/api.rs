@@ -1048,6 +1048,19 @@ pub struct ViewTransformPayload {
     pub layout_hints: Option<LayoutHints>,
 }
 
+/// A plugin-owned interval marker: a byte range `[start, end)` carrying an
+/// opaque JSON payload. The editor shifts `start`/`end` on edits so the marker
+/// rides the text; the payload is maintained by the plugin (e.g. table column
+/// widths). See `EditorStateSnapshot::plugin_markers`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PluginMarker {
+    pub start: usize,
+    pub end: usize,
+    #[ts(type = "any")]
+    pub payload: serde_json::Value,
+}
+
 /// Snapshot of editor state for plugin queries
 /// This is updated by the editor on each loop iteration
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1199,6 +1212,15 @@ pub struct EditorStateSnapshot {
     #[ts(skip)]
     pub plugin_view_states_split: usize,
 
+    /// Plugin-owned interval markers, per buffer, keyed by a plugin-chosen
+    /// string id. Each marker is a byte range `[start, end)` plus an opaque
+    /// JSON payload. The editor shifts `start`/`end` on every edit (so the
+    /// plugin never tracks byte offsets itself); plugins create/update/delete
+    /// and spatially query them via the marker API, which writes through to
+    /// this map for immediate same-thread read-back (like setViewState).
+    #[ts(type = "any")]
+    pub plugin_markers: HashMap<BufferId, HashMap<String, PluginMarker>>,
+
     /// Keybinding labels for plugin modes, keyed by "action\0mode" for fast lookup.
     /// Updated when modes are registered via defineMode().
     #[serde(skip)]
@@ -1303,6 +1325,7 @@ impl EditorStateSnapshot {
             editor_mode: None,
             plugin_view_states: HashMap::new(),
             plugin_view_states_split: 0,
+            plugin_markers: HashMap::new(),
             keybinding_labels: HashMap::new(),
             plugin_global_states: HashMap::new(),
             active_session_plugin_states: HashMap::new(),

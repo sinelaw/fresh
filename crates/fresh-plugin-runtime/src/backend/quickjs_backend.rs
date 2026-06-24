@@ -90,7 +90,8 @@ use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
-    PluginCommand, PluginResponse, SearchHandleRegistry, SearchHandleState, SearchTakeResult,
+    PluginCommand, PluginMarker, PluginResponse, SearchHandleRegistry, SearchHandleState,
+    SearchTakeResult,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -4991,6 +4992,147 @@ impl JsEditorApi {
             }
         }
         Ok(Value::new_undefined(ctx.clone()))
+    }
+
+    // === Plugin interval markers ===
+    //
+    // Byte-range markers `[start, end)` + an opaque payload, keyed by a
+    // plugin-chosen string id, stored per buffer in the shared state snapshot.
+    // The editor shifts `start`/`end` on every edit (so plugins never track
+    // byte offsets), and refreshes the snapshot before each hook — so a
+    // `queryMarkers` in an edit/cursor hook sees current coordinates. CRUD
+    // writes through to the snapshot for immediate same-thread read-back.
+
+    /// Create or replace an interval marker `[start, end)` with `payload`,
+    /// keyed by `key`, on the given buffer. The editor keeps `start`/`end`
+    /// shifted across edits; an edit inside the range is the plugin's signal
+    /// (via after_insert/after_delete) to re-parse and update or delete it.
+    pub fn create_marker<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        key: String,
+        start: u32,
+        end: u32,
+        payload: Value<'js>,
+    ) -> bool {
+        let bid = BufferId(buffer_id as usize);
+        let payload_json = js_to_json(&ctx, payload);
+        let marker = PluginMarker {
+            start: start as usize,
+            end: end as usize,
+            payload: payload_json,
+        };
+        if let Ok(mut snapshot) = self.state_snapshot.write() {
+            snapshot
+                .plugin_markers
+                .entry(bid)
+                .or_default()
+                .insert(key, marker);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update an existing marker's payload (keeping its current byte range).
+    /// Returns false if no marker with `key` exists on the buffer.
+    pub fn update_marker<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        key: String,
+        payload: Value<'js>,
+    ) -> bool {
+        let bid = BufferId(buffer_id as usize);
+        let payload_json = js_to_json(&ctx, payload);
+        if let Ok(mut snapshot) = self.state_snapshot.write() {
+            if let Some(m) = snapshot
+                .plugin_markers
+                .get_mut(&bid)
+                .and_then(|m| m.get_mut(&key))
+            {
+                m.payload = payload_json;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Delete a marker by key. Returns false if it did not exist.
+    pub fn delete_marker(&self, buffer_id: u32, key: String) -> bool {
+        let bid = BufferId(buffer_id as usize);
+        if let Ok(mut snapshot) = self.state_snapshot.write() {
+            if let Some(map) = snapshot.plugin_markers.get_mut(&bid) {
+                let removed = map.remove(&key).is_some();
+                if map.is_empty() {
+                    snapshot.plugin_markers.remove(&bid);
+                }
+                return removed;
+            }
+        }
+        false
+    }
+
+    /// Return all markers on the buffer whose range overlaps `[start, end)`,
+    /// as an array of `{ id, start, end, payload }`. O(n) over the buffer's
+    /// markers (a handful for typical documents).
+    pub fn query_markers<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        start: u32,
+        end: u32,
+    ) -> rquickjs::Result<Value<'js>> {
+        let bid = BufferId(buffer_id as usize);
+        let qs = start as usize;
+        let qe = end as usize;
+        let arr = rquickjs::Array::new(ctx.clone())?;
+        if let Ok(snapshot) = self.state_snapshot.read() {
+            if let Some(map) = snapshot.plugin_markers.get(&bid) {
+                let mut idx = 0usize;
+                for (key, m) in map.iter() {
+                    // overlap test: not (m.end <= qs || m.start >= qe), with
+                    // inclusive end so a zero-length query at a boundary hits.
+                    if m.end < qs || m.start > qe {
+                        continue;
+                    }
+                    let obj = rquickjs::Object::new(ctx.clone())?;
+                    obj.set("id", key.clone())?;
+                    obj.set("start", m.start as u32)?;
+                    obj.set("end", m.end as u32)?;
+                    obj.set("payload", json_to_js_value(&ctx, &m.payload)?)?;
+                    arr.set(idx, obj)?;
+                    idx += 1;
+                }
+            }
+        }
+        Ok(arr.into_value())
+    }
+
+    /// Return a single marker by key as `{ id, start, end, payload }`, or null.
+    pub fn get_marker<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        buffer_id: u32,
+        key: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let bid = BufferId(buffer_id as usize);
+        if let Ok(snapshot) = self.state_snapshot.read() {
+            if let Some(m) = snapshot
+                .plugin_markers
+                .get(&bid)
+                .and_then(|map| map.get(&key))
+            {
+                let obj = rquickjs::Object::new(ctx.clone())?;
+                obj.set("id", key)?;
+                obj.set("start", m.start as u32)?;
+                obj.set("end", m.end as u32)?;
+                obj.set("payload", json_to_js_value(&ctx, &m.payload)?)?;
+                return Ok(obj.into_value());
+            }
+        }
+        Ok(Value::new_null(ctx.clone()))
     }
 
     // === Plugin Global State ===
