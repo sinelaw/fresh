@@ -3509,10 +3509,7 @@ mod tests {
         assert!(Action::MoveRight.to_action_spec().args.is_empty());
         // Char actions carry their payload.
         let spec = Action::InsertChar('z').to_action_spec();
-        assert_eq!(
-            spec.args.get("char").and_then(|v| v.as_str()),
-            Some("z")
-        );
+        assert_eq!(spec.args.get("char").and_then(|v| v.as_str()), Some("z"));
     }
 
     #[test]

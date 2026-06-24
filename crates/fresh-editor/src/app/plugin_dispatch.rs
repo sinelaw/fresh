@@ -5462,10 +5462,12 @@ impl Window {
                 .keys_sorted()
                 .into_iter()
                 .filter_map(|key| {
-                    macros.get(key).map(|actions| fresh_core::api::MacroSnapshot {
-                        register: key.to_string(),
-                        steps: actions.iter().map(|a| a.to_action_spec()).collect(),
-                    })
+                    macros
+                        .get(key)
+                        .map(|actions| fresh_core::api::MacroSnapshot {
+                            register: key.to_string(),
+                            steps: actions.iter().map(|a| a.to_action_spec()).collect(),
+                        })
                 })
                 .collect()
         };
