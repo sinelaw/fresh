@@ -5477,9 +5477,40 @@ function openForm(options?: { fromPicker?: boolean }): void {
   void probeProjectPathDefaults();
 }
 
+/// The local directory a brand-new *local* workspace should default to.
+///
+/// Almost always the active window's cwd (`editor.getCwd()`). But when the
+/// active window is a remote session (ssh / kubernetes / devcontainer), its
+/// cwd is a path on the *remote* filesystem — `editor.getCwd()` returns the
+/// active window's root, which for those backends is the remote root. Seeding
+/// the New-Session form's Local Project Path with it roots the new *local*
+/// worktree at a path that need not exist on this machine (the "new workspace
+/// uses the remote fs for the local one" bug). In that case fall back to a
+/// local tracked session's root — preferring the launch/base session (lowest
+/// window id) — so the default stays on the local filesystem.
+function localProjectDefault(): string {
+  const cwd = editor.getCwd();
+  // A non-empty authority label means the active window runs under a remote
+  // authority; corroborate with the orchestrator's own per-session remote
+  // facet (set for the active SSH / k8s row). Either signal ⇒ cwd is remote.
+  const active = orchestratorSessions.get(editor.activeWindow());
+  const activeIsRemote = editor.getAuthorityLabel().length > 0 || !!active?.remote;
+  if (!activeIsRemote) return cwd;
+  // Active window is remote: pick the lowest-id local (non-remote, non-
+  // discovered) session's root — in practice the launch/base window. If there
+  // is no local session at all, leave cwd as the last-resort value rather than
+  // an empty default.
+  let base: AgentSession | null = null;
+  for (const s of orchestratorSessions.values()) {
+    if (s.remote || s.discovered) continue;
+    if (base === null || s.id < base.id) base = s;
+  }
+  return base ? base.root : cwd;
+}
+
 /// Resolve placeholders for the Project Path / Session Name /
 /// Branch fields based on the *currently-effective* project
-/// path: the user-typed value if any, else the editor's cwd
+/// path: the user-typed value if any, else a local default
 /// (the canonical-root probe runs against the latter). Re-runs
 /// on every Project Path keystroke (debounced via the caller).
 async function probeProjectPathDefaults(): Promise<void> {
@@ -5488,12 +5519,15 @@ async function probeProjectPathDefaults(): Promise<void> {
   const typedPath = form.projectPath.value.trim();
 
   // (1) Default Project Path: only meaningful when the user
-  //     hasn't typed anything. Resolve cwd → canonical root,
-  //     fall back to cwd verbatim for non-git launches.
+  //     hasn't typed anything. Resolve a local default → canonical
+  //     root, fall back to the local default verbatim for non-git
+  //     launches. `localProjectDefault()` keeps this on the local
+  //     filesystem even when the active window is a remote session.
   if (!typedPath) {
-    const resolved = await resolveCanonicalRepoRoot(editor.getCwd());
+    const localDefault = localProjectDefault();
+    const resolved = await resolveCanonicalRepoRoot(localDefault);
     if (!form || form.probeToken !== token) return;
-    form.defaultProjectPath = resolved || editor.getCwd();
+    form.defaultProjectPath = resolved || localDefault;
   } else {
     // User typed a path: that IS the project, no canonical
     // resolution needed. Defaults that depend on it (session
@@ -5633,7 +5667,9 @@ function computePathCompletions(typed: string): string[] {
   let parent: string;
   let basename: string;
   if (slashIdx < 0) {
-    parent = typed ? "." : editor.getCwd();
+    // Empty field: list the local default's siblings, not the active
+    // (possibly remote) window's cwd — the Project Path is always local.
+    parent = typed ? "." : localProjectDefault();
     basename = typed;
   } else if (slashIdx === 0) {
     parent = "/";
@@ -6043,11 +6079,13 @@ async function submitForm(): Promise<void> {
 
   // Project Path: typed value wins; otherwise the resolved
   // canonical-root placeholder (or, if that probe never
-  // completed, the editor cwd). The picked value drives the
-  // entire submission flow.
+  // completed, a local default). The picked value drives the
+  // entire submission flow. `localProjectDefault()` (not a raw
+  // `editor.getCwd()`) keeps the fallback on the local filesystem
+  // when the active window is a remote session.
   const projectPath = form.projectPath.value.trim() ||
     form.defaultProjectPath ||
-    editor.getCwd();
+    localProjectDefault();
 
   // Re-probe is-git so we trust the latest filesystem state
   // rather than a possibly-stale UI flag (race: user pressed
