@@ -612,6 +612,11 @@ impl Editor {
                         e
                     );
                 }
+                // Focus snapped to the surviving split via the low-level
+                // split-collapse path; restore terminal mode for the now-active
+                // buffer. Runs after `close_buffer` so its terminal-mode
+                // teardown can't clobber the restore (issue #2485).
+                self.sync_terminal_mode_to_active_buffer();
                 self.set_status_message(t!("buffer.tab_closed").to_string());
                 return true;
             }
@@ -646,6 +651,7 @@ impl Editor {
             if !has_other_tab {
                 // This is genuinely the only tab in this split — close it.
                 self.handle_close_split(split_id.into());
+                self.sync_terminal_mode_to_active_buffer();
                 return true;
             }
 
@@ -689,6 +695,9 @@ impl Editor {
                 }
             }
 
+            // The replacement tab was activated through the split manager,
+            // bypassing the buffer-focus path; restore terminal mode for it.
+            self.sync_terminal_mode_to_active_buffer();
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
         true

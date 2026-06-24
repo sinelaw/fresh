@@ -52,22 +52,10 @@ impl Editor {
         if !self.active_window_mut().set_active_buffer(buffer_id) {
             return;
         }
-        // Restored terminals load read-only (editing disabled) and the
-        // Window-side resume branch only flips the `terminal_mode` flag —
-        // it can't reach the Editor-level `enter_terminal_mode` that
-        // re-enables editing, drops the stale screen tail, and resizes the
-        // PTY. Without that completion, focusing a restored terminal tab
-        // leaves it in the read-only scrollback view (often a blank screen
-        // with no prompt) instead of a live terminal. Detect that exact
-        // state — a terminal we just resumed into terminal mode but whose
-        // buffer is still editing-disabled — and finish the transition.
-        // Live terminals (editing already enabled) are unaffected.
-        if self.active_window().terminal_mode
-            && self.active_window().is_terminal_buffer(buffer_id)
-            && self.active_window().is_editing_disabled()
-        {
-            self.enter_terminal_mode();
-        }
+        // The Window body already synced the `terminal_mode` flag; finish
+        // the restored-terminal transition (re-enable editing, drop the
+        // stale screen tail, resize the PTY) that only the Editor level can.
+        self.complete_terminal_mode_side_effects();
         // Plugin state snapshot reaches editor-wide state (clipboard,
         // windows list, config cache) so it stays on Editor. Run it
         // BEFORE the hook so the handler sees the new active buffer.
@@ -83,10 +71,41 @@ impl Editor {
     /// terminal mode. Window-side body in [`Window::focus_split`].
     pub(super) fn focus_split(&mut self, split_id: LeafId, buffer_id: BufferId) {
         match self.active_window_mut().focus_split(split_id, buffer_id) {
-            FocusSplitOutcome::Handled => {}
+            FocusSplitOutcome::Handled => {
+                // Window body synced the flag; finish any restored-terminal
+                // transition.
+                self.complete_terminal_mode_side_effects();
+            }
             FocusSplitOutcome::DelegateToActiveBuffer(target) => {
                 self.set_active_buffer(target);
             }
+        }
+    }
+
+    /// Bring `terminal_mode` / `key_context` fully in line with the active
+    /// buffer after a focus change that bypassed [`Editor::set_active_buffer`]
+    /// (split focus/navigation, split-collapse on close, opening a terminal
+    /// split). This is the single restore authority: a terminal resumes the
+    /// live/scrollback mode it had when it lost focus, a non-terminal clears
+    /// terminal mode. See issue #2485.
+    pub(crate) fn sync_terminal_mode_to_active_buffer(&mut self) {
+        self.active_window_mut().sync_terminal_mode_flags();
+        self.complete_terminal_mode_side_effects();
+    }
+
+    /// Editor-level completion of a transition *into* live terminal mode:
+    /// restored / read-only terminals load with editing disabled, so finish
+    /// the switch (re-enable editing, truncate the stale screen tail, resize
+    /// the PTY) which only [`Editor::enter_terminal_mode`] can do. A no-op
+    /// for live terminals and non-terminals.
+    pub(super) fn complete_terminal_mode_side_effects(&mut self) {
+        if self.active_window().terminal_mode
+            && self
+                .active_window()
+                .is_terminal_buffer(self.active_buffer())
+            && self.active_window().is_editing_disabled()
+        {
+            self.enter_terminal_mode();
         }
     }
 }
@@ -111,16 +130,6 @@ impl Window {
         // Cancel search/replace prompts when switching buffers
         // (they are buffer-specific and don't make sense across buffers)
         self.cancel_search_prompt_if_active();
-
-        // Track the previous buffer for "Switch to Previous Tab" command
-        let previous = self.active_buffer();
-
-        // If leaving a terminal buffer while in terminal mode, remember it should resume
-        if self.terminal_mode && self.is_terminal_buffer(previous) {
-            self.terminal_mode_resume.insert(previous);
-            self.terminal_mode = false;
-            self.key_context = crate::input::keybindings::KeyContext::Normal;
-        }
 
         // Capture the previous focus target BEFORE set_pane_buffer runs,
         // so the LRU records the right thing.
@@ -147,20 +156,10 @@ impl Window {
             }
         }
 
-        // If switching to a terminal buffer that should resume terminal mode, re-enter it
-        let resume_terminal_mode =
-            self.terminal_mode_resume.contains(&buffer_id) && self.is_terminal_buffer(buffer_id);
-        let is_terminal_buffer = self.is_terminal_buffer(buffer_id);
-        let sync_terminal_readonly = !resume_terminal_mode && is_terminal_buffer;
-        if resume_terminal_mode {
-            self.terminal_mode = true;
-            self.key_context = crate::input::keybindings::KeyContext::Terminal;
-        } else if sync_terminal_readonly {
-            // Switching to terminal in read-only mode — sync buffer to
-            // show current terminal content. Updates backing file +
-            // cursor.
-            self.sync_terminal_to_buffer(buffer_id);
-        }
+        // Bring terminal mode in line with the new active buffer (its
+        // remembered live/scrollback mode). The single authority for the
+        // flag half — see `sync_terminal_mode_flags`.
+        self.sync_terminal_mode_flags();
 
         // Window resize events only resize terminals that are currently the
         // active tab in their split (see `resize_visible_terminals`). A
@@ -168,7 +167,7 @@ impl Window {
         // sees the new size, so its PTY child keeps reporting stale
         // dimensions when the user switches back. Re-running the visible
         // resize here picks up the now-revealed terminal. Issue #1795.
-        if is_terminal_buffer {
+        if self.is_terminal_buffer(buffer_id) {
             self.resize_visible_terminals();
         }
 
@@ -184,6 +183,47 @@ impl Window {
         }
 
         true
+    }
+
+    /// Flag-only half of terminal-mode sync: set `terminal_mode` /
+    /// `key_context` from the active buffer and the mode it remembers.
+    ///
+    /// A terminal's persistent interaction mode lives in
+    /// `terminal_mode_resume` (present ⟺ live/Active, absent ⟺ read-only
+    /// scrollback), so a re-focused terminal keeps whatever mode it had when
+    /// it lost focus. This is the one place the flag is derived from focus;
+    /// every focus path routes through it (directly or via
+    /// [`Editor::sync_terminal_mode_to_active_buffer`]), so none can leave a
+    /// re-focused terminal in the wrong mode (issue #2485).
+    ///
+    /// Only owns the Terminal↔Normal edge: when another surface holds input
+    /// focus (file explorer, a prompt, a popup) `key_context` is something
+    /// other than `Normal`/`Terminal`, and those surfaces manage
+    /// `terminal_mode` themselves, so we leave it untouched. The Editor-level
+    /// side effects of entering live mode (re-enable editing, truncate the
+    /// stale screen tail, resize the PTY) are completed by
+    /// [`Editor::complete_terminal_mode_side_effects`].
+    pub(super) fn sync_terminal_mode_flags(&mut self) {
+        use crate::input::keybindings::KeyContext;
+        if !matches!(self.key_context, KeyContext::Normal | KeyContext::Terminal) {
+            return;
+        }
+        let active = self.active_buffer();
+        if self.is_terminal_buffer(active) {
+            if self.terminal_mode_resume.contains(&active) {
+                self.terminal_mode = true;
+                self.key_context = KeyContext::Terminal;
+            } else {
+                // Read-only scrollback terminal: refresh the file-backed view
+                // (backing file + cursor) and stop routing keys to the PTY.
+                self.sync_terminal_to_buffer(active);
+                self.terminal_mode = false;
+                self.key_context = KeyContext::Normal;
+            }
+        } else if self.terminal_mode {
+            self.terminal_mode = false;
+            self.key_context = KeyContext::Normal;
+        }
     }
 
     /// Window-side body of `focus_split`. Returns a [`FocusSplitOutcome`]
@@ -294,12 +334,6 @@ impl Window {
         }
 
         if split_changed {
-            // Switching to a different split - exit terminal mode if active
-            if self.terminal_mode && self.is_terminal_buffer(previous_buffer) {
-                self.terminal_mode = false;
-                self.key_context = crate::input::keybindings::KeyContext::Normal;
-            }
-
             // Update split manager to focus this split
             self.split_manager_mut()
                 .expect("active window must have a populated split layout")
@@ -311,15 +345,9 @@ impl Window {
             // silently no-op'd (issue #1620).
             self.set_pane_buffer(split_id, buffer_id);
 
-            // Set key context based on target buffer type
-            if self.is_terminal_buffer(buffer_id) {
-                self.terminal_mode = true;
-                self.key_context = crate::input::keybindings::KeyContext::Terminal;
-            } else {
-                // Ensure key context is Normal when focusing a non-terminal buffer
-                // This handles the case of clicking on editor from FileExplorer context
-                self.key_context = crate::input::keybindings::KeyContext::Normal;
-            }
+            // Bring terminal mode in line with the now-active buffer and its
+            // remembered live/scrollback mode — the single flag authority.
+            self.sync_terminal_mode_flags();
 
             // Handle buffer change side effects
             if previous_buffer != buffer_id {

@@ -573,13 +573,14 @@ impl Editor {
                 }
             }
             DeferredAction::EnterScrollbackMode => {
+                // Dropping to scrollback is a mode change: remember it so the
+                // terminal stays read-only the next time it is focused.
+                let __b = self.active_buffer();
+                self.active_window_mut().terminal_mode_resume.remove(&__b);
                 self.active_window_mut().terminal_mode = false;
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
-                {
-                    let __b = self.active_buffer();
-                    self.active_window_mut().sync_terminal_to_buffer(__b);
-                };
+                self.active_window_mut().sync_terminal_to_buffer(__b);
                 self.set_status_message(
                     "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
                         .to_string(),

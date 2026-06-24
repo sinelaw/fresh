@@ -937,6 +937,17 @@ impl Editor {
             .iter()
             .find(|(_, &tid)| tid == terminal_id)
         {
+            // A genuinely exited terminal becomes a read-only scrollback tab,
+            // so it is no longer "live" — drop it from the live set so a later
+            // focus shows scrollback instead of trying to drive a dead PTY. A
+            // terminal preserved for remote reconnect keeps its live mode so
+            // it comes back live when the carrier respawns it.
+            if !preserve_for_reconnect {
+                self.active_window_mut()
+                    .terminal_mode_resume
+                    .remove(&buffer_id);
+            }
+
             // Exit terminal mode if this is the active buffer
             if self.active_buffer() == buffer_id && self.active_window().terminal_mode {
                 self.active_window_mut().terminal_mode = false;

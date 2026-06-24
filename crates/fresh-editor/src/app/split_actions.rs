@@ -235,6 +235,11 @@ impl Editor {
             }
         }
 
+        // Focus snapped to the surviving split through the split manager,
+        // bypassing the buffer-focus path — restore terminal mode so a
+        // re-focused terminal keeps the mode it remembers (issue #2485).
+        self.sync_terminal_mode_to_active_buffer();
+
         // Closing a split gives its space back to the surviving panes.
         // Reflow through the single layout funnel so their terminals grow
         // into the reclaimed area.
@@ -255,13 +260,6 @@ impl Editor {
 
     /// Common split switching logic
     fn switch_split(&mut self, next: bool) {
-        // Capture what was active before the switch so we can mirror the
-        // mouse-click path in `focus_split`: leaving a terminal buffer must
-        // stop routing keyboard input to it. The terminal's visible pane
-        // keeps rendering live because `render_terminal_splits` ignores
-        // `terminal_mode` whenever the terminal isn't the active buffer.
-        let previous_buffer = self.active_buffer();
-
         // `next_split`/`prev_split` auto-unmaximize so the newly-active
         // split is visible (issue #1961). Detect that here so terminal
         // PTYs can be resized to match the restored layout.
@@ -309,27 +307,16 @@ impl Editor {
 
         let buffer_id = self.active_buffer();
 
-        // Leaving a terminal buffer: stop capturing keyboard for the
-        // terminal. Symmetric with the mouse-click path in `focus_split`.
-        if self.active_window().terminal_mode
-            && self.active_window().is_terminal_buffer(previous_buffer)
-            && !self.active_window().is_terminal_buffer(buffer_id)
-        {
-            self.active_window_mut().terminal_mode = false;
-            self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
-        }
+        // Bring terminal mode in line with the newly focused split: a
+        // terminal resumes the live/scrollback mode it remembers, a
+        // non-terminal clears terminal mode. Single restore authority.
+        self.sync_terminal_mode_to_active_buffer();
 
         // Emit buffer_activated hook for plugins
         self.plugin_manager.read().unwrap().run_hook(
             "buffer_activated",
             crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
         );
-
-        // Enter terminal mode if switching to a terminal split
-        if self.active_window().is_terminal_buffer(buffer_id) {
-            self.active_window_mut().terminal_mode = true;
-            self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
-        }
     }
 
     /// Adjust the size of the active split

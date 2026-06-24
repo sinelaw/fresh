@@ -232,6 +232,7 @@ pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_link;
 pub mod terminal_resize;
+pub mod terminal_resume_mode_after_close;
 pub mod terminal_split_focus_live;
 pub mod test_scrollbar_keybinds_cursor;
 pub mod theme;

@@ -550,6 +550,8 @@ impl Window {
         // next event flips `terminal_mode` — typically the next
         // printable keystroke via `should_enter_terminal_mode`.
         // Mirrors `open_terminal_in_window`'s post-spawn flip.
+        // A freshly opened terminal starts live (its remembered mode).
+        self.terminal_mode_resume.insert(buffer_id);
         if self.active_buffer() == buffer_id {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
@@ -722,6 +724,8 @@ impl Window {
         // Window-side activation: per-window mutation only — the
         // editor-wide plugin hook fires in the Editor wrapper.
         self.set_active_buffer(buffer_id);
+        // A freshly opened terminal starts live (its remembered mode).
+        self.terminal_mode_resume.insert(buffer_id);
         self.terminal_mode = true;
         self.key_context = crate::input::keybindings::KeyContext::Terminal;
         self.resize_visible_terminals();
@@ -1049,7 +1053,13 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .set_active_split(new_leaf);
 
-        // Mirror open_terminal's post-attach bookkeeping.
+        // Mirror open_terminal's post-attach bookkeeping. The new terminal
+        // starts live (its remembered mode); the previously-active terminal
+        // keeps its own remembered mode, so closing this split later restores
+        // it correctly (issue #2485).
+        self.active_window_mut()
+            .terminal_mode_resume
+            .insert(buffer_id);
         self.active_window_mut().terminal_mode = true;
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
         self.active_window_mut().resize_visible_terminals();
@@ -1301,14 +1311,15 @@ impl Editor {
                 crossterm::event::KeyCode::Char(' ')
                 | crossterm::event::KeyCode::Char(']')
                 | crossterm::event::KeyCode::Char('`') => {
-                    // Exit terminal mode and sync buffer
+                    // Exit terminal mode and sync buffer. The user dropped to
+                    // read-only scrollback: remember that mode so re-focusing
+                    // the terminal keeps it in scrollback.
+                    let __b = self.active_buffer();
+                    self.active_window_mut().terminal_mode_resume.remove(&__b);
                     self.active_window_mut().terminal_mode = false;
                     self.active_window_mut().key_context =
                         crate::input::keybindings::KeyContext::Normal;
-                    {
-                        let __b = self.active_buffer();
-                        self.active_window_mut().sync_terminal_to_buffer(__b);
-                    };
+                    self.active_window_mut().sync_terminal_to_buffer(__b);
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
@@ -1333,6 +1344,12 @@ impl Editor {
             .active_window()
             .is_terminal_buffer(self.active_buffer())
         {
+            // Resuming into live mode is a mode change: remember it so the
+            // terminal comes back live the next time it is focused.
+            let __active = self.active_buffer();
+            self.active_window_mut()
+                .terminal_mode_resume
+                .insert(__active);
             self.active_window_mut().terminal_mode = true;
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
 

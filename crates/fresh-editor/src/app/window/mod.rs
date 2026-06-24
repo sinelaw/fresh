@@ -421,9 +421,16 @@ pub struct Window {
     /// has its own terminal set + active buffer.
     pub terminal_mode: bool,
 
-    /// Set of terminal buffer ids that should auto-resume terminal
-    /// mode when switched back to. Per-window because terminal
-    /// buffers are per-window (Step 0d).
+    /// Per-terminal interaction mode: the set of terminal buffer ids whose
+    /// mode is **live** (capturing keyboard), as opposed to read-only
+    /// scrollback. Membership is the terminal's remembered mode and persists
+    /// across focus changes, so re-focusing a terminal (tab switch, split
+    /// focus/navigation, split-collapse on close) restores the mode it had
+    /// when it lost focus — see `Window::sync_terminal_mode_flags`. A
+    /// terminal is added when opened or resumed and removed when the user
+    /// drops it to scrollback (Ctrl+Space / scroll-up), when its process
+    /// exits, or when it is closed. Per-window because terminal buffers are
+    /// per-window.
     pub terminal_mode_resume: std::collections::HashSet<BufferId>,
 
     /// Path-link currently highlighted under a Ctrl+hover over the live
