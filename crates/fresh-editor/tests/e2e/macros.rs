@@ -343,6 +343,112 @@ fn test_macro_move_line_end_uses_current_line_length() {
     );
 }
 
+/// Record a macro, then "Macro: Save to init.ts" — the rendered status must
+/// confirm the macro was persisted (and init.ts reloaded). Drives the palette
+/// + register prompt and asserts only on screen output. The harness uses an
+/// isolated tempdir config, so this writes to a throwaway init.ts.
+#[test]
+fn test_macro_save_to_init_shows_confirmation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.render().unwrap();
+
+    // Record macro on register 0 typing "abc".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Record Macro").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("0").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Recording");
+    harness.type_text("abc").unwrap();
+    harness.render().unwrap();
+
+    // Stop recording.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Stop Recording").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save to init.ts via the palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Save to init.ts").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save macro to init.ts");
+
+    // Choose register 0.
+    harness.type_text("0").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The status line confirms the macro was persisted to init.ts.
+    harness.assert_screen_contains("saved to init.ts");
+    harness.assert_screen_not_contains("error");
+}
+
+/// "Macro: Load from buffer" parses the active buffer as `ActionSpec[]` and
+/// stores it under a register. The pasted buffer carries a `// ... ActionSpec[]`
+/// comment header (exactly what `ShowMacro` emits) — the parser must skip the
+/// `[` inside that comment. Regression for a bug found in manual testing.
+#[test]
+fn test_macro_load_from_buffer_with_comment_header() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.render().unwrap();
+
+    // Paste a loadable ActionSpec[] with a comment header (raw paste avoids
+    // auto-close mangling the JSON). The header contains "ActionSpec[]".
+    let buf = "// Macro '0' (2 actions) — editable ActionSpec[]\n\
+               // Edit, then run \"Macro: Load from buffer\".\n\n\
+               [\n  { \"action\": \"insert_char\", \"args\": { \"char\": \"W\" } },\n\
+               \x20 { \"action\": \"insert_char\", \"args\": { \"char\": \"X\" } }\n]\n";
+    harness.send_paste(buf).unwrap();
+    harness.render().unwrap();
+
+    // Load it into register 0.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Load from buffer").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Load macro from buffer");
+
+    harness.type_text("0").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Confirmation of a 2-action load (NOT a parse error from the comment).
+    harness.assert_screen_contains("Loaded macro into register");
+    harness.assert_screen_not_contains("Could not parse");
+}
+
 /// Test that macro playback is undoable as a single operation
 #[test]
 fn test_macro_playback_is_undoable() {

@@ -459,16 +459,55 @@ impl Editor {
 
 /// Extract the `[ ... ]` JSON array from `text` (tolerating leading comment
 /// lines, as a `ShowMacro` buffer has) and parse it as `Vec<ActionSpec>`.
+///
+/// `//` line comments are stripped first: the `ShowMacro` header literally
+/// contains `ActionSpec[]`, so a naive "first `[`" would slice into the
+/// comment and fail with "trailing characters". After stripping, the remaining
+/// text is the JSON array.
 fn parse_action_specs(text: &str) -> Result<Vec<fresh_core::api::ActionSpec>, String> {
-    let start = text
+    let stripped: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let start = stripped
         .find('[')
         .ok_or_else(|| "no '[' found — expected an ActionSpec array".to_string())?;
-    let end = text
+    let end = stripped
         .rfind(']')
         .ok_or_else(|| "no ']' found — expected an ActionSpec array".to_string())?;
     if end < start {
         return Err("malformed array brackets".to_string());
     }
-    serde_json::from_str::<Vec<fresh_core::api::ActionSpec>>(&text[start..=end])
+    serde_json::from_str::<Vec<fresh_core::api::ActionSpec>>(&stripped[start..=end])
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_action_specs;
+
+    #[test]
+    fn parse_tolerates_comment_header_containing_brackets() {
+        // The ShowMacro header literally contains "ActionSpec[]" — the parser
+        // must not slice into that comment. Regression for a bug found by
+        // interactive testing.
+        let buf = "// Macro '1' (3 actions) — editable ActionSpec[]\n\
+                   // Edit, then run \"Macro: Load from buffer\".\n\n\
+                   [\n  { \"action\": \"insert_char\", \"args\": { \"char\": \"Z\" } },\n\
+                   \x20 { \"action\": \"move_line_end\" }\n]\n";
+        let specs = parse_action_specs(buf).expect("should parse");
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].action, "insert_char");
+        assert_eq!(
+            specs[0].args.get("char").and_then(|v| v.as_str()),
+            Some("Z")
+        );
+        assert_eq!(specs[1].action, "move_line_end");
+    }
+
+    #[test]
+    fn parse_rejects_non_array() {
+        assert!(parse_action_specs("// just a comment\n").is_err());
+    }
 }
