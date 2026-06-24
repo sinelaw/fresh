@@ -1,6 +1,23 @@
 # Markdown Compose: Marker-Based Block Design
 
-Status: design / proposed. Plugin: `crates/fresh-editor/plugins/markdown_compose.ts`.
+Status: tables implemented (plugin-side). Plugin: `crates/fresh-editor/plugins/markdown_compose.ts`.
+
+> **Implementation note.** Tables now use a byte-range, stable-id block index
+> that lives **in the plugin** (`tableBlocks` / `TableBlock`), shifted on the
+> existing `after_insert` / `after_delete` blast-radius hooks. This realizes the
+> design (byte-range blocks, stable identity, edit-driven invalidation, spatial
+> render lookup, no line numbers) without the core marker API of §5. The
+> core-backed variant in §5 was deferred because fresh's plugin runs on a
+> separate thread reading a periodically-refreshed `state_snapshot`, so a
+> *synchronous* `queryMarkers` in the render path has an edit→shift→snapshot→read
+> timing hazard; the plugin-owned index sidesteps it and needs no breaking API
+> change. §5 remains the path to make the plugin thinner later. Fenced-code and
+> other Tier-2 blocks (§7) are not yet migrated.
+>
+> With the block index making border redraws idempotent, `cursor_moved` returns
+> to a single `refreshLines` (the targeted-recompute experiment broke table-cell
+> wrap/reveal during cursor motion); correctness now comes from the block design,
+> not from limiting how often decorations are rebuilt.
 
 This document describes the move from **line-number bookkeeping** to
 **byte-range interval markers** for the multi-line constructs in the markdown
