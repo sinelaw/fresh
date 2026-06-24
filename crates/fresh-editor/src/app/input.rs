@@ -2103,6 +2103,24 @@ impl Editor {
                     self.set_status_message(t!("status.no_macro_recorded").to_string());
                 }
             }
+            Action::PromptSaveMacroToInit => {
+                self.start_prompt(
+                    "Save macro to init.ts (0-9): ".to_string(),
+                    PromptType::SaveMacroToInit,
+                );
+            }
+            Action::PromptPromoteMacro => {
+                self.start_prompt(
+                    "Promote macro to command (0-9): ".to_string(),
+                    PromptType::PromoteMacro,
+                );
+            }
+            Action::PromptLoadMacroFromBuffer => {
+                self.start_prompt(
+                    "Load macro from buffer into register (0-9): ".to_string(),
+                    PromptType::LoadMacroFromBuffer,
+                );
+            }
             Action::PromptSetBookmark => {
                 self.start_prompt("Set bookmark (0-9): ".to_string(), PromptType::SetBookmark);
             }

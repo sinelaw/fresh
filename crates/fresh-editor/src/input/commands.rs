@@ -1221,6 +1221,27 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.save_macro_to_init",
+        desc_key: "cmd.save_macro_to_init_desc",
+        action: || Action::PromptSaveMacroToInit,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.promote_macro",
+        desc_key: "cmd.promote_macro_desc",
+        action: || Action::PromptPromoteMacro,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.load_macro_from_buffer",
+        desc_key: "cmd.load_macro_from_buffer_desc",
+        action: || Action::PromptLoadMacroFromBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.set_bookmark",
         desc_key: "cmd.set_bookmark_desc",
         action: || Action::PromptSetBookmark,

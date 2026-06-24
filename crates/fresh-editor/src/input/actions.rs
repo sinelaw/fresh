@@ -2909,6 +2909,9 @@ pub fn action_to_events(
         | Action::PromptRecordMacro
         | Action::PromptPlayMacro
         | Action::PlayLastMacro
+        | Action::PromptSaveMacroToInit
+        | Action::PromptPromoteMacro
+        | Action::PromptLoadMacroFromBuffer
         | Action::PromptSetBookmark
         | Action::PromptJumpToBookmark
         | Action::PromptConfirm

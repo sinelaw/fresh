@@ -1166,6 +1166,14 @@ impl Editor {
             PluginCommand::ExecuteActions { actions } => {
                 self.handle_execute_actions(actions);
             }
+            PluginCommand::DefineMacro { register, steps } => {
+                self.handle_define_macro(register, steps);
+            }
+            PluginCommand::PlayMacroByRegister { register } => {
+                if let Some(key) = register.chars().next() {
+                    self.play_macro(key);
+                }
+            }
             PluginCommand::GetBufferText {
                 buffer_id,
                 start,
@@ -2096,7 +2104,6 @@ impl Editor {
     /// Used by vi mode for count prefix (e.g., "3dw" = delete 3 words)
     fn handle_execute_actions(&mut self, actions: Vec<fresh_core::api::ActionSpec>) {
         use crate::input::keybindings::Action;
-        use std::collections::HashMap;
 
         // Plugins may *request* the trust prompt (`workspace_trust_prompt`,
         // which asks the user) but must never *set* the trust level
@@ -2119,7 +2126,7 @@ impl Editor {
                 );
                 continue;
             }
-            if let Some(action) = Action::from_str(&action_spec.action, &HashMap::new()) {
+            if let Some(action) = Action::from_str(&action_spec.action, &action_spec.args) {
                 // Execute the action `count` times
                 for _ in 0..action_spec.count {
                     if let Err(e) = self.handle_action(action.clone()) {
@@ -2137,6 +2144,43 @@ impl Editor {
                 return; // Stop on unknown action
             }
         }
+    }
+
+    /// Define (or replace) an in-memory macro under `register` from a step
+    /// list supplied by a plugin (`editor.defineMacro`). Each step is parsed
+    /// through `Action::from_str` (with its args), so payload actions like
+    /// `insert_char` reconstruct faithfully. Unknown action names are skipped
+    /// with a warning rather than aborting, so one typo in a hand-edited
+    /// `init.ts` macro doesn't discard the whole register.
+    fn handle_define_macro(&mut self, register: String, steps: Vec<fresh_core::api::ActionSpec>) {
+        use crate::input::keybindings::Action;
+
+        let Some(key) = register.chars().next() else {
+            tracing::warn!("defineMacro: empty register key, ignoring");
+            return;
+        };
+
+        let mut actions = Vec::with_capacity(steps.len());
+        for spec in &steps {
+            match Action::from_str(&spec.action, &spec.args) {
+                Some(action) => {
+                    for _ in 0..spec.count.max(1) {
+                        actions.push(action.clone());
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        "defineMacro['{}']: unknown action '{}' skipped",
+                        key,
+                        spec.action
+                    );
+                }
+            }
+        }
+
+        let count = actions.len();
+        self.active_window_mut().macros.define(key, actions);
+        tracing::debug!("defineMacro['{}']: stored {} action(s)", key, count);
     }
 
     /// Get text from a buffer range (for vi mode yank operations).
@@ -5406,6 +5450,25 @@ impl Window {
         }
 
         snapshot.active_buffer_id = self.active_buffer();
+
+        // Mirror the active session's recorded macros into the snapshot so
+        // plugins can read them synchronously via `editor.listMacros()` /
+        // `editor.getMacro()`. Computed before the split-layout borrow below
+        // to avoid overlapping immutable borrows of `self`. Macros are few and
+        // small, so rebuilding each tick is negligible.
+        snapshot.macros = {
+            let macros = &self.macros;
+            macros
+                .keys_sorted()
+                .into_iter()
+                .filter_map(|key| {
+                    macros.get(key).map(|actions| fresh_core::api::MacroSnapshot {
+                        register: key.to_string(),
+                        steps: actions.iter().map(|a| a.to_action_spec()).collect(),
+                    })
+                })
+                .collect()
+        };
 
         let (mgr_ref, vs_ref) = self
             .buffers

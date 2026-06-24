@@ -1153,6 +1153,62 @@ impl JsEditorApi {
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
+    // === Macros ===
+
+    /// Register keys of all recorded macros in the active session, sorted.
+    /// Reads the per-tick snapshot, so it never crosses the IPC boundary.
+    #[plugin_api(ts_return = "string[]")]
+    pub fn list_macros(&self) -> Vec<String> {
+        if let Ok(s) = self.state_snapshot.read() {
+            s.macros.iter().map(|m| m.register.clone()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The recorded steps of the macro under `register` as `ActionSpec[]`, or
+    /// `null` if no macro is stored there. The returned array is the exact
+    /// shape `editor.executeActions` accepts, so a macro round-trips into a
+    /// replay script with no translation — this equivalence is the core of the
+    /// macro<->code bridge.
+    #[plugin_api(ts_return = "ActionSpec[] | null")]
+    pub fn get_macro<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        register: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let steps = if let Ok(s) = self.state_snapshot.read() {
+            s.macros
+                .iter()
+                .find(|m| m.register == register)
+                .map(|m| m.steps.clone())
+        } else {
+            None
+        };
+        match steps {
+            Some(steps) => rquickjs_serde::to_value(ctx, &steps)
+                .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string())),
+            None => Ok(Value::new_null(ctx)),
+        }
+    }
+
+    /// Define (or replace) the macro under `register` from a step list. Lets
+    /// `init.ts` seed registers at startup so a saved macro plays back exactly
+    /// like a hand-recorded one. Returns true if the command was queued.
+    pub fn define_macro(&self, register: String, steps: Vec<ActionSpec>) -> bool {
+        self.command_sender
+            .send(PluginCommand::DefineMacro { register, steps })
+            .is_ok()
+    }
+
+    /// Play the macro stored under `register` (same effect as the built-in
+    /// "play macro" action). Returns true if the command was queued.
+    pub fn play_macro(&self, register: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::PlayMacroByRegister { register })
+            .is_ok()
+    }
+
     // === Logging ===
 
     pub fn debug(&self, msg: String) {

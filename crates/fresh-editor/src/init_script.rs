@@ -71,6 +71,21 @@ const editor = getEditor();
 // );
 //
 
+// Example: a saved macro. Record one with "Record macro", then run
+// "Macro: Save to init.ts" to generate a block like this — it re-seeds the
+// register at startup so the macro plays back in a fresh session. Edit the
+// steps freely; each is an ActionSpec the same shape `executeActions` takes.
+//
+// editor.defineMacro("q", [
+//     { action: "move_line_start" },
+//     { action: "insert_char", args: { char: "-" } },
+//     { action: "insert_char", args: { char: " " } },
+// ]);
+//
+// To go further, run "Macro: Promote to command" instead — it generates a
+// registerHandler/registerCommand stub seeded with the same steps that you
+// can extend with loops, conditionals, and the full plugin API.
+
 // Example: fade the editor in from black to the target theme. Uses
 // `overrideThemeColors` (in-memory, no disk I/O) for each frame, then
 // calls `applyTheme` at the end to drop the overrides and land cleanly

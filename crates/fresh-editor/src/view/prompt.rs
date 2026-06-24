@@ -68,6 +68,12 @@ pub enum PromptType {
     RecordMacro,
     /// Play a macro - prompts for register (0-9)
     PlayMacro,
+    /// Save a recorded macro to init.ts - prompts for register (0-9)
+    SaveMacroToInit,
+    /// Promote a recorded macro to an editable init.ts command - prompts for register
+    PromoteMacro,
+    /// Load a macro from the active buffer (ActionSpec[]) - prompts for register
+    LoadMacroFromBuffer,
     /// Set a bookmark - prompts for register (0-9)
     SetBookmark,
     /// Jump to a bookmark - prompts for register (0-9)

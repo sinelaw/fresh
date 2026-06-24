@@ -11,6 +11,7 @@ use crate::input::keybindings::Action;
 use crate::model::event::EventLog;
 use crate::state::EditorState;
 
+use super::macro_codegen::{generate_define_block, generate_promote_block, upsert_macro_block};
 use super::types::{BufferKind, BufferMetadata};
 use super::Editor;
 
@@ -171,7 +172,12 @@ impl Editor {
         // Get macro data and cache what we need before any mutable borrows
         let (json, actions_len) = match self.active_window_mut().macros.get(key) {
             Some(actions) => {
-                let json = match serde_json::to_string_pretty(actions) {
+                // Render as `ActionSpec[]` — the canonical, *loadable* form that
+                // `executeActions` consumes and "Macro: Load from buffer" parses
+                // back. (Not the raw `Action` serde form, which doesn't round-trip.)
+                let specs: Vec<fresh_core::api::ActionSpec> =
+                    actions.iter().map(|a| a.to_action_spec()).collect();
+                let json = match serde_json::to_string_pretty(&specs) {
                     Ok(json) => json,
                     Err(e) => {
                         self.set_status_message(
@@ -188,9 +194,11 @@ impl Editor {
             }
         };
 
-        // Create header with macro info
+        // Create header with macro info. The body is an editable ActionSpec
+        // array: tweak it, then run "Macro: Load from buffer" to store it back
+        // into a register.
         let content = format!(
-            "// Macro '{}' ({} actions)\n// This buffer can be saved as a .json file for persistence\n\n{}",
+            "// Macro '{}' ({} actions) — editable ActionSpec[]\n// Edit, then run \"Macro: Load from buffer\" to store it into a register.\n\n{}",
             key,
             actions_len,
             json
@@ -341,4 +349,126 @@ impl Editor {
         let count = self.active_window().macros.count();
         self.set_status_message(t!("macro.showing", count = count).to_string());
     }
+
+    /// Append register `key`'s recorded macro to `init.ts` as an editable
+    /// `editor.defineMacro(...)` block, then hot-reload init.ts so it takes
+    /// effect immediately. This is the persistence path: the macro survives
+    /// restarts and becomes hand-editable TypeScript in a file the user owns.
+    pub(super) fn save_macro_to_init(&mut self, key: char) {
+        self.write_macro_to_init(key, false);
+    }
+
+    /// Append register `key`'s recorded macro to `init.ts` as an editable
+    /// `registerHandler` / `registerCommand` stub — the "promote to arbitrary
+    /// code" path. The recorded steps become an ordinary `executeActions` call
+    /// inside a real function the user can extend with loops, conditionals, and
+    /// the full plugin API. Hot-reloads init.ts when done.
+    pub(super) fn promote_macro_to_command(&mut self, key: char) {
+        self.write_macro_to_init(key, true);
+    }
+
+    /// Shared body for save/promote: render the macro into the requested form,
+    /// upsert its sentinel-delimited block into `init.ts`, write, and reload.
+    fn write_macro_to_init(&mut self, key: char, promote: bool) {
+        let actions = match self.active_window().macros.get(key) {
+            Some(actions) if !actions.is_empty() => actions.to_vec(),
+            Some(_) => {
+                self.set_status_message(t!("macro.empty", key = key).to_string());
+                return;
+            }
+            None => {
+                self.set_status_message(t!("macro.not_found", key = key).to_string());
+                return;
+            }
+        };
+
+        let block = if promote {
+            generate_promote_block(key, &actions)
+        } else {
+            generate_define_block(key, &actions)
+        };
+
+        let config_dir = self.dir_context.config_dir.clone();
+        // Ensure init.ts (and the type scaffolding its `/// <reference>`s need)
+        // exist before we append to it.
+        let path = match crate::init_script::ensure_starter(&config_dir) {
+            Ok(p) => p,
+            Err(e) => {
+                self.set_status_message(
+                    t!("macro.init_write_failed", error = e.to_string()).to_string(),
+                );
+                return;
+            }
+        };
+
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        let updated = upsert_macro_block(&existing, key, &block);
+        if let Err(e) = std::fs::write(&path, updated) {
+            self.set_status_message(
+                t!("macro.init_write_failed", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+
+        // Hot-reload init.ts so the macro is live now — mirrors Action::InitReload.
+        self.load_init_script(true);
+        self.fire_plugins_loaded_hook();
+
+        let msg = if promote {
+            t!("macro.promoted_to_init", key = key)
+        } else {
+            t!("macro.saved_to_init", key = key)
+        };
+        self.set_status_message(msg.to_string());
+    }
+
+    /// Parse the active buffer as an `ActionSpec[]` JSON array (e.g. a
+    /// `ShowMacro` buffer the user tweaked) and store it under register `key`.
+    /// The inverse of [`Self::show_macro_in_buffer`] — together they give a
+    /// lightweight "edit a macro and re-run it" loop without touching init.ts.
+    pub(super) fn load_macro_from_active_buffer(&mut self, key: char) {
+        let Some(text) = self.active_state().buffer.to_string() else {
+            self.set_status_message(t!("macro.buffer_unreadable").to_string());
+            return;
+        };
+
+        let specs = match parse_action_specs(&text) {
+            Ok(specs) => specs,
+            Err(e) => {
+                self.set_status_message(t!("macro.load_parse_failed", error = e).to_string());
+                return;
+            }
+        };
+
+        let mut actions = Vec::with_capacity(specs.len());
+        for spec in &specs {
+            if let Some(action) = Action::from_str(&spec.action, &spec.args) {
+                for _ in 0..spec.count.max(1) {
+                    actions.push(action.clone());
+                }
+            }
+        }
+
+        let count = actions.len();
+        self.active_window_mut().macros.define(key, actions);
+        self.set_status_message(
+            t!("macro.loaded_from_buffer", key = key, count = count).to_string(),
+        );
+    }
+}
+
+/// Extract the `[ ... ]` JSON array from `text` (tolerating leading comment
+/// lines, as a `ShowMacro` buffer has) and parse it as `Vec<ActionSpec>`.
+fn parse_action_specs(text: &str) -> Result<Vec<fresh_core::api::ActionSpec>, String> {
+    let start = text
+        .find('[')
+        .ok_or_else(|| "no '[' found — expected an ActionSpec array".to_string())?;
+    let end = text
+        .rfind(']')
+        .ok_or_else(|| "no ']' found — expected an ActionSpec array".to_string())?;
+    if end < start {
+        return Err("malformed array brackets".to_string());
+    }
+    serde_json::from_str::<Vec<fresh_core::api::ActionSpec>>(&text[start..=end])
+        .map_err(|e| e.to_string())
 }

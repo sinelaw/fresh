@@ -42,6 +42,7 @@ mod lsp_event_notify;
 mod lsp_requests;
 mod lsp_status;
 mod macro_actions;
+mod macro_codegen;
 mod macros;
 mod menu_actions;
 mod menu_context;

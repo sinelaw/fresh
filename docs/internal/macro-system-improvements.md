@@ -1,6 +1,6 @@
 # Macro System Improvements: Persistable, Editable, Promotable Macros
 
-Status: Design proposal
+Status: Implemented (see §10 for what shipped)
 Audience: Fresh maintainers
 Related code: `crates/fresh-editor/src/app/macros.rs`,
 `crates/fresh-editor/src/app/macro_actions.rs`,
@@ -334,3 +334,36 @@ order once the bridge exists.
   surface over storage that already exists. The capability ramp is mostly
   generated TypeScript, which is the right place for user-facing, user-editable
   behaviour to live.
+
+## 10. What shipped
+
+All of §3–§7 landed. Concrete surface:
+
+- **`ActionSpec.args`** (`fresh-core/src/api.rs`) — optional payload map;
+  `handle_execute_actions` (`plugin_dispatch.rs`) now passes it to
+  `Action::from_str`, so `executeActions` replays typed text and other payload
+  actions.
+- **`Action::to_action_spec`** (`input/keybindings.rs`) — inverse of
+  `from_str`, covering every `with_char`/`custom` payload variant. Round-trip
+  tested.
+- **Macro bridge** — `editor.listMacros()`, `getMacro(register)`,
+  `defineMacro(register, steps)`, `playMacro(register)`
+  (`quickjs_backend.rs`), backed by `PluginCommand::DefineMacro` /
+  `PlayMacroByRegister` and a `macros: Vec<MacroSnapshot>` field on
+  `EditorStateSnapshot` populated each tick (`Window::populate_plugin_state_snapshot`).
+  `MacroState::define` is the new programmatic store path.
+- **Codegen** (`app/macro_codegen.rs`) — `generate_define_block`,
+  `generate_promote_block`, `upsert_macro_block` (sentinel-delimited, with
+  `insert_char` coalesced into a `// types:` comment). Unit tested.
+- **Commands** — `Macro: Save to init.ts`, `Macro: Promote to command`,
+  `Macro: Load from buffer` (palette + `Action` variants + `PromptType`s +
+  orchestrators in `app/macro_actions.rs`). Save/promote write a
+  sentinel-wrapped block and hot-reload init.ts; `ShowMacro` now renders a
+  loadable `ActionSpec[]`.
+- **Docs/UX** — a macro example in the `init.ts` starter template; this design
+  doc.
+
+Not done (deliberately deferred, per §7's "leaves"): a strict-mode lint that
+flags hand-edited macros referencing unknown action names — `from_str` already
+degrades unknowns to a no-op `PluginAction`, and `defineMacro` logs a warning,
+so a typo is non-fatal but currently silent in the UI.

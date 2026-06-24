@@ -377,6 +377,15 @@ pub struct ActionSpec {
     /// Number of times to repeat the action (default 1)
     #[serde(default = "default_action_count")]
     pub count: u32,
+    /// Action payload arguments for actions that carry data, e.g.
+    /// `{ "char": "x" }` for `insert_char` or `{ "text": "hello" }` for
+    /// `prompt_confirm_with_text`. Empty/absent for the common no-arg
+    /// actions (motions, edits, commands). This is what lets a recorded
+    /// macro — which contains `InsertChar` and other payload actions —
+    /// round-trip losslessly through `executeActions`.
+    #[serde(default)]
+    #[ts(type = "Record<string, unknown>")]
+    pub args: std::collections::HashMap<String, serde_json::Value>,
 }
 
 fn default_action_count() -> u32 {
@@ -1231,6 +1240,26 @@ pub struct EditorStateSnapshot {
     /// Cleared when the search is cancelled or a new search is started.
     #[serde(default)]
     pub has_active_search: bool,
+
+    /// Recorded macros for the active session, in register order. Each entry's
+    /// `steps` is the macro rendered as `ActionSpec[]` — the same shape
+    /// `editor.executeActions` consumes — so a plugin can read a macro and
+    /// replay or serialise it without crossing the IPC boundary. Refreshed on
+    /// every snapshot tick; read by `editor.listMacros()` / `editor.getMacro()`.
+    #[serde(default)]
+    pub macros: Vec<MacroSnapshot>,
+}
+
+/// One recorded macro, exposed to plugins. `register` is the single-character
+/// register key (e.g. `"0"`, `"q"`); `steps` is the recorded action sequence in
+/// the `ActionSpec` form `executeActions` accepts.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MacroSnapshot {
+    /// Register key the macro is stored under.
+    pub register: String,
+    /// Recorded steps as executable `ActionSpec`s.
+    pub steps: Vec<ActionSpec>,
 }
 
 /// Total terminal size in cells. Returned by `editor.getScreenSize()`.
@@ -1280,6 +1309,7 @@ impl EditorStateSnapshot {
             terminal_width: 0,
             terminal_height: 0,
             has_active_search: false,
+            macros: Vec::new(),
         }
     }
 }
@@ -3301,6 +3331,24 @@ pub enum PluginCommand {
     ExecuteActions {
         /// List of actions to execute in sequence
         actions: Vec<ActionSpec>,
+    },
+
+    /// Define (or replace) an in-memory macro under `register` from a step
+    /// list. Lets `init.ts` re-seed macro registers at startup, so a saved
+    /// macro plays back exactly like a hand-recorded one.
+    DefineMacro {
+        /// Single-character register key (first char is used).
+        register: String,
+        /// Recorded steps as `ActionSpec`s.
+        steps: Vec<ActionSpec>,
+    },
+
+    /// Play the macro stored under `register` (same effect as the
+    /// `PlayMacro(char)` action, but addressable by register string from
+    /// plugins).
+    PlayMacroByRegister {
+        /// Single-character register key (first char is used).
+        register: String,
     },
 
     /// Get text from a buffer range (for yank operations)

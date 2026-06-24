@@ -262,6 +262,27 @@ impl Editor {
             PromptType::PlayMacro => {
                 self.handle_register_input(&input, |editor, c| editor.play_macro(c), "Macro");
             }
+            PromptType::SaveMacroToInit => {
+                self.handle_register_input(
+                    &input,
+                    |editor, c| editor.save_macro_to_init(c),
+                    "Macro",
+                );
+            }
+            PromptType::PromoteMacro => {
+                self.handle_register_input(
+                    &input,
+                    |editor, c| editor.promote_macro_to_command(c),
+                    "Macro",
+                );
+            }
+            PromptType::LoadMacroFromBuffer => {
+                self.handle_register_input(
+                    &input,
+                    |editor, c| editor.load_macro_from_active_buffer(c),
+                    "Macro",
+                );
+            }
             PromptType::SetBookmark => {
                 self.handle_register_input(
                     &input,

@@ -105,6 +105,17 @@ impl MacroState {
         Some((key, action_count))
     }
 
+    /// Define (or replace) the macro stored under `key` from an explicit
+    /// action list. Unlike [`Self::start_recording`]/[`Self::stop_recording`]
+    /// this doesn't touch the in-flight recording — it's the programmatic path
+    /// used when `init.ts` seeds a register via `editor.defineMacro(...)` or
+    /// when a macro is loaded back from a buffer. Updates `last_register` so a
+    /// subsequent "play last macro" targets the freshly-defined one.
+    pub(crate) fn define(&mut self, key: char, actions: Vec<Action>) {
+        self.macros.insert(key, actions);
+        self.last_register = Some(key);
+    }
+
     /// Mark replay as started. Callers must call [`Self::end_play`] exactly
     /// once afterwards, even on error.
     pub(crate) fn begin_play(&mut self) {

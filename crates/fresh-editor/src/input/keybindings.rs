@@ -517,6 +517,15 @@ pub enum Action {
     PromptRecordMacro,
     PromptPlayMacro,
     PlayLastMacro,
+    /// Prompt for a register, then append its macro to `init.ts` as an
+    /// editable `editor.defineMacro(...)` block and reload.
+    PromptSaveMacroToInit,
+    /// Prompt for a register, then append its macro to `init.ts` as an
+    /// editable `registerHandler`/`registerCommand` stub and reload.
+    PromptPromoteMacro,
+    /// Parse the active buffer as `ActionSpec[]` (e.g. a `ShowMacro` buffer the
+    /// user tweaked) and store it under a prompted register.
+    PromptLoadMacroFromBuffer,
 
     // Bookmarks (prompt-based)
     PromptSetBookmark,
@@ -1047,6 +1056,9 @@ impl Action {
             "prompt_record_macro" => PromptRecordMacro,
             "prompt_play_macro" => PromptPlayMacro,
             "play_last_macro" => PlayLastMacro,
+            "prompt_save_macro_to_init" => PromptSaveMacroToInit,
+            "prompt_promote_macro" => PromptPromoteMacro,
+            "prompt_load_macro_from_buffer" => PromptLoadMacroFromBuffer,
             "prompt_set_bookmark" => PromptSetBookmark,
             "prompt_jump_to_bookmark" => PromptJumpToBookmark,
 
@@ -1365,6 +1377,55 @@ impl Action {
             Self::MenuOpen(name) => format!("menu_open:{}", name),
             Self::SwitchKeybindingMap(map) => format!("switch_keybinding_map:{}", map),
             other => other.to_action_str(),
+        }
+    }
+
+    /// Render this action as an [`ActionSpec`] — its canonical name plus the
+    /// payload args needed to reconstruct it via [`Self::from_str`]. This is
+    /// the inverse of `from_str`/`with_char`/`custom`, and the keystone of the
+    /// macro<->code bridge: a recorded `Vec<Action>` maps through here into the
+    /// exact `ActionSpec[]` shape `editor.executeActions` consumes, so a macro
+    /// and its replay script are one representation.
+    ///
+    /// `count` is always 1 — recorded macros carry one Action per step; the
+    /// repeat-count sugar is a hand-authoring convenience, not something we
+    /// emit. Payload variants populate `args` with the same keys `from_str`
+    /// reads (`char`, `text`, `theme`, `name`, `map`); everything else gets an
+    /// empty map.
+    pub fn to_action_spec(&self) -> fresh_core::api::ActionSpec {
+        use serde_json::Value;
+        let mut args: HashMap<String, Value> = HashMap::new();
+        match self {
+            // `with_char` family — all carry a single `char` arg.
+            Self::InsertChar(c)
+            | Self::SetBookmark(c)
+            | Self::JumpToBookmark(c)
+            | Self::ClearBookmark(c)
+            | Self::PlayMacro(c)
+            | Self::ToggleMacroRecording(c)
+            | Self::ShowMacro(c) => {
+                args.insert("char".to_string(), Value::String(c.to_string()));
+            }
+            // `custom` family — each carries a distinct string-keyed arg.
+            Self::CopyWithTheme(theme) => {
+                args.insert("theme".to_string(), Value::String(theme.clone()));
+            }
+            Self::MenuOpen(name) => {
+                args.insert("name".to_string(), Value::String(name.clone()));
+            }
+            Self::SwitchKeybindingMap(map) => {
+                args.insert("map".to_string(), Value::String(map.clone()));
+            }
+            Self::PromptConfirmWithText(text) => {
+                args.insert("text".to_string(), Value::String(text.clone()));
+            }
+            // No-arg actions (motions, edits, commands): empty args.
+            _ => {}
+        }
+        fresh_core::api::ActionSpec {
+            action: self.to_action_str(),
+            count: 1,
+            args,
         }
     }
 
@@ -2514,6 +2575,9 @@ impl KeybindingResolver {
             Action::PromptRecordMacro => t!("action.prompt_record_macro"),
             Action::PromptPlayMacro => t!("action.prompt_play_macro"),
             Action::PlayLastMacro => t!("action.play_last_macro"),
+            Action::PromptSaveMacroToInit => t!("action.prompt_save_macro_to_init"),
+            Action::PromptPromoteMacro => t!("action.prompt_promote_macro"),
+            Action::PromptLoadMacroFromBuffer => t!("action.prompt_load_macro_from_buffer"),
             Action::PromptSetBookmark => t!("action.prompt_set_bookmark"),
             Action::PromptJumpToBookmark => t!("action.prompt_jump_to_bookmark"),
             Action::Undo => t!("action.undo"),
@@ -3410,6 +3474,44 @@ mod tests {
             resolver.resolve(&plain_d, KeyContext::FileExplorer),
             Action::InsertChar('d'),
             "Plain 'd' must remain text input for explorer search-as-you-type"
+        );
+    }
+
+    #[test]
+    fn to_action_spec_round_trips_through_from_str() {
+        // A representative spread: no-arg, char-payload, and string-payload
+        // actions. Each must survive Action -> ActionSpec -> Action unchanged,
+        // which is the invariant the macro<->code bridge relies on.
+        let cases = vec![
+            Action::MoveLeft,
+            Action::DeleteLine,
+            Action::InsertChar('x'),
+            Action::InsertChar(' '),
+            Action::SetBookmark('3'),
+            Action::PlayMacro('q'),
+            Action::ShowMacro('0'),
+            Action::PromptConfirmWithText("hello world".to_string()),
+            Action::MenuOpen("File".to_string()),
+            Action::SwitchKeybindingMap("emacs".to_string()),
+            Action::CopyWithTheme("one-dark".to_string()),
+        ];
+        for action in cases {
+            let spec = action.to_action_spec();
+            assert_eq!(spec.count, 1, "to_action_spec emits count == 1");
+            let back = Action::from_str(&spec.action, &spec.args)
+                .unwrap_or_else(|| panic!("from_str failed for {:?}", action));
+            assert_eq!(back, action, "round-trip mismatch via spec {:?}", spec);
+        }
+    }
+
+    #[test]
+    fn to_action_spec_omits_args_for_plain_actions() {
+        assert!(Action::MoveRight.to_action_spec().args.is_empty());
+        // Char actions carry their payload.
+        let spec = Action::InsertChar('z').to_action_spec();
+        assert_eq!(
+            spec.args.get("char").and_then(|v| v.as_str()),
+            Some("z")
         );
     }
 
