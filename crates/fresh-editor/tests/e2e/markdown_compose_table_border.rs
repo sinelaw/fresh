@@ -9,16 +9,18 @@ use crate::common::harness::EditorTestHarness;
 /// virtual lines anchored to the table rows, so when text is inserted above the
 /// table they should simply ride downward unchanged.
 ///
-/// The bug: the plugin's `cursor_moved` handler called `editor.refreshLines()`,
-/// which cleared the buffer-wide "seen lines" set.  Pressing Enter at the top of
-/// the document moves the cursor, so the whole viewport — including the
-/// untouched table — was re-decorated.  The border pass then ran against
-/// freshly renumbered lines using stale per-line state and reclassified the
-/// table's *first* row as having a row above it, replacing the `┌─┬─┐` top
-/// border with a `├─┼─┤` separator.
+/// The bug class: the plugin keys its table bookkeeping (border namespaces, the
+/// cached column-width map, and the first/last-row classification) by *line
+/// number*.  Inserting lines above the table renumbers every row, so that state
+/// goes stale — the border pass eventually believes the header has a table row
+/// above it and stops drawing the `┌─┬─┐` top border (it renders the bare header
+/// with no frame, or a `├─┼─┤` separator instead).
 ///
-/// Observed only via rendered output: after a single Enter at the start of the
-/// file, the table must still have a `┌` top-border corner on screen.
+/// The corruption is cumulative: the table renders correctly for the first few
+/// inserts and only breaks once enough stale per-line state has piled up, so a
+/// single Enter is not a sufficient reproducer.  This test hammers Enter at the
+/// top of the file and asserts — on rendered output only — that the table is
+/// still a single well-formed frame with its `┌` top border above the header.
 #[test]
 fn test_table_border_survives_insert_above() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
@@ -89,35 +91,71 @@ Tail paragraph two.
         harness.screen_to_string(),
     );
 
-    // -- Insert a blank line at the very top of the file ------------------
-    // Move to the start of the buffer, then press Enter once.
+    // -- Insert blank lines at the very top of the file ------------------
+    // Move to the start of the buffer, then press Enter several times,
+    // letting the view settle after each (mirrors a user hammering Enter).
+    // A single insert was not enough to expose the deeper failure: the table
+    // renders correctly for the first few inserts and only loses its top border
+    // once the plugin's per-line bookkeeping has accumulated enough stale state
+    // (around the 5th insert with this layout), so we insert well past that.
     harness
         .send_key(KeyCode::Home, KeyModifiers::CONTROL)
         .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 
-    // Let the view settle (the corrupted state is itself stable, so this
-    // returns either way — the assertion below is what distinguishes them).
-    let mut prev = String::new();
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            let stable = s == prev;
-            prev = s;
-            stable
-        })
-        .unwrap();
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        let mut prev = String::new();
+        harness
+            .wait_until_stable(|h| {
+                let s = h.screen_to_string();
+                let stable = s == prev;
+                prev = s;
+                stable
+            })
+            .unwrap();
+    }
 
     // -- The regression check --------------------------------------------
-    // With the bug, the top border `┌─┬─┐` is replaced by a separator
-    // `├─┼─┤`, so no `┌` remains on screen.
+    // The table must still be a single, well-formed frame: a `┌─┬─┐` top
+    // border directly above the header row, and exactly one frame on screen
+    // (no missing / duplicated / orphaned borders).  We assert on the
+    // *rendered* screen only.
     let after = harness.screen_to_string();
+    let rows: Vec<&str> = after.lines().collect();
+
+    let header_idx = rows
+        .iter()
+        .position(|r| r.contains("Task") && r.contains("Owner") && r.contains("Status"))
+        .unwrap_or_else(|| panic!("table header row not found on screen.\nScreen:\n{}", after));
     assert!(
-        after.contains('┌'),
-        "table top border (┌) disappeared after inserting a line above the \
-         table — it was reclassified as a `├` separator.\nScreen:\n{}",
+        header_idx > 0,
+        "header row is at the very top with no room for a border.\nScreen:\n{}",
+        after,
+    );
+
+    // The line directly above the header must be the table's top border.
+    let above_header = rows[header_idx - 1];
+    assert!(
+        above_header.contains('┌'),
+        "table top border (┌─┬─┐) is missing directly above the header after \
+         inserting lines above the table.\nLine above header: {:?}\nScreen:\n{}",
+        above_header,
+        after,
+    );
+
+    // Exactly one frame: no missing, duplicated, or orphaned corners.
+    assert_eq!(
+        after.matches('┌').count(),
+        1,
+        "expected exactly one table top-left corner (┌).\nScreen:\n{}",
+        after,
+    );
+    assert_eq!(
+        after.matches('└').count(),
+        1,
+        "expected exactly one table bottom-left corner (└).\nScreen:\n{}",
         after,
     );
 }
