@@ -117,6 +117,32 @@ Tail paragraph two.
             .unwrap();
     }
 
+    // Strong settle before asserting. The border virtual lines are added via
+    // async `addVirtualLine` commands that are drained a tick *after* the
+    // `lines_changed` that requested them, so the screen can be momentarily
+    // unchanged (a one-frame lull) while the table is still mid-redraw. The
+    // two-equal-render `wait_until_stable` above can return inside such a lull,
+    // which under nextest's heavy parallel load made this assert flaky. Require
+    // several consecutive identical renders so we only assert on a frame the
+    // async pipeline has genuinely finished. (A genuinely-broken table is
+    // *stably* broken, so this never hides a real regression.)
+    {
+        let mut last = String::new();
+        let mut streak = 0;
+        harness
+            .wait_until(|h| {
+                let s = h.screen_to_string();
+                if s == last {
+                    streak += 1;
+                } else {
+                    streak = 0;
+                    last = s;
+                }
+                streak >= 6
+            })
+            .unwrap();
+    }
+
     // -- The regression check --------------------------------------------
     // The table must still be a single, well-formed frame: a `┌─┬─┐` top
     // border directly above the header row, and exactly one frame on screen
