@@ -435,9 +435,17 @@ pub mod indent_folding {
         buf_len
     }
 
-    /// Measure leading indent of a line given as a byte slice (no trailing `\n`).
-    /// Returns `(indent_width, all_blank)` where `all_blank` is true when the
-    /// line has no non-whitespace character. Tabs expand against `tab_size`.
+    /// Measure leading indent of a line. The slice may carry its trailing line
+    /// terminator (`\n` / `\r\n`); the newline ends the scan without counting as
+    /// content. Returns `(indent_width, all_blank)` where `all_blank` is true
+    /// when the line has no non-whitespace character. Tabs expand against
+    /// `tab_size`.
+    ///
+    /// Treating `\n` as a terminator (rather than as ordinary non-whitespace) is
+    /// what lets callers pass a `ViewLine::text` — which keeps its `\n` — and
+    /// still have an empty or whitespace-only line correctly read as blank. Get
+    /// this wrong and a bare `"\n"` measures as indent-0 *content*, which makes
+    /// blank lines masquerade as fold headers and resets indent-guide staircases.
     pub fn slice_indent(line: &[u8], tab_size: usize) -> (usize, bool) {
         let mut indent = 0;
         let mut all_blank = true;
@@ -452,6 +460,9 @@ pub mod indent_folding {
                     }
                 }
                 b'\r' => {}
+                // End of line: everything before was whitespace, so the line is
+                // blank. Stop before scanning into any following line's bytes.
+                b'\n' => break,
                 _ => {
                     all_blank = false;
                     break;
@@ -651,6 +662,17 @@ pub mod indent_folding {
             assert_eq!(slice_indent(b"", 4), (0, true));
             assert_eq!(slice_indent(b"   ", 4), (3, true));
             assert_eq!(slice_indent(b"  \r", 4), (2, true));
+        }
+
+        #[test]
+        fn test_slice_indent_newline_terminated() {
+            // A trailing newline (as kept by `ViewLine::text`) terminates the
+            // line and does not count as content: empty/whitespace-only lines
+            // stay blank, and real content is still detected past its indent.
+            assert_eq!(slice_indent(b"\n", 4), (0, true));
+            assert_eq!(slice_indent(b"    \n", 4), (4, true));
+            assert_eq!(slice_indent(b"  \r\n", 4), (2, true));
+            assert_eq!(slice_indent(b"    code\n", 4), (4, false));
         }
 
         #[test]

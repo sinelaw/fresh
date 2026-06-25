@@ -761,6 +761,25 @@ mod tests {
     }
 
     #[test]
+    fn indentation_guide_empty_line_does_not_collapse_staircase() {
+        // A *completely empty* line (a bare `\n`) inside a nested block must not
+        // reset the indent staircase: the code row below it keeps its full set of
+        // guides. (Before `slice_indent` treated `\n` as a terminator, a bare
+        // "\n" read as indent-0 content, popping the whole stack — so `b;` lost
+        // its col-4 guide and rendered "▏   b;".) The empty row's own rendering is
+        // covered by the draw-through test below.
+        let content = "fn f() {\n    if x {\n        a;\n\n        b;\n    }\n}\n";
+        let output = render_output_scrolled_with_indentation_guide(content, 0);
+
+        assert_eq!(rendered_line_text(&output, 0), "fn f() {");
+        assert_eq!(rendered_line_text(&output, 1), "▏   if x {");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   a;");
+        // row 3 is the empty line — owned by the draw-through test.
+        assert_eq!(rendered_line_text(&output, 4), "▏   ▏   b;");
+        assert_eq!(rendered_line_text(&output, 5), "▏   }");
+    }
+
+    #[test]
     fn indentation_guide_survives_scroll_past_block_opener() {
         // A block whose opening lines (`mod m {` at col 0, `fn f() {` at col 4)
         // have scrolled above the viewport must still draw their guides on the
@@ -1103,6 +1122,48 @@ mod tests {
         assert!(lines
             .iter()
             .any(|l| l.contains("header") && l.contains("...")));
+    }
+
+    #[test]
+    fn fold_indicator_lands_on_header_not_blank_line_after_it() {
+        // A blank line immediately after a foldable header must not steal the
+        // fold marker. The indent-based detector consumes `ViewLine::text`,
+        // which keeps the trailing `\n`; before `slice_indent` treated `\n` as a
+        // terminator, a bare "\n" read as indent-0 *content*, so `int main() {`
+        // looked unfoldable (its next "non-blank" line was the blank one) and the
+        // blank line itself looked like the indent-0 header of the body below.
+        let content = "int main() {\n\n    body();\n    \n    more();\n}\n";
+        let mut state = EditorState::new(40, 10, 1024, test_fs());
+        state.buffer = Buffer::from_str(content, 1024, test_fs());
+        let viewport = Viewport::new(40, 10);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let folds = FoldManager::new();
+        let view_data = build_view_data(
+            &mut state,
+            &viewport,
+            None,
+            content.len().max(1),
+            viewport.visible_line_count(),
+            false,
+            40,
+            0,
+            &ViewMode::Source,
+            &folds,
+            &theme,
+        );
+
+        let indicators = fold_indicators_for_viewport(&state, &folds, &view_data.lines);
+
+        let header_byte = 0; // `int main() {`
+        let blank_byte = content.find("\n\n").unwrap() + 1; // the empty line
+        assert!(
+            indicators.contains_key(&header_byte),
+            "fold marker should be on the function header"
+        );
+        assert!(
+            !indicators.contains_key(&blank_byte),
+            "fold marker must not be on the blank line"
+        );
     }
 
     #[test]
