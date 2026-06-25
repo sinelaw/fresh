@@ -2852,30 +2852,11 @@ impl Window {
             return;
         }
 
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
         let ns = self.search_namespace.clone();
 
-        let regex_pattern = if use_regex {
-            if whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query.to_string()
-            }
-        } else {
-            let escaped = regex::escape(query);
-            if whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        let regex = regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!case_sensitive)
-            .build();
-        let regex = match regex {
+        // Share the one search-regex builder so highlight anchoring (`^`/`$`
+        // line-matching) stays consistent with the actual search results.
+        let regex = match self.build_search_regex(query) {
             Ok(r) => r,
             Err(_) => {
                 self.clear_search_highlights();
@@ -2954,30 +2935,11 @@ impl Window {
             _ => return,
         };
 
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
         let ns = self.search_namespace.clone();
 
-        let regex_pattern = if use_regex {
-            if whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query
-            }
-        } else {
-            let escaped = regex::escape(&query);
-            if whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        let regex = match regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!case_sensitive)
-            .build()
-        {
+        // Share the one search-regex builder so re-highlighting after an edit
+        // keeps `^`/`$` line-anchoring consistent with the search results.
+        let regex = match self.build_search_regex(&query) {
             Ok(r) => r,
             Err(_) => return,
         };

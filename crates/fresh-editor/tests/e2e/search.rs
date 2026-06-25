@@ -2648,6 +2648,51 @@ fn test_regex_replace_with_capture_group() {
     assert_eq!(content, "ooblaoobla");
 }
 
+/// Regex search with a `^` anchor must match the start of *every* line, not
+/// just the start of the buffer. Before the multi-line fix, searching `^use`
+/// reported "Found 1 match"; it should find every line that begins with `use`.
+#[test]
+fn test_regex_caret_anchor_matches_every_line() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    // Four lines start with `use` (1, 2, 4, 5). Line 3's `use_x` is mid-line,
+    // so `^use` must NOT match it — a plain `use` search would find 5.
+    std::fs::write(
+        &file_path,
+        "use a;\nuse b;\nlet use_x = 1;\nuse c;\nuse d;\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Ctrl+F opens search.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Search: ");
+
+    // Alt+R enables regex mode.
+    harness
+        .send_key(KeyCode::Char('r'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Search for the anchored pattern and submit.
+    harness.type_text("^use").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    // The rendered status bar reports every line-anchored match (the full
+    // message is truncated in the status bar, so match a stable prefix).
+    // Before the fix this read "Found 1 match".
+    harness.assert_screen_contains("Found 4 matches");
+}
+
 /// Reproduce the performance issue where editor_tick takes ~700ms after a large
 /// search completes with many matches. This test uses tracing to identify the
 /// bottleneck. Run with: RUST_LOG=info cargo test -p fresh-editor --test e2e_tests

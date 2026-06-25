@@ -32,6 +32,11 @@ pub fn build_search_regex(
 
     regex::RegexBuilder::new(&pattern)
         .case_insensitive(!case_sensitive)
+        // Match `^`/`$` at every line boundary, like every editor's find.
+        // `crlf` makes both `\n` and `\r\n` count as terminators so the
+        // anchors behave the same on LF and CRLF buffers.
+        .multi_line(true)
+        .crlf(true)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -56,6 +61,9 @@ pub fn build_regex(
 
     regex::bytes::RegexBuilder::new(&pattern)
         .case_insensitive(!case_sensitive)
+        // Keep `^`/`$` line-anchored in replace, matching the search path.
+        .multi_line(true)
+        .crlf(true)
         .build()
         .ok()
 }
@@ -232,6 +240,50 @@ mod tests {
         // Plain-text mode escapes everything, so even a syntactically-bad
         // regex pattern compiles fine as a literal search.
         assert!(build_search_regex("[unclosed", false, false, true).is_ok());
+    }
+
+    #[test]
+    fn build_search_regex_caret_anchors_every_line() {
+        // Regression: `^use` must match the start of *every* line, not just
+        // the start of the buffer. Without multi-line mode this finds 1.
+        let re = build_search_regex("^use", true, false, true).unwrap();
+        let text = "use a;\nuse b;\nlet use_x = 1;\nuse c;\n";
+        assert_eq!(re.find_iter(text).count(), 3);
+    }
+
+    #[test]
+    fn build_search_regex_dollar_anchors_every_line() {
+        let re = build_search_regex("foo$", true, false, true).unwrap();
+        let text = "foo\nfoobar\nbar foo\n";
+        assert_eq!(re.find_iter(text).count(), 2);
+    }
+
+    #[test]
+    fn build_search_regex_anchors_match_crlf_lines() {
+        // On CRLF buffers `$` must match before `\r\n`, so `foo$` still hits.
+        let re = build_search_regex("foo$", true, false, true).unwrap();
+        let text = "foo\r\nbar\r\nfoo\r\n";
+        assert_eq!(re.find_iter(text).count(), 2);
+    }
+
+    #[test]
+    fn build_search_regex_dot_does_not_cross_newlines() {
+        // Multi-line mode only re-anchors `^`/`$`; `.` must still stop at a
+        // line boundary (no `dot_matches_new_line`). So `a.b` cannot span
+        // "a\nb", but a greedy `a.*` stays within its line.
+        let re = build_search_regex("a.b", true, false, true).unwrap();
+        assert!(!re.is_match("a\nb"));
+        let re2 = build_search_regex("a.*", true, false, true).unwrap();
+        let m = re2.find("axy\nbcd").unwrap();
+        assert_eq!(m.as_str(), "axy");
+    }
+
+    #[test]
+    fn build_regex_caret_anchors_every_line() {
+        // The bytes builder used for replace must anchor per line too.
+        let re = build_regex("^use", true, false, true).unwrap();
+        let text = b"use a;\nuse b;\nuse c;\n";
+        assert_eq!(re.find_iter(text).count(), 3);
     }
 
     #[test]
