@@ -84,6 +84,7 @@ pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod suspend_process;
 
+pub mod close_buffer_shared_split_cursor;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
 pub mod large_file_inplace_write_bug;
