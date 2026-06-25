@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Lưu macro đã ghi vào init.ts dưới dạng khối defineMacro() có thể chỉnh sửa",
   "cmd.promote_macro": "Macro: Nâng thành lệnh",
   "cmd.promote_macro_desc": "Chuyển macro đã ghi thành một lệnh init.ts có thể chỉnh sửa và mở rộng bằng mã tùy ý",
-  "cmd.load_macro_from_buffer": "Macro: Tải từ bộ đệm",
-  "cmd.load_macro_from_buffer_desc": "Phân tích bộ đệm đang hoạt động dưới dạng ActionSpec[] và lưu vào thanh ghi macro",
   "action.prompt_save_macro_to_init": "Lưu macro vào init.ts (hỏi thanh ghi)",
   "action.prompt_promote_macro": "Nâng macro thành lệnh init.ts (hỏi thanh ghi)",
-  "action.prompt_load_macro_from_buffer": "Tải macro từ bộ đệm (hỏi thanh ghi)",
-  "macro.buffer_unreadable": "Không thể đọc bộ đệm đang hoạt động",
   "macro.init_write_failed": "Không thể ghi init.ts: %{error}",
-  "macro.load_parse_failed": "Không thể phân tích macro từ bộ đệm: %{error}",
-  "macro.loaded_from_buffer": "Đã tải macro vào thanh ghi '%{key}' (%{count} hành động)",
   "macro.promoted_to_init": "Đã nâng macro '%{key}' thành lệnh có thể chỉnh sửa trong init.ts (đã tải lại)",
   "macro.saved_to_init": "Đã lưu macro '%{key}' vào init.ts (đã tải lại)"
 }

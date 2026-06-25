@@ -2115,12 +2115,6 @@ impl Editor {
                     PromptType::PromoteMacro,
                 );
             }
-            Action::PromptLoadMacroFromBuffer => {
-                self.start_prompt(
-                    "Load macro from buffer into register (0-9): ".to_string(),
-                    PromptType::LoadMacroFromBuffer,
-                );
-            }
             Action::PromptSetBookmark => {
                 self.start_prompt("Set bookmark (0-9): ".to_string(), PromptType::SetBookmark);
             }

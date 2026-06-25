@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "将录制的宏作为可编辑的 defineMacro() 块保存到 init.ts",
   "cmd.promote_macro": "宏：提升为命令",
   "cmd.promote_macro_desc": "将录制的宏转换为可编辑的 init.ts 命令，可用任意代码进行扩展",
-  "cmd.load_macro_from_buffer": "宏：从缓冲区加载",
-  "cmd.load_macro_from_buffer_desc": "将活动缓冲区解析为 ActionSpec[] 并存入宏寄存器",
   "action.prompt_save_macro_to_init": "将宏保存到 init.ts（提示输入寄存器）",
   "action.prompt_promote_macro": "将宏提升为 init.ts 命令（提示输入寄存器）",
-  "action.prompt_load_macro_from_buffer": "从缓冲区加载宏（提示输入寄存器）",
-  "macro.buffer_unreadable": "无法读取活动缓冲区",
   "macro.init_write_failed": "写入 init.ts 失败：%{error}",
-  "macro.load_parse_failed": "无法从缓冲区解析宏：%{error}",
-  "macro.loaded_from_buffer": "已将宏加载到寄存器 '%{key}'（%{count} 个动作）",
   "macro.promoted_to_init": "已将宏 '%{key}' 提升为 init.ts 中的可编辑命令（已重新加载）",
   "macro.saved_to_init": "已将宏 '%{key}' 保存到 init.ts（已重新加载）"
 }

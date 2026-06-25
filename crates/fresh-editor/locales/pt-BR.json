@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Persistir uma macro gravada no init.ts como um bloco defineMacro() editável",
   "cmd.promote_macro": "Macro: Promover a comando",
   "cmd.promote_macro_desc": "Transformar uma macro gravada em um comando do init.ts editável que você pode estender com código arbitrário",
-  "cmd.load_macro_from_buffer": "Macro: Carregar do buffer",
-  "cmd.load_macro_from_buffer_desc": "Analisar o buffer ativo como ActionSpec[] e armazená-lo em um registrador de macro",
   "action.prompt_save_macro_to_init": "Salvar macro no init.ts (solicita o registrador)",
   "action.prompt_promote_macro": "Promover macro a comando do init.ts (solicita o registrador)",
-  "action.prompt_load_macro_from_buffer": "Carregar macro do buffer (solicita o registrador)",
-  "macro.buffer_unreadable": "Não foi possível ler o buffer ativo",
   "macro.init_write_failed": "Falha ao gravar o init.ts: %{error}",
-  "macro.load_parse_failed": "Não foi possível analisar a macro do buffer: %{error}",
-  "macro.loaded_from_buffer": "Macro carregada no registrador '%{key}' (%{count} ações)",
   "macro.promoted_to_init": "Macro '%{key}' promovida a um comando editável no init.ts (recarregado)",
   "macro.saved_to_init": "Macro '%{key}' salva no init.ts (recarregado)"
 }

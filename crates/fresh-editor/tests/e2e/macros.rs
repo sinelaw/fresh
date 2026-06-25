@@ -407,48 +407,6 @@ fn test_macro_save_to_init_shows_confirmation() {
     harness.assert_screen_not_contains("error");
 }
 
-/// "Macro: Load from buffer" parses the active buffer as `ActionSpec[]` and
-/// stores it under a register. The pasted buffer carries a `// ... ActionSpec[]`
-/// comment header (exactly what `ShowMacro` emits) — the parser must skip the
-/// `[` inside that comment. Regression for a bug found in manual testing.
-#[test]
-fn test_macro_load_from_buffer_with_comment_header() {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
-    harness.render().unwrap();
-
-    // Paste a loadable ActionSpec[] with a comment header (raw paste avoids
-    // auto-close mangling the JSON). The header contains "ActionSpec[]".
-    let buf = "// Macro '0' (2 actions) — editable ActionSpec[]\n\
-               // Edit, then run \"Macro: Load from buffer\".\n\n\
-               [\n  { \"action\": \"insert_char\", \"args\": { \"char\": \"W\" } },\n\
-               \x20 { \"action\": \"insert_char\", \"args\": { \"char\": \"X\" } }\n]\n";
-    harness.send_paste(buf).unwrap();
-    harness.render().unwrap();
-
-    // Load it into register 0.
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Load from buffer").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-    harness.assert_screen_contains("Load macro from buffer");
-
-    harness.type_text("0").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Confirmation of a 2-action load (NOT a parse error from the comment).
-    harness.assert_screen_contains("Loaded macro into register");
-    harness.assert_screen_not_contains("Could not parse");
-}
-
 /// Test that macro playback is undoable as a single operation
 #[test]
 fn test_macro_playback_is_undoable() {

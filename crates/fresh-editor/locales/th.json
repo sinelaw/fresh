@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "บันทึกมาโครที่บันทึกไว้ลงใน init.ts เป็นบล็อก defineMacro() ที่แก้ไขได้",
   "cmd.promote_macro": "มาโคร: เลื่อนเป็นคำสั่ง",
   "cmd.promote_macro_desc": "เปลี่ยนมาโครที่บันทึกไว้ให้เป็นคำสั่ง init.ts ที่แก้ไขได้ และขยายด้วยโค้ดใด ๆ ก็ได้",
-  "cmd.load_macro_from_buffer": "มาโคร: โหลดจากบัฟเฟอร์",
-  "cmd.load_macro_from_buffer_desc": "แปลงบัฟเฟอร์ที่ใช้งานอยู่เป็น ActionSpec[] แล้วเก็บไว้ในรีจิสเตอร์มาโคร",
   "action.prompt_save_macro_to_init": "บันทึกมาโครไปยัง init.ts (ถามรีจิสเตอร์)",
   "action.prompt_promote_macro": "เลื่อนมาโครเป็นคำสั่ง init.ts (ถามรีจิสเตอร์)",
-  "action.prompt_load_macro_from_buffer": "โหลดมาโครจากบัฟเฟอร์ (ถามรีจิสเตอร์)",
-  "macro.buffer_unreadable": "ไม่สามารถอ่านบัฟเฟอร์ที่ใช้งานอยู่ได้",
   "macro.init_write_failed": "เขียน init.ts ไม่สำเร็จ: %{error}",
-  "macro.load_parse_failed": "ไม่สามารถแยกวิเคราะห์มาโครจากบัฟเฟอร์ได้: %{error}",
-  "macro.loaded_from_buffer": "โหลดมาโครไปยังรีจิสเตอร์ '%{key}' แล้ว (%{count} การกระทำ)",
   "macro.promoted_to_init": "เลื่อนมาโคร '%{key}' เป็นคำสั่งที่แก้ไขได้ใน init.ts แล้ว (โหลดใหม่แล้ว)",
   "macro.saved_to_init": "บันทึกมาโคร '%{key}' ไปยัง init.ts แล้ว (โหลดใหม่แล้ว)"
 }

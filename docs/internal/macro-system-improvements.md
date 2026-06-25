@@ -205,18 +205,22 @@ points it at `init.ts` (a real load path) instead of a dead-end `.json`.
 
 ### 5.2 Edit a stored macro
 
-Two editing routes, both falling out of §5.1 for free:
+**Edit the code directly.** The macro is literal TS in `init.ts`. Open it
+(`init: Edit init.ts`), change a step, hot-reload. This is the primary, no-new-UI
+path — and the only one we ship.
 
-1. **Edit the code directly.** The macro is literal TS in `init.ts`. Open it
-   (`init: Edit init.ts`), change a step, hot-reload. This is the primary,
-   no-new-UI path.
-2. **Round-trip through a scratch buffer (enhanced `ShowMacro`).** Keep the
-   existing "show macro in a buffer" affordance but make it *loadable*: the
-   buffer renders the `ActionSpec[]` (not raw serde), and a companion
-   **`Macro: Load from buffer`** command parses the buffer back via
-   `defineMacro`. This restores the symmetry the current read-only JSON dump
-   lacks, and gives a lightweight "tweak and re-run without touching init.ts"
-   loop.
+> **Dropped: scratch-buffer round-trip.** An earlier revision added a
+> `Macro: Load from buffer` command that re-parsed an edited `ShowMacro` buffer
+> back into a register. It was removed: `init.ts` is already a robust, *JS-parsed*
+> text edit surface, so a parallel command that re-implements parsing by hand
+> (extracting a JSON array out of a buffer) duplicated that capability with a
+> weaker, bug-prone parser — and indeed its hand-rolled array extraction broke on
+> the `ShowMacro` header comment. Every other path (`defineMacro`/`executeActions`
+> from `init.ts`) receives an already-deserialised `Vec<ActionSpec>` across the
+> IPC boundary, doing zero hand-parsing; the load command was the lone exception,
+> and its marginal value over "just edit it in `init.ts`" didn't justify owning a
+> parser. `ShowMacro` remains as a read-only `ActionSpec[]` view that points at
+> `Macro: Save to init.ts` for persistence.
 
 ### 5.3 Promote a macro into arbitrary code logic
 
@@ -279,8 +283,9 @@ the existing input layer rather than fork it.
 2. **`Action::to_action_spec` + macro bridge** `listMacros` / `getMacro` /
    `defineMacro` / `playMacro` (§4): new `PluginCommand` variants, `MacroState`
    already has the storage. Regenerate `fresh.d.ts`. *(Rust + generated TS.)*
-3. **Enhanced `ShowMacro` + `Macro: Load from buffer`** (§5.2 route 2): render
-   `ActionSpec[]`, add the parse-back command. Makes the round-trip real.
+3. **Read-only `ActionSpec[]` `ShowMacro`** (§5.2): render the macro as a
+   readable `ActionSpec[]` view (not raw serde). *(No load-back command — see
+   the §5.2 note.)*
 4. **`Macro: Save to init.ts`** (§5.1): the `init.ts` append-with-sentinels
    writer + reload. Delivers persistence.
 5. **`Macro: Promote to command`** (§5.3): the handler-stub generator.
@@ -355,11 +360,11 @@ All of §3–§7 landed. Concrete surface:
 - **Codegen** (`app/macro_codegen.rs`) — `generate_define_block`,
   `generate_promote_block`, `upsert_macro_block` (sentinel-delimited, with
   `insert_char` coalesced into a `// types:` comment). Unit tested.
-- **Commands** — `Macro: Save to init.ts`, `Macro: Promote to command`,
-  `Macro: Load from buffer` (palette + `Action` variants + `PromptType`s +
-  orchestrators in `app/macro_actions.rs`). Save/promote write a
-  sentinel-wrapped block and hot-reload init.ts; `ShowMacro` now renders a
-  loadable `ActionSpec[]`.
+- **Commands** — `Macro: Save to init.ts` and `Macro: Promote to command`
+  (palette + `Action` variants + `PromptType`s + orchestrators in
+  `app/macro_actions.rs`). Both write a sentinel-wrapped block and hot-reload
+  init.ts. `ShowMacro` renders a read-only `ActionSpec[]` view. (A
+  `Macro: Load from buffer` command was prototyped and then removed — see §5.2.)
 - **Docs/UX** — a macro example in the `init.ts` starter template; this design
   doc.
 

@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Сохранить записанный макрос в init.ts как редактируемый блок defineMacro()",
   "cmd.promote_macro": "Макрос: Преобразовать в команду",
   "cmd.promote_macro_desc": "Превратить записанный макрос в редактируемую команду init.ts, которую можно расширить произвольным кодом",
-  "cmd.load_macro_from_buffer": "Макрос: Загрузить из буфера",
-  "cmd.load_macro_from_buffer_desc": "Разобрать активный буфер как ActionSpec[] и сохранить его в регистр макросов",
   "action.prompt_save_macro_to_init": "Сохранить макрос в init.ts (запрашивает регистр)",
   "action.prompt_promote_macro": "Преобразовать макрос в команду init.ts (запрашивает регистр)",
-  "action.prompt_load_macro_from_buffer": "Загрузить макрос из буфера (запрашивает регистр)",
-  "macro.buffer_unreadable": "Не удалось прочитать активный буфер",
   "macro.init_write_failed": "Не удалось записать init.ts: %{error}",
-  "macro.load_parse_failed": "Не удалось разобрать макрос из буфера: %{error}",
-  "macro.loaded_from_buffer": "Макрос загружен в регистр '%{key}' (%{count} действий)",
   "macro.promoted_to_init": "Макрос '%{key}' преобразован в редактируемую команду в init.ts (перезагружено)",
   "macro.saved_to_init": "Макрос '%{key}' сохранён в init.ts (перезагружено)"
 }

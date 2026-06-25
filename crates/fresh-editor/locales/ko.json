@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "녹화한 매크로를 편집 가능한 defineMacro() 블록으로 init.ts에 저장합니다",
   "cmd.promote_macro": "매크로: 명령으로 승격",
   "cmd.promote_macro_desc": "녹화한 매크로를 임의의 코드로 확장할 수 있는 편집 가능한 init.ts 명령으로 변환합니다",
-  "cmd.load_macro_from_buffer": "매크로: 버퍼에서 불러오기",
-  "cmd.load_macro_from_buffer_desc": "활성 버퍼를 ActionSpec[]로 파싱하여 매크로 레지스터에 저장합니다",
   "action.prompt_save_macro_to_init": "매크로를 init.ts에 저장 (레지스터 입력)",
   "action.prompt_promote_macro": "매크로를 init.ts 명령으로 승격 (레지스터 입력)",
-  "action.prompt_load_macro_from_buffer": "버퍼에서 매크로 불러오기 (레지스터 입력)",
-  "macro.buffer_unreadable": "활성 버퍼를 읽을 수 없습니다",
   "macro.init_write_failed": "init.ts 쓰기에 실패했습니다: %{error}",
-  "macro.load_parse_failed": "버퍼에서 매크로를 파싱할 수 없습니다: %{error}",
-  "macro.loaded_from_buffer": "매크로를 레지스터 '%{key}'에 불러왔습니다 (%{count}개 동작)",
   "macro.promoted_to_init": "매크로 '%{key}'을(를) init.ts의 편집 가능한 명령으로 승격했습니다 (다시 불러옴)",
   "macro.saved_to_init": "매크로 '%{key}'을(를) init.ts에 저장했습니다 (다시 불러옴)"
 }

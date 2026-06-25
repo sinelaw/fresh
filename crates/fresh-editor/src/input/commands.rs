@@ -1235,13 +1235,6 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
-        name_key: "cmd.load_macro_from_buffer",
-        desc_key: "cmd.load_macro_from_buffer_desc",
-        action: || Action::PromptLoadMacroFromBuffer,
-        contexts: &[Normal],
-        custom_contexts: &[],
-    },
-    CommandDef {
         name_key: "cmd.set_bookmark",
         desc_key: "cmd.set_bookmark_desc",
         action: || Action::PromptSetBookmark,

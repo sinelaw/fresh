@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Uložit zaznamenané makro do init.ts jako upravitelný blok defineMacro()",
   "cmd.promote_macro": "Makro: Povýšit na příkaz",
   "cmd.promote_macro_desc": "Převést zaznamenané makro na upravitelný příkaz init.ts, který lze rozšířit libovolným kódem",
-  "cmd.load_macro_from_buffer": "Makro: Načíst z bufferu",
-  "cmd.load_macro_from_buffer_desc": "Analyzovat aktivní buffer jako ActionSpec[] a uložit jej do registru maker",
   "action.prompt_save_macro_to_init": "Uložit makro do init.ts (vyžádá si registr)",
   "action.prompt_promote_macro": "Povýšit makro na příkaz init.ts (vyžádá si registr)",
-  "action.prompt_load_macro_from_buffer": "Načíst makro z bufferu (vyžádá si registr)",
-  "macro.buffer_unreadable": "Nepodařilo se přečíst aktivní buffer",
   "macro.init_write_failed": "Nepodařilo se zapsat init.ts: %{error}",
-  "macro.load_parse_failed": "Nepodařilo se analyzovat makro z bufferu: %{error}",
-  "macro.loaded_from_buffer": "Makro načteno do registru '%{key}' (%{count} akcí)",
   "macro.promoted_to_init": "Makro '%{key}' povýšeno na upravitelný příkaz v init.ts (znovu načteno)",
   "macro.saved_to_init": "Makro '%{key}' uloženo do init.ts (znovu načteno)"
 }

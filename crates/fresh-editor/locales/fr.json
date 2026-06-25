@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Conserver une macro enregistrée dans init.ts sous forme de bloc defineMacro() modifiable",
   "cmd.promote_macro": "Macro : Promouvoir en commande",
   "cmd.promote_macro_desc": "Transformer une macro enregistrée en une commande init.ts modifiable, extensible avec du code arbitraire",
-  "cmd.load_macro_from_buffer": "Macro : Charger depuis le tampon",
-  "cmd.load_macro_from_buffer_desc": "Analyser le tampon actif en tant qu'ActionSpec[] et l'enregistrer dans un registre de macro",
   "action.prompt_save_macro_to_init": "Enregistrer la macro dans init.ts (demande le registre)",
   "action.prompt_promote_macro": "Promouvoir la macro en commande init.ts (demande le registre)",
-  "action.prompt_load_macro_from_buffer": "Charger la macro depuis le tampon (demande le registre)",
-  "macro.buffer_unreadable": "Impossible de lire le tampon actif",
   "macro.init_write_failed": "Échec de l'écriture de init.ts : %{error}",
-  "macro.load_parse_failed": "Impossible d'analyser la macro depuis le tampon : %{error}",
-  "macro.loaded_from_buffer": "Macro chargée dans le registre '%{key}' (%{count} actions)",
   "macro.promoted_to_init": "Macro '%{key}' promue en commande modifiable dans init.ts (rechargée)",
   "macro.saved_to_init": "Macro '%{key}' enregistrée dans init.ts (rechargée)"
 }

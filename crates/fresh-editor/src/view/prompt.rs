@@ -72,8 +72,6 @@ pub enum PromptType {
     SaveMacroToInit,
     /// Promote a recorded macro to an editable init.ts command - prompts for register
     PromoteMacro,
-    /// Load a macro from the active buffer (ActionSpec[]) - prompts for register
-    LoadMacroFromBuffer,
     /// Set a bookmark - prompts for register (0-9)
     SetBookmark,
     /// Jump to a bookmark - prompts for register (0-9)

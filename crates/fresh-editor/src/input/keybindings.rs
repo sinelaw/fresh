@@ -523,9 +523,6 @@ pub enum Action {
     /// Prompt for a register, then append its macro to `init.ts` as an
     /// editable `registerHandler`/`registerCommand` stub and reload.
     PromptPromoteMacro,
-    /// Parse the active buffer as `ActionSpec[]` (e.g. a `ShowMacro` buffer the
-    /// user tweaked) and store it under a prompted register.
-    PromptLoadMacroFromBuffer,
 
     // Bookmarks (prompt-based)
     PromptSetBookmark,
@@ -1058,7 +1055,6 @@ impl Action {
             "play_last_macro" => PlayLastMacro,
             "prompt_save_macro_to_init" => PromptSaveMacroToInit,
             "prompt_promote_macro" => PromptPromoteMacro,
-            "prompt_load_macro_from_buffer" => PromptLoadMacroFromBuffer,
             "prompt_set_bookmark" => PromptSetBookmark,
             "prompt_jump_to_bookmark" => PromptJumpToBookmark,
 
@@ -2577,7 +2573,6 @@ impl KeybindingResolver {
             Action::PlayLastMacro => t!("action.play_last_macro"),
             Action::PromptSaveMacroToInit => t!("action.prompt_save_macro_to_init"),
             Action::PromptPromoteMacro => t!("action.prompt_promote_macro"),
-            Action::PromptLoadMacroFromBuffer => t!("action.prompt_load_macro_from_buffer"),
             Action::PromptSetBookmark => t!("action.prompt_set_bookmark"),
             Action::PromptJumpToBookmark => t!("action.prompt_jump_to_bookmark"),
             Action::Undo => t!("action.undo"),

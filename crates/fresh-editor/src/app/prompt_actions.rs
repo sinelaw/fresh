@@ -276,13 +276,6 @@ impl Editor {
                     "Macro",
                 );
             }
-            PromptType::LoadMacroFromBuffer => {
-                self.handle_register_input(
-                    &input,
-                    |editor, c| editor.load_macro_from_active_buffer(c),
-                    "Macro",
-                );
-            }
             PromptType::SetBookmark => {
                 self.handle_register_input(
                     &input,

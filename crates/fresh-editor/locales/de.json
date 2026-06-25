@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "Ein aufgezeichnetes Makro als bearbeitbaren defineMacro()-Block in init.ts ablegen",
   "cmd.promote_macro": "Makro: Zu Befehl hochstufen",
   "cmd.promote_macro_desc": "Ein aufgezeichnetes Makro in einen bearbeitbaren init.ts-Befehl umwandeln, den du mit beliebigem Code erweitern kannst",
-  "cmd.load_macro_from_buffer": "Makro: Aus Puffer laden",
-  "cmd.load_macro_from_buffer_desc": "Den aktiven Puffer als ActionSpec[] parsen und in einem Makroregister speichern",
   "action.prompt_save_macro_to_init": "Makro in init.ts speichern (fragt nach Register)",
   "action.prompt_promote_macro": "Makro zu init.ts-Befehl hochstufen (fragt nach Register)",
-  "action.prompt_load_macro_from_buffer": "Makro aus Puffer laden (fragt nach Register)",
-  "macro.buffer_unreadable": "Aktiver Puffer konnte nicht gelesen werden",
   "macro.init_write_failed": "init.ts konnte nicht geschrieben werden: %{error}",
-  "macro.load_parse_failed": "Makro konnte nicht aus dem Puffer gelesen werden: %{error}",
-  "macro.loaded_from_buffer": "Makro in Register '%{key}' geladen (%{count} Aktionen)",
   "macro.promoted_to_init": "Makro '%{key}' zu einem bearbeitbaren Befehl in init.ts hochgestuft (neu geladen)",
   "macro.saved_to_init": "Makro '%{key}' in init.ts gespeichert (neu geladen)"
 }

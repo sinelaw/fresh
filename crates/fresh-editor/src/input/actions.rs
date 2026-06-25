@@ -2911,7 +2911,6 @@ pub fn action_to_events(
         | Action::PlayLastMacro
         | Action::PromptSaveMacroToInit
         | Action::PromptPromoteMacro
-        | Action::PromptLoadMacroFromBuffer
         | Action::PromptSetBookmark
         | Action::PromptJumpToBookmark
         | Action::PromptConfirm

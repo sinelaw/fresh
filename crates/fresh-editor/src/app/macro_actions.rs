@@ -172,9 +172,9 @@ impl Editor {
         // Get macro data and cache what we need before any mutable borrows
         let (json, actions_len) = match self.active_window_mut().macros.get(key) {
             Some(actions) => {
-                // Render as `ActionSpec[]` — the canonical, *loadable* form that
-                // `executeActions` consumes and "Macro: Load from buffer" parses
-                // back. (Not the raw `Action` serde form, which doesn't round-trip.)
+                // Render as `ActionSpec[]` — the same vocabulary `executeActions`
+                // and the generated `init.ts` blocks use, and more readable than
+                // the raw `Action` serde form.
                 let specs: Vec<fresh_core::api::ActionSpec> =
                     actions.iter().map(|a| a.to_action_spec()).collect();
                 let json = match serde_json::to_string_pretty(&specs) {
@@ -194,11 +194,10 @@ impl Editor {
             }
         };
 
-        // Create header with macro info. The body is an editable ActionSpec
-        // array: tweak it, then run "Macro: Load from buffer" to store it back
-        // into a register.
+        // Create header with macro info. This is a read-only view; to persist
+        // or edit a macro, run "Macro: Save to init.ts".
         let content = format!(
-            "// Macro '{}' ({} actions) — editable ActionSpec[]\n// Edit, then run \"Macro: Load from buffer\" to store it into a register.\n\n{}",
+            "// Macro '{}' ({} actions) — ActionSpec[] view\n// Run \"Macro: Save to init.ts\" to persist this macro as editable code.\n\n{}",
             key,
             actions_len,
             json
@@ -420,94 +419,5 @@ impl Editor {
             t!("macro.saved_to_init", key = key)
         };
         self.set_status_message(msg.to_string());
-    }
-
-    /// Parse the active buffer as an `ActionSpec[]` JSON array (e.g. a
-    /// `ShowMacro` buffer the user tweaked) and store it under register `key`.
-    /// The inverse of [`Self::show_macro_in_buffer`] — together they give a
-    /// lightweight "edit a macro and re-run it" loop without touching init.ts.
-    pub(super) fn load_macro_from_active_buffer(&mut self, key: char) {
-        let Some(text) = self.active_state().buffer.to_string() else {
-            self.set_status_message(t!("macro.buffer_unreadable").to_string());
-            return;
-        };
-
-        let specs = match parse_action_specs(&text) {
-            Ok(specs) => specs,
-            Err(e) => {
-                self.set_status_message(t!("macro.load_parse_failed", error = e).to_string());
-                return;
-            }
-        };
-
-        let mut actions = Vec::with_capacity(specs.len());
-        for spec in &specs {
-            if let Some(action) = Action::from_str(&spec.action, &spec.args) {
-                for _ in 0..spec.count.max(1) {
-                    actions.push(action.clone());
-                }
-            }
-        }
-
-        let count = actions.len();
-        self.active_window_mut().macros.define(key, actions);
-        self.set_status_message(
-            t!("macro.loaded_from_buffer", key = key, count = count).to_string(),
-        );
-    }
-}
-
-/// Extract the `[ ... ]` JSON array from `text` (tolerating leading comment
-/// lines, as a `ShowMacro` buffer has) and parse it as `Vec<ActionSpec>`.
-///
-/// `//` line comments are stripped first: the `ShowMacro` header literally
-/// contains `ActionSpec[]`, so a naive "first `[`" would slice into the
-/// comment and fail with "trailing characters". After stripping, the remaining
-/// text is the JSON array.
-fn parse_action_specs(text: &str) -> Result<Vec<fresh_core::api::ActionSpec>, String> {
-    let stripped: String = text
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let start = stripped
-        .find('[')
-        .ok_or_else(|| "no '[' found — expected an ActionSpec array".to_string())?;
-    let end = stripped
-        .rfind(']')
-        .ok_or_else(|| "no ']' found — expected an ActionSpec array".to_string())?;
-    if end < start {
-        return Err("malformed array brackets".to_string());
-    }
-    serde_json::from_str::<Vec<fresh_core::api::ActionSpec>>(&stripped[start..=end])
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_action_specs;
-
-    #[test]
-    fn parse_tolerates_comment_header_containing_brackets() {
-        // The ShowMacro header literally contains "ActionSpec[]" — the parser
-        // must not slice into that comment. Regression for a bug found by
-        // interactive testing.
-        let buf = "// Macro '1' (3 actions) — editable ActionSpec[]\n\
-                   // Edit, then run \"Macro: Load from buffer\".\n\n\
-                   [\n  { \"action\": \"insert_char\", \"args\": { \"char\": \"Z\" } },\n\
-                   \x20 { \"action\": \"move_line_end\" }\n]\n";
-        let specs = parse_action_specs(buf).expect("should parse");
-        assert_eq!(specs.len(), 2);
-        assert_eq!(specs[0].action, "insert_char");
-        assert_eq!(
-            specs[0].args.get("char").and_then(|v| v.as_str()),
-            Some("Z")
-        );
-        assert_eq!(specs[1].action, "move_line_end");
-    }
-
-    #[test]
-    fn parse_rejects_non_array() {
-        assert!(parse_action_specs("// just a comment\n").is_err());
     }
 }

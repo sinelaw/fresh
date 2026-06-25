@@ -1568,15 +1568,9 @@
   "cmd.save_macro_to_init_desc": "記録したマクロを編集可能な defineMacro() ブロックとして init.ts に保存します",
   "cmd.promote_macro": "マクロ: コマンドに昇格",
   "cmd.promote_macro_desc": "記録したマクロを、任意のコードで拡張できる編集可能な init.ts コマンドに変換します",
-  "cmd.load_macro_from_buffer": "マクロ: バッファから読み込み",
-  "cmd.load_macro_from_buffer_desc": "アクティブなバッファを ActionSpec[] として解析し、マクロレジスタに保存します",
   "action.prompt_save_macro_to_init": "マクロを init.ts に保存（レジスタを入力）",
   "action.prompt_promote_macro": "マクロを init.ts コマンドに昇格（レジスタを入力）",
-  "action.prompt_load_macro_from_buffer": "バッファからマクロを読み込み（レジスタを入力）",
-  "macro.buffer_unreadable": "アクティブなバッファを読み取れませんでした",
   "macro.init_write_failed": "init.ts の書き込みに失敗しました: %{error}",
-  "macro.load_parse_failed": "バッファからマクロを解析できませんでした: %{error}",
-  "macro.loaded_from_buffer": "マクロをレジスタ '%{key}' に読み込みました（%{count} アクション）",
   "macro.promoted_to_init": "マクロ '%{key}' を init.ts の編集可能なコマンドに昇格しました（再読み込み）",
   "macro.saved_to_init": "マクロ '%{key}' を init.ts に保存しました（再読み込み）"
 }
