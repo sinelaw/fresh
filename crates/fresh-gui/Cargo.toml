@@ -6,7 +6,7 @@ edition.workspace = true
 description = "GUI backend for Fresh editor: windowed ratatui via winit + wgpu"
 license.workspace = true
 repository.workspace = true
-publish = false  # depends on git-only ratatui-wgpu, not publishable to crates.io
+publish = false  # GUI backend is not part of the published editor surface
 
 [dependencies]
 # Shared types (Menu, MenuItem) — the menu model lives here
@@ -14,7 +14,7 @@ fresh-core = { workspace = true }
 # Window management
 winit = { workspace = true }
 # ratatui backend for wgpu
-ratatui-wgpu = { git = "https://github.com/Jesterhearts/ratatui-wgpu", rev = "cdcf5c6" }
+ratatui-wgpu = "0.5.0"
 # TUI framework (core types: Terminal, Frame, Backend)
 ratatui = { version = "0.30.0", default-features = false, features = ["std", "underline-color"] }
 # Event types (KeyEvent, MouseEvent, KeyModifiers, etc.)

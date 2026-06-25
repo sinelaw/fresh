@@ -17,8 +17,9 @@ jobs:
 
       - name: Remove unpublishable gui dep from fresh-editor
         run: |
-          # fresh-gui depends on git-only ratatui-wgpu so it can't be on crates.io.
-          # Strip the gui feature and fresh-gui dep so fresh-editor can be published.
+          # fresh-gui is publish = false (GUI backend, not part of the published
+          # editor surface), so it isn't on crates.io. Strip the gui feature and
+          # fresh-gui dep so fresh-editor can be published.
           cd crates/fresh-editor
           sed -i '/fresh-gui/d; /fresh_gui/d' Cargo.toml
           sed -i '/^gui = \[/,/^\]/d' Cargo.toml

@@ -4367,8 +4367,9 @@ dependencies = [
 
 [[package]]
 name = "ratatui-wgpu"
-version = "0.4.1"
-source = "git+https://github.com/Jesterhearts/ratatui-wgpu?rev=cdcf5c6#cdcf5c6987adba56b060f6a8532ee83b25a4e3e5"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "307466142b80e65e8e57348818b982177240923edb088d6991a5bebe9da2f14d"
 dependencies = [
  "ahash",
  "bitvec",
@@ -4378,7 +4379,8 @@ dependencies = [
  "log",
  "png 0.18.1",
  "raqote",
- "ratatui",
+ "ratatui-core",
+ "ratatui-widgets",
  "rustybuzz",
  "thiserror 2.0.18",
  "unicode-bidi",
