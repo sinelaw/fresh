@@ -8,7 +8,9 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": ["ES2020"],
+    "lib": [
+      "ES2020"
+    ],
     "types": []
   },
   "files": [
@@ -25,6 +27,7 @@
     "asm-lsp.ts",
     "astro-lsp.ts",
     "audit_mode.ts",
+    "azure_ai_chat.ts",
     "bash-lsp.ts",
     "clangd-lsp.ts",
     "clangd_support.ts",

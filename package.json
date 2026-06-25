@@ -6,7 +6,10 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "build": "bash scripts/build-site.sh"
+    "build": "bash scripts/build-site.sh",
+    "fresh-ai-proxy": "node scripts/fresh-ai-proxy.mjs",
+    "test:fresh-ai-proxy": "node scripts/fresh-ai-proxy.test.mjs",
+    "test:fresh-ai": "node scripts/fresh-ai-verify.mjs"
   },
   "devDependencies": {
     "feed": "^4.2.2",

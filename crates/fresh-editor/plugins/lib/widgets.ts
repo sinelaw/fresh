@@ -57,7 +57,7 @@ type OverlayOptions = globalThis.OverlayOptions;
 /** Horizontal layout. Children laid out left-to-right; inline-sized
  * children collapse into a single line. See §3 of the design doc. */
 export function row(...children: WidgetSpec[]): WidgetSpec {
-  return { kind: "row", children };
+  return { kind: "row", children, wrap: false };
 }
 
 /** Horizontal layout that **wraps**: children that don't fit on one line
@@ -411,6 +411,7 @@ export function text(
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
     completions: options.completions ?? [],
+    completionsVisibleRows: 5,
     key: options.key,
   };
 }

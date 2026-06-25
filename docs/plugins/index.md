@@ -100,6 +100,7 @@ For detailed guides, see:
 - [Language Packs](./development/language-packs.md) - Creating syntax highlighting and LSP support
 - [Common Patterns](./development/patterns.md) - Reusable plugin patterns and recipes
 - [Utilities Library](./development/utilities.md) - Built-in utility functions for plugins
+- [Fresh AI Assistant](./fresh-ai-assistant.md) - Local Azure-compatible AI assistant plugin and proxy
 - [Internationalization](./development/i18n.md) - Adding translations to plugins
 
 ### API Reference
@@ -145,3 +146,4 @@ Bundles are shown with a "B" tag in the package manager. Create one with `fresh 
 ## Clangd helper plugin
 
 Fresh ships `plugins/clangd_support.ts` with the source tree; see `plugins/clangd_support.md` for an overview of the plugin commands and how it surfaces clangd-specific notifications in the status bar.
+
