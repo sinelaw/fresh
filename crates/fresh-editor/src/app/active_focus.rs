@@ -188,10 +188,10 @@ impl Window {
     /// Flag-only half of terminal-mode sync: set `terminal_mode` /
     /// `key_context` from the active buffer and the mode it remembers.
     ///
-    /// A terminal's persistent interaction mode lives in
-    /// `terminal_mode_resume` (present ⟺ live/Active, absent ⟺ read-only
-    /// scrollback), so a re-focused terminal keeps whatever mode it had when
-    /// it lost focus. This is the one place the flag is derived from focus;
+    /// Each terminal buffer remembers its own interaction mode
+    /// ([`TerminalInteractionMode`] on its [`TerminalBuffer`] record), so a
+    /// re-focused terminal keeps whatever mode it had when it lost focus.
+    /// This is the one place the flag is derived from focus;
     /// every focus path routes through it (directly or via
     /// [`Editor::sync_terminal_mode_to_active_buffer`]), so none can leave a
     /// re-focused terminal in the wrong mode (issue #2485).
@@ -210,7 +210,7 @@ impl Window {
         }
         let active = self.active_buffer();
         if self.is_terminal_buffer(active) {
-            if self.terminal_mode_resume.contains(&active) {
+            if self.is_live_terminal(active) {
                 self.terminal_mode = true;
                 self.key_context = KeyContext::Terminal;
             } else {

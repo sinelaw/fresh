@@ -966,8 +966,9 @@ pub struct Editor {
     /// When false, UI keybindings (split nav, palette, etc.) are processed first.
     // `keyboard_capture` moved onto `Window`.
 
-    // `terminal_mode_resume` moved onto `Window` — terminal buffers
-    // are per-window (Step 0d), so the auto-resume set follows.
+    // A terminal buffer's remembered live/scrollback interaction mode is
+    // part of its per-window `Window::terminal_buffers` record
+    // (`TerminalBuffer::mode`).
     /// Timestamp of the previous mouse click (for multi-click detection)
     // `previous_click_time`, `previous_click_position`, `click_count` moved onto `Window`.
 

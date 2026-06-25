@@ -91,13 +91,13 @@ impl Editor {
     /// writing `key_context = FileExplorer` is not enough — if the user
     /// was in a terminal, every keystroke would still be swallowed by
     /// the PTY and the explorer would only *look* focused (issue #2029).
-    /// Clear `terminal_mode`; the terminal keeps its own remembered mode in
-    /// `terminal_mode_resume`, so re-focusing it later restores live mode.
+    /// Clear `terminal_mode`; the terminal keeps its own remembered mode on
+    /// its `TerminalBuffer` record, so re-focusing it later restores it.
     pub(super) fn take_focus_for_file_explorer(&mut self) {
         let win = self.active_window_mut();
         // Stop routing keys to the PTY while the explorer holds focus. The
-        // terminal keeps its own remembered live/scrollback mode (in
-        // `terminal_mode_resume`), so re-focusing it later restores that mode.
+        // terminal keeps its own remembered live/scrollback mode, so
+        // re-focusing it later restores that mode.
         win.terminal_mode = false;
         win.key_context = KeyContext::FileExplorer;
     }

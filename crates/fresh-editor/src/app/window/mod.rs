@@ -78,6 +78,44 @@ pub struct TerminalLinkHover {
     pub cols: std::ops::Range<usize>,
 }
 
+/// How a terminal buffer routes input — the buffer's remembered interaction
+/// mode, restored whenever it regains focus (see
+/// `Window::sync_terminal_mode_flags`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalInteractionMode {
+    /// Keystrokes are forwarded to the PTY and the buffer mirrors the live
+    /// terminal screen. This is the mode a terminal opens in.
+    Live,
+    /// Read-only scrollback: keys do ordinary editor navigation and the
+    /// buffer shows captured history. Entered via Ctrl+Space, scroll-up, or
+    /// when the process exits.
+    Scrollback,
+}
+
+/// Per-terminal-buffer editor state, keyed by `BufferId` in
+/// [`Window::terminal_buffers`]. Holds the editor-facing facts about a
+/// terminal buffer: which service-layer terminal feeds it, and the
+/// interaction mode it remembers across focus changes. (PTY I/O state lives
+/// in the `TerminalManager`; the byte-stream backing files stay keyed by
+/// `TerminalId` in `terminal_backing_files`.)
+#[derive(Debug, Clone)]
+pub struct TerminalBuffer {
+    /// The PTY session feeding this buffer, scoped to this window.
+    pub terminal_id: crate::services::terminal::TerminalId,
+    /// Remembered live/scrollback interaction mode.
+    pub mode: TerminalInteractionMode,
+}
+
+impl TerminalBuffer {
+    /// A freshly opened/attached terminal buffer, which starts live.
+    pub fn new_live(terminal_id: crate::services::terminal::TerminalId) -> Self {
+        Self {
+            terminal_id,
+            mode: TerminalInteractionMode::Live,
+        }
+    }
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -300,8 +338,10 @@ pub struct Window {
     /// PTY threads — no orphan agents survive a `closeWindow`.
     pub terminal_manager: crate::services::terminal::TerminalManager,
 
-    /// Maps a terminal-buffer id to its PTY id, scoped to this window.
-    pub terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
+    /// Per-terminal-buffer editor state, keyed by buffer id and scoped to
+    /// this window: the PTY id feeding the buffer plus its remembered
+    /// live/scrollback interaction mode. See [`TerminalBuffer`].
+    pub terminal_buffers: HashMap<BufferId, TerminalBuffer>,
 
     /// Backing files for terminal buffers (the rendered visible-screen
     /// + scrollback content the buffer actually displays).
@@ -420,18 +460,6 @@ pub struct Window {
     /// the active terminal buffer). Per-window because each window
     /// has its own terminal set + active buffer.
     pub terminal_mode: bool,
-
-    /// Per-terminal interaction mode: the set of terminal buffer ids whose
-    /// mode is **live** (capturing keyboard), as opposed to read-only
-    /// scrollback. Membership is the terminal's remembered mode and persists
-    /// across focus changes, so re-focusing a terminal (tab switch, split
-    /// focus/navigation, split-collapse on close) restores the mode it had
-    /// when it lost focus — see `Window::sync_terminal_mode_flags`. A
-    /// terminal is added when opened or resumed and removed when the user
-    /// drops it to scrollback (Ctrl+Space / scroll-up), when its process
-    /// exits, or when it is closed. Per-window because terminal buffers are
-    /// per-window.
-    pub terminal_mode_resume: std::collections::HashSet<BufferId>,
 
     /// Path-link currently highlighted under a Ctrl+hover over the live
     /// terminal grid. `Some` means the renderer underlines the given grid row
@@ -1838,7 +1866,6 @@ impl Window {
             preview: None,
             terminal_mode: false,
             terminal_link_hover: None,
-            terminal_mode_resume: std::collections::HashSet::new(),
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
             same_buffer_scroll_sync: false,
@@ -2240,7 +2267,42 @@ impl Window {
         &self,
         buffer_id: BufferId,
     ) -> Option<crate::services::terminal::TerminalId> {
-        self.terminal_buffers.get(&buffer_id).copied()
+        self.terminal_buffers
+            .get(&buffer_id)
+            .map(|tb| tb.terminal_id)
+    }
+
+    /// The remembered interaction mode of a terminal buffer, or `None` if
+    /// `buffer_id` is not a terminal buffer in this window.
+    pub fn terminal_interaction_mode(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<TerminalInteractionMode> {
+        self.terminal_buffers.get(&buffer_id).map(|tb| tb.mode)
+    }
+
+    /// Whether a terminal buffer currently remembers the **live** mode
+    /// (keystrokes routed to the PTY). False for scrollback terminals and
+    /// for non-terminal buffers.
+    pub fn is_live_terminal(&self, buffer_id: BufferId) -> bool {
+        matches!(
+            self.terminal_interaction_mode(buffer_id),
+            Some(TerminalInteractionMode::Live)
+        )
+    }
+
+    /// Record a terminal buffer's interaction mode. No-op if `buffer_id`
+    /// isn't a terminal buffer in this window. This is the only writer of
+    /// the remembered mode; the transitions that call it are the real
+    /// live↔scrollback edges (open/resume, Ctrl+Space, scroll-up, exit).
+    pub fn set_terminal_interaction_mode(
+        &mut self,
+        buffer_id: BufferId,
+        mode: TerminalInteractionMode,
+    ) {
+        if let Some(tb) = self.terminal_buffers.get_mut(&buffer_id) {
+            tb.mode = mode;
+        }
     }
 
     /// Clear the visual search overlays for the active buffer,

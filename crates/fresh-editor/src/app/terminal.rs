@@ -23,7 +23,7 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
-use super::window::Window;
+use super::window::{TerminalBuffer, TerminalInteractionMode, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
 use crate::services::authority::TerminalWrapper;
@@ -314,7 +314,8 @@ impl Window {
             false,
         );
         self.buffer_metadata.insert(buffer_id, metadata);
-        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.terminal_buffers
+            .insert(buffer_id, TerminalBuffer::new_live(terminal_id));
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -549,9 +550,9 @@ impl Window {
         // terminal mode) and the user sees a blank tab until the
         // next event flips `terminal_mode` — typically the next
         // printable keystroke via `should_enter_terminal_mode`.
-        // Mirrors `open_terminal_in_window`'s post-spawn flip.
-        // A freshly opened terminal starts live (its remembered mode).
-        self.terminal_mode_resume.insert(buffer_id);
+        // Mirrors `open_terminal_in_window`'s post-spawn flip. The buffer was
+        // inserted with `TerminalBuffer::new_live`, so its remembered mode is
+        // already Live; just flip the focus flags if it's the active buffer.
         if self.active_buffer() == buffer_id {
             self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
@@ -647,7 +648,7 @@ impl Window {
         if interval_due {
             self.terminal_fg_poll_at = Some(now);
         }
-        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+        for (buffer_id, tb) in self.terminal_buffers.iter() {
             if self.terminal_explicit_titles.contains(buffer_id) {
                 continue;
             }
@@ -656,7 +657,7 @@ impl Window {
             }
             let name = self
                 .terminal_manager
-                .get(*terminal_id)
+                .get(tb.terminal_id)
                 .and_then(|h| h.foreground_process_name())
                 .map(|n| crate::services::terminal_title::sanitize_title(&n))
                 .filter(|n| !n.is_empty());
@@ -675,18 +676,21 @@ impl Window {
         // Snapshot first so the mutable `buffer_metadata` borrow doesn't
         // overlap the immutable reads above.
         let mut updates: Vec<(BufferId, String)> = Vec::new();
-        for (buffer_id, terminal_id) in self.terminal_buffers.iter() {
+        for (buffer_id, tb) in self.terminal_buffers.iter() {
             if self.terminal_explicit_titles.contains(buffer_id) {
                 continue;
             }
             let pty = self.terminal_fg_cache.get(buffer_id).cloned();
-            let osc = self.terminal_manager.get(*terminal_id).and_then(|handle| {
-                let osc = handle.state.lock().ok()?.title().to_string();
-                let sanitized = crate::services::terminal_title::sanitize_title(&osc);
-                (!sanitized.is_empty()).then_some(sanitized)
-            });
+            let osc = self
+                .terminal_manager
+                .get(tb.terminal_id)
+                .and_then(|handle| {
+                    let osc = handle.state.lock().ok()?.title().to_string();
+                    let sanitized = crate::services::terminal_title::sanitize_title(&osc);
+                    (!sanitized.is_empty()).then_some(sanitized)
+                });
             let name = combine_terminal_title(pty.as_deref(), osc.as_deref())
-                .unwrap_or_else(|| format!("*Terminal {}*", terminal_id.0));
+                .unwrap_or_else(|| format!("*Terminal {}*", tb.terminal_id.0));
             updates.push((*buffer_id, name));
         }
 
@@ -724,8 +728,8 @@ impl Window {
         // Window-side activation: per-window mutation only — the
         // editor-wide plugin hook fires in the Editor wrapper.
         self.set_active_buffer(buffer_id);
-        // A freshly opened terminal starts live (its remembered mode).
-        self.terminal_mode_resume.insert(buffer_id);
+        // The buffer was inserted with `TerminalBuffer::new_live`, so its
+        // remembered mode is already Live.
         self.terminal_mode = true;
         self.key_context = crate::input::keybindings::KeyContext::Terminal;
         self.resize_visible_terminals();
@@ -770,7 +774,8 @@ impl Window {
             false,
         );
         self.buffer_metadata.insert(buffer_id, metadata);
-        self.terminal_buffers.insert(buffer_id, terminal_id);
+        self.terminal_buffers
+            .insert(buffer_id, TerminalBuffer::new_live(terminal_id));
         self.event_logs
             .insert(buffer_id, crate::model::event::EventLog::new());
 
@@ -786,13 +791,17 @@ impl Window {
         if let Some((mgr, _)) = self.buffers.splits() {
             let terminal_of_leaf = |leaf: LeafId| {
                 mgr.get_buffer_id(leaf.into())
-                    .and_then(|buffer_id| self.terminal_buffers.get(&buffer_id).copied())
+                    .and_then(|buffer_id| self.terminal_buffers.get(&buffer_id))
+                    .map(|tb| tb.terminal_id)
             };
             if let Some(leaf) = mgr.last_focused_where(|leaf| terminal_of_leaf(leaf).is_some()) {
                 return terminal_of_leaf(leaf);
             }
         }
-        self.terminal_buffers.values().copied().max_by_key(|t| t.0)
+        self.terminal_buffers
+            .values()
+            .map(|tb| tb.terminal_id)
+            .max_by_key(|t| t.0)
     }
 
     /// Respawn this window's dead embedded terminals through its *current*
@@ -823,7 +832,7 @@ impl Window {
         let bindings: Vec<(BufferId, TerminalId)> = self
             .terminal_buffers
             .iter()
-            .map(|(b, t)| (*b, *t))
+            .map(|(b, tb)| (*b, tb.terminal_id))
             .collect();
 
         let mut revived = 0usize;
@@ -888,7 +897,10 @@ impl Window {
 
             // Remap every terminal-id-keyed entry from old_id → new_id.
             if new_id != old_id {
-                self.terminal_buffers.insert(buffer_id, new_id);
+                // Remap the PTY id but preserve the buffer's remembered mode.
+                if let Some(tb) = self.terminal_buffers.get_mut(&buffer_id) {
+                    tb.terminal_id = new_id;
+                }
                 if let Some(p) = self.terminal_backing_files.remove(&old_id) {
                     self.terminal_backing_files.insert(new_id, p);
                 }
@@ -1053,13 +1065,10 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .set_active_split(new_leaf);
 
-        // Mirror open_terminal's post-attach bookkeeping. The new terminal
-        // starts live (its remembered mode); the previously-active terminal
-        // keeps its own remembered mode, so closing this split later restores
-        // it correctly (issue #2485).
-        self.active_window_mut()
-            .terminal_mode_resume
-            .insert(buffer_id);
+        // Mirror open_terminal's post-attach bookkeeping. The new terminal was
+        // inserted with `TerminalBuffer::new_live` so its remembered mode is
+        // already Live; the previously-active terminal keeps its own remembered
+        // mode, so closing this split later restores it correctly (#2485).
         self.active_window_mut().terminal_mode = true;
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
         self.active_window_mut().resize_visible_terminals();
@@ -1110,7 +1119,7 @@ impl Editor {
     pub fn close_terminal(&mut self) {
         let buffer_id = self.active_buffer();
 
-        if let Some(&terminal_id) = self.active_window().terminal_buffers.get(&buffer_id) {
+        if let Some(terminal_id) = self.active_window().get_terminal_id(buffer_id) {
             // Close the terminal
             self.active_window_mut().terminal_manager.close(terminal_id);
             self.active_window_mut().terminal_buffers.remove(&buffer_id);
@@ -1204,7 +1213,7 @@ impl Editor {
             .active_window()
             .terminal_buffers
             .iter()
-            .find_map(|(buffer, terminal)| (*terminal == terminal_id).then_some(*buffer))
+            .find_map(|(buffer, tb)| (tb.terminal_id == terminal_id).then_some(*buffer))
         else {
             return;
         };
@@ -1315,7 +1324,8 @@ impl Editor {
                     // read-only scrollback: remember that mode so re-focusing
                     // the terminal keeps it in scrollback.
                     let __b = self.active_buffer();
-                    self.active_window_mut().terminal_mode_resume.remove(&__b);
+                    self.active_window_mut()
+                        .set_terminal_interaction_mode(__b, TerminalInteractionMode::Scrollback);
                     self.active_window_mut().terminal_mode = false;
                     self.active_window_mut().key_context =
                         crate::input::keybindings::KeyContext::Normal;
@@ -1348,8 +1358,7 @@ impl Editor {
             // terminal comes back live the next time it is focused.
             let __active = self.active_buffer();
             self.active_window_mut()
-                .terminal_mode_resume
-                .insert(__active);
+                .set_terminal_interaction_mode(__active, TerminalInteractionMode::Live);
             self.active_window_mut().terminal_mode = true;
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
 
@@ -1371,11 +1380,7 @@ impl Editor {
             }
 
             // Truncate backing file to remove visible screen tail and scroll to bottom
-            if let Some(&terminal_id) = self
-                .active_window()
-                .terminal_buffers
-                .get(&self.active_buffer())
-            {
+            if let Some(terminal_id) = self.active_window().get_terminal_id(self.active_buffer()) {
                 // Truncate backing file to remove visible screen that was appended
                 if let Some(backing_path) = self
                     .active_window()
@@ -1416,8 +1421,8 @@ impl Editor {
         &self,
         buffer_id: BufferId,
     ) -> Option<Vec<Vec<crate::services::terminal::TerminalCell>>> {
-        let terminal_id = self.active_window().terminal_buffers.get(&buffer_id)?;
-        let handle = self.active_window().terminal_manager.get(*terminal_id)?;
+        let terminal_id = self.active_window().get_terminal_id(buffer_id)?;
+        let handle = self.active_window().terminal_manager.get(terminal_id)?;
         let state = handle.state.lock().ok()?;
 
         let (_, rows) = state.size();
@@ -1436,15 +1441,15 @@ impl Window {
     pub fn get_active_terminal_state(
         &self,
     ) -> Option<std::sync::MutexGuard<'_, crate::services::terminal::TerminalState>> {
-        let terminal_id = self.terminal_buffers.get(&self.active_buffer())?;
-        let handle = self.terminal_manager.get(*terminal_id)?;
+        let terminal_id = self.get_terminal_id(self.active_buffer())?;
+        let handle = self.terminal_manager.get(terminal_id)?;
         handle.state.lock().ok()
     }
 
     /// Send input bytes to this window's active terminal (no-op if the
     /// active buffer is not a terminal).
     pub fn send_terminal_input(&mut self, data: &[u8]) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&self.active_buffer()) {
+        if let Some(terminal_id) = self.get_terminal_id(self.active_buffer()) {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 handle.write(data);
             }
@@ -1543,7 +1548,7 @@ impl Window {
     /// Check if the given terminal buffer in this window is in
     /// alternate-screen mode (vim/less/htop etc.).
     pub fn is_terminal_in_alternate_screen(&self, buffer_id: BufferId) -> bool {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+        if let Some(terminal_id) = self.get_terminal_id(buffer_id) {
             if let Some(handle) = self.terminal_manager.get(terminal_id) {
                 if let Ok(state) = handle.state.lock() {
                     return state.is_alternate_screen();
@@ -1556,7 +1561,7 @@ impl Window {
     /// Resize a single terminal buffer's PTY (only if `buffer_id`
     /// belongs to this window's terminal_buffers map).
     pub fn resize_terminal(&mut self, buffer_id: BufferId, cols: u16, rows: u16) {
-        if let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) {
+        if let Some(terminal_id) = self.get_terminal_id(buffer_id) {
             if let Some(handle) = self.terminal_manager.get_mut(terminal_id) {
                 handle.resize(cols, rows);
             }
@@ -1637,7 +1642,7 @@ impl Window {
     ///
     /// Performance: O(screen_size) instead of O(total_history).
     pub fn sync_terminal_to_buffer(&mut self, buffer_id: BufferId) {
-        let Some(&terminal_id) = self.terminal_buffers.get(&buffer_id) else {
+        let Some(terminal_id) = self.get_terminal_id(buffer_id) else {
             return;
         };
         // Get the backing file path
@@ -1821,7 +1826,7 @@ impl Window {
         for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             split_areas
         {
-            let Some(&terminal_id) = self.terminal_buffers.get(buffer_id) else {
+            let Some(terminal_id) = self.get_terminal_id(*buffer_id) else {
                 continue;
             };
             // When the user's current tab is a terminal but they're
@@ -1877,13 +1882,6 @@ impl Editor {
     /// Check if terminal mode is active (for testing)
     pub fn is_terminal_mode(&self) -> bool {
         self.active_window().terminal_mode
-    }
-
-    /// Check if a buffer is in terminal_mode_resume set (for testing/debugging)
-    pub fn is_in_terminal_mode_resume(&self, buffer_id: BufferId) -> bool {
-        self.active_window()
-            .terminal_mode_resume
-            .contains(&buffer_id)
     }
 
     /// Check if keyboard capture is enabled in terminal mode (for testing)

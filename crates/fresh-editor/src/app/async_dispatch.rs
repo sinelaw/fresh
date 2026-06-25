@@ -731,10 +731,8 @@ impl Editor {
         // automatically re-enter terminal mode
         if self.config.terminal.jump_to_end_on_output && !self.active_window().terminal_mode {
             // Check if active buffer is this terminal
-            if let Some(&active_terminal_id) = self
-                .active_window()
-                .terminal_buffers
-                .get(&self.active_buffer())
+            if let Some(active_terminal_id) =
+                self.active_window().get_terminal_id(self.active_buffer())
             {
                 if active_terminal_id == terminal_id {
                     self.enter_terminal_mode();
@@ -935,17 +933,18 @@ impl Editor {
             .active_window()
             .terminal_buffers
             .iter()
-            .find(|(_, &tid)| tid == terminal_id)
+            .find(|(_, tb)| tb.terminal_id == terminal_id)
         {
             // A genuinely exited terminal becomes a read-only scrollback tab,
-            // so it is no longer "live" — drop it from the live set so a later
-            // focus shows scrollback instead of trying to drive a dead PTY. A
-            // terminal preserved for remote reconnect keeps its live mode so
-            // it comes back live when the carrier respawns it.
+            // so mark it Scrollback — a later focus shows scrollback instead of
+            // trying to drive a dead PTY. A terminal preserved for remote
+            // reconnect keeps its live mode so it comes back live when the
+            // carrier respawns it.
             if !preserve_for_reconnect {
-                self.active_window_mut()
-                    .terminal_mode_resume
-                    .remove(&buffer_id);
+                self.active_window_mut().set_terminal_interaction_mode(
+                    buffer_id,
+                    crate::app::window::TerminalInteractionMode::Scrollback,
+                );
             }
 
             // Exit terminal mode if this is the active buffer

@@ -560,13 +560,14 @@ impl Editor {
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
                 if explicit {
-                    // User explicitly exited - don't auto-resume when switching back
+                    // User explicitly exited — remember scrollback so refocus
+                    // doesn't auto-resume into live mode.
                     let buf = self.active_buffer();
-                    self.active_window_mut().terminal_mode_resume.remove(&buf);
-                    {
-                        let __b = self.active_buffer();
-                        self.active_window_mut().sync_terminal_to_buffer(__b);
-                    };
+                    self.active_window_mut().set_terminal_interaction_mode(
+                        buf,
+                        crate::app::window::TerminalInteractionMode::Scrollback,
+                    );
+                    self.active_window_mut().sync_terminal_to_buffer(buf);
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
@@ -576,7 +577,10 @@ impl Editor {
                 // Dropping to scrollback is a mode change: remember it so the
                 // terminal stays read-only the next time it is focused.
                 let __b = self.active_buffer();
-                self.active_window_mut().terminal_mode_resume.remove(&__b);
+                self.active_window_mut().set_terminal_interaction_mode(
+                    __b,
+                    crate::app::window::TerminalInteractionMode::Scrollback,
+                );
                 self.active_window_mut().terminal_mode = false;
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;

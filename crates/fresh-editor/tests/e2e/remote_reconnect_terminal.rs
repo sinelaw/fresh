@@ -71,8 +71,8 @@ fn reconnect_respawns_a_dead_embedded_terminal_in_place() {
         "dead terminal's handle is torn down"
     );
     assert_eq!(
-        window.terminal_buffers.get(&buffer_id),
-        Some(&old_id),
+        window.get_terminal_id(buffer_id),
+        Some(old_id),
         "binding is preserved across the drop, awaiting respawn"
     );
 
@@ -80,9 +80,8 @@ fn reconnect_respawns_a_dead_embedded_terminal_in_place() {
     window.respawn_terminals_through_authority();
 
     // The buffer is bound to a *new, live* terminal.
-    let new_id = *window
-        .terminal_buffers
-        .get(&buffer_id)
+    let new_id = window
+        .get_terminal_id(buffer_id)
         .expect("buffer is still bound to a terminal after respawn");
     assert_ne!(
         new_id, old_id,
@@ -142,8 +141,8 @@ fn respawn_leaves_a_live_terminal_untouched() {
     window.respawn_terminals_through_authority();
 
     assert_eq!(
-        window.terminal_buffers.get(&buffer_id),
-        Some(&id),
+        window.get_terminal_id(buffer_id),
+        Some(id),
         "a live terminal keeps its id (not respawned)"
     );
 }

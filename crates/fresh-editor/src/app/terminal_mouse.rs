@@ -71,7 +71,7 @@ impl Window {
         let term_col = col.saturating_sub(content_rect.x) as usize;
         let term_row = row.saturating_sub(content_rect.y);
 
-        let &terminal_id = self.terminal_buffers.get(&buffer_id)?;
+        let terminal_id = self.get_terminal_id(buffer_id)?;
         let handle = self.terminal_manager.get(terminal_id)?;
         let (line, cwd) = {
             let state = handle.state.lock().ok()?;
@@ -162,9 +162,8 @@ impl Window {
 
         let link = crate::services::terminal::path_link::detect_link_at(line, char_col)?;
         let cwd = self
-            .terminal_buffers
-            .get(&active)
-            .and_then(|tid| self.terminal_manager.get(*tid))
+            .get_terminal_id(active)
+            .and_then(|tid| self.terminal_manager.get(tid))
             .and_then(|h| {
                 h.state
                     .lock()

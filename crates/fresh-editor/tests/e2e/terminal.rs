@@ -767,21 +767,24 @@ fn test_terminal_buffer_cursor_movement() {
 
     assert!(!harness.editor().is_terminal_mode());
 
-    // Get initial cursor position
+    // Get initial cursor position. Exiting terminal mode anchors the cursor
+    // at the top of the just-exited visible screen (see
+    // `sync_terminal_to_buffer`), so navigate downward into the content.
     let initial_pos = harness.editor().get_cursor_position(buffer_id);
 
-    // Move cursor up
+    // Move cursor down
     harness
         .editor_mut()
-        .handle_key(KeyCode::Up, KeyModifiers::NONE)
+        .handle_key(KeyCode::Down, KeyModifiers::NONE)
         .unwrap();
 
-    let pos_after_up = harness.editor().get_cursor_position(buffer_id);
+    let pos_after_down = harness.editor().get_cursor_position(buffer_id);
 
-    // Cursor should have moved (different position)
+    // Cursor should have moved (arrow keys do buffer navigation, not PTY input,
+    // once terminal mode is disabled).
     assert_ne!(
-        initial_pos, pos_after_up,
-        "Cursor should move when pressing Up in disabled terminal mode"
+        initial_pos, pos_after_down,
+        "Cursor should move when pressing Down in disabled terminal mode"
     );
 }
 

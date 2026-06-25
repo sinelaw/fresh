@@ -520,7 +520,10 @@ impl Editor {
                 // Scrolling up drops the terminal to read-only scrollback:
                 // remember that mode so re-focusing keeps it in scrollback.
                 let __b = self.active_buffer();
-                self.active_window_mut().terminal_mode_resume.remove(&__b);
+                self.active_window_mut().set_terminal_interaction_mode(
+                    __b,
+                    crate::app::window::TerminalInteractionMode::Scrollback,
+                );
                 self.active_window_mut().sync_terminal_to_buffer(__b);
                 self.active_window_mut().terminal_mode = false;
                 self.active_window_mut().key_context =

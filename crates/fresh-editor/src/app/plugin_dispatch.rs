@@ -5130,7 +5130,7 @@ impl Editor {
             .active_window()
             .terminal_buffers
             .iter()
-            .find(|(_, &tid)| tid == terminal_id)
+            .find(|(_, tb)| tb.terminal_id == terminal_id)
             .map(|(&bid, _)| bid);
         if let Some(buffer_id) = buffer_to_close {
             if let Err(e) = self.close_buffer(buffer_id) {

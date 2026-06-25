@@ -84,8 +84,9 @@ impl Editor {
         }
 
         // If closing a terminal buffer, tear down its terminal-side state.
-        if let Some(terminal_id) = self.active_window_mut().terminal_buffers.remove(&id) {
-            self.cleanup_closed_terminal(id, terminal_id);
+        // Removing the entry drops the buffer's remembered mode with it.
+        if let Some(tb) = self.active_window_mut().terminal_buffers.remove(&id) {
+            self.cleanup_closed_terminal(id, tb.terminal_id);
         }
 
         // Capture before resolving the replacement: the last-resort
@@ -228,8 +229,8 @@ impl Editor {
             }
         }
 
-        // Remove from terminal_mode_resume to prevent stale entries
-        self.active_window_mut().terminal_mode_resume.remove(&id);
+        // The buffer's remembered mode was dropped when its `terminal_buffers`
+        // entry was removed by the caller — nothing else to clean up here.
 
         // Exit terminal mode if we were in it
         if self.active_window().terminal_mode {
