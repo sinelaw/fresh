@@ -527,6 +527,101 @@ mod tests {
         )
     }
 
+    /// Render `content` with the viewport scrolled so the buffer byte
+    /// `top_byte` is the first visible row. Used to exercise indentation-guide
+    /// rendering when a block-opening line has scrolled above the viewport.
+    fn render_output_scrolled_with_indentation_guide(
+        content: &str,
+        top_byte: usize,
+    ) -> LineRenderOutput {
+        let mut state = EditorState::new(20, 6, 1024, test_fs());
+        state.buffer = Buffer::from_str(content, 1024, test_fs());
+        let mut cursors = crate::model::cursor::Cursors::new();
+        cursors.primary_mut().position = 0;
+        let mut viewport = Viewport::new(20, 4);
+        viewport.top_byte = top_byte;
+        state.margins.left_config.enabled = false;
+
+        let render_area = Rect::new(0, 0, 20, 4);
+        let visible_count = viewport.visible_line_count();
+        let gutter_width = state.margins.left_total_width();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let empty_folds = FoldManager::new();
+
+        let view_data = build_view_data(
+            &mut state,
+            &viewport,
+            None,
+            content.len().max(1),
+            visible_count,
+            false,
+            render_area.width as usize,
+            gutter_width,
+            &ViewMode::Source,
+            &empty_folds,
+            &theme,
+        );
+        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
+
+        let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
+        state.margins.update_width_for_buffer(estimated_lines, true);
+        let gutter_width = state.margins.left_total_width();
+
+        let selection = selection_context(&state, &cursors);
+        let _ = state
+            .buffer
+            .populate_line_cache(viewport.top_byte, visible_count);
+        let viewport_start = viewport.top_byte;
+        let viewport_end = calculate_viewport_end(
+            &mut state,
+            viewport_start,
+            content.len().max(1),
+            visible_count,
+        );
+        let decorations = decoration_context(
+            &mut state,
+            viewport_start,
+            viewport_end,
+            selection.primary_cursor_position,
+            &empty_folds,
+            &theme,
+            100_000,
+            &ViewMode::Source,
+            false,
+            &[],
+        );
+
+        let glyph = crate::config::default_indentation_guide_glyph();
+        let mut dummy_theme_map = Vec::new();
+        render_view_lines(LineRenderInput {
+            state: &state,
+            theme: &theme,
+            view_lines: &view_data.lines,
+            view_anchor,
+            render_area,
+            gutter_width,
+            selection: &selection,
+            decorations: &decorations,
+            visible_line_count: visible_count,
+            lsp_waiting: false,
+            is_active: true,
+            line_wrap: viewport.line_wrap_enabled,
+            estimated_lines,
+            left_column: viewport.left_column,
+            relative_line_numbers: false,
+            session_mode: false,
+            software_cursor_only: false,
+            show_line_numbers: true,
+            byte_offset_mode: false,
+            show_tilde: true,
+            highlight_current_line: true,
+            indentation_guide: IndentationGuideMode::All,
+            indentation_guide_glyph: &glyph,
+            cell_theme_map: &mut dummy_theme_map,
+            screen_width: 0,
+        })
+    }
+
     fn rendered_line_text(output: &LineRenderOutput, line_idx: usize) -> String {
         output.lines[line_idx]
             .spans
@@ -655,6 +750,38 @@ mod tests {
         assert_eq!(rendered_line_text(&output, 1), "▏   a");
         assert_eq!(rendered_line_text(&output, 2), "▏");
         assert_eq!(rendered_line_text(&output, 3), "▏   b");
+    }
+
+    #[test]
+    fn indentation_guide_survives_scroll_past_block_opener() {
+        // A block whose opening lines (`mod m {` at col 0, `fn f() {` at col 4)
+        // have scrolled above the viewport must still draw their guides on the
+        // interior rows below. Previously the all-mode scanner derived its
+        // staircase only from the visible rows, so the off-screen openers'
+        // levels were missing — the col-4 guide vanished on the deeper interior
+        // rows and reappeared only when scrolling the opener back into view.
+        let content = concat!(
+            "mod m {\n",             // col 0  (scrolled off-screen)
+            "    fn f() {\n",        // col 4  (scrolled off-screen)
+            "        let arr = [\n", // col 8  <- first visible row
+            "            a,\n",      // col 12
+            "            b,\n",      // col 12
+            "        ];\n",          // col 8
+            "        let c = 1;\n",  // col 8
+            "    }\n",
+            "}\n",
+        );
+        let top_byte = content.find("        let arr = [").unwrap();
+        let output = render_output_scrolled_with_indentation_guide(content, top_byte);
+
+        // First visible row keeps both ancestor guides (col 0 and col 4) even
+        // though both owning lines are off-screen.
+        assert_eq!(rendered_line_text(&output, 0), "▏   ▏   let arr = [");
+        // Interior rows show the full staircase, including the col-4 guide that
+        // the scroll regression used to drop.
+        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   ▏   a,");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   ▏   b,");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏   ];");
     }
 
     #[test]

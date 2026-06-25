@@ -242,17 +242,6 @@ struct GuideColumnScanner {
 }
 
 impl GuideColumnScanner {
-    /// Advance the staircase past a row without recording its columns — used to
-    /// prime the scanner over the rows scrolled above the first rendered row.
-    fn advance(&mut self, line: &ViewLine, tab_size: usize) {
-        if let Some((width, true)) = view_line_indent(line, tab_size) {
-            while self.stack.last().is_some_and(|&w| w >= width) {
-                self.stack.pop();
-            }
-            self.stack.push(width);
-        }
-    }
-
     /// Write the guide columns for `line` into `out` and advance the staircase.
     fn columns_for(&mut self, line: &ViewLine, tab_size: usize, out: &mut Vec<usize>) {
         match view_line_indent(line, tab_size) {
@@ -278,6 +267,60 @@ impl GuideColumnScanner {
             None => out.clear(),
         }
     }
+}
+
+/// Reconstruct the open-ancestor indentation stack as of the buffer line
+/// starting at `first_visible_line_start`, by walking the buffer *upward*.
+///
+/// This is exactly the staircase a [`GuideColumnScanner`] would hold had it
+/// scanned every line from the buffer's start: the strictly-increasing indent
+/// widths of the enclosing blocks. Deriving the seed from the buffer's absolute
+/// indentation — rather than from the handful of `view_lines` that precede the
+/// viewport (there are none under vertical scroll, since `view_lines` begins at
+/// the viewport top) — makes a row's guide columns depend only on absolute
+/// indentation. A block whose opening line has scrolled above the viewport then
+/// still contributes its guide to the interior rows below it, instead of the
+/// guide vanishing until the opener scrolls back into view.
+fn prime_guide_stack_from_buffer(
+    buffer: &crate::model::buffer::Buffer,
+    first_visible_line_start: usize,
+    tab_size: usize,
+    max_upward_lines: usize,
+) -> Vec<usize> {
+    use crate::view::folding::indent_folding::{find_line_start_byte, slice_indent};
+
+    // Collected in decreasing order while walking up, then reversed.
+    let mut ancestors_desc: Vec<usize> = Vec::new();
+    let mut min_indent_seen = usize::MAX;
+    let mut line_start = first_visible_line_start;
+
+    // Bound the upward scan to a fixed window (mirroring the active-mode fold
+    // search) so this never degrades into a full-buffer scan for a viewport
+    // sitting deep inside one enormous top-level block.
+    for _ in 0..max_upward_lines {
+        if line_start == 0 {
+            break;
+        }
+        let prev_line_start = find_line_start_byte(buffer, line_start - 1);
+        // Slice the previous line's content *excluding* its trailing `\n` (at
+        // `line_start - 1`) so a whitespace-only line is correctly classified
+        // as blank rather than as content ending in a newline.
+        let content = buffer.slice_bytes(prev_line_start..line_start - 1);
+        let (width, all_blank) = slice_indent(&content, tab_size);
+        // Each strictly-shallower content line opens an enclosing block; once we
+        // reach column 0 the staircase is complete.
+        if !all_blank && width < min_indent_seen {
+            ancestors_desc.push(width);
+            min_indent_seen = width;
+            if width == 0 {
+                break;
+            }
+        }
+        line_start = prev_line_start;
+    }
+
+    ancestors_desc.reverse();
+    ancestors_desc
 }
 
 /// Fill `out` with the guide columns for a line of indent `width` whose open
@@ -362,16 +405,28 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     );
     // `all`-mode guide columns are scanned lazily, one row at a time, as the
     // render loop walks the viewport. The scanner is only built for `all` mode
-    // (the default `none` and `active` modes skip it entirely), and it is
-    // primed over the rows scrolled above the first rendered row so the visible
-    // top rows see their true ancestor indentation.
+    // (the default `none` and `active` modes skip it entirely). Its staircase is
+    // seeded from the buffer's *absolute* indentation above the first visible
+    // row (not from the preceding `view_lines`, which under vertical scroll
+    // start at the viewport top and so carry no ancestor context). This keeps a
+    // row's guides identical regardless of scroll offset — a block whose opener
+    // has scrolled off the top still draws its guide on the interior rows.
     let mut guide_column_scanner = (indentation_guide == IndentationGuideMode::All).then(|| {
-        let mut scanner = GuideColumnScanner::default();
-        let prime_end = view_anchor.start_line_idx.min(view_lines.len());
-        for line in &view_lines[..prime_end] {
-            scanner.advance(line, state.buffer_settings.tab_size);
-        }
-        scanner
+        let first_visible_source = view_lines
+            .get(view_anchor.start_line_idx..)
+            .into_iter()
+            .flatten()
+            .find_map(|line| line.source_start_byte);
+        let stack = match first_visible_source {
+            Some(src) => prime_guide_stack_from_buffer(
+                &state.buffer,
+                indent_folding::find_line_start_byte(&state.buffer, src),
+                state.buffer_settings.tab_size,
+                crate::config::INDENT_FOLD_MAX_UPWARD_SCAN,
+            ),
+            None => Vec::new(),
+        };
+        GuideColumnScanner { stack }
     });
 
     // Cursors for O(1) amortized span lookups (spans are sorted by byte range)
