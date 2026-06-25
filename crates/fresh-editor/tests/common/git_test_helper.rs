@@ -343,6 +343,7 @@ A sample project for testing.
         let plugins_dir = self.path.join("plugins");
         fs::create_dir_all(&plugins_dir).expect("Failed to create plugins directory");
         copy_plugin(&plugins_dir, "git_explorer");
+        copy_plugin_lib(&plugins_dir);
     }
 
     /// Buffer-modified indicators are now computed natively during rendering.
