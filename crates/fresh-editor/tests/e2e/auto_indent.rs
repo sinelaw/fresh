@@ -1,6 +1,7 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LanguageConfig};
+use fresh_languages::Language;
 use tempfile::TempDir;
 
 /// Helper to create a harness with auto-indent enabled
@@ -2219,4 +2220,187 @@ fn test_config_indent_next_line_pattern_applies() {
         "indent_next_line_pattern should indent the immediately following line; got: {:?}",
         content
     );
+}
+
+// ============================================================================
+// All-supported-languages coverage
+//
+// One e2e check per language Fresh supports: open a file of that language,
+// type its idiomatic block opener, press Enter, and assert the new line lands
+// at the right indent. The scenario table is keyed by an *exhaustive* match on
+// `Language`, so adding a new `Language` variant fails to compile until a
+// scenario is supplied here — i.e. coverage cannot silently regress.
+//
+// This exercises the real editor through the same tiering the app uses:
+// tree-sitter for the bundled grammars (JS/TS/Go/JSON(C)/Templ), the regex
+// indent-rules tier for the syntect languages, and the generic bracket scanner
+// for the rest. Behavior was characterized by hand (in a live terminal) first;
+// the expectations below match what the editor actually produces.
+// ============================================================================
+
+/// What we expect to happen on the line created by pressing Enter at the end of
+/// the language's idiomatic block-opening line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Expect {
+    /// The new line is indented exactly one level (4 visual columns — 4 spaces,
+    /// or one tab for the tab-indented languages).
+    OneLevel,
+    /// No structural auto-indent: the new line stays at column 0. (Languages
+    /// with neither a bundled grammar nor a regex indent-rules family fall back
+    /// to copy-the-previous-line, which is column 0 here.)
+    NoStructural,
+}
+
+/// The idiomatic block opener and expected outcome for each supported language.
+///
+/// Exhaustive on purpose: no `_` arm, so a newly added `Language` variant forces
+/// a decision here rather than slipping through untested.
+fn indent_scenario(lang: Language) -> (&'static str, Expect) {
+    use Expect::*;
+    use Language::*;
+    match lang {
+        Rust => ("fn main() {", OneLevel),
+        Python => ("def foo():", OneLevel),
+        JavaScript => ("function f() {", OneLevel),
+        TypeScript => ("interface User {", OneLevel),
+        // HTML has no bundled grammar and no regex indent family, so block
+        // structure is not recognized — Enter copies the previous indent (0).
+        HTML => ("<div>", NoStructural),
+        CSS => (".a {", OneLevel),
+        C => ("if (x) {", OneLevel),
+        Cpp => ("class Foo {", OneLevel),
+        Go => ("func main() {", OneLevel),
+        Json => ("{", OneLevel),
+        Jsonc => ("{", OneLevel),
+        Java => ("class A {", OneLevel),
+        CSharp => ("class A {", OneLevel),
+        Php => ("if (x) {", OneLevel),
+        Ruby => ("def foo", OneLevel),
+        Bash => ("f() {", OneLevel),
+        Lua => ("function f()", OneLevel),
+        Pascal => ("begin", OneLevel),
+        Odin => ("main :: proc() {", OneLevel),
+        Templ => ("templ x() {", OneLevel),
+    }
+}
+
+/// Visual width of the leading whitespace of `line`, tabs counted as 4 columns.
+fn leading_indent_width(line: &str) -> usize {
+    let mut w = 0;
+    for ch in line.chars() {
+        match ch {
+            ' ' => w += 1,
+            '\t' => w += 4,
+            _ => break,
+        }
+    }
+    w
+}
+
+/// Like [`harness_with_auto_indent`] but also loads the full grammar registry
+/// (syntect + tree-sitter). The default harness ships an empty registry for
+/// speed, which leaves syntect-only languages (Ruby, Lua, Pascal, …) with no
+/// highlighter — and therefore no syntax name — so their regex indent-rules
+/// tier never engages and Enter falls back to the generic bracket scanner. The
+/// real editor always has the registry, so the all-languages test needs it to
+/// exercise each language through the same tier the app uses.
+fn harness_with_auto_indent_full_registry() -> EditorTestHarness {
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    let mut harness = EditorTestHarness::create(
+        80,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.enable_shadow_validation();
+    harness
+}
+
+/// Drive the editor for one language's scenario and return the indent width of
+/// the line produced by pressing Enter after the block opener.
+fn indent_width_after_enter(ext: &str, seed: &str) -> usize {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join(format!("indent_probe.{ext}"));
+    // Seed the opener via the file (not by typing) so auto-pairing of brackets
+    // never interferes — mirrors the established tests above.
+    std::fs::write(&file_path, seed).unwrap();
+
+    let mut harness = harness_with_auto_indent_full_registry();
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let content = harness.get_buffer_content().unwrap();
+    // Everything after the first newline is the freshly created line (plus any
+    // relocated closing delimiter on a later line, which we don't reach since
+    // we only read leading whitespace).
+    let after = content.split_once('\n').map(|(_, b)| b).unwrap_or("");
+    leading_indent_width(after)
+}
+
+/// Every language Fresh supports indents its idiomatic block opener correctly.
+#[test]
+fn test_auto_indent_every_supported_language() {
+    const ONE_LEVEL: usize = 4;
+    let mut failures = Vec::new();
+
+    for &lang in Language::all() {
+        let ext = lang
+            .extensions()
+            .first()
+            .copied()
+            .unwrap_or_else(|| panic!("{lang:?} has no file extension"));
+        let (seed, expect) = indent_scenario(lang);
+        let width = indent_width_after_enter(ext, seed);
+        let expected = match expect {
+            Expect::OneLevel => ONE_LEVEL,
+            Expect::NoStructural => 0,
+        };
+        if width != expected {
+            failures.push(format!(
+                "  {lang:?} (.{ext}): opener {seed:?} -> expected indent width {expected} ({expect:?}), got {width}"
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "auto-indent differs from expectation for {} language(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Regression target for the braceless control-flow indent gap (issue #2492).
+///
+/// Pressing Enter after a *braceless* `if (a)` should indent the body one level
+/// — every C-style syntect language does this (via the regex tier's
+/// `indent_next_line` rule), and so do VS Code / Prettier / clang-format. But
+/// TypeScript and JavaScript use the bundled tree-sitter grammar, whose
+/// incomplete-syntax fallback doesn't recognize a braceless head, so the body
+/// stays at column 0.
+///
+/// Ignored because it currently fails; remove `#[ignore]` when #2492 is fixed.
+#[test]
+#[ignore = "issue #2492: braceless control-flow body not indented in TS/JS"]
+fn test_braceless_if_indents_in_ts_js() {
+    for ext in ["ts", "js"] {
+        let width = indent_width_after_enter(ext, "if (a)");
+        assert_eq!(
+            width, 4,
+            ".{ext}: braceless `if (a)` body should indent one level, got width {width}"
+        );
+    }
 }

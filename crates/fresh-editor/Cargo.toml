@@ -231,6 +231,9 @@ fresh-gui = { workspace = true, optional = true }
 [dev-dependencies]
 proptest = "1.9"
 tempfile = "3.25"
+# Used by the all-languages auto-indent e2e test to enumerate every supported
+# language (Language::all) and force a per-language scenario via exhaustive match.
+fresh-languages = { workspace = true }
 insta = { version = "1.46", features = ["yaml"] }
 vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
 ctor = "0.6.3"
