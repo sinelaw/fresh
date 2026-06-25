@@ -838,6 +838,42 @@ mod tests {
     }
 
     #[test]
+    fn indentation_guide_draws_through_completely_empty_lines() {
+        // A bare `\n` line has no cells for the per-cell pass to restyle, so its
+        // guides are synthesised. At root depth the empty line carries the single
+        // col-0 guide; nested, it carries every ancestor guide of the surrounding
+        // body — keeping the vertical guides continuous through the gap.
+        let root = "int main() {\n\n    greet();\n    \n    return 0;\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(root, 0);
+        assert_eq!(rendered_line_text(&out, 0), "int main() {");
+        assert_eq!(rendered_line_text(&out, 1), "▏"); // empty line, drawn through
+        assert_eq!(rendered_line_text(&out, 2), "▏   greet();");
+        assert_eq!(rendered_line_text(&out, 3), "▏"); // whitespace-only line
+        assert_eq!(rendered_line_text(&out, 4), "▏   return 0;");
+        assert_eq!(rendered_line_text(&out, 5), "}");
+
+        let nested = "fn f() {\n    if x {\n        a;\n\n        b;\n    }\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(nested, 0);
+        assert_eq!(rendered_line_text(&out, 2), "▏   ▏   a;");
+        // The empty interior line carries both the col-0 and col-4 guides.
+        assert_eq!(rendered_line_text(&out, 3), "▏   ▏");
+        assert_eq!(rendered_line_text(&out, 4), "▏   ▏   b;");
+    }
+
+    #[test]
+    fn indentation_guide_empty_line_after_opener_flows_into_body() {
+        // The empty line sits directly under the opener, before any body row —
+        // so the staircase alone (just the opener's level) would under-draw. The
+        // look-ahead to the next content row pulls the body's guide onto the
+        // empty line, so the guide is continuous from the opener down.
+        let content = "if outer {\n\n    inner();\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(content, 0);
+        assert_eq!(rendered_line_text(&out, 0), "if outer {");
+        assert_eq!(rendered_line_text(&out, 1), "▏"); // flows into the body below
+        assert_eq!(rendered_line_text(&out, 2), "▏   inner();");
+    }
+
+    #[test]
     fn indentation_guide_render_for_tabs() {
         let (output, _, _, _) =
             render_output_for_with_indentation_guide("\tchild\n\t\tgrand\n", 0, 0);

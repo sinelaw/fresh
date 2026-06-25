@@ -243,7 +243,16 @@ struct GuideColumnScanner {
 
 impl GuideColumnScanner {
     /// Write the guide columns for `line` into `out` and advance the staircase.
-    fn columns_for(&mut self, line: &ViewLine, tab_size: usize, out: &mut Vec<usize>) {
+    ///
+    /// `next_content_indent` is the indentation of the next non-blank source row
+    /// below `line` (looked up by the caller), used only when `line` is blank.
+    fn columns_for(
+        &mut self,
+        line: &ViewLine,
+        tab_size: usize,
+        next_content_indent: Option<usize>,
+        out: &mut Vec<usize>,
+    ) {
         match view_line_indent(line, tab_size) {
             // Content row: its guides are the open ancestors strictly to its
             // left; it then becomes an ancestor for the rows below.
@@ -254,19 +263,41 @@ impl GuideColumnScanner {
                 fill_guide_columns(&self.stack, width, tab_size, out);
                 self.stack.push(width);
             }
-            // Whitespace-only row: draw the enclosing block's guides straight
-            // through it (so guides stay continuous across blank lines) without
-            // disturbing the staircase.
-            Some((_, false)) => match self.stack.split_last() {
-                Some((&deepest, ancestors)) => {
-                    fill_guide_columns(ancestors, deepest, tab_size, out)
-                }
-                None => out.clear(),
-            },
+            // Blank (empty or whitespace-only) row: draw the enclosing block's
+            // guides straight through it so they stay continuous, without
+            // disturbing the staircase. The guides shown are those of the
+            // *deeper* of the row above (the open block) and the row below (the
+            // upcoming content) — so guides flow into a nested body even when the
+            // blank line sits directly under the block opener, before any body
+            // row has been seen (e.g. the empty line right after `fn f() {`).
+            Some((_, false)) => {
+                let above = self.stack.last().copied().unwrap_or(0);
+                let level = above.max(next_content_indent.unwrap_or(0));
+                let cut = self.stack.partition_point(|&w| w < level);
+                fill_guide_columns(&self.stack[..cut], level, tab_size, out);
+            }
             // Continuation / injected row: no guides, staircase untouched.
             None => out.clear(),
         }
     }
+}
+
+/// Indentation of the next non-blank source row at or after `start_idx`, used to
+/// flow blank-line guides into an upcoming nested body. Blank and
+/// continuation/injected rows are skipped; `None` if none remain.
+fn next_content_indent(
+    view_lines: &[ViewLine],
+    start_idx: usize,
+    tab_size: usize,
+) -> Option<usize> {
+    view_lines
+        .get(start_idx..)
+        .into_iter()
+        .flatten()
+        .find_map(|line| match view_line_indent(line, tab_size) {
+            Some((width, true)) => Some(width),
+            _ => None,
+        })
 }
 
 /// Reconstruct the open-ancestor indentation stack as of the buffer line
@@ -346,6 +377,56 @@ fn fill_guide_columns(ancestors: &[usize], width: usize, tab_size: usize, out: &
     }
 }
 
+/// Append guide glyphs for `guide_columns` lying *beyond* the row's own rendered
+/// content (`content_visual_end` is the first visual column past it). The
+/// per-cell pass already draws guides on existing leading-whitespace cells; this
+/// fills in guide columns that have no cell to restyle — the case for empty rows
+/// (no cells at all) and whitespace-only rows narrower than their guides — so the
+/// vertical guides run continuously through blank lines. Synthesised cells map to
+/// no source byte, exactly like the tail fill. Code rows pass through untouched:
+/// their guide columns all sit inside their indent, so none exceed
+/// `content_visual_end`.
+#[allow(clippy::too_many_arguments)]
+fn append_blank_line_guides(
+    guide_columns: &[usize],
+    content_visual_end: usize,
+    left_col: usize,
+    content_width: usize,
+    glyph: char,
+    style: Style,
+    rendered_cols: &mut usize,
+    line_spans: &mut Vec<Span<'static>>,
+    line_view_map: &mut Vec<Option<usize>>,
+) {
+    // Deepest guide column needing synthesis: past the rendered content and not
+    // scrolled off the left edge.
+    let Some(last_col) = guide_columns
+        .iter()
+        .copied()
+        .filter(|&c| c >= content_visual_end && c >= left_col)
+        .max()
+    else {
+        return;
+    };
+    let start = content_visual_end.max(left_col);
+    // Clamp to the visible content area so guides never spill past the viewport.
+    let end_col = last_col.min(left_col + content_width.saturating_sub(1));
+    if end_col < start {
+        return;
+    }
+
+    let mut text = String::with_capacity(end_col + 1 - start);
+    for col in start..=end_col {
+        text.push(if guide_columns.contains(&col) {
+            glyph
+        } else {
+            ' '
+        });
+    }
+    push_span_with_map(line_spans, line_view_map, text, style, None);
+    *rendered_cols += end_col + 1 - start;
+}
+
 pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput {
     use crate::view::folding::indent_folding;
 
@@ -403,6 +484,16 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         view_lines,
         primary_cursor_position,
     );
+    // Resolve the guide glyph once (single display cell; falls back to `▏`),
+    // matching the per-cell pass — used for blank-line guide synthesis.
+    let guide_glyph_char = {
+        let c = indentation_guide_glyph.trim().chars().next().unwrap_or('▏');
+        if crate::primitives::display_width::char_width(c) != 1 {
+            '▏'
+        } else {
+            c
+        }
+    };
     // `all`-mode guide columns are scanned lazily, one row at a time, as the
     // render loop walks the viewport. The scanner is only built for `all` mode
     // (the default `none` and `active` modes skip it entirely). Its staircase is
@@ -630,14 +721,29 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // Advance the `all`-mode guide scanner for this row and capture its
         // guide columns into the reused buffer (empty in `none`/`active` mode).
         if let Some(scanner) = guide_column_scanner.as_mut() {
+            let tab_size = state.buffer_settings.tab_size;
+            // Blank rows look ahead to the next content row so their guides flow
+            // into an upcoming nested body; content rows don't need it.
+            let next_indent = match view_line_indent(current_view_line, tab_size) {
+                Some((_, false)) => {
+                    next_content_indent(view_lines, current_view_line_idx + 1, tab_size)
+                }
+                _ => None,
+            };
             scanner.columns_for(
                 current_view_line,
-                state.buffer_settings.tab_size,
+                tab_size,
+                next_indent,
                 &mut guide_columns_buf,
             );
         } else {
             guide_columns_buf.clear();
         }
+
+        // The single active-mode guide column for this row (None in other
+        // modes); reused by the cell pass and the blank-line guide synthesis.
+        let active_guide_col =
+            active_indentation_guide.and_then(|guide| guide.column_for_line(current_view_line_idx));
 
         // Per-cell pass: walk the line's characters and emit styled spans
         let cells = render_line_cells(
@@ -662,8 +768,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 indentation_guide,
                 indentation_guide_glyph,
                 indentation_guide_columns: &guide_columns_buf,
-                active_indentation_guide_col: active_indentation_guide
-                    .and_then(|guide| guide.column_for_line(current_view_line_idx)),
+                active_indentation_guide_col: active_guide_col,
             },
             &mut selection_sweep,
             &mut overlay_sweep,
@@ -715,6 +820,41 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
         let content_width = render_area.width.saturating_sub(gutter_width as u16) as usize;
         let cursor_line_active = is_on_cursor_line && highlight_current_line && is_active;
+
+        // Draw indentation guides *through* this row at guide columns the
+        // per-cell pass could not reach — i.e. columns past the row's own
+        // leading whitespace. Blank and empty rows have few or no leading-space
+        // cells to restyle, so without this their guides would gap out; here the
+        // missing guide cells (and the plain spaces between them) are synthesised
+        // so guides stay vertically continuous across blank lines. Code rows
+        // never trigger this (their guide columns all fall inside their indent).
+        let row_can_have_guides = current_view_line.source_start_byte.is_some()
+            && !matches!(
+                line_start_type,
+                LineStart::AfterBreak | LineStart::AfterInjectedNewline
+            );
+        if row_can_have_guides {
+            let synth_columns: &[usize] = match indentation_guide {
+                IndentationGuideMode::All => &guide_columns_buf,
+                IndentationGuideMode::Active => active_guide_col.as_slice(),
+                IndentationGuideMode::None => &[],
+            };
+            let mut guide_style = Style::default().fg(theme.indentation_guide_fg);
+            if cursor_line_active {
+                guide_style = guide_style.bg(theme.current_line_bg);
+            }
+            append_blank_line_guides(
+                synth_columns,
+                left_col + rendered_cols,
+                left_col,
+                content_width,
+                guide_glyph_char,
+                guide_style,
+                &mut rendered_cols,
+                &mut line_spans,
+                &mut line_view_map,
+            );
+        }
 
         // Inline diagnostic text: render after line content (before extend_to_line_end fill).
         // Only for non-continuation lines that have a diagnostic overlay.
