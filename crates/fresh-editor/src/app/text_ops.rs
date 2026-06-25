@@ -75,12 +75,21 @@ impl Editor {
                 }
             };
 
+            // Respect Emacs-style mark mode: preserve the anchor when movement
+            // should keep extending the selection (e.g. after Set Mark), so the
+            // Home key extends the selection instead of collapsing it.
+            let new_anchor = if cursor.deselect_on_move {
+                None
+            } else {
+                cursor.anchor
+            };
+
             events.push(Event::MoveCursor {
                 cursor_id,
                 old_position: cursor.position,
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
-                new_anchor: None,
+                new_anchor,
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: 0,
             });
@@ -495,12 +504,20 @@ impl Editor {
         };
 
         if let Some(new_pos) = matching_pos {
+            // Respect Emacs-style mark mode: when movement should preserve the
+            // selection (e.g. after Set Mark), keep the anchor so jumping to the
+            // matching bracket extends the selection instead of collapsing it.
+            let new_anchor = if cursor.deselect_on_move {
+                None
+            } else {
+                cursor.anchor
+            };
             let event = Event::MoveCursor {
                 cursor_id,
                 old_position: cursor.position,
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
-                new_anchor: None,
+                new_anchor,
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: 0,
             };
