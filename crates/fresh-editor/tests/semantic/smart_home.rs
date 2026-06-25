@@ -51,3 +51,22 @@ fn theorem_smart_home_toggles_to_byte_zero() {
         ..Default::default()
     });
 }
+
+#[test]
+fn smart_home_extends_selection_in_mark_mode() {
+    // Regression: after `Set Mark` (Emacs mark mode), pressing Home must
+    // EXTEND the selection rather than collapse it. From byte 12 (end of
+    // line) SetMark anchors there, then SmartHome moves to the first
+    // non-whitespace (byte 4) while keeping the anchor at 12.
+    assert_buffer_scenario(BufferScenario {
+        terminal: TerminalSize::default(),
+        description: "SmartHome in mark mode extends the selection".into(),
+        initial_text: "    indented".into(),
+        actions: vec![Action::MoveLineEnd, Action::SetMark, Action::SmartHome],
+        expected_text: "    indented".into(),
+        expected_primary: CursorExpect::range(12, 4),
+        expected_extra_cursors: vec![],
+        expected_selection_text: Some("indented".into()),
+        ..Default::default()
+    });
+}

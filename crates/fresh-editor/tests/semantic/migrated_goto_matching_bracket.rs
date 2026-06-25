@@ -138,6 +138,42 @@ fn anti_goto_matching_bracket_dropping_action_yields_check_err() {
     );
 }
 
+// ── Mark mode: jump should extend the selection ─────────────────────
+
+#[test]
+fn goto_matching_bracket_extends_selection_in_mark_mode() {
+    // Regression: after `Set Mark` (Emacs mark mode), jumping to the
+    // matching bracket must EXTEND the selection rather than collapse it.
+    // Cursor on '(' at byte 3, SetMark anchors there, then the jump moves
+    // to ')' at byte 7 while keeping the anchor at 3.
+    assert_buffer_scenario(BufferScenario {
+        description: "GoToMatchingBracket in mark mode extends selection from '(' to ')'".into(),
+        initial_text: "foo(bar)".into(),
+        actions: repeat(Action::MoveRight, 3)
+            .chain([Action::SetMark, Action::GoToMatchingBracket])
+            .collect(),
+        expected_text: "foo(bar)".into(),
+        expected_primary: CursorExpect::range(3, 7),
+        ..Default::default()
+    });
+}
+
+#[test]
+fn goto_matching_bracket_without_mark_collapses_selection() {
+    // Counterpart to the mark-mode test: with no mark set, the jump must
+    // NOT create a selection — the anchor stays `None`.
+    assert_buffer_scenario(BufferScenario {
+        description: "GoToMatchingBracket without mark mode leaves no selection".into(),
+        initial_text: "foo(bar)".into(),
+        actions: repeat(Action::MoveRight, 3)
+            .chain(std::iter::once(Action::GoToMatchingBracket))
+            .collect(),
+        expected_text: "foo(bar)".into(),
+        expected_primary: CursorExpect::at(7),
+        ..Default::default()
+    });
+}
+
 #[test]
 fn migrated_goto_matching_bracket_from_inside_nested_outer() {
     // Original: `test_goto_matching_bracket_from_inside_outer_of_nested`.

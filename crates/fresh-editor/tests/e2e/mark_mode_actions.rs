@@ -419,3 +419,58 @@ fn test_clear_mark_clears_block_selection() {
         "Block selection should be cleared by ClearMark"
     );
 }
+
+/// Regression: after Set Mark, jumping to the matching bracket must produce a
+/// *real* selection, not merely a visual highlight. The observable proof is a
+/// clipboard round-trip — Cut removes exactly the selected range and Paste
+/// restores it — so copy/cut/paste behave correctly on the mark-mode selection.
+#[test]
+fn test_mark_then_matching_bracket_selection_is_cuttable() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+
+    // Force internal-only clipboard so the test stays isolated from the host.
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
+    harness.type_text("foo(bar)baz").unwrap();
+    harness.assert_buffer_content("foo(bar)baz");
+
+    // Move onto the '(' at byte 3.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    // Enter mark mode, then jump to the matching ')'.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SetMark);
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::GoToMatchingBracket);
+    harness.render().unwrap();
+
+    assert!(
+        harness.has_selection(),
+        "Jumping to the matching bracket in mark mode should extend the selection"
+    );
+
+    // Cut must remove exactly the selected range "(bar" — this only works if
+    // the selection is semantically active, not just highlighted.
+    harness.editor_mut().dispatch_action_for_tests(Action::Cut);
+    harness.render().unwrap();
+    harness.assert_buffer_content("foo)baz");
+    assert_eq!(
+        harness.editor().clipboard_content_for_test(),
+        "(bar",
+        "Cut should capture the mark-mode bracket selection"
+    );
+
+    // Paste restores the original text — the full round trip succeeds.
+    harness.editor_mut().paste_for_test();
+    harness.render().unwrap();
+    harness.assert_buffer_content("foo(bar)baz");
+}
