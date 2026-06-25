@@ -538,11 +538,11 @@ mod tests {
         state.buffer = Buffer::from_str(content, 1024, test_fs());
         let mut cursors = crate::model::cursor::Cursors::new();
         cursors.primary_mut().position = 0;
-        let mut viewport = Viewport::new(20, 4);
+        let mut viewport = Viewport::new(20, 10);
         viewport.top_byte = top_byte;
         state.margins.left_config.enabled = false;
 
-        let render_area = Rect::new(0, 0, 20, 4);
+        let render_area = Rect::new(0, 0, 20, 10);
         let visible_count = viewport.visible_line_count();
         let gutter_width = state.margins.left_total_width();
         let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
@@ -740,16 +740,24 @@ mod tests {
 
     #[test]
     fn indentation_guide_all_mode_draws_through_blank_lines() {
-        // A whitespace-only line inside a block continues the enclosing block's
-        // guides rather than leaving a one-row gap (the blank line here has
-        // four trailing spaces, so its column-0 guide cell is present).
-        let (output, _, _, _) =
-            render_output_for_with_indentation_guide("fn main()\n    a\n    \n    b\n", 0, 0);
+        // A whitespace-only line inside a nested block continues *every*
+        // enclosing block's guides straight through it, rather than leaving a
+        // one-row gap. With the block openers (`fn f() {` at col 0, `if x {` at
+        // col 4) on screen, the blank row must still draw both the col-0 and
+        // col-4 guides (it has eight trailing spaces, so those guide cells
+        // exist), and the staircase resumes unchanged on the row below.
+        let blank = " ".repeat(8);
+        let content =
+            format!("fn f() {{\n    if x {{\n        a;\n{blank}\n        b;\n    }}\n}}\n");
+        let output = render_output_scrolled_with_indentation_guide(&content, 0);
 
-        assert_eq!(rendered_line_text(&output, 0), "fn main()");
-        assert_eq!(rendered_line_text(&output, 1), "▏   a");
-        assert_eq!(rendered_line_text(&output, 2), "▏");
-        assert_eq!(rendered_line_text(&output, 3), "▏   b");
+        assert_eq!(rendered_line_text(&output, 0), "fn f() {");
+        assert_eq!(rendered_line_text(&output, 1), "▏   if x {");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   a;");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏");
+        assert_eq!(rendered_line_text(&output, 4), "▏   ▏   b;");
+        assert_eq!(rendered_line_text(&output, 5), "▏   }");
+        assert_eq!(rendered_line_text(&output, 6), "}");
     }
 
     #[test]
@@ -782,6 +790,32 @@ mod tests {
         assert_eq!(rendered_line_text(&output, 1), "▏   ▏   ▏   a,");
         assert_eq!(rendered_line_text(&output, 2), "▏   ▏   ▏   b,");
         assert_eq!(rendered_line_text(&output, 3), "▏   ▏   ];");
+    }
+
+    #[test]
+    fn indentation_guide_draws_through_blank_line_when_opener_scrolled_off() {
+        // Combines the two cases that interact here: a whitespace-only line in
+        // the middle of a block (guides must be drawn straight through it) while
+        // the block's openers (`mod m {` at col 0, `fn f() {` at col 4) have
+        // scrolled above the viewport. The primer must skip the blank line as it
+        // walks up to reconstruct the staircase, and the drawn-through guides
+        // must use that primed staircase — otherwise the col-4 guide drops on the
+        // blank row exactly as it did on the textual interior rows.
+        // 12 spaces: a whitespace-only line wide enough to carry guide cells at
+        // columns 0/4/8 (the renderer only replaces existing leading-space cells).
+        let blank = " ".repeat(12);
+        let content = format!(
+            "mod m {{\n    fn f() {{\n        let arr = [\n            alpha_value,\n{blank}\n            beta_value,\n        ];\n        let after = compute();\n    }}\n}}\n"
+        );
+        let top_byte = content.find("        let arr = [").unwrap();
+        let output = render_output_scrolled_with_indentation_guide(&content, top_byte);
+
+        assert_eq!(rendered_line_text(&output, 0), "▏   ▏   let arr = [");
+        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   ▏   alpha_value,");
+        // The whitespace-only row continues the enclosing block's guides — the
+        // col-4 guide (owned by the off-screen `fn f() {`) must be drawn through.
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   ▏");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏   ▏   beta_value,");
     }
 
     #[test]
