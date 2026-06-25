@@ -52,18 +52,24 @@ function isComposingInAnySplit(bufferId: number): boolean {
 //
 // Each table is one editor interval marker: a byte range `[start, end)` keyed by
 // a stable string id, carrying a payload `{ rows, sepRows, maxW, allocated }`.
-// The EDITOR owns the byte coordinates — it shifts the marker on every edit —
-// so this plugin never tracks or shifts byte offsets itself. The marker id is
-// also the border namespace (`md-tb-${id}`).
+// The marker id is also the border namespace (`md-tb-${id}`).
 //
-//   * `updateTableBlocks` discovers/accumulates from the `lines_changed` batch:
-//     it finds the marker a group of rows belongs to (spatial query) or mints a
-//     new id, merges widths/rows into the payload, and upserts via createMarker.
-//   * Edits are handled by the core shift; the plugin only reacts when an edit
-//     lands *inside* a table (after_insert/after_delete -> delete the marker so
-//     the next render re-discovers it). Edits outside are a no-op.
-//   * Borders are drawn from the marker payload's row positions, so a partial
-//     batch still renders the whole frame and clearing `md-tb-${id}` is safe.
+// Position source of truth: the `lines_changed` event byte positions, which
+// always reflect the live buffer (the conceals rendered from them are always
+// correct). The marker's stored byte coordinates are NOT trusted to track the
+// table across edits — the editor does not reliably shift plugin markers across
+// every edit path (single-cursor Enter, auto-indent, paste and other bulk edits
+// bypass the shift), so trusting them produced corrupted/displaced borders.
+//
+//   * `updateTableBlocks` rebuilds each table from the current `lines_changed`
+//     group every render: it reuses an overlapping marker's id (for a stable
+//     border namespace) but discards its coordinates, and refreshes the marker
+//     from the live row positions via createMarker.
+//   * Edits need no special handling: the next render's batch carries the new
+//     positions and the block is rebuilt from them. (after_insert/after_delete
+//     still drop a marker whose interior was edited, as a fast invalidation.)
+//   * Borders are drawn from the (freshly rebuilt) marker payload's row
+//     positions; clearing `md-tb-${id}` before redraw is idempotent.
 //
 // createMarker/queryMarkers write through to / read from the shared state
 // snapshot, so a marker created earlier in a pass is visible to a query later in
@@ -122,20 +128,15 @@ function blockPayload(b: TableBlock): {
   };
 }
 
-// Create (or re-create) a block's marker, SETTING its byte coordinates. Use
-// only when a marker doesn't exist yet or its extent genuinely changed — never
-// on every render. createMarker write-throughs start/end, so calling it while
-// the editor is concurrently shifting the marker for an edit can clobber the
-// shift with a stale coordinate (off-by-one borders under rapid edits). The
-// editor owns start/end after creation and shifts them across edits.
+// Create a block's marker, SETTING its byte coordinates. Use when the marker is
+// new or its extent changed this batch.
 function saveBlock(bufferId: number, b: TableBlock): void {
   editor.createMarker(bufferId, b.id, b.startByte, b.endByte, blockPayload(b));
 }
 
-// Update ONLY a block's payload, leaving the editor's start/end untouched. This
-// is the steady-state write: row positions are stored relative to start, so the
-// editor's shifts keep them correct without the plugin ever re-sending (and
-// possibly staling) the coordinates. Safe to call on every render.
+// Update ONLY a block's payload, leaving start/end to the editor — which shifts
+// the marker on every edit. Used in steady state (extent unchanged) so a
+// concurrent edit-shift is never clobbered by a slightly-lagged event position.
 function savePayload(bufferId: number, b: TableBlock): void {
   editor.updateMarker(bufferId, b.id, blockPayload(b));
 }
@@ -1256,29 +1257,43 @@ function processLineConceals(
           const pipeByte = charToByte(lineContent, i, byteStart);
           const pipeByteEnd = charToByte(lineContent, i + 1, byteStart);
 
-          // Compute padding or truncation for the cell that just ended.
-          // When the cursor is on this row, skip truncation/padding entirely
-          // so that only pipe→│ conceals exist. This ensures cursor positioning
-          // works correctly (segment conceals break cursor mapping).
+          // Compute padding (and, off the cursor row, truncation) for the cell
+          // that just ended.
+          //
+          // Columns are sized to the widest *raw* cell, so a row only aligns
+          // when its rendered cell is padded out to that width. The row the
+          // cursor is on renders raw (emphasis markers revealed), so it must be
+          // padded too — otherwise that row's cell collapses to its natural
+          // width and its borders fall out of the frame as the cursor passes
+          // through it (a very visible "the table breaks under the cursor"
+          // glitch). Trailing padding never hides content, so it is safe on the
+          // cursor row; we still skip *truncation* there so a too-wide cell
+          // stays fully visible for editing.
           let padding = "";
           const cellIdx = pipeIdx - 1;
-          if (!cursorStrictlyOnLine && colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
-            const cellText = concealedText(cells[cellIdx]);
+          if (colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
+            // The cursor row shows raw text (markers revealed), so measure its
+            // raw width; every other row shows concealed text.
+            const cellText = cursorStrictlyOnLine ? cells[cellIdx] : concealedText(cells[cellIdx]);
             const cellWidth = displayWidth(cellText);
             const allocatedWidth = colWidths[cellIdx];
 
             if (cellWidth > allocatedWidth) {
-              // Truncate: conceal entire cell content and replace with truncated text.
-              // Separator rows use box-drawing ─ to match the non-truncated path
-              // (per-char conceals replace source `-` with ─ and pad via pipe replacement).
-              const prevPipeCharPos = pipePositions[pipeIdx - 1];
-              const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
-              const cellByteEnd = pipeByte;
-              const truncated = isSeparator
-                ? '─'.repeat(allocatedWidth)
-                : cellText.slice(0, allocatedWidth - 1) + '-';
-              editor.addConceal(bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated);
-              truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
+              if (!cursorStrictlyOnLine) {
+                // Truncate: conceal entire cell content and replace with truncated text.
+                // Separator rows use box-drawing ─ to match the non-truncated path
+                // (per-char conceals replace source `-` with ─ and pad via pipe replacement).
+                const prevPipeCharPos = pipePositions[pipeIdx - 1];
+                const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
+                const cellByteEnd = pipeByte;
+                const truncated = isSeparator
+                  ? '─'.repeat(allocatedWidth)
+                  : cellText.slice(0, allocatedWidth - 1) + '-';
+                editor.addConceal(bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated);
+                truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
+              }
+              // On the cursor row a too-wide cell is left raw (no padding, no
+              // truncation) so its full content stays editable.
             } else {
               const padCount = allocatedWidth - cellWidth;
               if (padCount > 0) {
@@ -1573,39 +1588,21 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     const gStart = group[0].byte_start;
     const gEnd = group[group.length - 1].byte_end;
 
-    // Find the table marker this group belongs to: byte-overlapping or
-    // byte-adjacent (the single `\n` between two rows is a 1-byte gap). A blank
+    // Find the table marker this group belongs to. The marker rides edits (the
+    // editor shifts it on every edit path), so its stored coordinates — and the
+    // row positions reconstructed from its payload — are current. We merge this
+    // batch's rows/widths into it. A pure displacement (e.g. inserting lines
+    // above the table) is absorbed by the editor's shift: the marker and its
+    // border virtual lines simply ride down, the merge is a no-op, and the
+    // upsert below keeps the editor-owned coordinates untouched.
+    //
+    // Tolerance of 1 byte covers the single `\n` between adjacent rows; a blank
     // line between two tables is a >1-byte gap, so distinct tables stay separate.
     // queryMarkers reflects same-pass creates (write-through), so two groups of
-    // one table in the same batch merge into one marker.
+    // one table in the same batch merge into one marker. Consolidate any
+    // duplicate overlapping markers (rare, from a missed query).
     const near = queryBlocks(bufferId, gStart - 1, gEnd + 1);
-    const existing = near.length ? near[0] : undefined;
-    // Consolidate accidental duplicates: if more than one marker overlaps this
-    // group (can happen if a prior pass missed the marker under a query lag and
-    // minted a second one), keep the first and drop the rest plus their border
-    // namespaces. Without this, every duplicate draws its own border frame.
-    for (let k = 1; k < near.length; k++) {
-      editor.clearVirtualTextNamespace(bufferId, `md-tb-${near[k].id}`);
-      editor.deleteMarker(bufferId, near[k].id);
-    }
-
-    // The editor owns the marker's byte coordinates and shifts them on every
-    // edit. The `lines_changed` event, however, carries row byte positions from
-    // the buffer state at the moment the batch was computed, which under rapid
-    // edits can LAG the live marker coords the plugin reads from the shared
-    // snapshot. Reconcile the two frames up front: translate every event row
-    // position into the marker's (authoritative) coordinate frame by the
-    // observed offset between the marker start and the group start. For an
-    // existing marker the group's first row IS the marker start, so this offset
-    // is exactly the lag; positions then line up with the editor's shifts and
-    // no stale anchor can survive.
-    const origStart = existing ? existing.startByte : gStart;
-    const origEnd = existing ? existing.endByte : gEnd;
-    const frameShift = existing ? origStart - gStart : 0;
-    const groupStart = gStart + frameShift; // == origStart when existing
-    const groupEnd = gEnd + frameShift;
-
-    const block: TableBlock = existing ?? {
+    const block: TableBlock = near.length ? near[0] : {
       id: `t${nextTableBlockId++}`,
       startByte: gStart,
       endByte: gEnd,
@@ -1614,19 +1611,19 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
       maxW: [],
       allocated: [],
     };
+    for (let k = 1; k < near.length; k++) {
+      editor.clearVirtualTextNamespace(bufferId, `md-tb-${near[k].id}`);
+      editor.deleteMarker(bufferId, near[k].id);
+    }
 
-    // Rebuild the rows this group covers from the (internally consistent) event
-    // data, translated into the marker frame. Drop any persisted rows inside the
-    // group's span first so stale anchors from an earlier, laggier frame can't
-    // accumulate; rows OUTSIDE the span (off-screen rows from prior scrolls)
-    // are kept.
-    block.rows = block.rows.filter((r) => r < groupStart || r >= groupEnd);
-    block.sepRows = block.sepRows.filter((r) => r < groupStart || r >= groupEnd);
+    const origStart = block.startByte;
+    const origEnd = block.endByte;
+    block.startByte = Math.min(block.startByte, gStart);
+    block.endByte = Math.max(block.endByte, gEnd);
     for (const line of group) {
-      const r = line.byte_start + frameShift;
-      if (!block.rows.includes(r)) block.rows.push(r);
+      if (!block.rows.includes(line.byte_start)) block.rows.push(line.byte_start);
       const isSep = isSepRowContent(line.content);
-      if (isSep && !block.sepRows.includes(r)) block.sepRows.push(r);
+      if (isSep && !block.sepRows.includes(line.byte_start)) block.sepRows.push(line.byte_start);
       const cells = tableCells(line.content);
       for (let c = 0; c < cells.length; c++) {
         // Separator-row cells (`---`) adapt to data rows: width 0. Use RAW
@@ -1638,25 +1635,15 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     }
     block.rows.sort((a, b) => a - b);
     block.sepRows.sort((a, b) => a - b);
-    block.startByte = block.rows[0];
-    // Keep the editor-owned end when off-screen rows below remain; otherwise the
-    // group's end is the table end. (For a full-table batch these are equal, so
-    // an existing marker's extent is unchanged and we never rewrite its coords.)
-    const hasBelow = block.rows.some((r) => r >= groupEnd);
-    block.endByte = hasBelow ? Math.max(origEnd, groupEnd) : groupEnd;
 
     const prevAlloc = block.allocated.slice();
     rebuildAllocatedWidths(block);
     if (block.allocated.some((w, i) => w > (prevAlloc[i] ?? 0))) grew = true;
 
-    // Upsert into the core marker store (write-through: visible to later queries
-    // in this same pass). Only SET coordinates (createMarker) for a brand-new
-    // marker or a genuine extent change; otherwise update the payload only
-    // (updateMarker) so the editor stays the sole writer of start/end and a
-    // concurrent edit-shift can't be clobbered by a stale coordinate. Row
-    // positions are stored relative to the (editor-owned) start, so they remain
-    // correct across the editor's shifts without the plugin re-sending coords.
-    if (!existing || block.startByte !== origStart || block.endByte !== origEnd) {
+    // Upsert. createMarker (sets coordinates) only when the marker is new or its
+    // extent changed this batch; otherwise updateMarker (payload only) so the
+    // editor stays the sole writer of the start/end it shifts on edits.
+    if (!near.length || block.startByte !== origStart || block.endByte !== origEnd) {
       saveBlock(bufferId, block);
     } else {
       savePayload(bufferId, block);

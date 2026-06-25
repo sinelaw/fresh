@@ -526,6 +526,15 @@ impl Editor {
             .highlighter
             .notify_edits(&edit_lengths);
 
+        // Bulk edits (multi-cursor typing, paste, code-action rewrites) apply
+        // here instead of through the Insert/Delete hook arms, so shift plugin
+        // interval markers for each edit too — mirroring the `marker_list`
+        // adjustments above — or plugin-tracked decorations keep stale coords.
+        #[cfg(feature = "plugins")]
+        for &(pos, del_len, ins_len) in &edit_lengths {
+            self.shift_plugin_markers_for_edit(active_buf, pos, del_len, ins_len);
+        }
+
         // Create BulkEdit event with both buffer snapshots
         let bulk_edit = Event::BulkEdit {
             old_snapshot: Some(old_snapshot),

@@ -1110,6 +1110,11 @@ impl Editor {
         }
         // Keep search-match highlights consistent with the edit (issue #2414).
         self.reevaluate_plugin_edit_search_overlays(buffer_id, position, text_len);
+        // Plugin edits bypass apply_event_to_active_buffer, so the plugin
+        // interval markers must be shifted here too — otherwise plugin-tracked
+        // decorations (e.g. markdown table borders) keep stale coordinates.
+        #[cfg(feature = "plugins")]
+        self.shift_plugin_markers_for_edit(buffer_id, position, 0, text_len);
     }
 
     /// Handle DeleteRange command
@@ -1161,6 +1166,10 @@ impl Editor {
         }
         // Keep search-match highlights consistent with the edit (issue #2414).
         self.reevaluate_plugin_edit_search_overlays(buffer_id, delete_start, 0);
+        // Plugin edits bypass apply_event_to_active_buffer; shift plugin interval
+        // markers here too so plugin-tracked decorations ride the deletion.
+        #[cfg(feature = "plugins")]
+        self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
     }
 
     /// Re-evaluate the active window's search-match overlays around a region a
@@ -1207,6 +1216,7 @@ impl Editor {
     pub(super) fn handle_insert_at_cursor(&mut self, text: String) {
         // Read cursor position first to avoid borrow conflicts
         let cursor_pos = self.active_cursors().primary().position;
+        let text_len = text.len();
         let event = Event::Insert {
             position: cursor_pos,
             text,
@@ -1217,6 +1227,12 @@ impl Editor {
         self.active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
+        // This path bypasses apply_event_to_active_buffer (it's how the markdown
+        // plugins insert a newline on Enter, etc.), so shift plugin interval
+        // markers here or plugin-tracked decorations (markdown table borders)
+        // keep stale coordinates and corrupt.
+        #[cfg(feature = "plugins")]
+        self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
     }
 
     /// Handle DeleteSelection command
