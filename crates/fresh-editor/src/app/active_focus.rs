@@ -82,22 +82,19 @@ impl Editor {
         }
     }
 
-    /// Bring `terminal_mode` / `key_context` fully in line with the active
-    /// buffer after a focus change that bypassed [`Editor::set_active_buffer`]
-    /// (split focus/navigation, split-collapse on close, opening a terminal
-    /// split). This is the single restore authority: a terminal resumes the
-    /// live/scrollback mode it had when it lost focus, a non-terminal clears
-    /// terminal mode. See issue #2485.
+    /// Restore `terminal_mode`/`key_context` after a focus change that bypassed
+    /// [`Editor::set_active_buffer`] (split focus/nav, split-collapse on close,
+    /// opening a terminal split). The single restore authority: a terminal
+    /// resumes the mode it had when it lost focus. Issue #2485.
     pub(crate) fn sync_terminal_mode_to_active_buffer(&mut self) {
         self.active_window_mut().sync_terminal_mode_flags();
         self.complete_terminal_mode_side_effects();
     }
 
-    /// Editor-level completion of a transition *into* live terminal mode:
-    /// restored / read-only terminals load with editing disabled, so finish
-    /// the switch (re-enable editing, truncate the stale screen tail, resize
-    /// the PTY) which only [`Editor::enter_terminal_mode`] can do. A no-op
-    /// for live terminals and non-terminals.
+    /// Finish entering live mode for a terminal that loaded with editing
+    /// disabled (restored / read-only): only [`Editor::enter_terminal_mode`]
+    /// can re-enable editing, truncate the stale screen tail, and resize the
+    /// PTY. No-op otherwise.
     pub(super) fn complete_terminal_mode_side_effects(&mut self) {
         if self.active_window().terminal_mode
             && self
@@ -156,9 +153,6 @@ impl Window {
             }
         }
 
-        // Bring terminal mode in line with the new active buffer (its
-        // remembered live/scrollback mode). The single authority for the
-        // flag half — see `sync_terminal_mode_flags`.
         self.sync_terminal_mode_flags();
 
         // Window resize events only resize terminals that are currently the
@@ -185,24 +179,15 @@ impl Window {
         true
     }
 
-    /// Flag-only half of terminal-mode sync: set `terminal_mode` /
-    /// `key_context` from the active buffer and the mode it remembers.
-    ///
-    /// Each terminal buffer remembers its own interaction mode
-    /// ([`TerminalInteractionMode`] on its [`TerminalBuffer`] record), so a
-    /// re-focused terminal keeps whatever mode it had when it lost focus.
-    /// This is the one place the flag is derived from focus;
-    /// every focus path routes through it (directly or via
-    /// [`Editor::sync_terminal_mode_to_active_buffer`]), so none can leave a
-    /// re-focused terminal in the wrong mode (issue #2485).
-    ///
-    /// Only owns the Terminal↔Normal edge: when another surface holds input
-    /// focus (file explorer, a prompt, a popup) `key_context` is something
-    /// other than `Normal`/`Terminal`, and those surfaces manage
-    /// `terminal_mode` themselves, so we leave it untouched. The Editor-level
-    /// side effects of entering live mode (re-enable editing, truncate the
-    /// stale screen tail, resize the PTY) are completed by
+    /// Derive `terminal_mode`/`key_context` from the active buffer's remembered
+    /// mode. The one place the flags follow focus — every focus path routes
+    /// through it, so none can leave a re-focused terminal in the wrong mode
+    /// (issue #2485). The Editor-level finish for entering live mode is
     /// [`Editor::complete_terminal_mode_side_effects`].
+    ///
+    /// Owns only the Terminal↔Normal edge: while another surface holds focus
+    /// (file explorer, prompt, popup) it manages `terminal_mode` itself, so the
+    /// guard below leaves the flags untouched.
     pub(super) fn sync_terminal_mode_flags(&mut self) {
         use crate::input::keybindings::KeyContext;
         if !matches!(self.key_context, KeyContext::Normal | KeyContext::Terminal) {
@@ -214,8 +199,8 @@ impl Window {
                 self.terminal_mode = true;
                 self.key_context = KeyContext::Terminal;
             } else {
-                // Read-only scrollback terminal: refresh the file-backed view
-                // (backing file + cursor) and stop routing keys to the PTY.
+                // Refresh the file-backed scrollback view before keys stop
+                // routing to the PTY.
                 self.sync_terminal_to_buffer(active);
                 self.terminal_mode = false;
                 self.key_context = KeyContext::Normal;

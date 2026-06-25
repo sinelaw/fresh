@@ -78,31 +78,23 @@ pub struct TerminalLinkHover {
     pub cols: std::ops::Range<usize>,
 }
 
-/// How a terminal buffer routes input — the buffer's remembered interaction
-/// mode, restored whenever it regains focus (see
-/// `Window::sync_terminal_mode_flags`).
+/// A terminal buffer's remembered interaction mode, restored whenever it
+/// regains focus (see `Window::sync_terminal_mode_flags`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalInteractionMode {
-    /// Keystrokes are forwarded to the PTY and the buffer mirrors the live
-    /// terminal screen. This is the mode a terminal opens in.
+    /// Keystrokes forwarded to the PTY; the buffer mirrors the live screen.
     Live,
-    /// Read-only scrollback: keys do ordinary editor navigation and the
-    /// buffer shows captured history. Entered via Ctrl+Space, scroll-up, or
-    /// when the process exits.
+    /// Read-only scrollback. Entered via Ctrl+Space, scroll-up, or process exit.
     Scrollback,
 }
 
 /// Per-terminal-buffer editor state, keyed by `BufferId` in
-/// [`Window::terminal_buffers`]. Holds the editor-facing facts about a
-/// terminal buffer: which service-layer terminal feeds it, and the
-/// interaction mode it remembers across focus changes. (PTY I/O state lives
-/// in the `TerminalManager`; the byte-stream backing files stay keyed by
-/// `TerminalId` in `terminal_backing_files`.)
+/// [`Window::terminal_buffers`]. PTY I/O lives in the `TerminalManager`; the
+/// byte-stream backing files stay keyed by `TerminalId`.
 #[derive(Debug, Clone)]
 pub struct TerminalBuffer {
     /// The PTY session feeding this buffer, scoped to this window.
     pub terminal_id: crate::services::terminal::TerminalId,
-    /// Remembered live/scrollback interaction mode.
     pub mode: TerminalInteractionMode,
 }
 
@@ -115,16 +107,12 @@ impl TerminalBuffer {
         }
     }
 
-    /// Whether this terminal remembers the **live** mode (keystrokes routed to
-    /// the PTY). False for scrollback.
     pub fn is_live(&self) -> bool {
         matches!(self.mode, TerminalInteractionMode::Live)
     }
 
-    /// Record this terminal's interaction mode. The transitions that call it
-    /// are the real live↔scrollback edges (open/resume, Ctrl+Space, scroll-up,
-    /// exit); route them through [`Window::set_terminal_interaction_mode`] so
-    /// the write stays single-sited.
+    /// Route writes through [`Window::set_terminal_interaction_mode`] to keep
+    /// the mode single-sited.
     pub fn set_mode(&mut self, mode: TerminalInteractionMode) {
         self.mode = mode;
     }
@@ -2270,16 +2258,13 @@ impl Window {
 
     // ---- Terminal-buffer query helpers ----
 
-    /// The [`TerminalBuffer`] record for a buffer, or `None` if `buffer_id`
-    /// isn't a terminal buffer in this window. The single lookup the per-record
-    /// helpers below build on; reach for it directly when you need more than
-    /// one field off the record.
+    /// The [`TerminalBuffer`] record for a buffer, or `None` if it isn't a
+    /// terminal buffer in this window. The single lookup the helpers below
+    /// build on.
     pub fn terminal_buffer(&self, buffer_id: BufferId) -> Option<&TerminalBuffer> {
         self.terminal_buffers.get(&buffer_id)
     }
 
-    /// Mutable [`TerminalBuffer`] record for a buffer, or `None` if it isn't a
-    /// terminal buffer in this window.
     pub fn terminal_buffer_mut(&mut self, buffer_id: BufferId) -> Option<&mut TerminalBuffer> {
         self.terminal_buffers.get_mut(&buffer_id)
     }
@@ -2298,10 +2283,9 @@ impl Window {
         self.terminal_buffer(buffer_id).map(|tb| tb.terminal_id)
     }
 
-    /// Record a terminal buffer's interaction mode. No-op if `buffer_id`
-    /// isn't a terminal buffer in this window. This is the only writer of
-    /// the remembered mode; the transitions that call it are the real
-    /// live↔scrollback edges (open/resume, Ctrl+Space, scroll-up, exit).
+    /// The only writer of a terminal's remembered mode — the real
+    /// live↔scrollback edges (open/resume, Ctrl+Space, scroll-up, exit) all
+    /// route here. No-op if `buffer_id` isn't a terminal buffer in this window.
     pub fn set_terminal_interaction_mode(
         &mut self,
         buffer_id: BufferId,
