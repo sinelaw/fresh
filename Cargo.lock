@@ -1420,6 +1420,7 @@ dependencies = [
  "include_dir",
  "insta",
  "interprocess",
+ "jsonc-parser",
  "libc",
  "libloading 0.9.0",
  "lsp-types",

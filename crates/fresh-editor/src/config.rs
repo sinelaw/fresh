@@ -3804,9 +3804,11 @@ impl Config {
         let contents = std::fs::read_to_string(path.as_ref())
             .map_err(|e| ConfigError::IoError(e.to_string()))?;
 
-        // Deserialize as PartialConfig first, then resolve with defaults
+        // Parse as JSONC (comments/trailing commas tolerated), then deserialize
+        // as PartialConfig and resolve with defaults.
+        let value = parse_config_jsonc(&contents)?;
         let partial: crate::partial_config::PartialConfig =
-            serde_json::from_str(&contents).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+            serde_json::from_value(value).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
         Ok(partial.resolve())
     }
@@ -7443,6 +7445,27 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Parse the contents of a config file as JSONC (JSON with comments and
+/// trailing commas), returning a `serde_json::Value`.
+///
+/// Fresh's config files (`config.json`, project `.fresh/config.json`, the
+/// session file, and `--config <file>`) accept the JSONC superset so users
+/// can annotate settings or comment them out, the same way `parse_jsonc`
+/// already works for plugins. An empty or whitespace/comment-only document
+/// parses as an empty object so a file containing only comments still
+/// resolves to "no overrides" rather than failing.
+pub(crate) fn parse_config_jsonc(contents: &str) -> Result<serde_json::Value, ConfigError> {
+    let value: serde_json::Value =
+        jsonc_parser::parse_to_serde_value(contents, &Default::default())
+            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+    // Empty / comment-only input deserializes to JSON null; treat it as an
+    // empty object so callers get a mergeable "no overrides" value.
+    Ok(match value {
+        serde_json::Value::Null => serde_json::Value::Object(Default::default()),
+        other => other,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7451,6 +7474,47 @@ mod tests {
     fn test_file_explorer_width_default_is_percent_30() {
         let cfg = FileExplorerConfig::default();
         assert_eq!(cfg.width, ExplorerWidth::Percent(30));
+    }
+
+    #[test]
+    fn parse_config_jsonc_tolerates_comments_and_trailing_commas() {
+        let value = parse_config_jsonc(
+            r#"{
+                // line comment
+                "editor": {
+                    "tab_size": 7, /* block comment */
+                    "line_numbers": false,
+                }
+            }"#,
+        )
+        .expect("JSONC with comments should parse");
+        assert_eq!(
+            value.pointer("/editor/tab_size"),
+            Some(&serde_json::json!(7))
+        );
+        assert_eq!(
+            value.pointer("/editor/line_numbers"),
+            Some(&serde_json::json!(false))
+        );
+    }
+
+    #[test]
+    fn parse_config_jsonc_empty_and_comment_only_is_empty_object() {
+        assert_eq!(
+            parse_config_jsonc("").unwrap(),
+            serde_json::Value::Object(Default::default())
+        );
+        assert_eq!(
+            parse_config_jsonc("// just a comment\n").unwrap(),
+            serde_json::Value::Object(Default::default())
+        );
+    }
+
+    #[test]
+    fn parse_config_jsonc_rejects_truly_invalid_input() {
+        // Comment tolerance must not turn into "accept anything" — a genuinely
+        // malformed document still errors so real mistakes surface.
+        assert!(parse_config_jsonc(r#"{ "editor": { "#).is_err());
     }
 
     #[test]

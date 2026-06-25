@@ -195,7 +195,7 @@ fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
     }
     let content = std::fs::read_to_string(path)
         .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-    Ok(serde_json::from_str(&content).unwrap_or(Value::Object(Default::default())))
+    Ok(crate::config::parse_config_jsonc(&content).unwrap_or(Value::Object(Default::default())))
 }
 
 // ============================================================================
@@ -430,8 +430,8 @@ impl ConfigResolver {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
 
-        // Parse as raw JSON first
-        let value: Value = serde_json::from_str(&content)
+        // Parse as raw JSONC first (comments/trailing commas tolerated)
+        let value: Value = crate::config::parse_config_jsonc(&content)
             .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
 
         // Apply migrations
@@ -470,7 +470,10 @@ impl ConfigResolver {
         let existing: PartialConfig = if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-            serde_json::from_str(&content).unwrap_or_default()
+            crate::config::parse_config_jsonc(&content)
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default()
         } else {
             PartialConfig::default()
         };
@@ -788,7 +791,7 @@ impl Config {
     pub fn read_user_config_raw(working_dir: &Path) -> serde_json::Value {
         for path in Self::config_search_paths(working_dir) {
             if let Ok(contents) = std::fs::read_to_string(&path) {
-                match serde_json::from_str(&contents) {
+                match crate::config::parse_config_jsonc(&contents) {
                     Ok(value) => return value,
                     Err(e) => {
                         tracing::warn!("Failed to parse config from {}: {}", path.display(), e);
@@ -1078,6 +1081,115 @@ mod tests {
         assert_eq!(config.editor.tab_size, 2);
         assert!(config.editor.line_numbers); // Still default
         drop(temp);
+    }
+
+    #[test]
+    fn resolver_loads_user_layer_with_comments() {
+        // A user config annotated with JSONC comments and a trailing comma
+        // must be honored, not silently dropped to defaults.
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                // I like a 7-space tab in this project
+                "editor": {
+                    "tab_size": 7, /* trailing comma below is allowed too */
+                    "line_numbers": false,
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(
+            config.editor.tab_size, 7,
+            "commented user config should still apply tab_size"
+        );
+        assert!(
+            !config.editor.line_numbers,
+            "commented user config should still apply line_numbers"
+        );
+        drop(temp);
+    }
+
+    #[test]
+    fn resolver_loads_project_layer_with_comments() {
+        // The project `.fresh/config.json` layer must also tolerate comments.
+        let (temp, resolver) = create_test_resolver();
+
+        let project_config_path = resolver.project_config_write_path();
+        std::fs::create_dir_all(project_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &project_config_path,
+            "{\n  // project override\n  \"editor\": { \"tab_size\": 3 }\n}\n",
+        )
+        .unwrap();
+
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 3);
+        drop(temp);
+    }
+
+    #[test]
+    fn save_preserves_external_commented_values() {
+        // Saving a delta to a layer whose file already contains comments must
+        // not wipe the user's other (commented) settings. The comment is not
+        // required to survive, but the sibling values must.
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            r#"{
+                // hand-edited by the user
+                "editor": {
+                    "tab_size": 7
+                }
+            }"#,
+        )
+        .unwrap();
+
+        // Change a *different* field and save back to the user layer.
+        let mut config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 7);
+        config.editor.line_numbers = false;
+        resolver.save_to_layer(&config, ConfigLayer::User).unwrap();
+
+        // The externally-set tab_size must survive the round-trip.
+        let reloaded = resolver.resolve().unwrap();
+        assert_eq!(
+            reloaded.editor.tab_size, 7,
+            "saving an unrelated field must not drop the commented tab_size"
+        );
+        assert!(!reloaded.editor.line_numbers);
+        drop(temp);
+    }
+
+    #[test]
+    fn load_from_file_accepts_comments() {
+        // The explicit `--config <file>` path (Config::load_from_file) must
+        // accept JSONC instead of refusing to start.
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config-with-comments.json");
+        std::fs::write(
+            &path,
+            r#"{
+                // 2-space tabs, no gutter
+                "editor": {
+                    "tab_size": 2,
+                    "line_numbers": false /* turn off the gutter */
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = Config::load_from_file(&path).expect("commented --config file should load");
+        assert_eq!(config.editor.tab_size, 2);
+        assert!(!config.editor.line_numbers);
     }
 
     #[test]

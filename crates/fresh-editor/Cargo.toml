@@ -148,6 +148,8 @@ oxc_span = { workspace = true, optional = true }
 # Always required (for schema generation and runtime)
 serde.workspace = true
 serde_json.workspace = true
+# Comment- and trailing-comma-tolerant JSON parsing for config files (JSONC).
+jsonc-parser.workspace = true
 schemars.workspace = true
 rust-i18n.workspace = true
 once_cell.workspace = true
