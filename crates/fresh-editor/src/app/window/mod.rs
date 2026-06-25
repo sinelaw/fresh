@@ -114,6 +114,20 @@ impl TerminalBuffer {
             mode: TerminalInteractionMode::Live,
         }
     }
+
+    /// Whether this terminal remembers the **live** mode (keystrokes routed to
+    /// the PTY). False for scrollback.
+    pub fn is_live(&self) -> bool {
+        matches!(self.mode, TerminalInteractionMode::Live)
+    }
+
+    /// Record this terminal's interaction mode. The transitions that call it
+    /// are the real live↔scrollback edges (open/resume, Ctrl+Space, scroll-up,
+    /// exit); route them through [`Window::set_terminal_interaction_mode`] so
+    /// the write stays single-sited.
+    pub fn set_mode(&mut self, mode: TerminalInteractionMode) {
+        self.mode = mode;
+    }
 }
 
 pub struct Window {
@@ -2256,9 +2270,23 @@ impl Window {
 
     // ---- Terminal-buffer query helpers ----
 
+    /// The [`TerminalBuffer`] record for a buffer, or `None` if `buffer_id`
+    /// isn't a terminal buffer in this window. The single lookup the per-record
+    /// helpers below build on; reach for it directly when you need more than
+    /// one field off the record.
+    pub fn terminal_buffer(&self, buffer_id: BufferId) -> Option<&TerminalBuffer> {
+        self.terminal_buffers.get(&buffer_id)
+    }
+
+    /// Mutable [`TerminalBuffer`] record for a buffer, or `None` if it isn't a
+    /// terminal buffer in this window.
+    pub fn terminal_buffer_mut(&mut self, buffer_id: BufferId) -> Option<&mut TerminalBuffer> {
+        self.terminal_buffers.get_mut(&buffer_id)
+    }
+
     /// Check if a buffer is a terminal buffer (in this window).
     pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
-        self.terminal_buffers.contains_key(&buffer_id)
+        self.terminal_buffer(buffer_id).is_some()
     }
 
     /// Get the terminal ID for a buffer (if it's a terminal buffer in
@@ -2267,28 +2295,7 @@ impl Window {
         &self,
         buffer_id: BufferId,
     ) -> Option<crate::services::terminal::TerminalId> {
-        self.terminal_buffers
-            .get(&buffer_id)
-            .map(|tb| tb.terminal_id)
-    }
-
-    /// The remembered interaction mode of a terminal buffer, or `None` if
-    /// `buffer_id` is not a terminal buffer in this window.
-    pub fn terminal_interaction_mode(
-        &self,
-        buffer_id: BufferId,
-    ) -> Option<TerminalInteractionMode> {
-        self.terminal_buffers.get(&buffer_id).map(|tb| tb.mode)
-    }
-
-    /// Whether a terminal buffer currently remembers the **live** mode
-    /// (keystrokes routed to the PTY). False for scrollback terminals and
-    /// for non-terminal buffers.
-    pub fn is_live_terminal(&self, buffer_id: BufferId) -> bool {
-        matches!(
-            self.terminal_interaction_mode(buffer_id),
-            Some(TerminalInteractionMode::Live)
-        )
+        self.terminal_buffer(buffer_id).map(|tb| tb.terminal_id)
     }
 
     /// Record a terminal buffer's interaction mode. No-op if `buffer_id`
@@ -2300,8 +2307,8 @@ impl Window {
         buffer_id: BufferId,
         mode: TerminalInteractionMode,
     ) {
-        if let Some(tb) = self.terminal_buffers.get_mut(&buffer_id) {
-            tb.mode = mode;
+        if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
+            tb.set_mode(mode);
         }
     }
 

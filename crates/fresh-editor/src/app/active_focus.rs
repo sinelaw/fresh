@@ -209,8 +209,8 @@ impl Window {
             return;
         }
         let active = self.active_buffer();
-        if self.is_terminal_buffer(active) {
-            if self.is_live_terminal(active) {
+        if let Some(terminal) = self.terminal_buffer(active) {
+            if terminal.is_live() {
                 self.terminal_mode = true;
                 self.key_context = KeyContext::Terminal;
             } else {
