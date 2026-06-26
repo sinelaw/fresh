@@ -1198,6 +1198,131 @@ impl Editor {
         let theme_clone = self.theme.read().unwrap().clone();
         let hover_target = self.active_window_mut().mouse_state.hover_target.clone();
 
+        // Cursor-anchored buffer popups (completion, hover, signature help):
+        // recompute their areas for hit-testing and paint them.
+        self.render_buffer_popups(frame, chrome_area, &theme_clone, &hover_target);
+
+        // Render editor-level popups (e.g. plugin action popups) on top of any
+        // buffer content so they stay visible across buffer switches and over
+        // virtual buffers (Dashboard, diagnostics) that own the whole split.
+        // These don't need cursor-relative positioning — they all use absolute
+        // positions like BottomRight or Centered.
+        //
+        // Queue semantics: concurrent action popups stack in `global_popups`,
+        // but only the top one renders & receives input. Deeper popups
+        // surface as the top is resolved — the alternative (drawing all at
+        // the same BottomRight slot) makes them illegible.
+        self.active_chrome_mut().global_popup_areas.clear();
+        // The workspace-trust prompt is a blocking modal: it renders later in
+        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
+        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
+        // Everything else on the global stack renders here, above buffer content.
+        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        });
+        if !top_is_trust_modal {
+            // Global popups render within the chrome area (right of a
+            // left dock) so corner/centred popups don't overrun it.
+            let draw_global_popup = !self.suppress_chrome_cells;
+            self.render_top_global_popup(
+                frame,
+                chrome_area,
+                &theme_clone,
+                hover_target.as_ref(),
+                draw_global_popup,
+            );
+        }
+
+        // Render menu bar last so dropdown appears on top of all other content
+        // Update menu context with current editor state
+        self.update_menu_context();
+
+        // Settings / calibration-wizard / keybinding-editor / event-debug
+        // modals, dimming the chrome behind each. Rendered before the menu
+        // bar so open menus overlay them.
+        self.render_modal_overlays(frame, chrome_area);
+
+        // The workspace-trust prompt is a blocking, top-most security modal.
+        // It dims the *entire* frame (the dock included) and centres in the
+        // full window, so it is rendered at the very end of this method —
+        // after the dock and floating panels — rather than here, where the
+        // dock's later pass would overpaint its left edge. See the bottom of
+        // `render`.
+
+        // Menu bar, drawn last so its dropdowns sit above all other content.
+        self.render_menu_bar(frame, menu_bar_area);
+
+        // Tab / file-explorer / new-tab context menus (TUI cell drawing only).
+        self.render_context_menus(frame);
+
+        // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
+        // scrollbars) is now recorded during each region's own paint.
+
+        // Render tab drag drop zone overlay if dragging a tab
+        let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
+        if let Some(ref drag_state) = drag_state_clone {
+            if drag_state.is_dragging() {
+                self.render_tab_drop_zone(frame, drag_state);
+            }
+        }
+
+        // Software mouse cursor (GPM) and keyboard-capture dimming — both
+        // read already-painted cells, so they run after the main draw.
+        self.render_software_cursor_and_capture(frame, size);
+
+        // Commit the active-split hardware cursor (deferred since
+        // `render_content`) unless a popup has been drawn over that cell.
+        // Ratatui draws the hardware caret on top of every cell, so a
+        // popup cannot hide the cursor by painting cells — the only way
+        // to hide it is to leave `Frame::cursor_position` as `None`, which
+        // triggers `Terminal::hide_cursor` at the end of the draw.
+        //
+        // When a prompt is active the prompt renderer already placed the
+        // caret on the prompt line via `frame.set_cursor_position`; don't
+        // override it with the (now-irrelevant) buffer cursor.
+        if let Some((cx, cy)) = pending_hardware_cursor {
+            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
+                frame.set_cursor_position((cx, cy));
+            }
+        }
+
+        // Convert all colors for terminal capability (256/16 color fallback)
+        crate::view::color_support::convert_buffer_colors(
+            frame.buffer_mut(),
+            self.color_capability,
+        );
+
+        // Frame-buffer animations run last so they mutate the final paint.
+        self.active_window_mut()
+            .animations
+            .apply_all(frame.buffer_mut());
+
+        // Dock, floating panel, theme-info popup, and the workspace-trust
+        // modal — the topmost layers, drawn above prompts/popups/animations.
+        self.render_panels_and_modals(
+            frame,
+            size,
+            chrome_area,
+            dock_area,
+            top_is_trust_modal,
+            &theme_clone,
+        );
+    }
+
+    /// Recompute the on-screen areas of the active buffer's cursor-anchored
+    /// popups (completion / hover / signature help), cache them for mouse
+    /// hit-testing, and paint them. `theme_clone` and `hover_target` are
+    /// passed in because `render` reuses them for the global-popup pass.
+    fn render_buffer_popups(
+        &mut self,
+        frame: &mut Frame,
+        chrome_area: ratatui::layout::Rect,
+        theme_clone: &crate::view::theme::Theme,
+        hover_target: &Option<HoverTarget>,
+    ) {
         // Clear popup areas and recalculate
         self.active_chrome_mut().popup_areas.clear();
 
@@ -1369,124 +1494,10 @@ impl Editor {
         if draw_popups && state.popups.is_visible() {
             for (popup_idx, popup) in state.popups.all().iter().enumerate() {
                 if let Some((_, popup_area, _, _, _, _, _)) = popup_info.get(popup_idx) {
-                    popup.render_with_hover(
-                        frame,
-                        *popup_area,
-                        &theme_clone,
-                        hover_target.as_ref(),
-                    );
+                    popup.render_with_hover(frame, *popup_area, theme_clone, hover_target.as_ref());
                 }
             }
         }
-
-        // Render editor-level popups (e.g. plugin action popups) on top of any
-        // buffer content so they stay visible across buffer switches and over
-        // virtual buffers (Dashboard, diagnostics) that own the whole split.
-        // These don't need cursor-relative positioning — they all use absolute
-        // positions like BottomRight or Centered.
-        //
-        // Queue semantics: concurrent action popups stack in `global_popups`,
-        // but only the top one renders & receives input. Deeper popups
-        // surface as the top is resolved — the alternative (drawing all at
-        // the same BottomRight slot) makes them illegible.
-        self.active_chrome_mut().global_popup_areas.clear();
-        // The workspace-trust prompt is a blocking modal: it renders later in
-        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
-        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
-        // Everything else on the global stack renders here, above buffer content.
-        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        });
-        if !top_is_trust_modal {
-            // Global popups render within the chrome area (right of a
-            // left dock) so corner/centred popups don't overrun it.
-            let draw_global_popup = !self.suppress_chrome_cells;
-            self.render_top_global_popup(
-                frame,
-                chrome_area,
-                &theme_clone,
-                hover_target.as_ref(),
-                draw_global_popup,
-            );
-        }
-
-        // Render menu bar last so dropdown appears on top of all other content
-        // Update menu context with current editor state
-        self.update_menu_context();
-
-        // Settings / calibration-wizard / keybinding-editor / event-debug
-        // modals, dimming the chrome behind each. Rendered before the menu
-        // bar so open menus overlay them.
-        self.render_modal_overlays(frame, chrome_area);
-
-        // The workspace-trust prompt is a blocking, top-most security modal.
-        // It dims the *entire* frame (the dock included) and centres in the
-        // full window, so it is rendered at the very end of this method —
-        // after the dock and floating panels — rather than here, where the
-        // dock's later pass would overpaint its left edge. See the bottom of
-        // `render`.
-
-        // Menu bar, drawn last so its dropdowns sit above all other content.
-        self.render_menu_bar(frame, menu_bar_area);
-
-        // Tab / file-explorer / new-tab context menus (TUI cell drawing only).
-        self.render_context_menus(frame);
-
-        // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
-        // scrollbars) is now recorded during each region's own paint.
-
-        // Render tab drag drop zone overlay if dragging a tab
-        let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
-        if let Some(ref drag_state) = drag_state_clone {
-            if drag_state.is_dragging() {
-                self.render_tab_drop_zone(frame, drag_state);
-            }
-        }
-
-        // Software mouse cursor (GPM) and keyboard-capture dimming — both
-        // read already-painted cells, so they run after the main draw.
-        self.render_software_cursor_and_capture(frame, size);
-
-        // Commit the active-split hardware cursor (deferred since
-        // `render_content`) unless a popup has been drawn over that cell.
-        // Ratatui draws the hardware caret on top of every cell, so a
-        // popup cannot hide the cursor by painting cells — the only way
-        // to hide it is to leave `Frame::cursor_position` as `None`, which
-        // triggers `Terminal::hide_cursor` at the end of the draw.
-        //
-        // When a prompt is active the prompt renderer already placed the
-        // caret on the prompt line via `frame.set_cursor_position`; don't
-        // override it with the (now-irrelevant) buffer cursor.
-        if let Some((cx, cy)) = pending_hardware_cursor {
-            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
-                frame.set_cursor_position((cx, cy));
-            }
-        }
-
-        // Convert all colors for terminal capability (256/16 color fallback)
-        crate::view::color_support::convert_buffer_colors(
-            frame.buffer_mut(),
-            self.color_capability,
-        );
-
-        // Frame-buffer animations run last so they mutate the final paint.
-        self.active_window_mut()
-            .animations
-            .apply_all(frame.buffer_mut());
-
-        // Dock, floating panel, theme-info popup, and the workspace-trust
-        // modal — the topmost layers, drawn above prompts/popups/animations.
-        self.render_panels_and_modals(
-            frame,
-            size,
-            chrome_area,
-            dock_area,
-            top_is_trust_modal,
-            &theme_clone,
-        );
     }
 
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on
