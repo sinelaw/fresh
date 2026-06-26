@@ -648,6 +648,14 @@ impl Editor {
         // Web renders the tab bar natively from `tab_bar_view`; skip painting it
         // to cells (its TabLayout is still computed). Panes always draw.
         let split_draw_tab_bar = !self.suppress_chrome_cells;
+        // Bundle the immutable editor render settings. Built before the
+        // `&mut self.windows` borrow below; it only borrows `self.config`,
+        // so the two coexist.
+        let cfg = crate::view::ui::EditorRenderConfig::new(
+            &self.config.editor,
+            self.background_fade,
+            self.software_cursor_only,
+        );
         // Take a single mutable borrow on the active window's splits and
         // split it into (&SplitManager, &mut HashMap<...>) — Rust can
         // destructure the tuple, but we can't make two separate
@@ -695,12 +703,8 @@ impl Editor {
                     __composite_view_states_mut,
                     &*self.theme.read().unwrap(),
                     self.ansi_background.as_ref(),
-                    self.background_fade,
+                    &cfg,
                     lsp_waiting,
-                    self.config.editor.large_file_threshold_bytes,
-                    self.config.editor.line_wrap,
-                    self.config.editor.estimated_line_length,
-                    self.config.editor.highlight_context_bytes,
                     Some(__vs_map),
                     __grouped_ref,
                     hide_cursor,
@@ -708,20 +712,9 @@ impl Editor {
                     hovered_close_split,
                     hovered_maximize_split,
                     is_maximized,
-                    self.config.editor.relative_line_numbers,
                     __tab_bar_visible,
-                    self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
-                    self.software_cursor_only,
-                    self.config.editor.show_vertical_scrollbar,
-                    self.config.editor.show_horizontal_scrollbar,
                     __terminal_mode,
-                    self.config.editor.diagnostics_inline_text,
-                    self.config.editor.show_tilde,
-                    self.config.editor.highlight_current_column,
-                    self.config.editor.indentation_guide,
-                    &self.config.editor.indentation_guide_glyph,
-                    self.config.editor.hide_current_line_on_selection,
                     __cell_theme_map_mut,
                     size.width,
                     &mut pending_hardware_cursor,
@@ -2282,6 +2275,21 @@ impl Editor {
         // than panic; the next plugin refresh re-emits the spec
         // without the dead embed.
         let preview_draw_tab_bar = !self.suppress_chrome_cells;
+        // Same immutable render settings as the live editor, but with
+        // scrollbars and tildes suppressed — they're noisy in a small
+        // preview rect where the active session's chrome is authoritative.
+        // Built before the `&mut self.windows` borrow (it only borrows
+        // `self.config`).
+        let preview_cfg = crate::view::ui::EditorRenderConfig {
+            show_vertical_scrollbar: false,
+            show_horizontal_scrollbar: false,
+            show_tilde: false,
+            ..crate::view::ui::EditorRenderConfig::new(
+                &self.config.editor,
+                self.background_fade,
+                self.software_cursor_only,
+            )
+        };
         let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
             return;
         };
@@ -2330,12 +2338,8 @@ impl Editor {
                     __preview_composite_view_states,
                     theme,
                     self.ansi_background.as_ref(),
-                    self.background_fade,
+                    &preview_cfg,
                     lsp_waiting,
-                    self.config.editor.large_file_threshold_bytes,
-                    self.config.editor.line_wrap,
-                    self.config.editor.estimated_line_length,
-                    self.config.editor.highlight_context_bytes,
                     Some(view_states),
                     __preview_grouped_subtrees,
                     true, // hide_cursor — the active session owns the hardware caret
@@ -2343,22 +2347,9 @@ impl Editor {
                     None,
                     None,
                     false, // not maximized
-                    self.config.editor.relative_line_numbers,
                     preview_tab_bar_visible,
-                    self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
-                    self.software_cursor_only,
-                    // Scrollbars are noisy in a small preview rect; the
-                    // active session's chrome is the source of truth.
-                    false,
-                    false,
                     false, // terminal_mode — scrollbars are off in the preview anyway
-                    self.config.editor.diagnostics_inline_text,
-                    false, // hide tilde markers in the preview
-                    self.config.editor.highlight_current_column,
-                    self.config.editor.indentation_guide,
-                    &self.config.editor.indentation_guide_glyph,
-                    self.config.editor.hide_current_line_on_selection,
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,

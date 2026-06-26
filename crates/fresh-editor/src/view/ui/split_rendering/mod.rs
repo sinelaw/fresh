@@ -44,6 +44,64 @@ use std::collections::HashMap;
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
 const MAX_SAFE_LINE_WIDTH: usize = 10_000;
 
+/// Immutable editor render settings for one frame.
+///
+/// Bundles the static `config.editor.*` flags (plus a couple of stable
+/// `Editor` fields) that `render_content` and its callees only ever read.
+/// Deliberately holds *only* settings — no buffers, view-states, theme,
+/// geometry, output sinks, or per-frame computed flags (hover, cursor,
+/// mode) — so it can be built once and shared without entangling borrows.
+#[derive(Debug, Clone, Copy)]
+pub struct EditorRenderConfig<'a> {
+    pub large_file_threshold_bytes: u64,
+    pub line_wrap: bool,
+    pub estimated_line_length: usize,
+    pub highlight_context_bytes: usize,
+    pub relative_line_numbers: bool,
+    pub use_terminal_bg: bool,
+    pub show_vertical_scrollbar: bool,
+    pub show_horizontal_scrollbar: bool,
+    pub diagnostics_inline_text: bool,
+    pub show_tilde: bool,
+    pub highlight_current_column: bool,
+    pub indentation_guide: IndentationGuideMode,
+    pub indentation_guide_glyph: &'a str,
+    pub hide_current_line_on_selection: bool,
+    pub background_fade: f32,
+    pub software_cursor_only: bool,
+}
+
+impl<'a> EditorRenderConfig<'a> {
+    /// Build from the static editor config plus the two stable `Editor`
+    /// flags that don't live under `config.editor`. Borrows only
+    /// `config.editor`, so it composes with a disjoint `&mut windows`
+    /// borrow at the call site.
+    pub fn new(
+        editor: &'a crate::config::EditorConfig,
+        background_fade: f32,
+        software_cursor_only: bool,
+    ) -> Self {
+        Self {
+            large_file_threshold_bytes: editor.large_file_threshold_bytes,
+            line_wrap: editor.line_wrap,
+            estimated_line_length: editor.estimated_line_length,
+            highlight_context_bytes: editor.highlight_context_bytes,
+            relative_line_numbers: editor.relative_line_numbers,
+            use_terminal_bg: editor.use_terminal_bg,
+            show_vertical_scrollbar: editor.show_vertical_scrollbar,
+            show_horizontal_scrollbar: editor.show_horizontal_scrollbar,
+            diagnostics_inline_text: editor.diagnostics_inline_text,
+            show_tilde: editor.show_tilde,
+            highlight_current_column: editor.highlight_current_column,
+            indentation_guide: editor.indentation_guide,
+            indentation_guide_glyph: &editor.indentation_guide_glyph,
+            hide_current_line_on_selection: editor.hide_current_line_on_selection,
+            background_fade,
+            software_cursor_only,
+        }
+    }
+}
+
 /// Public façade for split-pane rendering.
 ///
 /// All logic lives in `orchestration::*`. This struct exists only to
@@ -69,12 +127,8 @@ impl SplitRenderer {
         >,
         theme: &crate::view::theme::Theme,
         ansi_background: Option<&AnsiBackground>,
-        background_fade: f32,
+        cfg: &EditorRenderConfig<'_>,
         lsp_waiting: bool,
-        large_file_threshold_bytes: u64,
-        line_wrap: bool,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
         split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
         grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
         hide_cursor: bool,
@@ -82,20 +136,9 @@ impl SplitRenderer {
         hovered_close_split: Option<LeafId>,
         hovered_maximize_split: Option<LeafId>,
         is_maximized: bool,
-        relative_line_numbers: bool,
         tab_bar_visible: bool,
-        use_terminal_bg: bool,
         session_mode: bool,
-        software_cursor_only: bool,
-        show_vertical_scrollbar: bool,
-        show_horizontal_scrollbar: bool,
         terminal_mode: bool,
-        diagnostics_inline_text: bool,
-        show_tilde: bool,
-        highlight_current_column: bool,
-        indentation_guide: IndentationGuideMode,
-        indentation_guide_glyph: &str,
-        hide_current_line_on_selection: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
         pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -129,12 +172,8 @@ impl SplitRenderer {
             composite_view_states,
             theme,
             ansi_background,
-            background_fade,
+            cfg,
             lsp_waiting,
-            large_file_threshold_bytes,
-            line_wrap,
-            estimated_line_length,
-            highlight_context_bytes,
             split_view_states,
             grouped_subtrees,
             hide_cursor,
@@ -142,20 +181,9 @@ impl SplitRenderer {
             hovered_close_split,
             hovered_maximize_split,
             is_maximized,
-            relative_line_numbers,
             tab_bar_visible,
-            use_terminal_bg,
             session_mode,
-            software_cursor_only,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
             terminal_mode,
-            diagnostics_inline_text,
-            show_tilde,
-            highlight_current_column,
-            indentation_guide,
-            indentation_guide_glyph,
-            hide_current_line_on_selection,
             cell_theme_map,
             screen_width,
             pending_hardware_cursor,

@@ -30,6 +30,7 @@ use super::scrollbar::{
 };
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
+use super::EditorRenderConfig;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
@@ -91,12 +92,10 @@ pub(crate) fn render_content(
     >,
     theme: &crate::view::theme::Theme,
     ansi_background: Option<&AnsiBackground>,
-    background_fade: f32,
+    // Immutable editor render settings (config.editor.* flags + a couple of
+    // stable Editor fields). Destructured into locals at the top of the body.
+    cfg: &EditorRenderConfig<'_>,
     lsp_waiting: bool,
-    large_file_threshold_bytes: u64,
-    _line_wrap: bool,
-    estimated_line_length: usize,
-    highlight_context_bytes: usize,
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     hide_cursor: bool,
@@ -104,24 +103,13 @@ pub(crate) fn render_content(
     hovered_close_split: Option<LeafId>,
     hovered_maximize_split: Option<LeafId>,
     is_maximized: bool,
-    relative_line_numbers: bool,
     tab_bar_visible: bool,
-    use_terminal_bg: bool,
     session_mode: bool,
-    software_cursor_only: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
     // Whether the window is in terminal mode. When set, the active split's
     // terminal buffer is showing its live PTY grid (not the read-only
     // scrollback view), so its vertical scrollbar is suppressed and the grid
     // reclaims that column. Exiting terminal mode brings the scrollbar back.
     terminal_mode: bool,
-    diagnostics_inline_text: bool,
-    show_tilde: bool,
-    highlight_current_column: bool,
-    indentation_guide: IndentationGuideMode,
-    indentation_guide_glyph: &str,
-    hide_current_line_on_selection: bool,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -144,6 +132,28 @@ pub(crate) fn render_content(
     )>, // hit areas for separators inside active Grouped subtrees
 ) {
     let _span = tracing::trace_span!("render_content").entered();
+
+    // Unpack the render config into locals so the body below (and its onward
+    // calls) read them by name, unchanged. `line_wrap` is currently unused
+    // here, hence discarded.
+    let &EditorRenderConfig {
+        large_file_threshold_bytes,
+        line_wrap: _,
+        estimated_line_length,
+        highlight_context_bytes,
+        relative_line_numbers,
+        use_terminal_bg,
+        show_vertical_scrollbar,
+        show_horizontal_scrollbar,
+        diagnostics_inline_text,
+        show_tilde,
+        highlight_current_column,
+        indentation_guide,
+        indentation_guide_glyph,
+        hide_current_line_on_selection,
+        background_fade,
+        software_cursor_only,
+    } = cfg;
 
     let base_visible = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
