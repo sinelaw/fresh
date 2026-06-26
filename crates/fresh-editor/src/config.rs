@@ -154,6 +154,20 @@ impl CursorStyle {
         "_ Solid underline",
     ];
 
+    /// Whether this style draws a full-cell block cursor.
+    ///
+    /// `Default` resolves to the terminal's `DECSCUSR 0` shape, which is a
+    /// block on every common terminal — so it counts as a block here. Block
+    /// cursors fully cover the glyph cell, which is what makes a theme cursor
+    /// color able to swallow a same-colored glyph (bar/underline shapes leave
+    /// the glyph visible, so they are excluded).
+    pub fn is_block(self) -> bool {
+        matches!(
+            self,
+            Self::Default | Self::BlinkingBlock | Self::SteadyBlock
+        )
+    }
+
     /// Convert to crossterm cursor style (runtime only)
     #[cfg(feature = "runtime")]
     pub fn to_crossterm_style(self) -> crossterm::cursor::SetCursorStyle {

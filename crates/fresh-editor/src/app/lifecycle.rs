@@ -148,6 +148,18 @@ impl Editor {
         self.theme.read().unwrap()
     }
 
+    /// Override individual theme color keys at runtime. Exposed for tests that
+    /// need to construct specific color collisions (e.g. a cursor color that
+    /// matches a syntax token); returns the number of keys applied.
+    #[doc(hidden)]
+    pub fn override_theme_colors<I, K>(&mut self, overrides: I) -> usize
+    where
+        I: IntoIterator<Item = (K, ratatui::style::Color)>,
+        K: AsRef<str>,
+    {
+        self.theme.write().unwrap().override_colors(overrides)
+    }
+
     /// Check if the settings dialog is open and visible
     pub fn is_settings_open(&self) -> bool {
         self.settings_state.as_ref().is_some_and(|s| s.visible)

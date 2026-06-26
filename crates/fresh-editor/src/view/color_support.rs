@@ -362,6 +362,16 @@ fn contrast_ratio(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
+/// Pick black or white — whichever is more readable — as a foreground on `bg`.
+/// Uses the WCAG black/white crossover luminance (0.179). Unresolvable
+/// backgrounds default to white.
+pub fn readable_bw_on(bg: Color) -> Color {
+    match color_to_rgb(bg) {
+        Some((r, g, b)) if relative_luminance(r, g, b) > 0.179 => Color::Black,
+        _ => Color::White,
+    }
+}
+
 /// Standard ANSI color RGB approximations (indices 0-15)
 const ANSI_COLORS: [(u8, u8, u8); 16] = [
     (0, 0, 0),
