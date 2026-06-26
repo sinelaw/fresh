@@ -131,12 +131,21 @@ pub(crate) struct ChromeLayout {
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing
     pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
-    /// Last frame dimensions — used by recompute_layout for macro replay
-    pub last_frame_width: u16,
-    pub last_frame_height: u16,
+    /// Dimensions of the last rendered frame. See [`FrameDimensions`].
+    pub last_frame: FrameDimensions,
     /// Per-cell theme key provenance recorded during rendering.
-    /// Flat vec indexed as `row * width + col` where `width = last_frame_width`.
+    /// Flat vec indexed as `row * width + col` where `width = last_frame.width`.
     pub cell_theme_map: Vec<CellThemeInfo>,
+}
+
+/// Width and height of the most recently rendered frame. Used to size the
+/// cell-theme map and to clamp / replay layout against the latest frame
+/// extent (macro replay, dock/overlay sizing). Grouped so the pair travels
+/// together rather than as loose `last_frame_*` members of [`ChromeLayout`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FrameDimensions {
+    pub width: u16,
+    pub height: u16,
 }
 
 /// Status-bar hit-test layout captured each frame by `render_status_bar`.
@@ -189,14 +198,14 @@ impl StatusBarChrome {
 impl ChromeLayout {
     /// Reset the cell theme map for a new frame
     pub fn reset_cell_theme_map(&mut self) {
-        let total = self.last_frame_width as usize * self.last_frame_height as usize;
+        let total = self.last_frame.width as usize * self.last_frame.height as usize;
         self.cell_theme_map.clear();
         self.cell_theme_map.resize(total, CellThemeInfo::default());
     }
 
     /// Look up the theme info for a screen position
     pub fn cell_theme_at(&self, col: u16, row: u16) -> Option<&CellThemeInfo> {
-        let idx = row as usize * self.last_frame_width as usize + col as usize;
+        let idx = row as usize * self.last_frame.width as usize + col as usize;
         self.cell_theme_map.get(idx)
     }
 
@@ -204,7 +213,7 @@ impl ChromeLayout {
     /// per-cell map. The runs carry screen coordinates; cells outside the
     /// frame are skipped.
     pub fn apply_theme_runs(&mut self, runs: &[super::theme::ThemeRun]) {
-        let width = self.last_frame_width;
+        let width = self.last_frame.width;
         super::theme::apply_theme_runs(&mut self.cell_theme_map, width, runs);
     }
 }

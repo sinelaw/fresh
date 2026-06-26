@@ -1007,8 +1007,8 @@ impl Editor {
     fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
-                self.active_chrome().last_frame_width,
-                self.active_chrome().last_frame_height,
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
             );
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();
@@ -3295,8 +3295,8 @@ impl Editor {
             }
         }
 
-        let frame_w = self.active_chrome().last_frame_width;
-        let frame_h = self.active_chrome().last_frame_height;
+        let frame_w = self.active_chrome().last_frame.width;
+        let frame_h = self.active_chrome().last_frame.height;
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
@@ -3686,8 +3686,8 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         // Extract all needed values while the immutable borrow is live, then mutate.
-        let frame_w = self.active_chrome().last_frame_width;
-        let frame_h = self.active_chrome().last_frame_height;
+        let frame_w = self.active_chrome().last_frame.width;
+        let frame_h = self.active_chrome().last_frame.height;
         let clicked_item: Option<super::types::FileExplorerContextMenuItem> = {
             let menu = self.active_window().file_explorer_context_menu.as_ref()?;
             let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);

@@ -81,8 +81,8 @@ impl Editor {
         self.active_window_mut().animations.capture_before_all();
 
         // Save frame dimensions for recompute_layout (used by macro replay)
-        self.active_chrome_mut().last_frame_width = size.width;
-        self.active_chrome_mut().last_frame_height = size.height;
+        self.active_chrome_mut().last_frame.width = size.width;
+        self.active_chrome_mut().last_frame.height = size.height;
 
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
@@ -4390,7 +4390,7 @@ impl Editor {
             return;
         }
 
-        let dock_sw = self.active_chrome().last_frame_width;
+        let dock_sw = self.active_chrome().last_frame.width;
         let max_rows = inner.height as usize;
         for (i, entry) in entries.iter().take(max_rows).enumerate() {
             let recorder = is_dock.then(|| {
@@ -4566,7 +4566,7 @@ impl Editor {
         // borders).
         let panel_bg = theme.popup_bg;
         let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
-        let overlay_sw = self.active_chrome().last_frame_width;
+        let overlay_sw = self.active_chrome().last_frame.width;
         for o in &overlays {
             let row_y = inner.y.saturating_add(o.buffer_row as u16);
             if row_y >= inner.y.saturating_add(inner.height) {

@@ -832,7 +832,7 @@ impl Editor {
         let w = self.active_window();
         let chrome = self.active_chrome();
         if let Some(m) = &w.file_explorer_context_menu {
-            let (x, y) = m.clamped_position(chrome.last_frame_width, chrome.last_frame_height);
+            let (x, y) = m.clamped_position(chrome.last_frame.width, chrome.last_frame.height);
             return Some(ContextMenuView {
                 kind: "fileExplorer",
                 x,

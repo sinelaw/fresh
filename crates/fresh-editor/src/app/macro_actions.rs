@@ -131,8 +131,8 @@ impl Editor {
             log.begin_undo_group();
         }
         let action_count = actions.len();
-        let width = self.active_chrome().last_frame_width;
-        let height = self.active_chrome().last_frame_height;
+        let width = self.active_chrome().last_frame.width;
+        let height = self.active_chrome().last_frame.height;
         for action in actions {
             if let Err(e) = self.handle_action(action) {
                 tracing::warn!("Macro action failed: {}", e);
