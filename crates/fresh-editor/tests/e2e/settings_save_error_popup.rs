@@ -78,8 +78,13 @@ fn failed_settings_save_shows_modal_and_keeps_file() {
         "a failed save must not modify the config file"
     );
 
-    // Esc dismisses the modal.
+    // Acknowledging the modal (Esc) dismisses it AND opens the offending
+    // config file in a buffer so the user can fix it.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains("Couldn't save settings");
+    // The config file's contents are now on screen (the malformed token and
+    // the filename tab), confirming it was opened in a buffer.
+    harness.assert_screen_contains("config.json");
+    harness.assert_screen_contains("broken");
 }

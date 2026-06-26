@@ -1347,6 +1347,7 @@
   "settings.failed_to_save": "保存设置失败：%{error}",
   "settings.save_failed_title": "无法保存设置",
   "settings.save_failed_unchanged": "你的配置文件未被更改，你可以修复它。",
+  "settings.save_failed_open_hint": "按 Esc 打开你的配置文件并修复它。",
   "settings.field.editor.auto_close": "自动关闭",
   "settings.field.editor.whitespace_show": "显示空白字符",
   "settings.field.editor.whitespace_spaces_inner": "行内空格",

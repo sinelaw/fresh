@@ -273,7 +273,7 @@ impl Editor {
                 self.set_status_message(
                     t!("settings.failed_to_save", error = err.clone()).to_string(),
                 );
-                self.show_settings_save_error_popup(&err);
+                self.show_settings_save_error_popup(target_layer, &err);
             }
         }
     }

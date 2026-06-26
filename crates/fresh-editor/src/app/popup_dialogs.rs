@@ -23,6 +23,58 @@ fn is_lsp_status_popup(popup: &crate::view::popup::Popup) -> bool {
     matches!(popup.resolver, crate::view::popup::PopupResolver::LspStatus)
 }
 
+/// Hard-wrap `text` to `width` display columns, breaking words that are longer
+/// than `width` (e.g. a long, space-less config-file path) so they never
+/// overflow a popup's border. Whitespace-separated where possible.
+fn hard_wrap(text: &str, width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
+
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let ch_width = |c: char| UnicodeWidthChar::width(c).unwrap_or(1);
+
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+
+    let mut push_word =
+        |word: &str, lines: &mut Vec<String>, cur: &mut String, cur_w: &mut usize| {
+            for c in word.chars() {
+                let w = ch_width(c);
+                if *cur_w + w > width && !cur.is_empty() {
+                    lines.push(std::mem::take(cur));
+                    *cur_w = 0;
+                }
+                cur.push(c);
+                *cur_w += w;
+            }
+        };
+
+    for word in text.split(' ') {
+        let word_w: usize = word.chars().map(ch_width).sum();
+        if cur.is_empty() {
+            push_word(word, &mut lines, &mut cur, &mut cur_w);
+        } else if cur_w + 1 + word_w <= width {
+            cur.push(' ');
+            cur_w += 1;
+            cur.push_str(word);
+            cur_w += word_w;
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur_w = 0;
+            push_word(word, &mut lines, &mut cur, &mut cur_w);
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
 /// Max display cells for each variable field (title / message) of the LSP
 /// progress line. Used to pin the popup width so it doesn't jitter as live
 /// progress messages come and go.
@@ -1478,29 +1530,55 @@ impl Editor {
     /// and the file is left untouched, but the user must be told loudly. A
     /// status-bar line is far too easy to miss for "your change didn't take
     /// effect", so this raises a focused, centered popup (red border) that the
-    /// user has to dismiss with Esc.
-    pub fn show_settings_save_error_popup(&mut self, error: &str) {
-        use crate::view::popup::{Popup, PopupPosition};
+    /// user dismisses with Esc — and on dismissal we open the offending config
+    /// file (for `layer`) so they can fix the syntax error right away.
+    ///
+    /// The body is hard-wrapped here (long config paths have no spaces to break
+    /// on) and rendered as plain text so a long file name wraps inside the
+    /// border instead of being clipped.
+    pub fn show_settings_save_error_popup(
+        &mut self,
+        layer: crate::config_io::ConfigLayer,
+        error: &str,
+    ) {
+        use crate::view::popup::{Popup, PopupPosition, PopupResolver};
         use ratatui::style::Style;
+
+        const WIDTH: u16 = 64;
+        // Border (2) + a little inner padding/scrollbar headroom (2).
+        let wrap_width = (WIDTH as usize).saturating_sub(4);
 
         let detail = t!("settings.failed_to_save", error = error).to_string();
         let unchanged = t!("settings.save_failed_unchanged").to_string();
-        let dismiss = t!("warning.dismiss").to_string();
+        let open_hint = t!("settings.save_failed_open_hint").to_string();
         let title = t!("settings.save_failed_title").to_string();
-        let md = format!("{detail}\n\n{unchanged}\n\n*Esc — {dismiss}*");
+
+        // One blank line between paragraphs; each paragraph hard-wrapped so a
+        // long, space-less path breaks rather than overflowing the border.
+        let mut lines: Vec<String> = Vec::new();
+        for (i, para) in [detail.as_str(), unchanged.as_str(), open_hint.as_str()]
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                lines.push(String::new());
+            }
+            lines.extend(hard_wrap(para, wrap_width));
+        }
 
         let popup = {
             let theme = self.theme.read().unwrap();
-            let mut p = Popup::markdown(&md, &theme, Some(&self.grammar_registry))
+            let mut p = Popup::text(lines, &theme)
                 .with_title(title)
                 .with_focused(true);
             p.transient = false;
             p.position = PopupPosition::Centered;
-            p.width = 64;
-            p.max_height = 12;
+            p.width = WIDTH;
+            p.max_height = 14;
             // Red border to read as an error, not a neutral info popup.
             p.border_style = Style::default().fg(theme.diagnostic_error_fg);
             p.background_style = Style::default().bg(theme.popup_bg);
+            p.resolver = PopupResolver::SettingsSaveError { layer };
             p
         };
 

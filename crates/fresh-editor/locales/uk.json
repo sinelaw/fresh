@@ -1347,6 +1347,7 @@
   "settings.failed_to_save": "Не вдалося зберегти налаштування: %{error}",
   "settings.save_failed_title": "Не вдалося зберегти налаштування",
   "settings.save_failed_unchanged": "Ваш файл конфігурації залишився без змін, тож ви можете його виправити.",
+  "settings.save_failed_open_hint": "Натисніть Esc, щоб відкрити файл конфігурації та виправити його.",
   "settings.field.editor.auto_close": "Автозакриття",
   "settings.field.editor.whitespace_show": "Показати пробіли",
   "settings.field.editor.whitespace_spaces_inner": "Внутрішні пробіли",

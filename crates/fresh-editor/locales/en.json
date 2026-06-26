@@ -1366,6 +1366,7 @@
   "settings.failed_to_save": "Failed to save settings: %{error}",
   "settings.save_failed_title": "Couldn't save settings",
   "settings.save_failed_unchanged": "Your config file was left unchanged so you can fix it.",
+  "settings.save_failed_open_hint": "Press Esc to open your config file and fix it.",
   "settings.line_ending_set": "Line ending set to %{value}",
   "settings.pending_changes": "Save or discard pending changes before editing config file",
   "settings.saved_to_layer": "Settings saved to %{layer} layer",
