@@ -1543,8 +1543,7 @@ impl Editor {
                 close_button_hovered,
                 remote_connection.as_deref(),
                 cut_paths,
-                &self.config.file_explorer.tree_indicator_collapsed,
-                &self.config.file_explorer.tree_indicator_expanded,
+                &self.config.file_explorer,
                 Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
                 fe_draw,
             );

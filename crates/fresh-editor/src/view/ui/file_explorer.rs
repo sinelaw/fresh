@@ -50,8 +50,7 @@ impl FileExplorerRenderer {
         close_button_hovered: bool,
         remote_connection: Option<&str>,
         cut_paths: &[PathBuf],
-        tree_indicator_collapsed: &str,
-        tree_indicator_expanded: &str,
+        config: &crate::config::FileExplorerConfig,
         mut rec: Option<&mut CellThemeRecorder>,
         // When false, compute layout (viewport height for scrolling) but draw no
         // cells — the frontend renders the sidebar natively from
@@ -66,6 +65,11 @@ impl FileExplorerRenderer {
             return;
         }
         let search_active = view.is_search_active();
+        // The tree-indicator glyphs are the only config the inner renderers
+        // need; pull them out here and forward as `&str` so the helpers don't
+        // depend on the whole config struct.
+        let tree_indicator_collapsed = config.tree_indicator_collapsed.as_str();
+        let tree_indicator_expanded = config.tree_indicator_expanded.as_str();
 
         // Seed the whole explorer rect with its surface keys so border/content
         // rows resolve to the explorer; the selected row is refined below.
