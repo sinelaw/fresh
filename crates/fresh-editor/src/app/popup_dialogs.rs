@@ -590,7 +590,7 @@ impl Editor {
         // the BottomRight anchor when the LSP segment isn't visible.
         let position = self
             .active_chrome()
-            .status_bar_clickable_area(crate::view::ui::status_bar::StatusBarClickable::Lsp)
+            .status_bar.clickable_area(crate::view::ui::status_bar::StatusBarClickable::Lsp)
             .map(
                 |(status_row, col_start, _)| crate::view::popup::PopupPosition::AboveStatusBarAt {
                     x: col_start,
@@ -907,7 +907,7 @@ impl Editor {
         // even in prompt-auto-hide mode.
         let position = self
             .active_chrome()
-            .status_bar_clickable_area(
+            .status_bar.clickable_area(
                 crate::view::ui::status_bar::StatusBarClickable::RemoteIndicator,
             )
             .map(
@@ -995,7 +995,7 @@ impl Editor {
 
         let position = self
             .active_chrome()
-            .status_bar_clickable_area(crate::view::ui::status_bar::StatusBarClickable::ReadOnly)
+            .status_bar.clickable_area(crate::view::ui::status_bar::StatusBarClickable::ReadOnly)
             .map(
                 |(status_row, col_start, _)| PopupPosition::AboveStatusBarAt {
                     x: col_start,

@@ -50,7 +50,7 @@ pub enum HoverTarget {
     /// ending / language / warnings / messages / remote / trust / read-only).
     /// One generic variant carrying the segment's identity — the renderer
     /// styles it and `handle_click_status_bar` dispatches it via a single
-    /// hit-test over `ChromeLayout::status_bar_clickable`.
+    /// hit-test over `StatusBarChrome::clickable`.
     StatusBarClickable(crate::view::ui::status_bar::StatusBarClickable),
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,

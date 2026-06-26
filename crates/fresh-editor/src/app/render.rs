@@ -1730,13 +1730,11 @@ impl Editor {
             self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
 
             // Store status bar layout for click detection
-            let status_bar_area = area;
-            self.active_chrome_mut().status_bar_area =
-                Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
-            self.active_chrome_mut().status_bar_clickable = status_bar_layout.clickable;
-            self.active_chrome_mut().status_bar_plugin_token_areas =
-                status_bar_layout.plugin_token_areas;
-            self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
+            let status_bar = &mut self.active_chrome_mut().status_bar;
+            status_bar.area = Some((area.y, area.x, area.width));
+            status_bar.clickable = status_bar_layout.clickable;
+            status_bar.plugin_token_areas = status_bar_layout.plugin_token_areas;
+            status_bar.segments = status_bar_layout.segments;
         }
     }
 

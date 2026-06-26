@@ -124,31 +124,9 @@ pub(crate) struct ChromeLayout {
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.
     pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
-    /// Status bar area (row, x, width)
-    pub status_bar_area: Option<(u16, u16, u16)>,
-    /// Every clickable built-in status-bar segment drawn last frame, as
-    /// `(id, row, start_col, end_col)`. One generic list (mirroring
-    /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
-    /// `handle_click_status_bar` — no per-indicator field. See
-    /// `StatusBarClickable`.
-    pub status_bar_clickable: Vec<(
-        crate::view::ui::status_bar::StatusBarClickable,
-        u16,
-        u16,
-        u16,
-    )>,
-    /// Plugin-registered status-bar token areas, keyed by
-    /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
-    /// by `handle_click_status_bar` which fires the
-    /// `status_bar_token_clicked` hook on a hit so the registering
-    /// plugin can react (typically by re-opening a deferred prompt).
-    /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
-    /// design context.
-    pub status_bar_plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
-    /// Semantic status-bar model (rendered elements + text + positions), captured
-    /// by the renderer so `status_view` derives the web status bar directly
-    /// instead of scraping the drawn cells.
-    pub status_bar_segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
+    /// Status-bar hit-test layout (area, clickable segments, plugin token
+    /// areas, semantic segment model). See [`StatusBarChrome`].
+    pub status_bar: StatusBarChrome,
     /// Search options layout for checkbox hit testing
     pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
     /// Menu bar layout for hit testing
@@ -161,20 +139,54 @@ pub(crate) struct ChromeLayout {
     pub cell_theme_map: Vec<CellThemeInfo>,
 }
 
-impl ChromeLayout {
+/// Status-bar hit-test layout captured each frame by `render_status_bar`.
+/// Grouped so the four related fields travel together rather than as loose
+/// `status_bar_*` members of [`ChromeLayout`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StatusBarChrome {
+    /// Status bar area (row, x, width)
+    pub area: Option<(u16, u16, u16)>,
+    /// Every clickable built-in status-bar segment drawn last frame, as
+    /// `(id, row, start_col, end_col)`. One generic list (mirroring
+    /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
+    /// `handle_click_status_bar` — no per-indicator field. See
+    /// `StatusBarClickable`.
+    pub clickable: Vec<(
+        crate::view::ui::status_bar::StatusBarClickable,
+        u16,
+        u16,
+        u16,
+    )>,
+    /// Plugin-registered status-bar token areas, keyed by
+    /// `"<plugin>:<token>"`. Populated by `render_status_bar`; consumed
+    /// by `handle_click_status_bar` which fires the
+    /// `status_bar_token_clicked` hook on a hit so the registering
+    /// plugin can react (typically by re-opening a deferred prompt).
+    /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
+    /// design context.
+    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
+    /// Semantic status-bar model (rendered elements + text + positions), captured
+    /// by the renderer so `status_view` derives the web status bar directly
+    /// instead of scraping the drawn cells.
+    pub segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
+}
+
+impl StatusBarChrome {
     /// Screen area `(row, start_col, end_col)` of a given clickable status-bar
     /// segment from the last frame, if it was drawn. Used to anchor popups to
     /// their indicator (e.g. the LSP / remote / read-only menus).
-    pub fn status_bar_clickable_area(
+    pub fn clickable_area(
         &self,
         id: crate::view::ui::status_bar::StatusBarClickable,
     ) -> Option<(u16, u16, u16)> {
-        self.status_bar_clickable
+        self.clickable
             .iter()
             .find(|(cid, _, _, _)| *cid == id)
             .map(|(_, row, start, end)| (*row, *start, *end))
     }
+}
 
+impl ChromeLayout {
     /// Reset the cell theme map for a new frame
     pub fn reset_cell_theme_map(&mut self) {
         let total = self.last_frame_width as usize * self.last_frame_height as usize;

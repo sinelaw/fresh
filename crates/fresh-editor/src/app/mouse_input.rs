@@ -1289,9 +1289,9 @@ impl Editor {
 
         // Check status bar indicators — one generic hit-test over every
         // clickable segment recorded last frame (encoding, LSP, remote, …).
-        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar_area {
+        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar.area {
             if row == status_row {
-                for (id, indicator_row, start, end) in &self.active_chrome().status_bar_clickable {
+                for (id, indicator_row, start, end) in &self.active_chrome().status_bar.clickable {
                     if row == *indicator_row && col >= *start && col < *end {
                         return Some(HoverTarget::StatusBarClickable(*id));
                     }
@@ -2437,14 +2437,14 @@ impl Editor {
     }
 
     fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar_area?;
+        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar.area?;
         if row != status_row {
             return None;
         }
         // Generic click rail: one hit-test over every clickable segment drawn
         // last frame. The id→Action mapping (and each element's popup-dismiss
         // nuance) lives in `dispatch_status_bar_click`.
-        let clickables = self.active_chrome().status_bar_clickable.clone();
+        let clickables = self.active_chrome().status_bar.clickable.clone();
         for (id, r, s, e) in clickables {
             if row == r && col >= s && col < e {
                 return Some(self.dispatch_status_bar_click(id));
@@ -2455,7 +2455,7 @@ impl Editor {
         // so the registering plugin can react. We split the registry key
         // (`"<plugin>:<token>"`) on the first colon — that's how
         // `register_status_bar_element` builds it.
-        let plugin_areas = self.active_chrome().status_bar_plugin_token_areas.clone();
+        let plugin_areas = self.active_chrome().status_bar.plugin_token_areas.clone();
         for (key, (r, s, e)) in plugin_areas {
             if row == r && col >= s && col < e {
                 let (plugin_name, token_name) = match key.split_once(':') {
