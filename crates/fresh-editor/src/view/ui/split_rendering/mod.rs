@@ -101,6 +101,22 @@ impl<'a> EditorRenderConfig<'a> {
     }
 }
 
+/// "How to render" — the appearance/policy inputs that are identical for
+/// every split in a frame: the theme, the ANSI backdrop, and the editor
+/// render config. Built once at the top of the render pass and threaded by
+/// reference through the whole painter chain (`render_content` →
+/// `render_buffer_in_split` → …), so each layer forwards one `RenderStyle`
+/// instead of re-listing ~16 style parameters. Distinct from per-split state
+/// and the draw target, which vary or are mutated.
+//
+// No `Debug` derive — `AnsiBackground` isn't `Debug`.
+#[derive(Clone, Copy)]
+pub struct RenderStyle<'a> {
+    pub theme: &'a crate::view::theme::Theme,
+    pub ansi_background: Option<&'a AnsiBackground>,
+    pub cfg: EditorRenderConfig<'a>,
+}
+
 /// Public façade for split-pane rendering.
 ///
 /// All logic lives in `orchestration::*`. This struct exists only to
@@ -124,9 +140,7 @@ impl SplitRenderer {
             (LeafId, BufferId),
             crate::view::composite_view::CompositeViewState,
         >,
-        theme: &crate::view::theme::Theme,
-        ansi_background: Option<&AnsiBackground>,
-        cfg: &EditorRenderConfig<'_>,
+        style: RenderStyle<'_>,
         lsp_waiting: bool,
         split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
         grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
@@ -169,9 +183,7 @@ impl SplitRenderer {
             event_logs,
             composite_buffers,
             composite_view_states,
-            theme,
-            ansi_background,
-            cfg,
+            style,
             lsp_waiting,
             split_view_states,
             grouped_subtrees,
@@ -249,28 +261,18 @@ impl SplitRenderer {
         folds: &mut crate::view::folding::FoldManager,
         event_log: Option<&mut EventLog>,
         area: Rect,
-        theme: &crate::view::theme::Theme,
-        ansi_background: Option<&AnsiBackground>,
-        background_fade: f32,
+        style: RenderStyle<'_>,
         view_mode: crate::state::ViewMode,
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
         view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
         buffer_id: BufferId,
-        relative_line_numbers: bool,
-        use_terminal_bg: bool,
         session_mode: bool,
-        software_cursor_only: bool,
         rulers: &[usize],
         show_line_numbers: bool,
         highlight_current_line: bool,
-        diagnostics_inline_text: bool,
         show_tilde: bool,
         highlight_current_column: bool,
-        indentation_guide: IndentationGuideMode,
-        indentation_guide_glyph: &str,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
     ) -> Vec<crate::app::types::ViewLineMapping> {
@@ -292,30 +294,20 @@ impl SplitRenderer {
             event_log,
             area,
             /* is_active */ false,
-            theme,
-            ansi_background,
-            background_fade,
+            style,
             /* lsp_waiting */ false,
             view_mode,
             compose_width,
             compose_column_guides,
             view_transform,
-            estimated_line_length,
-            highlight_context_bytes,
             buffer_id,
             /* hide_cursor */ true,
-            relative_line_numbers,
-            use_terminal_bg,
             session_mode,
-            software_cursor_only,
             rulers,
             show_line_numbers,
             highlight_current_line,
-            diagnostics_inline_text,
             show_tilde,
             highlight_current_column,
-            indentation_guide,
-            indentation_guide_glyph,
             cell_theme_map,
             screen_width,
             &mut sink,

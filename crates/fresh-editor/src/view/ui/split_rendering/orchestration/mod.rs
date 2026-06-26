@@ -34,7 +34,6 @@ use super::EditorRenderConfig;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
-use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::folding::FoldManager;
 use crate::view::split::SplitManager;
@@ -90,11 +89,10 @@ pub(crate) fn render_content(
         (LeafId, BufferId),
         crate::view::composite_view::CompositeViewState,
     >,
-    theme: &crate::view::theme::Theme,
-    ansi_background: Option<&AnsiBackground>,
-    // Immutable editor render settings (config.editor.* flags + a couple of
-    // stable Editor fields). Destructured into locals at the top of the body.
-    cfg: &EditorRenderConfig<'_>,
+    // Appearance/policy group (theme + ANSI backdrop + editor render config),
+    // identical for every split. Unpacked into locals at the top of the body
+    // and threaded as-is into render_buffer_in_split.
+    style: crate::view::ui::RenderStyle<'_>,
     lsp_waiting: bool,
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
@@ -133,26 +131,21 @@ pub(crate) fn render_content(
 ) {
     let _span = tracing::trace_span!("render_content").entered();
 
-    // Unpack the render config into locals so the body below (and its onward
-    // calls) read them by name, unchanged. `line_wrap` is currently unused
-    // here, hence discarded.
-    let &EditorRenderConfig {
+    // Unpack the style group. `theme` is forwarded to the sub-painters; the
+    // whole `style` (incl. `ansi_background` + full `cfg`) is threaded as-is
+    // into render_buffer_in_split. Only the `cfg` flags this layer reads itself
+    // (per-split flag math, scrollbars, composite) are bound below; the rest
+    // ride along inside `style.cfg`.
+    let crate::view::ui::RenderStyle { theme, cfg, .. } = style;
+    let EditorRenderConfig {
         large_file_threshold_bytes,
-        line_wrap: _,
-        estimated_line_length,
-        highlight_context_bytes,
-        relative_line_numbers,
         use_terminal_bg,
         show_vertical_scrollbar,
         show_horizontal_scrollbar,
-        diagnostics_inline_text,
         show_tilde,
         highlight_current_column,
-        indentation_guide,
-        indentation_guide_glyph,
         hide_current_line_on_selection,
-        background_fade,
-        software_cursor_only,
+        ..
     } = cfg;
 
     let base_visible = split_manager.get_visible_buffers(area);
@@ -465,30 +458,20 @@ pub(crate) fn render_content(
                 event_log_opt,
                 layout.content_rect,
                 is_active,
-                theme,
-                ansi_background,
-                background_fade,
+                style,
                 lsp_waiting,
                 view_prefs.view_mode,
                 view_prefs.compose_width,
                 view_prefs.compose_column_guides,
                 view_prefs.view_transform,
-                estimated_line_length,
-                highlight_context_bytes,
                 buffer_id,
                 hide_cursor,
-                relative_line_numbers,
-                use_terminal_bg,
                 session_mode,
-                software_cursor_only,
                 effective_rulers,
                 view_prefs.show_line_numbers,
                 effective_highlight_current_line,
-                diagnostics_inline_text,
                 split_show_tilde,
                 highlight_current_column && state.show_cursors,
-                indentation_guide,
-                indentation_guide_glyph,
                 cell_theme_map,
                 screen_width,
                 pending_hardware_cursor,

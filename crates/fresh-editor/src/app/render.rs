@@ -538,6 +538,10 @@ impl Editor {
             self.background_fade,
             self.software_cursor_only,
         );
+        // `cfg` is captured by the render closure; the theme read-guard and the
+        // `RenderStyle` wrapping it are built *inside* the closure so the
+        // `self.theme` borrow is released before the post-render `&mut self`
+        // chrome updates.
         // Take a single mutable borrow on the active window's splits and
         // split it into (&SplitManager, &mut HashMap<...>) — Rust can
         // destructure the tuple, but we can't make two separate
@@ -573,6 +577,14 @@ impl Editor {
         ) = __win
             .buffers
             .with_all_mut(|__buffers_mut, __mgr, __vs_map| {
+                // Built here so the `self.theme` read-guard lives only for the
+                // render call, not the later `&mut self` chrome updates.
+                let theme_guard = self.theme.read().unwrap();
+                let style = crate::view::ui::RenderStyle {
+                    theme: &theme_guard,
+                    ansi_background: self.ansi_background.as_ref(),
+                    cfg,
+                };
                 SplitRenderer::render_content(
                     frame.buffer_mut(),
                     editor_content_area,
@@ -583,9 +595,7 @@ impl Editor {
                     __event_logs_mut,
                     __composite_buffers_mut,
                     __composite_view_states_mut,
-                    &*self.theme.read().unwrap(),
-                    self.ansi_background.as_ref(),
-                    &cfg,
+                    style,
                     lsp_waiting,
                     Some(__vs_map),
                     __grouped_ref,
@@ -2437,6 +2447,13 @@ impl Editor {
                 self.software_cursor_only,
             )
         };
+        // Group the appearance inputs for the preview pass. `theme` is the
+        // caller-supplied borrow; built before the `&mut self.windows` borrow.
+        let preview_style = crate::view::ui::RenderStyle {
+            theme,
+            ansi_background: self.ansi_background.as_ref(),
+            cfg: preview_cfg,
+        };
         let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
             return;
         };
@@ -2483,9 +2500,7 @@ impl Editor {
                     __preview_event_logs,
                     __preview_composite_buffers,
                     __preview_composite_view_states,
-                    theme,
-                    self.ansi_background.as_ref(),
-                    &preview_cfg,
+                    preview_style,
                     lsp_waiting,
                     Some(view_states),
                     __preview_grouped_subtrees,
@@ -3504,27 +3519,24 @@ impl Editor {
             {
                 self.render_session_preview_into_rect(frame, inner, &theme);
             } else if inner.height > 0 && inner.width > 0 {
-                // Snapshot scalar config values up front so the
-                // mutable-borrow split below has minimal scope.
-                // AnsiBackground isn't Clone, so it's taken as a
-                // borrow; Rust permits disjoint-field splitting
-                // between `&self.ansi_background` and the `&mut`
-                // accesses below because they touch distinct fields.
-                let bg_fade = self.background_fade;
-                let estimated_line_length = self.config.editor.estimated_line_length;
-                let highlight_context_bytes = self.config.editor.highlight_context_bytes;
-                let relative_line_numbers = self.config.editor.relative_line_numbers;
-                let use_terminal_bg = self.config.editor.use_terminal_bg;
+                // Snapshot the per-split scalars and group the appearance
+                // inputs into one `RenderStyle`, all before the `&mut
+                // self.windows` borrow below — they touch only
+                // `self.config`/`self.theme`/`self.ansi_background`, which Rust
+                // splits from `self.windows` as distinct fields.
                 let session_mode = self.session_mode || !self.software_cursor_only;
-                let software_cursor_only = self.software_cursor_only;
-                let diagnostics_inline_text = self.config.editor.diagnostics_inline_text;
                 let show_tilde = false; // preview hides tilde markers
                 let highlight_current_column = self.config.editor.highlight_current_column;
-                let indentation_guide = self.config.editor.indentation_guide;
-                let indentation_guide_glyph = self.config.editor.indentation_guide_glyph.clone();
                 let screen_width = frame.area().width;
-
-                let ansi_ref = self.ansi_background.as_ref();
+                let style = crate::view::ui::RenderStyle {
+                    theme: &theme,
+                    ansi_background: self.ansi_background.as_ref(),
+                    cfg: crate::view::ui::EditorRenderConfig::new(
+                        &self.config.editor,
+                        self.background_fade,
+                        self.software_cursor_only,
+                    ),
+                };
                 let __win = self
                     .windows
                     .get_mut(&self.active_window)
@@ -3572,28 +3584,18 @@ impl Editor {
                         folds_ref,
                         event_log,
                         inner,
-                        &theme,
-                        ansi_ref,
-                        bg_fade,
+                        style,
                         view_mode,
                         compose_width,
                         compose_column_guides,
                         view_transform,
-                        estimated_line_length,
-                        highlight_context_bytes,
                         buffer_id,
-                        relative_line_numbers,
-                        use_terminal_bg,
                         session_mode,
-                        software_cursor_only,
                         &rulers,
                         show_line_numbers,
                         highlight_current_line,
-                        diagnostics_inline_text,
                         show_tilde,
                         highlight_current_column,
-                        indentation_guide,
-                        &indentation_guide_glyph,
                         cell_theme_map,
                         screen_width,
                     );

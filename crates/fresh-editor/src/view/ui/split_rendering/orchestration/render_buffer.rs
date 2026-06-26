@@ -580,34 +580,44 @@ pub(crate) fn render_buffer_in_split(
     event_log: Option<&mut EventLog>,
     area: Rect,
     is_active: bool,
-    theme: &Theme,
-    ansi_background: Option<&AnsiBackground>,
-    background_fade: f32,
+    style: crate::view::ui::RenderStyle<'_>,
     lsp_waiting: bool,
     view_mode: ViewMode,
     compose_width: Option<u16>,
     compose_column_guides: Option<Vec<u16>>,
     view_transform: Option<ViewTransformPayload>,
-    estimated_line_length: usize,
-    highlight_context_bytes: usize,
     _buffer_id: BufferId,
     hide_cursor: bool,
-    relative_line_numbers: bool,
-    use_terminal_bg: bool,
     session_mode: bool,
-    software_cursor_only: bool,
     rulers: &[usize],
     show_line_numbers: bool,
     highlight_current_line: bool,
-    diagnostics_inline_text: bool,
     show_tilde: bool,
     highlight_current_column: bool,
-    indentation_guide: IndentationGuideMode,
-    indentation_guide_glyph: &str,
     cell_theme_map: &mut Vec<CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
 ) -> Vec<ViewLineMapping> {
+    // The style group provides theme + the appearance flags; unpack into the
+    // locals the body already uses by name. The cfg fields this painter
+    // doesn't read are ignored.
+    let crate::view::ui::RenderStyle {
+        theme,
+        ansi_background,
+        cfg,
+    } = style;
+    let crate::view::ui::EditorRenderConfig {
+        background_fade,
+        estimated_line_length,
+        highlight_context_bytes,
+        relative_line_numbers,
+        use_terminal_bg,
+        software_cursor_only,
+        diagnostics_inline_text,
+        indentation_guide,
+        indentation_guide_glyph,
+        ..
+    } = cfg;
     let layout_output = compute_buffer_layout(
         state,
         cursors,

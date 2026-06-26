@@ -64,7 +64,7 @@ pub use scroll_panel::{
 };
 pub use scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 #[cfg(feature = "runtime")]
-pub use split_rendering::{EditorRenderConfig, SplitRenderer};
+pub use split_rendering::{EditorRenderConfig, RenderStyle, SplitRenderer};
 #[cfg(feature = "runtime")]
 pub use status_bar::{truncate_path, StatusBarLayout, StatusBarRenderer, TruncatedPath};
 #[cfg(feature = "runtime")]
