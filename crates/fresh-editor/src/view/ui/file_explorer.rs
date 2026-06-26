@@ -51,7 +51,11 @@ impl FileExplorerRenderer {
         remote_connection: Option<&str>,
         cut_paths: &[PathBuf],
         config: &crate::config::FileExplorerConfig,
-        mut rec: Option<&mut CellThemeRecorder>,
+        // The explorer is only ever painted by the TUI path, which always
+        // records theme-key provenance — so this isn't `Option` like the other
+        // chrome renderers (tabs/menu/status_bar), whose legacy/offscreen
+        // callers pass `None`.
+        rec: &mut CellThemeRecorder,
         // When false, compute layout (viewport height for scrolling) but draw no
         // cells — the frontend renders the sidebar natively from
         // `Editor::file_explorer_view`. The TUI always passes `true`.
@@ -73,17 +77,15 @@ impl FileExplorerRenderer {
 
         // Seed the whole explorer rect with its surface keys so border/content
         // rows resolve to the explorer; the selected row is refined below.
-        if let Some(r) = rec.as_deref_mut() {
-            for row in area.y..area.y + area.height {
-                r.run(
-                    area.x,
-                    row,
-                    area.width,
-                    Some("editor.fg"),
-                    Some("editor.bg"),
-                    "File Explorer",
-                );
-            }
+        for row in area.y..area.y + area.height {
+            rec.run(
+                area.x,
+                row,
+                area.width,
+                Some("editor.fg"),
+                Some("editor.bg"),
+                "File Explorer",
+            );
         }
 
         // Viewport height already applied above (before the `draw` early-out).
@@ -226,26 +228,24 @@ impl FileExplorerRenderer {
 
         // Refine the selected row with its highlight keys (focused → selection
         // background, blurred → current-line background).
-        if let Some(r) = rec {
-            if let Some(selected) = selected_index {
-                if selected >= scroll_offset && selected < scroll_offset + viewport_height {
-                    let row = area.y + 1 + (selected - scroll_offset) as u16;
-                    let inner_x = area.x + 1;
-                    let inner_w = area.width.saturating_sub(2);
-                    let bg_key = if is_focused {
-                        "editor.selection_bg"
-                    } else {
-                        "editor.current_line_bg"
-                    };
-                    r.run(
-                        inner_x,
-                        row,
-                        inner_w,
-                        Some("editor.fg"),
-                        Some(bg_key),
-                        "File Explorer",
-                    );
-                }
+        if let Some(selected) = selected_index {
+            if selected >= scroll_offset && selected < scroll_offset + viewport_height {
+                let row = area.y + 1 + (selected - scroll_offset) as u16;
+                let inner_x = area.x + 1;
+                let inner_w = area.width.saturating_sub(2);
+                let bg_key = if is_focused {
+                    "editor.selection_bg"
+                } else {
+                    "editor.current_line_bg"
+                };
+                rec.run(
+                    inner_x,
+                    row,
+                    inner_w,
+                    Some("editor.fg"),
+                    Some(bg_key),
+                    "File Explorer",
+                );
             }
         }
 

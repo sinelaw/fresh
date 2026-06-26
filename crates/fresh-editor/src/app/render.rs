@@ -1544,7 +1544,7 @@ impl Editor {
                 remote_connection.as_deref(),
                 cut_paths,
                 &self.config.file_explorer,
-                Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
+                &mut crate::app::types::CellThemeRecorder::new(&mut fe_runs),
                 fe_draw,
             );
         }
