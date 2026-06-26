@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Не вдалося застосувати налаштування: %{error}",
   "settings.failed_to_open": "Не вдалося відкрити налаштування: %{error}",
   "settings.failed_to_save": "Не вдалося зберегти налаштування: %{error}",
+  "settings.save_failed_title": "Не вдалося зберегти налаштування",
+  "settings.save_failed_unchanged": "Ваш файл конфігурації залишився без змін, тож ви можете його виправити.",
   "settings.field.editor.auto_close": "Автозакриття",
   "settings.field.editor.whitespace_show": "Показати пробіли",
   "settings.field.editor.whitespace_spaces_inner": "Внутрішні пробіли",

@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Použití nastavení selhalo: %{error}",
   "settings.failed_to_open": "Otevření nastavení selhalo: %{error}",
   "settings.failed_to_save": "Uložení nastavení selhalo: %{error}",
+  "settings.save_failed_title": "Nepodařilo se uložit nastavení",
+  "settings.save_failed_unchanged": "Váš konfigurační soubor zůstal beze změny, takže jej můžete opravit.",
   "settings.field.editor.auto_close": "Automatické uzavírání",
   "settings.field.editor.whitespace_show": "Zobrazit bílé znaky",
   "settings.field.editor.whitespace_spaces_inner": "Vnitřní mezery",

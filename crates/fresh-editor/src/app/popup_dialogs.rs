@@ -1471,6 +1471,51 @@ impl Editor {
         }
     }
 
+    /// Show a prominent, centered modal popup reporting that a settings save
+    /// failed.
+    ///
+    /// Used when the config file on disk can't be parsed: the save is aborted
+    /// and the file is left untouched, but the user must be told loudly. A
+    /// status-bar line is far too easy to miss for "your change didn't take
+    /// effect", so this raises a focused, centered popup (red border) that the
+    /// user has to dismiss with Esc.
+    pub fn show_settings_save_error_popup(&mut self, error: &str) {
+        use crate::view::popup::{Popup, PopupPosition};
+        use ratatui::style::Style;
+
+        let detail = t!("settings.failed_to_save", error = error).to_string();
+        let unchanged = t!("settings.save_failed_unchanged").to_string();
+        let dismiss = t!("warning.dismiss").to_string();
+        let title = t!("settings.save_failed_title").to_string();
+        let md = format!("{detail}\n\n{unchanged}\n\n*Esc — {dismiss}*");
+
+        let popup = {
+            let theme = self.theme.read().unwrap();
+            let mut p = Popup::markdown(&md, &theme, Some(&self.grammar_registry))
+                .with_title(title)
+                .with_focused(true);
+            p.transient = false;
+            p.position = PopupPosition::Centered;
+            p.width = 64;
+            p.max_height = 12;
+            // Red border to read as an error, not a neutral info popup.
+            p.border_style = Style::default().fg(theme.diagnostic_error_fg);
+            p.background_style = Style::default().bg(theme.popup_bg);
+            p
+        };
+
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.popups.show(popup);
+        }
+    }
+
     /// Get text properties at the cursor position in the active buffer
     pub fn get_text_properties_at_cursor(
         &self,

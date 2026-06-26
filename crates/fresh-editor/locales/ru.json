@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Не удалось применить настройки: %{error}",
   "settings.failed_to_open": "Не удалось открыть настройки: %{error}",
   "settings.failed_to_save": "Не удалось сохранить настройки: %{error}",
+  "settings.save_failed_title": "Не удалось сохранить настройки",
+  "settings.save_failed_unchanged": "Ваш файл конфигурации остался без изменений, чтобы вы могли его исправить.",
   "settings.field.editor.auto_close": "Автозакрытие",
   "settings.field.editor.whitespace_show": "Показать пробелы",
   "settings.field.editor.whitespace_spaces_inner": "Внутренние пробелы",

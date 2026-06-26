@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "설정 적용 실패: %{error}",
   "settings.failed_to_open": "설정 열기 실패: %{error}",
   "settings.failed_to_save": "설정 저장 실패: %{error}",
+  "settings.save_failed_title": "설정을 저장할 수 없습니다",
+  "settings.save_failed_unchanged": "구성 파일이 변경되지 않았으므로 수정할 수 있습니다.",
   "settings.field.editor.auto_close": "자동 닫기",
   "settings.field.editor.whitespace_show": "공백 표시",
   "settings.field.editor.whitespace_spaces_inner": "내부 공백",

@@ -266,9 +266,14 @@ impl Editor {
                 self.request_full_redraw();
             }
             Err(e) => {
+                // A failed save means the change did not take effect (and the
+                // config file was left untouched). Surface it loudly with a
+                // modal popup, not just the easy-to-miss status bar.
+                let err = e.to_string();
                 self.set_status_message(
-                    t!("settings.failed_to_save", error = e.to_string()).to_string(),
+                    t!("settings.failed_to_save", error = err.clone()).to_string(),
                 );
+                self.show_settings_save_error_popup(&err);
             }
         }
     }

@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Échec de l'application des paramètres : %{error}",
   "settings.failed_to_open": "Échec de l'ouverture des paramètres : %{error}",
   "settings.failed_to_save": "Échec de l'enregistrement des paramètres : %{error}",
+  "settings.save_failed_title": "Impossible d'enregistrer les paramètres",
+  "settings.save_failed_unchanged": "Votre fichier de configuration n'a pas été modifié afin que vous puissiez le corriger.",
   "settings.field.editor.auto_close": "Fermeture automatique",
   "settings.field.editor.whitespace_show": "Afficher les espaces",
   "settings.field.editor.whitespace_spaces_inner": "Espaces intérieurs",

@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Impossibile applicare le impostazioni: %{error}",
   "settings.failed_to_open": "Impossibile aprire le impostazioni: %{error}",
   "settings.failed_to_save": "Impossibile salvare le impostazioni: %{error}",
+  "settings.save_failed_title": "Impossibile salvare le impostazioni",
+  "settings.save_failed_unchanged": "Il file di configurazione non è stato modificato così puoi correggerlo.",
   "settings.field.editor.auto_close": "Chiusura automatica",
   "settings.field.editor.whitespace_show": "Mostra spazi bianchi",
   "settings.field.editor.whitespace_spaces_inner": "Spazi interni",

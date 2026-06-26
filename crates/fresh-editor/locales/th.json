@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "ใช้การตั้งค่าไม่สำเร็จ: %{error}",
   "settings.failed_to_open": "เปิดการตั้งค่าไม่สำเร็จ: %{error}",
   "settings.failed_to_save": "บันทึกการตั้งค่าไม่สำเร็จ: %{error}",
+  "settings.save_failed_title": "ไม่สามารถบันทึกการตั้งค่าได้",
+  "settings.save_failed_unchanged": "ไฟล์การตั้งค่าของคุณไม่ถูกเปลี่ยนแปลง คุณจึงสามารถแก้ไขได้",
   "settings.field.editor.auto_close": "ปิดอัตโนมัติ",
   "settings.field.editor.whitespace_show": "แสดงช่องว่าง",
   "settings.field.editor.whitespace_spaces_inner": "ช่องว่างภายใน",

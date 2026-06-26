@@ -1345,6 +1345,8 @@
   "settings.failed_to_apply": "Áp dụng cài đặt thất bại: %{error}",
   "settings.failed_to_open": "Mở cài đặt thất bại: %{error}",
   "settings.failed_to_save": "Lưu cài đặt thất bại: %{error}",
+  "settings.save_failed_title": "Không thể lưu cài đặt",
+  "settings.save_failed_unchanged": "Tệp cấu hình của bạn không bị thay đổi nên bạn có thể sửa nó.",
   "settings.field.editor.auto_close": "Tự động đóng",
   "settings.field.editor.whitespace_show": "Hiển thị khoảng trắng",
   "settings.field.editor.whitespace_spaces_inner": "Khoảng trắng bên trong",
