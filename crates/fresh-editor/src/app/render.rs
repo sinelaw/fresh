@@ -193,9 +193,14 @@ impl Editor {
         let search_options_idx = 3;
         let prompt_line_idx = 4;
 
-        // Split the main content area for the file explorer (when shown) and
-        // paint it; the remaining region is the editor content area.
-        let editor_content_area = self.render_file_explorer_pane(frame, main_content_area);
+        // Split the main content area into the explorer sidebar (when shown)
+        // and the editor content area beside it. Painting the explorer is a
+        // separate, composable step that draws only into the returned rect.
+        let (editor_content_area, file_explorer_area) =
+            self.split_file_explorer_area(main_content_area);
+        if let Some(file_explorer_area) = file_explorer_area {
+            self.render_file_explorer(frame, file_explorer_area);
+        }
 
         // Note: Tabs are now rendered within each split by SplitRenderer
 
@@ -1407,142 +1412,146 @@ impl Editor {
         self.active_chrome_mut().workspace_trust_dialog = trust_layout;
     }
 
-    /// Lay out and paint the file-explorer sidebar within `main_content_area`
-    /// (when it should be shown), returning the editor content area that
-    /// remains. When the explorer is hidden the whole region is the editor's
-    /// and the cached explorer rect is cleared. The split is also kept while a
-    /// sync is in progress, to avoid a one-frame flicker.
-    fn render_file_explorer_pane(
+    /// Split `main_content_area` into the editor content area and the
+    /// file-explorer sidebar rect, updating the cached explorer rect for hit
+    /// testing. Returns `(editor_content_area, explorer_rect)`, where
+    /// `explorer_rect` is `None` when the explorer is hidden (the whole region
+    /// is the editor's). The split is kept while a sync is in progress, to
+    /// avoid a one-frame flicker. This decides layout only — painting the
+    /// sidebar is [`render_file_explorer`], which draws into the returned rect.
+    fn split_file_explorer_area(
         &mut self,
-        frame: &mut Frame,
         main_content_area: ratatui::layout::Rect,
-    ) -> ratatui::layout::Rect {
-        let editor_content_area;
+    ) -> (ratatui::layout::Rect, Option<ratatui::layout::Rect>) {
         let file_explorer_should_show = self.file_explorer_visible()
             && (self.file_explorer().is_some()
                 || self.active_window().file_explorer_sync_in_progress);
 
-        if file_explorer_should_show {
-            // Split horizontally based on side placement
-            tracing::trace!(
-                "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
-                self.file_explorer().is_some(),
-                self.active_window().file_explorer_sync_in_progress,
-                self.active_window().file_explorer_side
-            );
-            let explorer_cols = self
-                .active_window()
-                .file_explorer_width
-                .to_cols(main_content_area.width);
+        if !file_explorer_should_show {
+            // No file explorer: use entire main content area for editor
+            self.active_layout_mut().file_explorer_area = None;
+            return (main_content_area, None);
+        }
 
-            let (explorer_area, editor_area) = match self.active_window().file_explorer_side {
-                FileExplorerSide::Left => {
-                    let chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
-                        .split(main_content_area);
-                    (chunks[0], chunks[1])
-                }
-                FileExplorerSide::Right => {
-                    let chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Min(0), Constraint::Length(explorer_cols)])
-                        .split(main_content_area);
-                    (chunks[1], chunks[0])
-                }
-            };
+        // Split horizontally based on side placement
+        tracing::trace!(
+            "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
+            self.file_explorer().is_some(),
+            self.active_window().file_explorer_sync_in_progress,
+            self.active_window().file_explorer_side
+        );
+        let explorer_cols = self
+            .active_window()
+            .file_explorer_width
+            .to_cols(main_content_area.width);
 
-            self.active_layout_mut().file_explorer_area = Some(explorer_area);
-            editor_content_area = editor_area;
+        let (explorer_area, editor_area) = match self.active_window().file_explorer_side {
+            FileExplorerSide::Left => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
+                    .split(main_content_area);
+                (chunks[0], chunks[1])
+            }
+            FileExplorerSide::Right => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Min(0), Constraint::Length(explorer_cols)])
+                    .split(main_content_area);
+                (chunks[1], chunks[0])
+            }
+        };
 
-            // Get connection string before mutable borrow of file_explorer.
-            let remote_connection = self.connection_display_string();
+        self.active_layout_mut().file_explorer_area = Some(explorer_area);
+        (editor_area, Some(explorer_area))
+    }
 
-            // Render file explorer (only if we have it - during sync we just keep the area reserved).
-            // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
-            // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
-            // splits the borrow on `self.windows` from the borrows on those other fields.
-            let active_id = self.active_window;
-            // Read window-state inputs before taking the &mut borrow on the
-            // window for the explorer/buffer access below.
-            // The explorer reads as focused only when it actually owns the
-            // keyboard — not when a focused orchestrator dock has stolen it
-            // out from under the (still-FileExplorer) window context. Without
-            // this guard the explorer keeps its accent border while the dock
-            // is driving, making it ambiguous which panel is focused.
-            let is_focused = self.active_window().key_context == KeyContext::FileExplorer
-                && !self.dock.as_ref().is_some_and(|d| d.focused);
-            let key_context_clone = self.active_window().key_context.clone();
-            let close_button_hovered = matches!(
-                &self.active_window().mouse_state.hover_target,
-                Some(HoverTarget::FileExplorerCloseButton)
-            );
-            let slot_resolver = self.file_explorer_slot_resolver();
-            // Theme-key runs the explorer records as it paints; applied to the
-            // chrome cell map after the window borrow is released.
-            let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            // Web renders the sidebar natively from `file_explorer_view`; skip
-            // its cell drawing (layout/viewport still applied).
-            let fe_draw = !self.suppress_chrome_cells;
-            // Take one &mut on the active window; the explorer + buffers
-            // come from disjoint sub-fields so they can coexist.
-            let __win = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
-            if let Some(explorer) = __win.file_explorer.as_mut() {
-                // Build set of files with unsaved changes
-                let mut files_with_unsaved_changes = std::collections::HashSet::new();
-                for (buffer_id, state) in __buffers_ref {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
-                            if let Some(file_path) = metadata.file_path() {
-                                files_with_unsaved_changes.insert(file_path.clone());
-                            }
+    /// Paint the file-explorer sidebar into `area`. Composable: it draws only
+    /// into the given rect and makes no layout decisions. A no-op when the
+    /// explorer isn't materialised (mid-sync the rect stays reserved but
+    /// blank).
+    fn render_file_explorer(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        // Get connection string before mutable borrow of file_explorer.
+        let remote_connection = self.connection_display_string();
+
+        // Render file explorer (only if we have it - during sync we just keep the area reserved).
+        // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
+        // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
+        // splits the borrow on `self.windows` from the borrows on those other fields.
+        let active_id = self.active_window;
+        // Read window-state inputs before taking the &mut borrow on the
+        // window for the explorer/buffer access below.
+        // The explorer reads as focused only when it actually owns the
+        // keyboard — not when a focused orchestrator dock has stolen it
+        // out from under the (still-FileExplorer) window context. Without
+        // this guard the explorer keeps its accent border while the dock
+        // is driving, making it ambiguous which panel is focused.
+        let is_focused = self.active_window().key_context == KeyContext::FileExplorer
+            && !self.dock.as_ref().is_some_and(|d| d.focused);
+        let key_context_clone = self.active_window().key_context.clone();
+        let close_button_hovered = matches!(
+            &self.active_window().mouse_state.hover_target,
+            Some(HoverTarget::FileExplorerCloseButton)
+        );
+        let slot_resolver = self.file_explorer_slot_resolver();
+        // Theme-key runs the explorer records as it paints; applied to the
+        // chrome cell map after the window borrow is released.
+        let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+        // Web renders the sidebar natively from `file_explorer_view`; skip
+        // its cell drawing (layout/viewport still applied).
+        let fe_draw = !self.suppress_chrome_cells;
+        // Take one &mut on the active window; the explorer + buffers
+        // come from disjoint sub-fields so they can coexist.
+        let __win = self
+            .windows
+            .get_mut(&active_id)
+            .expect("active window must exist");
+        let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
+        if let Some(explorer) = __win.file_explorer.as_mut() {
+            // Build set of files with unsaved changes
+            let mut files_with_unsaved_changes = std::collections::HashSet::new();
+            for (buffer_id, state) in __buffers_ref {
+                if state.buffer.is_modified() {
+                    if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
+                        if let Some(file_path) = metadata.file_path() {
+                            files_with_unsaved_changes.insert(file_path.clone());
                         }
                     }
                 }
-
-                let keybindings = self.keybindings.read().unwrap();
-                let empty: Vec<std::path::PathBuf> = Vec::new();
-                let cut_paths = __win
-                    .file_explorer_clipboard
-                    .as_ref()
-                    .filter(|cb| cb.is_cut)
-                    .map(|cb| cb.paths.as_slice())
-                    .unwrap_or(empty.as_slice());
-                FileExplorerRenderer::render(
-                    explorer,
-                    frame,
-                    explorer_area,
-                    slot_resolver,
-                    is_focused,
-                    &files_with_unsaved_changes,
-                    &__win.file_explorer_decoration_cache,
-                    &__win.file_explorer_slot_override_cache,
-                    &keybindings,
-                    key_context_clone,
-                    &*self.theme.read().unwrap(),
-                    close_button_hovered,
-                    remote_connection.as_deref(),
-                    cut_paths,
-                    &self.config.file_explorer.tree_indicator_collapsed,
-                    &self.config.file_explorer.tree_indicator_expanded,
-                    Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
-                    fe_draw,
-                );
             }
-            // Note: if file_explorer is None but sync_in_progress is true,
-            // we just leave the area blank (or could render a placeholder)
-            self.active_chrome_mut().apply_theme_runs(&fe_runs);
-        } else {
-            // No file explorer: use entire main content area for editor
-            self.active_layout_mut().file_explorer_area = None;
-            editor_content_area = main_content_area;
-        }
 
-        editor_content_area
+            let keybindings = self.keybindings.read().unwrap();
+            let empty: Vec<std::path::PathBuf> = Vec::new();
+            let cut_paths = __win
+                .file_explorer_clipboard
+                .as_ref()
+                .filter(|cb| cb.is_cut)
+                .map(|cb| cb.paths.as_slice())
+                .unwrap_or(empty.as_slice());
+            FileExplorerRenderer::render(
+                explorer,
+                frame,
+                area,
+                slot_resolver,
+                is_focused,
+                &files_with_unsaved_changes,
+                &__win.file_explorer_decoration_cache,
+                &__win.file_explorer_slot_override_cache,
+                &keybindings,
+                key_context_clone,
+                &*self.theme.read().unwrap(),
+                close_button_hovered,
+                remote_connection.as_deref(),
+                cut_paths,
+                &self.config.file_explorer.tree_indicator_collapsed,
+                &self.config.file_explorer.tree_indicator_expanded,
+                Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
+                fe_draw,
+            );
+        }
+        // Note: if file_explorer is None but sync_in_progress is true,
+        // we just leave the area blank (or could render a placeholder)
+        self.active_chrome_mut().apply_theme_runs(&fe_runs);
     }
 
     /// Render the status bar into `area`, unless it's toggled off or a
