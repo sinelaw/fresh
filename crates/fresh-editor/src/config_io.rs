@@ -292,14 +292,25 @@ fn json_value_to_cst_input(value: &Value) -> jsonc_parser::cst::CstInputValue {
 }
 
 /// Read an existing config file as raw JSON, returning an empty object when the file
-/// is absent or unparseable.
+/// is absent or empty.
+///
+/// **Errors** (rather than returning an empty object) when the file exists with
+/// content that can't be parsed. This is used on the read-modify-write save
+/// path: silently treating an unparseable file as empty would make the
+/// subsequent write overwrite the user's entire config with just the new
+/// edits. Failing here instead leaves the file untouched and lets the caller
+/// surface the parse error.
 fn read_existing_json(path: &Path) -> Result<Value, ConfigError> {
     if !path.exists() {
         return Ok(Value::Object(Default::default()));
     }
     let content = std::fs::read_to_string(path)
         .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-    Ok(crate::config::parse_config_jsonc(&content).unwrap_or(Value::Object(Default::default())))
+    if content.trim().is_empty() {
+        return Ok(Value::Object(Default::default()));
+    }
+    crate::config::parse_config_jsonc(&content)
+        .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))
 }
 
 // ============================================================================
@@ -571,13 +582,19 @@ impl ConfigResolver {
         let delta = diff_partial_config(&current, &parent);
 
         // Preserve any manual edits made externally; delta takes precedence.
+        // Fail loudly on an unparseable existing file rather than discarding it
+        // (which would clobber the user's whole config on write).
         let existing: PartialConfig = if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
-            crate::config::parse_config_jsonc(&content)
-                .ok()
-                .and_then(|v| serde_json::from_value(v).ok())
-                .unwrap_or_default()
+            if content.trim().is_empty() {
+                PartialConfig::default()
+            } else {
+                let value = crate::config::parse_config_jsonc(&content)
+                    .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?;
+                serde_json::from_value(value)
+                    .map_err(|e| ConfigError::ParseError(format!("{}: {}", path.display(), e)))?
+            }
         } else {
             PartialConfig::default()
         };
@@ -1402,6 +1419,225 @@ mod tests {
         // A non-object existing document can't be edited in place; the writer
         // signals a fall-back so the caller pretty-prints fresh.
         assert!(reconcile_preserving_comments("[1, 2, 3]", &serde_json::json!({"a": 1})).is_none());
+    }
+
+    /// A realistic user config: comments in two places, a `keybindings` array,
+    /// and a `languages` map. Mirrors the file from the data-loss report.
+    const REALISTIC_USER_CONFIG: &str = r#"{
+  "version": 2,
+  "theme": "builtin://dracula",
+  "editor": {
+    // stuff that's really thingy
+    "hide_current_line_on_selection": true,
+    "auto_read_only": false,
+    "indentation_guide": "all"
+  },
+  // file explorer hooray:
+  "file_explorer": {
+    "show_hidden": true,
+    "custom_ignore_patterns": ["*.log"]
+  },
+  "keybindings": [
+    {
+      "key": "=",
+      "modifiers": ["alt"],
+      "action": "next_window"
+    }
+  ],
+  "languages": {
+    "go": {
+      "extensions": ["go"],
+      "grammar": "go",
+      "use_tabs": true,
+      "tab_size": 8,
+      "formatter": {
+        "command": "gofmt",
+        "stdin": true,
+        "timeout_ms": 10000
+      },
+      "format_on_save": true
+    }
+  },
+  "check_for_updates": false
+}
+"#;
+
+    /// Reproduces the original parse failure: the reported config is perfectly
+    /// legitimate JSON-with-comments, but the strict `serde_json` parser the
+    /// loader used to rely on rejects it (the `key must be a string` error from
+    /// the bug report, raised at the first `//`). Our config loader must accept
+    /// it and read every value correctly.
+    #[test]
+    fn realistic_commented_config_is_rejected_by_strict_json_but_accepted_by_loader() {
+        // Original behavior: strict JSON cannot parse comments — this is the bug.
+        assert!(
+            serde_json::from_str::<serde_json::Value>(REALISTIC_USER_CONFIG).is_err(),
+            "sanity: the sample must actually contain JSONC that strict JSON rejects"
+        );
+
+        // Fixed behavior: the loader parses it and the values are intact.
+        let v = crate::config::parse_config_jsonc(REALISTIC_USER_CONFIG)
+            .expect("loader must accept legitimate JSON-with-comments");
+        assert_eq!(
+            v.pointer("/theme"),
+            Some(&serde_json::json!("builtin://dracula"))
+        );
+        assert_eq!(
+            v.pointer("/languages/go/tab_size"),
+            Some(&serde_json::json!(8))
+        );
+        assert_eq!(
+            v.pointer("/keybindings/0/action"),
+            Some(&serde_json::json!("next_window"))
+        );
+        assert_eq!(
+            v.pointer("/file_explorer/custom_ignore_patterns/0"),
+            Some(&serde_json::json!("*.log"))
+        );
+    }
+
+    /// Reproduces the reported data-loss bug. Saving a single settings change
+    /// onto an existing config file that fails to parse must NOT overwrite the
+    /// whole file with just that change. The save must error (so the UI can
+    /// alert) and leave the file byte-for-byte intact.
+    ///
+    /// Without the guard, `read_existing_json` returns an empty object for an
+    /// unparseable file, the one change is applied on top, and the user's
+    /// entire config is overwritten — exactly the failure that was reported.
+    #[test]
+    fn save_changes_does_not_clobber_unparseable_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        // Truncated / malformed JSON: missing closing braces.
+        let original = "{\n  \"editor\": {\n    \"tab_size\": 7\n";
+        std::fs::write(&user_config_path, original).unwrap();
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/line_numbers".to_string(), serde_json::json!(false));
+        let result = resolver.save_changes_to_layer(
+            &changes,
+            &std::collections::HashSet::new(),
+            ConfigLayer::User,
+        );
+
+        assert!(
+            result.is_err(),
+            "saving onto an unparseable config must error, not silently succeed and clobber it"
+        );
+        let after = std::fs::read_to_string(&user_config_path).unwrap();
+        assert_eq!(
+            after, original,
+            "a failed save must leave the unparseable config file untouched"
+        );
+        drop(temp);
+    }
+
+    /// Same guarantee for the baseline-based save path used by the Settings UI.
+    #[test]
+    fn save_with_baseline_does_not_clobber_unparseable_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        let original = "{ \"editor\": { \"tab_size\": 7  oops not json";
+        std::fs::write(&user_config_path, original).unwrap();
+
+        let baseline = Config::default();
+        let mut current = Config::default();
+        current.editor.tab_size = 3;
+        let result = resolver.save_to_layer_with_baseline(&current, &baseline, ConfigLayer::User);
+
+        assert!(result.is_err(), "must error on unparseable existing file");
+        assert_eq!(
+            std::fs::read_to_string(&user_config_path).unwrap(),
+            original,
+            "a failed save must leave the file untouched"
+        );
+        drop(temp);
+    }
+
+    /// Same guarantee for `save_to_layer`.
+    #[test]
+    fn save_to_layer_does_not_clobber_unparseable_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        let original = "{ broken";
+        std::fs::write(&user_config_path, original).unwrap();
+
+        let mut config = Config::default();
+        config.editor.tab_size = 3;
+        let result = resolver.save_to_layer(&config, ConfigLayer::User);
+
+        assert!(result.is_err(), "must error on unparseable existing file");
+        assert_eq!(
+            std::fs::read_to_string(&user_config_path).unwrap(),
+            original,
+            "a failed save must leave the file untouched"
+        );
+        drop(temp);
+    }
+
+    /// End-to-end: a Settings-UI save of one unrelated field onto the realistic
+    /// commented config preserves every comment, the keybindings array, and the
+    /// languages map, while applying the change. This is the regression that the
+    /// original (strict-parse) code silently failed by wiping the file.
+    #[test]
+    fn settings_save_preserves_full_realistic_config() {
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(&user_config_path, REALISTIC_USER_CONFIG).unwrap();
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/editor/auto_read_only".to_string(),
+            serde_json::json!(true),
+        );
+        resolver
+            .save_changes_to_layer(
+                &changes,
+                &std::collections::HashSet::new(),
+                ConfigLayer::User,
+            )
+            .unwrap();
+
+        let saved = std::fs::read_to_string(&user_config_path).unwrap();
+        // Comments survive.
+        assert!(
+            saved.contains("// stuff that's really thingy"),
+            "editor comment lost:\n{saved}"
+        );
+        assert!(
+            saved.contains("// file explorer hooray:"),
+            "file_explorer comment lost:\n{saved}"
+        );
+        // Complex structures survive.
+        let reparsed = crate::config::parse_config_jsonc(&saved).unwrap();
+        assert_eq!(
+            reparsed.pointer("/keybindings/0/action"),
+            Some(&serde_json::json!("next_window")),
+            "keybindings array lost:\n{saved}"
+        );
+        assert_eq!(
+            reparsed.pointer("/languages/go/formatter/command"),
+            Some(&serde_json::json!("gofmt")),
+            "languages map lost:\n{saved}"
+        );
+        assert_eq!(
+            reparsed.pointer("/theme"),
+            Some(&serde_json::json!("builtin://dracula"))
+        );
+        // The change was applied.
+        assert_eq!(
+            reparsed.pointer("/editor/auto_read_only"),
+            Some(&serde_json::json!(true))
+        );
+        drop(temp);
     }
 
     #[test]
