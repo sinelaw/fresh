@@ -1417,85 +1417,10 @@ impl Editor {
         // Update menu context with current editor state
         self.update_menu_context();
 
-        // Render settings modal (before menu bar so menus can overlay)
-        // Check visibility first to avoid borrow conflict with dimming
-        // The web renders Settings natively from `settings_view`; paint cells
-        // only for the TUI.
-        let draw_settings = !self.suppress_chrome_cells;
-        let settings_visible = draw_settings
-            && self
-                .settings_state
-                .as_ref()
-                .map(|s| s.visible)
-                .unwrap_or(false);
-        if settings_visible {
-            // Dim the editor content behind the settings modal. Use the
-            // chrome area (right of a left dock) so the modal sits beside
-            // the persistent dock instead of being overlapped by it.
-            crate::view::dimming::apply_dimming(frame, chrome_area);
-        }
-        if let Some(ref mut settings_state) = self.settings_state {
-            if !draw_settings {
-                // keyboard-driven native render; skip cells (and the focus-state
-                // update tied to the cell layout pass).
-            } else if settings_state.visible {
-                settings_state.update_focus_states();
-                let settings_layout = crate::view::settings::render_settings(
-                    frame,
-                    chrome_area,
-                    settings_state,
-                    &*self.theme.read().unwrap(),
-                );
-                self.active_chrome_mut().settings_layout = Some(settings_layout);
-            }
-        }
-
-        // Render calibration wizard if active. (Deprecated; the web has no native
-        // projection for it, so suppress its cells there rather than bleed.)
-        if !self.suppress_chrome_cells {
-            if let Some(ref wizard) = self.calibration_wizard {
-                // Dim the editor content behind the wizard modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::calibration_wizard::render_calibration_wizard(
-                    frame,
-                    chrome_area,
-                    wizard,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
-
-        // Event-debug: the web renders it natively from `aux_modals_view`; paint
-        // cells only for the TUI.
-        let draw_aux = !self.suppress_chrome_cells;
-
-        // Keybinding editor: web renders it natively from `keybinding_editor_view`;
-        // paint cells only for the TUI.
-        if draw_aux {
-            if let Some(ref mut kb_editor) = self.keybinding_editor {
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::keybinding_editor::render_keybinding_editor(
-                    frame,
-                    chrome_area,
-                    kb_editor,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
-
-        // Render event debug dialog if active
-        if draw_aux {
-            if let Some(ref debug) = self.active_window().event_debug {
-                // Dim the editor content behind the dialog modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::event_debug::render_event_debug(
-                    frame,
-                    chrome_area,
-                    debug,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
+        // Settings / calibration-wizard / keybinding-editor / event-debug
+        // modals, dimming the chrome behind each. Rendered before the menu
+        // bar so open menus overlay them.
+        self.render_modal_overlays(frame, chrome_area);
 
         // The workspace-trust prompt is a blocking, top-most security modal.
         // It dims the *entire* frame (the dock included) and centres in the
@@ -1504,64 +1429,11 @@ impl Editor {
         // dock's later pass would overpaint its left edge. See the bottom of
         // `render`.
 
-        if self.active_window_mut().menu_bar_visible {
-            // Pre-expand DynamicSubmenu items once per registry; without this
-            // MenuRenderer::render rescans + reparses every theme JSON file
-            // on every frame.
-            self.expanded_menus_cache.update(
-                &self.theme_registry,
-                &self.menus,
-                &self.menu_state.themes_dir,
-            );
-            let hover_target = self.active_window().mouse_state.hover_target.clone();
-            let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
-            let draw_chrome = !self.suppress_chrome_cells;
-            // The single content source shared with the web `menu_view()`
-            // projection (uses the cache populated just above).
-            let all_menus = self.all_menus_expanded();
-            let keybindings = self.keybindings.read().unwrap();
-            let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            let new_menu_layout = crate::view::ui::MenuRenderer::render(
-                frame,
-                menu_bar_area,
-                &all_menus,
-                &self.menu_state,
-                &keybindings,
-                &*self.theme.read().unwrap(),
-                hover_target.as_ref(),
-                menu_bar_mnemonics,
-                Some(&mut crate::app::types::CellThemeRecorder::new(
-                    &mut menu_runs,
-                )),
-                draw_chrome,
-            );
-            drop(keybindings);
-            self.active_chrome_mut().menu_layout = Some(new_menu_layout);
-            self.active_chrome_mut().apply_theme_runs(&menu_runs);
-        } else {
-            self.active_chrome_mut().menu_layout = None;
-        }
+        // Menu bar, drawn last so its dropdowns sit above all other content.
+        self.render_menu_bar(frame, menu_bar_area);
 
-        // Context menus: the web renders these natively from `context_menu_view`
-        // (no cell drawing); the TUI draws them as before.
-        if !self.suppress_chrome_cells {
-            // Render tab context menu if open
-            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
-            if let Some(menu) = tab_ctx_menu {
-                self.render_tab_context_menu(frame, &menu);
-            }
-
-            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
-            if let Some(menu) = fe_ctx_menu {
-                self.render_file_explorer_context_menu(frame, &menu);
-            }
-
-            // Render the "+" new-tab popup menu if open
-            let new_tab_menu = self.active_window().new_tab_menu.clone();
-            if let Some(menu) = new_tab_menu {
-                self.render_new_tab_menu(frame, &menu);
-            }
-        }
+        // Tab / file-explorer / new-tab context menus (TUI cell drawing only).
+        self.render_context_menus(frame);
 
         // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
         // scrollbars) is now recorded during each region's own paint.
@@ -1767,6 +1639,158 @@ impl Editor {
             None
         };
         self.active_chrome_mut().workspace_trust_dialog = trust_layout;
+    }
+
+    /// Render the modal overlays that dim the chrome behind them: settings,
+    /// calibration wizard, keybinding editor, and event-debug dialog. Each is
+    /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects
+    /// them natively. Rendered before the menu bar so open menus overlay them.
+    fn render_modal_overlays(&mut self, frame: &mut Frame, chrome_area: ratatui::layout::Rect) {
+        // Render settings modal (before menu bar so menus can overlay)
+        // Check visibility first to avoid borrow conflict with dimming
+        // The web renders Settings natively from `settings_view`; paint cells
+        // only for the TUI.
+        let draw_settings = !self.suppress_chrome_cells;
+        let settings_visible = draw_settings
+            && self
+                .settings_state
+                .as_ref()
+                .map(|s| s.visible)
+                .unwrap_or(false);
+        if settings_visible {
+            // Dim the editor content behind the settings modal. Use the
+            // chrome area (right of a left dock) so the modal sits beside
+            // the persistent dock instead of being overlapped by it.
+            crate::view::dimming::apply_dimming(frame, chrome_area);
+        }
+        if let Some(ref mut settings_state) = self.settings_state {
+            if !draw_settings {
+                // keyboard-driven native render; skip cells (and the focus-state
+                // update tied to the cell layout pass).
+            } else if settings_state.visible {
+                settings_state.update_focus_states();
+                let settings_layout = crate::view::settings::render_settings(
+                    frame,
+                    chrome_area,
+                    settings_state,
+                    &*self.theme.read().unwrap(),
+                );
+                self.active_chrome_mut().settings_layout = Some(settings_layout);
+            }
+        }
+
+        // Render calibration wizard if active. (Deprecated; the web has no native
+        // projection for it, so suppress its cells there rather than bleed.)
+        if !self.suppress_chrome_cells {
+            if let Some(ref wizard) = self.calibration_wizard {
+                // Dim the editor content behind the wizard modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::calibration_wizard::render_calibration_wizard(
+                    frame,
+                    chrome_area,
+                    wizard,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+
+        // Event-debug: the web renders it natively from `aux_modals_view`; paint
+        // cells only for the TUI.
+        let draw_aux = !self.suppress_chrome_cells;
+
+        // Keybinding editor: web renders it natively from `keybinding_editor_view`;
+        // paint cells only for the TUI.
+        if draw_aux {
+            if let Some(ref mut kb_editor) = self.keybinding_editor {
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::keybinding_editor::render_keybinding_editor(
+                    frame,
+                    chrome_area,
+                    kb_editor,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+
+        // Render event debug dialog if active
+        if draw_aux {
+            if let Some(ref debug) = self.active_window().event_debug {
+                // Dim the editor content behind the dialog modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::event_debug::render_event_debug(
+                    frame,
+                    chrome_area,
+                    debug,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+    }
+
+    /// Render the menu bar into `menu_bar_area`, or clear the cached layout
+    /// when the bar is hidden. Drawn late in `render` so its dropdowns sit
+    /// above all other content.
+    fn render_menu_bar(&mut self, frame: &mut Frame, menu_bar_area: ratatui::layout::Rect) {
+        if self.active_window().menu_bar_visible {
+            // Pre-expand DynamicSubmenu items once per registry; without this
+            // MenuRenderer::render rescans + reparses every theme JSON file
+            // on every frame.
+            self.expanded_menus_cache.update(
+                &self.theme_registry,
+                &self.menus,
+                &self.menu_state.themes_dir,
+            );
+            let hover_target = self.active_window().mouse_state.hover_target.clone();
+            let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
+            let draw_chrome = !self.suppress_chrome_cells;
+            // The single content source shared with the web `menu_view()`
+            // projection (uses the cache populated just above).
+            let all_menus = self.all_menus_expanded();
+            let keybindings = self.keybindings.read().unwrap();
+            let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            let new_menu_layout = crate::view::ui::MenuRenderer::render(
+                frame,
+                menu_bar_area,
+                &all_menus,
+                &self.menu_state,
+                &keybindings,
+                &*self.theme.read().unwrap(),
+                hover_target.as_ref(),
+                menu_bar_mnemonics,
+                Some(&mut crate::app::types::CellThemeRecorder::new(
+                    &mut menu_runs,
+                )),
+                draw_chrome,
+            );
+            drop(keybindings);
+            self.active_chrome_mut().menu_layout = Some(new_menu_layout);
+            self.active_chrome_mut().apply_theme_runs(&menu_runs);
+        } else {
+            self.active_chrome_mut().menu_layout = None;
+        }
+    }
+
+    /// Render the tab, file-explorer, and new-tab context menus. TUI-only
+    /// cell drawing; the web projects these natively from `context_menu_view`.
+    fn render_context_menus(&mut self, frame: &mut Frame) {
+        if !self.suppress_chrome_cells {
+            // Render tab context menu if open
+            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
+            if let Some(menu) = tab_ctx_menu {
+                self.render_tab_context_menu(frame, &menu);
+            }
+
+            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
+            if let Some(menu) = fe_ctx_menu {
+                self.render_file_explorer_context_menu(frame, &menu);
+            }
+
+            // Render the "+" new-tab popup menu if open
+            let new_tab_menu = self.active_window().new_tab_menu.clone();
+            if let Some(menu) = new_tab_menu {
+                self.render_new_tab_menu(frame, &menu);
+            }
+        }
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.
