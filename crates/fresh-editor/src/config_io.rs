@@ -171,8 +171,14 @@ fn find_changed_paths_recursive(
     }
 }
 
-/// Strip defaults/nulls from `value`, serialize to pretty JSON, ensure the parent
-/// directory exists, and write to `path`.
+/// Strip defaults/nulls from `value`, ensure the parent directory exists, and
+/// write to `path`.
+///
+/// When `path` already holds a JSON object, the new values are applied onto the
+/// existing file *text* through the JSONC CST so the user's comments,
+/// formatting, and untouched inline annotations survive the write. Only when
+/// there is no usable existing file (new file, unparseable, or a non-object
+/// root) do we fall back to pretty-printing from scratch.
 fn write_clean_value_to_path(path: &Path, value: Value) -> Result<(), ConfigError> {
     if let Some(parent_dir) = path.parent() {
         std::fs::create_dir_all(parent_dir)
@@ -180,11 +186,109 @@ fn write_clean_value_to_path(path: &Path, value: Value) -> Result<(), ConfigErro
     }
     let stripped = strip_nulls(value).unwrap_or(Value::Object(Default::default()));
     let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
-    let json = serde_json::to_string_pretty(&clean)
-        .map_err(|e| ConfigError::SerializeError(e.to_string()))?;
-    std::fs::write(path, json)
+
+    let output = render_config_text(path, &clean)?;
+    std::fs::write(path, output)
         .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
     Ok(())
+}
+
+/// Produce the on-disk text for `clean`, preserving comments from any existing
+/// file at `path` when possible (see `write_clean_value_to_path`).
+fn render_config_text(path: &Path, clean: &Value) -> Result<String, ConfigError> {
+    if let (Value::Object(_), Ok(existing)) = (clean, std::fs::read_to_string(path)) {
+        if let Some(text) = reconcile_preserving_comments(&existing, clean) {
+            return Ok(text);
+        }
+    }
+    serde_json::to_string_pretty(clean).map_err(|e| ConfigError::SerializeError(e.to_string()))
+}
+
+/// Apply `clean` (a JSON object) onto the existing JSONC `existing` text via the
+/// CST, returning the edited text. Returns `None` when `existing` can't be
+/// parsed or its root isn't an object, so the caller can fall back to a fresh
+/// pretty-print.
+fn reconcile_preserving_comments(existing: &str, clean: &Value) -> Option<String> {
+    use jsonc_parser::cst::CstRootNode;
+
+    let Value::Object(target) = clean else {
+        return None;
+    };
+    let root = CstRootNode::parse(existing, &Default::default()).ok()?;
+    // Bail out (pretty-print fresh) if the document root isn't a JSON object —
+    // editing a scalar/array root in place isn't meaningful for our configs.
+    root.value()?.as_object()?;
+    let obj = root.object_value_or_set();
+    reconcile_cst_object(&obj, target);
+    Some(root.to_string())
+}
+
+/// Recursively reconcile a CST object node so it matches `target`, touching as
+/// little as possible: unchanged properties are left exactly as written (commas,
+/// whitespace, and inline comments intact), nested objects recurse, removed keys
+/// are deleted, and new keys are appended.
+fn reconcile_cst_object(
+    obj: &jsonc_parser::cst::CstObject,
+    target: &serde_json::Map<String, Value>,
+) {
+    use jsonc_parser::cst::CstObjectProp;
+
+    let prop_name = |prop: &CstObjectProp| -> Option<String> {
+        prop.name().and_then(|n| n.decoded_value().ok())
+    };
+
+    // Remove properties that are no longer present in the target.
+    for prop in obj.properties() {
+        match prop_name(&prop) {
+            Some(name) if target.contains_key(&name) => {}
+            _ => prop.remove(),
+        }
+    }
+
+    // Insert or update properties from the target.
+    for (key, new_value) in target {
+        match obj.get(key) {
+            Some(prop) => {
+                // Skip writes when the value is already equal so existing
+                // formatting/comments on that value are preserved verbatim.
+                let current = prop.value().and_then(|n| n.to_serde_value());
+                if current.as_ref() == Some(new_value) {
+                    continue;
+                }
+                match (new_value, prop.value().and_then(|n| n.as_object())) {
+                    // Both sides are objects: recurse to keep inner comments.
+                    (Value::Object(child_target), Some(child_obj)) => {
+                        reconcile_cst_object(&child_obj, child_target);
+                    }
+                    // Otherwise replace the value wholesale.
+                    _ => prop.set_value(json_value_to_cst_input(new_value)),
+                }
+            }
+            None => {
+                obj.append(key, json_value_to_cst_input(new_value));
+            }
+        }
+    }
+}
+
+/// Convert a `serde_json::Value` into the CST's input-value representation used
+/// for inserts and replacements.
+fn json_value_to_cst_input(value: &Value) -> jsonc_parser::cst::CstInputValue {
+    use jsonc_parser::cst::CstInputValue;
+    match value {
+        Value::Null => CstInputValue::Null,
+        Value::Bool(b) => CstInputValue::Bool(*b),
+        Value::Number(n) => CstInputValue::Number(n.to_string()),
+        Value::String(s) => CstInputValue::String(s.clone()),
+        Value::Array(arr) => {
+            CstInputValue::Array(arr.iter().map(json_value_to_cst_input).collect())
+        }
+        Value::Object(map) => CstInputValue::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), json_value_to_cst_input(v)))
+                .collect(),
+        ),
+    }
 }
 
 /// Read an existing config file as raw JSON, returning an empty object when the file
@@ -1190,6 +1294,114 @@ mod tests {
         let config = Config::load_from_file(&path).expect("commented --config file should load");
         assert_eq!(config.editor.tab_size, 2);
         assert!(!config.editor.line_numbers);
+    }
+
+    #[test]
+    fn reconcile_preserves_comments_and_unchanged_inline_annotations() {
+        // Direct unit test of the comment-preserving writer: changing one
+        // field must keep every comment and leave the untouched field's inline
+        // annotation byte-for-byte.
+        let existing = "{\n  \
+            // top-of-file note\n  \
+            \"editor\": {\n    \
+                \"tab_size\": 7, // my preferred width\n    \
+                \"line_numbers\": true\n  \
+            }\n\
+        }\n";
+
+        let target = serde_json::json!({
+            "editor": { "tab_size": 7, "line_numbers": false }
+        });
+
+        let out =
+            reconcile_preserving_comments(existing, &target).expect("object root should reconcile");
+
+        assert!(
+            out.contains("// top-of-file note"),
+            "file comment lost:\n{out}"
+        );
+        assert!(
+            out.contains("\"tab_size\": 7, // my preferred width"),
+            "inline comment on the unchanged field should be untouched:\n{out}"
+        );
+        // The changed field was actually updated.
+        let reparsed = crate::config::parse_config_jsonc(&out).unwrap();
+        assert_eq!(
+            reparsed.pointer("/editor/line_numbers"),
+            Some(&serde_json::json!(false))
+        );
+    }
+
+    #[test]
+    fn reconcile_appends_new_key_without_disturbing_comments() {
+        let existing = "{\n  // keep me\n  \"editor\": { \"tab_size\": 2 }\n}\n";
+        let target = serde_json::json!({
+            "editor": { "tab_size": 2 },
+            "theme": "dark"
+        });
+
+        let out = reconcile_preserving_comments(existing, &target).unwrap();
+        assert!(out.contains("// keep me"), "comment lost:\n{out}");
+        let reparsed = crate::config::parse_config_jsonc(&out).unwrap();
+        assert_eq!(reparsed.pointer("/theme"), Some(&serde_json::json!("dark")));
+        assert_eq!(
+            reparsed.pointer("/editor/tab_size"),
+            Some(&serde_json::json!(2))
+        );
+    }
+
+    #[test]
+    fn save_changes_to_layer_preserves_user_comments() {
+        // End-to-end through the Settings-UI save path: a commented user
+        // config keeps its comments after a single field is changed.
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            "{\n  \
+                // I like a 7-space tab in this project\n  \
+                \"editor\": {\n    \
+                    \"tab_size\": 7 /* keep this */\n  \
+                }\n\
+            }\n",
+        )
+        .unwrap();
+
+        let mut changes: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        changes.insert("/editor/line_numbers".to_string(), serde_json::json!(false));
+        resolver
+            .save_changes_to_layer(
+                &changes,
+                &std::collections::HashSet::new(),
+                ConfigLayer::User,
+            )
+            .unwrap();
+
+        let saved = std::fs::read_to_string(&user_config_path).unwrap();
+        assert!(
+            saved.contains("// I like a 7-space tab in this project"),
+            "line comment must survive a settings save:\n{saved}"
+        );
+        assert!(
+            saved.contains("/* keep this */"),
+            "inline comment on the untouched field must survive:\n{saved}"
+        );
+
+        // Both the preserved and the newly written values resolve correctly.
+        let config = resolver.resolve().unwrap();
+        assert_eq!(config.editor.tab_size, 7);
+        assert!(!config.editor.line_numbers);
+        drop(temp);
+    }
+
+    #[test]
+    fn reconcile_falls_back_for_non_object_root() {
+        // A non-object existing document can't be edited in place; the writer
+        // signals a fall-back so the caller pretty-prints fresh.
+        assert!(reconcile_preserving_comments("[1, 2, 3]", &serde_json::json!({"a": 1})).is_none());
     }
 
     #[test]
