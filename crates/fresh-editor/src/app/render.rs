@@ -898,201 +898,21 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        let status_message = self.active_window().status_message.clone();
-        let plugin_status_message = self.active_window().plugin_status_message.clone();
         let prompt = self.active_window().prompt.clone();
-        // Compute a simple buffer-aware LSP indicator.
-        // Compose the LSP status-bar segment for the active buffer. This
-        // runs every render — the editor has no precomputed LSP-status
-        // string cached anywhere else, so there is a single source of
-        // truth for what the user sees.
-        //
-        // Priority order (first non-empty wins):
-        //
-        //   1. Active `$/progress` work for this language — e.g.
-        //      "LSP (cpp): indexing (42%)". Conveys the transient
-        //      startup/indexing phase.
-        //   2. A running server — "LSP". Short because detail belongs
-        //      in LSP-specific UI, not the compact status bar pill.
-        //   3. Configured `auto_start=true` servers that haven't started
-        //      (error / crashed / pending) — "LSP off".
-        //   4. Configured `enabled && !auto_start` servers that the user
-        //      has to opt into — "LSP: off (N)".
-        //   5. Nothing.
-        //
-        // Rules 3 and 4 address heuristic eval H-1: without them, a
-        // configured-but-dormant server is indistinguishable from "no
-        // LSP at all."
-        let current_language = self
-            .buffers()
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-            .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .filter(|m| !m.lsp_enabled)
-            .and_then(|m| m.lsp_disabled_reason.as_deref());
-        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
-            &current_language,
-            buffer_lsp_disabled_reason,
-            &self.active_window().lsp_progress,
-            &self.active_window().lsp_server_statuses,
-            &self.config.lsp,
-            &self.active_window().user_dismissed_lsp_languages,
-            self.config.lsp_enabled,
-        );
         let theme = self.theme.read().unwrap().clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
-        let chord_state_cloned = self.active_window_mut().chord_state.clone(); // Clone the chord state
 
-        // Get update availability info
-        let update_available = self.latest_version().map(|v| v.to_string());
-
-        // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
-        if self.active_window_mut().status_bar_visible && !has_suggestions && !has_file_browser {
-            // Get warning level for colored indicator (respects config setting)
-            // LSP warning level is scoped to the current buffer's language
-            let (warning_level, general_warning_count) =
-                if self.config.warnings.show_status_indicator {
-                    let lsp_level = {
-                        use crate::services::async_bridge::LspServerStatus;
-                        let mut level = WarningLevel::None;
-                        for ((lang, _), status) in &self.active_window().lsp_server_statuses {
-                            if lang == &current_language {
-                                match status {
-                                    LspServerStatus::Error => {
-                                        level = WarningLevel::Error;
-                                        break;
-                                    }
-                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
-                                        if level != WarningLevel::Error {
-                                            level = WarningLevel::Warning;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        level
-                    };
-                    (
-                        lsp_level,
-                        self.active_window().warning_domains.general.count,
-                    )
-                } else {
-                    (WarningLevel::None, 0)
-                };
-
-            // Which clickable status-bar segment (if any) the mouse is over —
-            // drives hover styling generically (one variant for the whole bar).
-            let status_bar_hovered = match &self.active_window_mut().mouse_state.hover_target {
-                Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
-                _ => None,
-            };
-
-            let remote_connection = self.connection_display_string();
-            // Active window's last failed-reconnect error (drives a core
-            // FailedAttach indicator for a dormant remote workspace).
-            let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
-
-            // Get session name for display (only in session mode)
-            let session_name = self.session_name().map(|s| s.to_string());
-
-            let active_split = self.effective_active_split();
-            let active_buf = self.active_buffer();
-            let default_cursors = crate::model::cursor::Cursors::new();
-            let is_read_only = self
-                .active_window()
-                .buffer_metadata
-                .get(&active_buf)
-                .map(|m| m.read_only)
-                .unwrap_or(false);
-            let is_synthetic_placeholder = self
-                .active_window()
-                .buffer_metadata
-                .get(&active_buf)
-                .map(|m| m.synthetic_placeholder)
-                .unwrap_or(false);
-            // Compute plugin-provided status-bar values before taking the
-            // mutable window borrow below.
-            let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
-            // Active session's trust level for the always-present `{trust}`
-            // indicator — read here (Copy) before the mutable window borrow.
-            let workspace_trust_level = self.authority().workspace_trust.level();
-            // Single window borrow, split into buffers + cursors so the
-            // status-bar context can hold both.
-            let __active_id = self.active_window;
-            // Theme-key runs the status bar records as it paints; applied to
-            // the chrome's cell map after the window borrow is released.
-            let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            // Web renders the status bar natively from `status_view`; skip painting
-            // it (the semantic segments + indicator rects are still captured).
-            let sb_draw = !self.suppress_chrome_cells;
-            let __win = self
-                .windows
-                .get_mut(&__active_id)
-                .expect("active window must exist");
-            let status_bar_layout = __win
-                .buffers
-                .with_buffer_and_view_states(active_buf, |state, vs_map| {
-                    let cursors = vs_map
-                        .get(&active_split)
-                        .map(|v| &v.cursors)
-                        .unwrap_or(&default_cursors);
-                    let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
-                        state,
-                        cursors,
-                        status_message: &status_message,
-                        plugin_status_message: &plugin_status_message,
-                        lsp_status: &lsp_status,
-                        lsp_indicator_state,
-                        theme: &theme,
-                        display_name: &display_name,
-                        keybindings: &keybindings_cloned,
-                        chord_state: &chord_state_cloned,
-                        update_available: update_available.as_deref(),
-                        warning_level,
-                        general_warning_count,
-                        hovered: status_bar_hovered,
-                        remote_connection: remote_connection.as_deref(),
-                        session_name: session_name.as_deref(),
-                        read_only: is_read_only,
-                        remote_state_override: self.remote_indicator_override.as_ref(),
-                        remote_reconnect_error: remote_reconnect_error.as_deref(),
-                        is_synthetic_placeholder,
-                        // Filled in by `render_status` from the user's
-                        // status_bar config; the value here is just a
-                        // safe default for the rare path that builds the
-                        // ctx but doesn't run `render_status`.
-                        remote_indicator_on_bar: false,
-                        dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
-                        workspace_trust_level,
-                    };
-                    let mut sb_rec =
-                        crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);
-                    StatusBarRenderer::render_status_bar(
-                        frame,
-                        main_chunks[status_bar_idx],
-                        &mut status_ctx,
-                        &self.config.editor.status_bar,
-                        Some(&mut sb_rec),
-                        sb_draw,
-                    )
-                })
-                .expect("active buffer must be present");
-            self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
-
-            // Store status bar layout for click detection
-            let status_bar_area = main_chunks[status_bar_idx];
-            self.active_chrome_mut().status_bar_area =
-                Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
-            self.active_chrome_mut().status_bar_clickable = status_bar_layout.clickable;
-            self.active_chrome_mut().status_bar_plugin_token_areas =
-                status_bar_layout.plugin_token_areas;
-            self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
-        }
+        // Status bar (hidden when toggled off, or when a suggestions/file-
+        // browser popup covers the bottom row).
+        self.render_status_bar_row(
+            frame,
+            main_chunks[status_bar_idx],
+            &display_name,
+            &theme,
+            &keybindings_cloned,
+            has_suggestions,
+            has_file_browser,
+        );
 
         // Search-options bar (case / whole-word / regex / confirm toggles),
         // shown only while a search-style prompt is active.
@@ -1708,6 +1528,216 @@ impl Editor {
             None
         };
         self.active_chrome_mut().workspace_trust_dialog = trust_layout;
+    }
+
+    /// Render the status bar into `area`, unless it's toggled off or a
+    /// suggestions / file-browser popup is occupying the bottom row. The
+    /// status-bar-only inputs (LSP segment, messages, chord state, update
+    /// banner, …) are computed here; `display_name`, `theme`, and
+    /// `keybindings` are shared with other chrome and passed in.
+    #[allow(clippy::too_many_arguments)]
+    fn render_status_bar_row(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        display_name: &str,
+        theme: &crate::view::theme::Theme,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        has_suggestions: bool,
+        has_file_browser: bool,
+    ) {
+        let status_message = self.active_window().status_message.clone();
+        let plugin_status_message = self.active_window().plugin_status_message.clone();
+        // Compute a simple buffer-aware LSP indicator.
+        // Compose the LSP status-bar segment for the active buffer. This
+        // runs every render — the editor has no precomputed LSP-status
+        // string cached anywhere else, so there is a single source of
+        // truth for what the user sees.
+        //
+        // Priority order (first non-empty wins):
+        //
+        //   1. Active `$/progress` work for this language — e.g.
+        //      "LSP (cpp): indexing (42%)". Conveys the transient
+        //      startup/indexing phase.
+        //   2. A running server — "LSP". Short because detail belongs
+        //      in LSP-specific UI, not the compact status bar pill.
+        //   3. Configured `auto_start=true` servers that haven't started
+        //      (error / crashed / pending) — "LSP off".
+        //   4. Configured `enabled && !auto_start` servers that the user
+        //      has to opt into — "LSP: off (N)".
+        //   5. Nothing.
+        //
+        // Rules 3 and 4 address heuristic eval H-1: without them, a
+        // configured-but-dormant server is indistinguishable from "no
+        // LSP at all."
+        let current_language = self
+            .buffers()
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_default();
+        let buffer_lsp_disabled_reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|m| !m.lsp_enabled)
+            .and_then(|m| m.lsp_disabled_reason.as_deref());
+        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
+            &current_language,
+            buffer_lsp_disabled_reason,
+            &self.active_window().lsp_progress,
+            &self.active_window().lsp_server_statuses,
+            &self.config.lsp,
+            &self.active_window().user_dismissed_lsp_languages,
+            self.config.lsp_enabled,
+        );
+        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
+
+        // Get update availability info
+        let update_available = self.latest_version().map(|v| v.to_string());
+
+        // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
+        if self.active_window().status_bar_visible && !has_suggestions && !has_file_browser {
+            // Get warning level for colored indicator (respects config setting)
+            // LSP warning level is scoped to the current buffer's language
+            let (warning_level, general_warning_count) =
+                if self.config.warnings.show_status_indicator {
+                    let lsp_level = {
+                        use crate::services::async_bridge::LspServerStatus;
+                        let mut level = WarningLevel::None;
+                        for ((lang, _), status) in &self.active_window().lsp_server_statuses {
+                            if lang == &current_language {
+                                match status {
+                                    LspServerStatus::Error => {
+                                        level = WarningLevel::Error;
+                                        break;
+                                    }
+                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
+                                        if level != WarningLevel::Error {
+                                            level = WarningLevel::Warning;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        level
+                    };
+                    (
+                        lsp_level,
+                        self.active_window().warning_domains.general.count,
+                    )
+                } else {
+                    (WarningLevel::None, 0)
+                };
+
+            // Which clickable status-bar segment (if any) the mouse is over —
+            // drives hover styling generically (one variant for the whole bar).
+            let status_bar_hovered = match &self.active_window().mouse_state.hover_target {
+                Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
+                _ => None,
+            };
+
+            let remote_connection = self.connection_display_string();
+            // Active window's last failed-reconnect error (drives a core
+            // FailedAttach indicator for a dormant remote workspace).
+            let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
+
+            // Get session name for display (only in session mode)
+            let session_name = self.session_name().map(|s| s.to_string());
+
+            let active_split = self.effective_active_split();
+            let active_buf = self.active_buffer();
+            let default_cursors = crate::model::cursor::Cursors::new();
+            let is_read_only = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.read_only)
+                .unwrap_or(false);
+            let is_synthetic_placeholder = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.synthetic_placeholder)
+                .unwrap_or(false);
+            // Compute plugin-provided status-bar values before taking the
+            // mutable window borrow below.
+            let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
+            // Active session's trust level for the always-present `{trust}`
+            // indicator — read here (Copy) before the mutable window borrow.
+            let workspace_trust_level = self.authority().workspace_trust.level();
+            // Single window borrow, split into buffers + cursors so the
+            // status-bar context can hold both.
+            let __active_id = self.active_window;
+            // Theme-key runs the status bar records as it paints; applied to
+            // the chrome's cell map after the window borrow is released.
+            let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            // Web renders the status bar natively from `status_view`; skip painting
+            // it (the semantic segments + indicator rects are still captured).
+            let sb_draw = !self.suppress_chrome_cells;
+            let __win = self
+                .windows
+                .get_mut(&__active_id)
+                .expect("active window must exist");
+            let status_bar_layout = __win
+                .buffers
+                .with_buffer_and_view_states(active_buf, |state, vs_map| {
+                    let cursors = vs_map
+                        .get(&active_split)
+                        .map(|v| &v.cursors)
+                        .unwrap_or(&default_cursors);
+                    let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
+                        state,
+                        cursors,
+                        status_message: &status_message,
+                        plugin_status_message: &plugin_status_message,
+                        lsp_status: &lsp_status,
+                        lsp_indicator_state,
+                        theme,
+                        display_name,
+                        keybindings,
+                        chord_state: &chord_state_cloned,
+                        update_available: update_available.as_deref(),
+                        warning_level,
+                        general_warning_count,
+                        hovered: status_bar_hovered,
+                        remote_connection: remote_connection.as_deref(),
+                        session_name: session_name.as_deref(),
+                        read_only: is_read_only,
+                        remote_state_override: self.remote_indicator_override.as_ref(),
+                        remote_reconnect_error: remote_reconnect_error.as_deref(),
+                        is_synthetic_placeholder,
+                        // Filled in by `render_status` from the user's
+                        // status_bar config; the value here is just a
+                        // safe default for the rare path that builds the
+                        // ctx but doesn't run `render_status`.
+                        remote_indicator_on_bar: false,
+                        dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
+                        workspace_trust_level,
+                    };
+                    let mut sb_rec =
+                        crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);
+                    StatusBarRenderer::render_status_bar(
+                        frame,
+                        area,
+                        &mut status_ctx,
+                        &self.config.editor.status_bar,
+                        Some(&mut sb_rec),
+                        sb_draw,
+                    )
+                })
+                .expect("active buffer must be present");
+            self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
+
+            // Store status bar layout for click detection
+            let status_bar_area = area;
+            self.active_chrome_mut().status_bar_area =
+                Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
+            self.active_chrome_mut().status_bar_clickable = status_bar_layout.clickable;
+            self.active_chrome_mut().status_bar_plugin_token_areas =
+                status_bar_layout.plugin_token_areas;
+            self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
+        }
     }
 
     /// Render the modal overlays that dim the chrome behind them: settings,
