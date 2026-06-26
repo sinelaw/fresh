@@ -1446,48 +1446,9 @@ impl Editor {
             }
         }
 
-        // Render software mouse cursor when GPM is active
-        // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
-        // so we draw our own cursor at the tracked mouse position.
-        // This must happen LAST in the render flow so we can read the already-rendered
-        // cell content and invert it.
-        if self.active_window_mut().gpm_active {
-            if let Some((col, row)) = self.active_window_mut().mouse_cursor_position {
-                use ratatui::style::Modifier;
-
-                // Only render if within screen bounds
-                if col < size.width && row < size.height {
-                    // Get the cell at this position and add REVERSED modifier to invert colors
-                    let buf = frame.buffer_mut();
-                    if let Some(cell) = buf.cell_mut((col, row)) {
-                        cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
-                    }
-                }
-            }
-        }
-
-        // When keyboard capture mode is active, dim all UI elements outside the terminal
-        // to visually indicate that focus is exclusively on the terminal
-        if self.active_window_mut().keyboard_capture && self.active_window().terminal_mode {
-            // Find the active split's content area
-            let active_split = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split();
-            let active_split_area = self
-                .active_layout()
-                .split_areas
-                .iter()
-                .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
-                .map(|(_, _, content_rect, _, _, _)| *content_rect);
-
-            if let Some(terminal_area) = active_split_area {
-                self.apply_keyboard_capture_dimming(frame, terminal_area);
-            }
-        }
+        // Software mouse cursor (GPM) and keyboard-capture dimming — both
+        // read already-painted cells, so they run after the main draw.
+        self.render_software_cursor_and_capture(frame, size);
 
         // Commit the active-split hardware cursor (deferred since
         // `render_content`) unless a popup has been drawn over that cell.
@@ -1516,6 +1477,82 @@ impl Editor {
             .animations
             .apply_all(frame.buffer_mut());
 
+        // Dock, floating panel, theme-info popup, and the workspace-trust
+        // modal — the topmost layers, drawn above prompts/popups/animations.
+        self.render_panels_and_modals(
+            frame,
+            size,
+            chrome_area,
+            dock_area,
+            top_is_trust_modal,
+            &theme_clone,
+        );
+    }
+
+    /// Draw the software mouse cursor (GPM, which can't paint its own caret on
+    /// the alt-screen) and the keyboard-capture dimming. Both read cells that
+    /// the main draw already painted, so they run near the end of `render`.
+    fn render_software_cursor_and_capture(
+        &mut self,
+        frame: &mut Frame,
+        size: ratatui::layout::Rect,
+    ) {
+        // Render software mouse cursor when GPM is active
+        // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
+        // so we draw our own cursor at the tracked mouse position.
+        // This must happen LAST in the render flow so we can read the already-rendered
+        // cell content and invert it.
+        if self.active_window().gpm_active {
+            if let Some((col, row)) = self.active_window().mouse_cursor_position {
+                use ratatui::style::Modifier;
+
+                // Only render if within screen bounds
+                if col < size.width && row < size.height {
+                    // Get the cell at this position and add REVERSED modifier to invert colors
+                    let buf = frame.buffer_mut();
+                    if let Some(cell) = buf.cell_mut((col, row)) {
+                        cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+                    }
+                }
+            }
+        }
+
+        // When keyboard capture mode is active, dim all UI elements outside the terminal
+        // to visually indicate that focus is exclusively on the terminal
+        if self.active_window().keyboard_capture && self.active_window().terminal_mode {
+            // Find the active split's content area
+            let active_split = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr)
+                .expect("active window must have a populated split layout")
+                .active_split();
+            let active_split_area = self
+                .active_layout()
+                .split_areas
+                .iter()
+                .find(|(split_id, _, _, _, _, _)| *split_id == active_split)
+                .map(|(_, _, content_rect, _, _, _)| *content_rect);
+
+            if let Some(terminal_area) = active_split_area {
+                self.apply_keyboard_capture_dimming(frame, terminal_area);
+            }
+        }
+    }
+
+    /// Render the topmost layers: the dock and floating widget panel (each in
+    /// its own slot), the theme-info popup, and the blocking workspace-trust
+    /// modal. Drawn after every other layer so they sit on top.
+    fn render_panels_and_modals(
+        &mut self,
+        frame: &mut Frame,
+        size: ratatui::layout::Rect,
+        chrome_area: ratatui::layout::Rect,
+        dock_area: Option<ratatui::layout::Rect>,
+        top_is_trust_modal: bool,
+        theme_clone: &crate::view::theme::Theme,
+    ) {
         // Panels are drawn last so they sit above every other layer
         // (prompts, popups, animations). The two slots are independent:
         // the dock paints into its carved column (`dock_area`); a
@@ -1631,7 +1668,7 @@ impl Editor {
                     &triggers,
                     &secondary_label,
                     self.workspace_trust_scroll,
-                    &theme_clone,
+                    theme_clone,
                     draw_trust,
                 ),
             )
