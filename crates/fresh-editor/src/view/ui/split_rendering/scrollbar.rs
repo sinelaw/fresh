@@ -9,8 +9,8 @@ use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
 
 /// Compute scrollbar line counts: `(total_lines, top_line)`.
 ///

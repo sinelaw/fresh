@@ -465,7 +465,9 @@ pub(crate) fn draw_buffer_in_split(
     let editor_block = Block::default()
         .borders(Borders::NONE)
         .style(Style::default().bg(effective_editor_bg));
-    Paragraph::new(lines).block(editor_block).render(render_area, buf);
+    Paragraph::new(lines)
+        .block(editor_block)
+        .render(render_area, buf);
 
     let cursor = resolve_cursor_fallback(
         layout_output.render_output.cursor,

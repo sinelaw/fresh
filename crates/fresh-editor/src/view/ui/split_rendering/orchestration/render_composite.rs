@@ -488,7 +488,9 @@ fn render_row_pane(
         } else {
             let gap_style = Style::default().bg(bg);
             let empty_content = " ".repeat(width as usize);
-            Paragraph::new(empty_content).style(gap_style).render(pane_area, buf);
+            Paragraph::new(empty_content)
+                .style(gap_style)
+                .render(pane_area, buf);
         }
         return;
     };

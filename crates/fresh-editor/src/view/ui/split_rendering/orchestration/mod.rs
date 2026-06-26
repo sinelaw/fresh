@@ -28,9 +28,9 @@ use super::scrollbar::{
     compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
     render_scrollbar, scrollbar_line_counts,
 };
+use super::EditorRenderConfig;
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
-use super::EditorRenderConfig;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
@@ -40,8 +40,8 @@ use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
 use render_buffer::compute_buffer_layout;
 // Re-exported one level up (split_rendering::SplitRenderer) so the
 // `render_phantom_leaf` façade can forward into the per-leaf
@@ -1177,7 +1177,11 @@ pub(crate) fn build_base_tokens_for_hook(
 /// user closes the last buffer with both `file_explorer.auto_open_on_last_buffer_close`
 /// and `editor.auto_create_empty_buffer_on_last_buffer_close` set to false.
 /// Tells the user how to escape the blank-workspace state.
-fn render_placeholder_hint(buf: &mut ratatui::buffer::Buffer, area: Rect, theme: &crate::view::theme::Theme) {
+fn render_placeholder_hint(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    theme: &crate::view::theme::Theme,
+) {
     const HINT: &str =
         "Ctrl+P  command palette   ·   Ctrl+O  open file   ·   Ctrl+E  file explorer";
     let needed_width = HINT.chars().count() as u16;

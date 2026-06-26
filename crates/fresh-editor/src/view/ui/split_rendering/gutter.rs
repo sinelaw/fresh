@@ -14,8 +14,8 @@ use crate::view::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
-use ratatui::widgets::Widget;
 use ratatui::widgets::Block;
+use ratatui::widgets::Widget;
 use std::collections::{BTreeMap, HashSet};
 
 /// Context for rendering the left margin (line numbers, indicators, separator).

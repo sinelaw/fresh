@@ -15,8 +15,8 @@ use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
 use std::collections::HashMap;
 
 /// Anchor describing where to start rendering within a slice of view lines.
