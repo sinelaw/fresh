@@ -1094,87 +1094,18 @@ impl Editor {
             self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
         }
 
-        // Render search options bar when in search prompt
-        if show_search_options {
-            // Show "Confirm" option only in replace modes
-            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
-                if matches!(
-                    p.prompt_type,
-                    PromptType::ReplaceSearch
-                        | PromptType::Replace { .. }
-                        | PromptType::QueryReplaceSearch
-                        | PromptType::QueryReplace { .. }
-                ) {
-                    Some(self.active_window().search_confirm_each)
-                } else {
-                    None
-                }
-            });
+        // Search-options bar (case / whole-word / regex / confirm toggles),
+        // shown only while a search-style prompt is active.
+        self.render_search_options_bar(
+            frame,
+            main_chunks[search_options_idx],
+            show_search_options,
+            &theme,
+            &keybindings_cloned,
+        );
 
-            // Determine hover state for search options
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            let search_options_hover = match &self.active_window_mut().mouse_state.hover_target {
-                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
-                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
-                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
-                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
-                _ => SearchOptionsHover::None,
-            };
-
-            let search_options_layout = StatusBarRenderer::render_search_options(
-                frame,
-                main_chunks[search_options_idx],
-                self.active_window().search_case_sensitive,
-                self.active_window().search_whole_word,
-                self.active_window().search_use_regex,
-                confirm_each,
-                &theme,
-                &keybindings_cloned,
-                search_options_hover,
-            );
-            self.active_chrome_mut().search_options_layout = Some(search_options_layout);
-        } else {
-            self.active_chrome_mut().search_options_layout = None;
-        }
-
-        // Render prompt line if active. Overlay prompts (Live Grep)
-        // skip the bottom-row render entirely — they paint their own
-        // input row inside the centred overlay frame, so the user's
-        // editor view stays unobstructed at the bottom.
-        if let Some(prompt) = &prompt {
-            if !prompt.overlay {
-                // Use specialized renderer for file/folder open prompt to show colorized path
-                if matches!(
-                    prompt.prompt_type,
-                    crate::view::prompt::PromptType::OpenFile
-                        | crate::view::prompt::PromptType::SwitchProject
-                ) {
-                    if let Some(file_open_state) = &self.active_window_mut().file_open_state {
-                        StatusBarRenderer::render_file_open_prompt(
-                            frame,
-                            main_chunks[prompt_line_idx],
-                            prompt,
-                            file_open_state,
-                            &theme,
-                        );
-                    } else {
-                        StatusBarRenderer::render_prompt(
-                            frame,
-                            main_chunks[prompt_line_idx],
-                            prompt,
-                            &theme,
-                        );
-                    }
-                } else {
-                    StatusBarRenderer::render_prompt(
-                        frame,
-                        main_chunks[prompt_line_idx],
-                        prompt,
-                        &theme,
-                    );
-                }
-            }
-        }
+        // Prompt input line (non-overlay prompts only).
+        self.render_prompt_line(frame, main_chunks[prompt_line_idx], &prompt, &theme);
 
         // Float-overlay preview: load the selected match's file (if
         // the file changed) and seed the phantom leaf's cursor before
@@ -1310,6 +1241,96 @@ impl Editor {
             top_is_trust_modal,
             &theme_clone,
         );
+    }
+
+    /// Render the search-options bar into `area` when `show_search_options`
+    /// is set (a search-style prompt is active), or clear its cached layout
+    /// otherwise.
+    fn render_search_options_bar(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        show_search_options: bool,
+        theme: &crate::view::theme::Theme,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) {
+        if show_search_options {
+            // Show "Confirm" option only in replace modes
+            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
+                if matches!(
+                    p.prompt_type,
+                    PromptType::ReplaceSearch
+                        | PromptType::Replace { .. }
+                        | PromptType::QueryReplaceSearch
+                        | PromptType::QueryReplace { .. }
+                ) {
+                    Some(self.active_window().search_confirm_each)
+                } else {
+                    None
+                }
+            });
+
+            // Determine hover state for search options
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            let search_options_hover = match &self.active_window().mouse_state.hover_target {
+                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
+                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
+                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
+                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
+                _ => SearchOptionsHover::None,
+            };
+
+            let search_options_layout = StatusBarRenderer::render_search_options(
+                frame,
+                area,
+                self.active_window().search_case_sensitive,
+                self.active_window().search_whole_word,
+                self.active_window().search_use_regex,
+                confirm_each,
+                theme,
+                keybindings,
+                search_options_hover,
+            );
+            self.active_chrome_mut().search_options_layout = Some(search_options_layout);
+        } else {
+            self.active_chrome_mut().search_options_layout = None;
+        }
+    }
+
+    /// Render the bottom prompt input line into `area`. Overlay prompts (e.g.
+    /// Live Grep) paint their own input row inside their centred frame and so
+    /// skip this; file/folder open prompts use a path-colorising renderer.
+    fn render_prompt_line(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        prompt: &Option<crate::view::prompt::Prompt>,
+        theme: &crate::view::theme::Theme,
+    ) {
+        if let Some(prompt) = prompt {
+            if !prompt.overlay {
+                // Use specialized renderer for file/folder open prompt to show colorized path
+                if matches!(
+                    prompt.prompt_type,
+                    crate::view::prompt::PromptType::OpenFile
+                        | crate::view::prompt::PromptType::SwitchProject
+                ) {
+                    if let Some(file_open_state) = &self.active_window().file_open_state {
+                        StatusBarRenderer::render_file_open_prompt(
+                            frame,
+                            area,
+                            prompt,
+                            file_open_state,
+                            theme,
+                        );
+                    } else {
+                        StatusBarRenderer::render_prompt(frame, area, prompt, theme);
+                    }
+                } else {
+                    StatusBarRenderer::render_prompt(frame, area, prompt, theme);
+                }
+            }
+        }
     }
 
     /// Recompute the on-screen areas of the active buffer's cursor-anchored
