@@ -34,7 +34,6 @@ use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::split::SplitManager;
 use ratatui::layout::Rect;
-use ratatui::Frame;
 use std::collections::HashMap;
 
 /// Maximum line width before forced wrapping is applied, even when line wrapping is disabled.
@@ -113,7 +112,7 @@ impl SplitRenderer {
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::type_complexity)]
     pub fn render_content(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
@@ -161,7 +160,7 @@ impl SplitRenderer {
         )>,
     ) {
         orchestration::render_content(
-            frame,
+            buf,
             area,
             split_manager,
             buffers,
@@ -243,7 +242,7 @@ impl SplitRenderer {
     /// testing — overlay callers may discard them.
     #[allow(clippy::too_many_arguments)]
     pub fn render_phantom_leaf(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         state: &mut EditorState,
         cursors: &crate::model::cursor::Cursors,
         viewport: &mut crate::view::viewport::Viewport,
@@ -285,7 +284,7 @@ impl SplitRenderer {
         //   terminal's hardware cursor away from the prompt input.
         let mut sink: Option<(u16, u16)> = None;
         orchestration::render_buffer_in_split(
-            frame,
+            buf,
             state,
             cursors,
             viewport,

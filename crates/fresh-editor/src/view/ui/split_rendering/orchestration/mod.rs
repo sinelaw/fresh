@@ -41,8 +41,8 @@ use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use render_buffer::compute_buffer_layout;
 // Re-exported one level up (split_rendering::SplitRenderer) so the
 // `render_phantom_leaf` façade can forward into the per-leaf
@@ -76,7 +76,7 @@ type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(crate) fn render_content(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     split_manager: &SplitManager,
     buffers: &mut HashMap<BufferId, EditorState>,
@@ -285,7 +285,7 @@ pub(crate) fn render_content(
         // Only render tabs and split control buttons when tab bar is visible
         if split_tab_bar_visible {
             render_split_tab_bar(
-                frame,
+                buf,
                 &layout,
                 split_id,
                 buffer_id,
@@ -329,7 +329,7 @@ pub(crate) fn render_content(
             .get(&buffer_id)
             .is_some_and(|m| m.synthetic_placeholder);
         if is_synthetic_placeholder {
-            render_placeholder_hint(frame, layout.content_rect, theme);
+            render_placeholder_hint(buf, layout.content_rect, theme);
             view_line_mappings.insert(split_id, Vec::new());
             continue;
         }
@@ -341,7 +341,7 @@ pub(crate) fn render_content(
             .is_some_and(|s| s.is_composite_buffer)
         {
             render_composite_split(
-                frame,
+                buf,
                 &layout,
                 split_id,
                 buffer_id,
@@ -457,7 +457,7 @@ pub(crate) fn render_content(
 
             let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
             let split_view_mappings = render_buffer_in_split(
-                frame,
+                buf,
                 state,
                 &split_cursors,
                 &mut viewport,
@@ -510,7 +510,7 @@ pub(crate) fn render_content(
             // Render vertical scrollbar for this split and get thumb position
             let (thumb_start, thumb_end) = if panel_show_vscroll {
                 render_scrollbar(
-                    frame,
+                    buf,
                     state,
                     &viewport,
                     layout.scrollbar_rect,
@@ -541,7 +541,7 @@ pub(crate) fn render_content(
             // Render horizontal scrollbar for this split
             let (hthumb_start, hthumb_end) = if show_horizontal_scrollbar {
                 render_horizontal_scrollbar(
-                    frame,
+                    buf,
                     &viewport,
                     layout.horizontal_scrollbar_rect,
                     is_active,
@@ -594,13 +594,13 @@ pub(crate) fn render_content(
     // active Grouped subtrees dispatched at render time.
     let separators = split_manager.get_separators(area);
     for (direction, x, y, length) in separators {
-        render_separator(frame, direction, x, y, length, theme);
+        render_separator(buf, direction, x, y, length, theme);
     }
     // Walk the visible splits again to render internal separators of any
     // active buffer groups (their Split nodes live in the side-map, not the
     // main split tree, so `split_manager` doesn't know about them).
     let grouped_separator_areas = render_grouped_separators(
-        frame,
+        buf,
         &base_visible,
         split_view_states.as_deref(),
         grouped_subtrees,
@@ -702,7 +702,7 @@ fn expand_visible_buffers(
 /// recording the resulting tab layout and button hit areas for mouse handling.
 #[allow(clippy::too_many_arguments)]
 fn render_split_tab_bar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     layout: &SplitLayout,
     split_id: LeafId,
     buffer_id: BufferId,
@@ -752,7 +752,7 @@ fn render_split_tab_bar(
     let tab_layout = {
         let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
         TabsRenderer::render_for_split(
-            frame,
+            buf,
             layout.tabs_rect,
             split_buffers,
             buffers,
@@ -794,7 +794,7 @@ fn render_split_tab_bar(
         };
         let close_button =
             Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-        frame.render_widget(close_button, Rect::new(btn_x, tab_row, 1, 1));
+        close_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
         close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
         btn_x = btn_x.saturating_sub(2); // 1 space before the next button
     }
@@ -809,7 +809,7 @@ fn render_split_tab_bar(
         let icon = if is_maximized { "⧉" } else { "□" };
         let max_button =
             Paragraph::new(icon).style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-        frame.render_widget(max_button, Rect::new(btn_x, tab_row, 1, 1));
+        max_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
         maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
     }
 }
@@ -818,7 +818,7 @@ fn render_split_tab_bar(
 /// scrollbar, and record the content/scrollbar areas for mouse handling.
 #[allow(clippy::too_many_arguments)]
 fn render_composite_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     layout: &SplitLayout,
     split_id: LeafId,
     buffer_id: BufferId,
@@ -893,7 +893,7 @@ fn render_composite_split(
     }
 
     render_composite_buffer(
-        frame,
+        buf,
         layout.content_rect,
         composite,
         buffers,
@@ -908,7 +908,7 @@ fn render_composite_split(
     let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
     let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
         render_composite_scrollbar(
-            frame,
+            buf,
             layout.scrollbar_rect,
             total_rows,
             view_state.scroll_row,
@@ -947,7 +947,7 @@ fn render_composite_split(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn render_grouped_separators(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     base_visible: &[(LeafId, BufferId, Rect)],
     split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
@@ -984,7 +984,7 @@ fn render_grouped_separators(
             for (id, direction, x, y, length) in
                 layout.get_separators_with_ids(main_layout.content_rect)
             {
-                render_separator(frame, direction, x, y, length, theme);
+                render_separator(buf, direction, x, y, length, theme);
                 grouped_separator_areas.push((id, direction, x, y, length));
             }
         }
@@ -1194,7 +1194,7 @@ pub(crate) fn build_base_tokens_for_hook(
 /// user closes the last buffer with both `file_explorer.auto_open_on_last_buffer_close`
 /// and `editor.auto_create_empty_buffer_on_last_buffer_close` set to false.
 /// Tells the user how to escape the blank-workspace state.
-fn render_placeholder_hint(frame: &mut Frame, area: Rect, theme: &crate::view::theme::Theme) {
+fn render_placeholder_hint(buf: &mut ratatui::buffer::Buffer, area: Rect, theme: &crate::view::theme::Theme) {
     const HINT: &str =
         "Ctrl+P  command palette   ·   Ctrl+O  open file   ·   Ctrl+E  file explorer";
     let needed_width = HINT.chars().count() as u16;
@@ -1205,5 +1205,5 @@ fn render_placeholder_hint(frame: &mut Frame, area: Rect, theme: &crate::view::t
     let y = area.y + area.height / 2;
     let hint_area = Rect::new(x, y, needed_width, 1);
     let style = Style::default().fg(theme.syntax_comment);
-    frame.render_widget(Paragraph::new(HINT).style(style), hint_area);
+    Paragraph::new(HINT).style(style).render(hint_area, buf);
 }

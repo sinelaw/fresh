@@ -15,8 +15,8 @@ use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use std::collections::HashMap;
 
 /// Anchor describing where to start rendering within a slice of view lines.
@@ -274,7 +274,7 @@ pub(super) fn calculate_viewport_end(
 
 /// Draw the separator line between two splits.
 pub(super) fn render_separator(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     direction: SplitDirection,
     x: u16,
     y: u16,
@@ -289,13 +289,13 @@ pub(super) fn render_separator(
             let line_area = Rect::new(x, y, length, 1);
             let line_text = "─".repeat(length as usize);
             let paragraph = Paragraph::new(line_text).style(style);
-            frame.render_widget(paragraph, line_area);
+            paragraph.render(line_area, buf);
         }
         SplitDirection::Vertical => {
             for offset in 0..length {
                 let cell_area = Rect::new(x, y + offset, 1, 1);
                 let paragraph = Paragraph::new("│").style(style);
-                frame.render_widget(paragraph, cell_area);
+                paragraph.render(cell_area, buf);
             }
         }
     }

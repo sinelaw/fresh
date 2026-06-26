@@ -14,8 +14,8 @@ use crate::view::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
+use ratatui::widgets::Widget;
 use ratatui::widgets::Block;
-use ratatui::Frame;
 use std::collections::{BTreeMap, HashSet};
 
 /// Context for rendering the left margin (line numbers, indicators, separator).
@@ -204,7 +204,7 @@ pub(super) fn render_left_margin(
 
 /// Paper-on-desk compose-mode margins flanking the content area.
 pub(super) fn render_compose_margins(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     layout: &ComposeLayout,
     _view_mode: &ViewMode,
@@ -228,12 +228,12 @@ pub(super) fn render_compose_margins(
 
         if desk_width > 0 {
             let desk_rect = Rect::new(area.x, area.y, desk_width, area.height);
-            frame.render_widget(Block::default().style(desk_style), desk_rect);
+            Block::default().style(desk_style).render(desk_rect, buf);
         }
 
         if paper_edge > 0 {
             let paper_rect = Rect::new(area.x + desk_width, area.y, paper_edge, area.height);
-            frame.render_widget(Block::default().style(paper_style), paper_rect);
+            Block::default().style(paper_style).render(paper_rect, buf);
         }
     }
 
@@ -244,12 +244,12 @@ pub(super) fn render_compose_margins(
 
         if paper_edge > 0 {
             let paper_rect = Rect::new(right_start, area.y, paper_edge, area.height);
-            frame.render_widget(Block::default().style(paper_style), paper_rect);
+            Block::default().style(paper_style).render(paper_rect, buf);
         }
 
         if desk_width > 0 {
             let desk_rect = Rect::new(right_start + paper_edge, area.y, desk_width, area.height);
-            frame.render_widget(Block::default().style(desk_style), desk_rect);
+            Block::default().style(desk_style).render(desk_rect, buf);
         }
     }
 }

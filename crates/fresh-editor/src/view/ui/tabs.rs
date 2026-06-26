@@ -10,8 +10,8 @@ use crate::view::ui::layout::point_in_rect;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::Widget;
 use ratatui::widgets::{Block, Paragraph};
-use ratatui::Frame;
 use rust_i18n::t;
 use std::collections::HashMap;
 
@@ -740,7 +740,7 @@ impl TabsRenderer {
     /// `TabLayout` containing hit areas for mouse interaction.
     #[allow(clippy::too_many_arguments)]
     pub fn render_for_split(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         tab_targets: &[TabTarget],
         buffers: &HashMap<BufferId, EditorState>,
@@ -888,7 +888,7 @@ impl TabsRenderer {
         let block = Block::default().style(Style::default().bg(theme.tab_separator_bg));
         let paragraph = Paragraph::new(line).block(block);
         if draw {
-            frame.render_widget(paragraph, area);
+            paragraph.render(area, buf);
         }
 
         // Pinned "+" button: when the tabs overflow, draw the button on top of
@@ -906,7 +906,7 @@ impl TabsRenderer {
                     .bg(theme.tab_inactive_bg),
             )]));
             if draw {
-                frame.render_widget(plus_para, plus_rect);
+                plus_para.render(plus_rect, buf);
             }
             layout.new_tab_area = Some(plus_rect);
         }
@@ -994,44 +994,6 @@ impl TabsRenderer {
         }
 
         layout
-    }
-
-    /// Legacy render function for backward compatibility
-    /// Renders all buffers as tabs (used during transition)
-    #[allow(dead_code)]
-    pub fn render(
-        frame: &mut Frame,
-        area: Rect,
-        buffers: &HashMap<BufferId, EditorState>,
-        buffer_metadata: &HashMap<BufferId, BufferMetadata>,
-        composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-        active_buffer: BufferId,
-        theme: &crate::view::theme::Theme,
-        preview_buffer: Option<BufferId>,
-    ) {
-        // Sort buffer IDs to ensure consistent tab order
-        let mut buffer_ids: Vec<_> = buffers.keys().copied().collect();
-        buffer_ids.sort_by_key(|id| id.0);
-        let tab_targets: Vec<TabTarget> = buffer_ids.into_iter().map(TabTarget::Buffer).collect();
-        let group_names = HashMap::new();
-
-        Self::render_for_split(
-            frame,
-            area,
-            &tab_targets,
-            buffers,
-            buffer_metadata,
-            composite_buffers,
-            TabTarget::Buffer(active_buffer),
-            theme,
-            true, // Legacy behavior: always treat as active
-            0,    // Default tab_scroll_offset for legacy render
-            None, // No hover state for legacy render
-            &group_names,
-            preview_buffer,
-            None, // No theme recording for legacy render
-            true, // Legacy render always draws
-        );
     }
 }
 

@@ -574,7 +574,7 @@ impl Editor {
             .buffers
             .with_all_mut(|__buffers_mut, __mgr, __vs_map| {
                 SplitRenderer::render_content(
-                    frame,
+                    frame.buffer_mut(),
                     editor_content_area,
                     &*__mgr,
                     __buffers_mut,
@@ -2474,7 +2474,7 @@ impl Editor {
             .buffers
             .with_all_mut(|preview_buffers, mgr, view_states| {
                 let result = crate::view::ui::SplitRenderer::render_content(
-                    frame,
+                    frame.buffer_mut(),
                     inner,
                     &*mgr,
                     preview_buffers,
@@ -3565,7 +3565,7 @@ impl Editor {
                     let folds_ref = &mut buf_state.folds;
                     let event_log = event_logs.get_mut(&buffer_id);
                     let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
-                        frame,
+                        frame.buffer_mut(),
                         state,
                         &cursors,
                         viewport_ref,

@@ -9,8 +9,8 @@ use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::widgets::Widget;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 /// Compute scrollbar line counts: `(total_lines, top_line)`.
 ///
@@ -148,7 +148,7 @@ pub(super) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Vi
 /// Returns (thumb_start, thumb_end) positions for mouse hit testing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_scrollbar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     state: &EditorState,
     viewport: &Viewport,
     scrollbar_rect: Rect,
@@ -216,7 +216,7 @@ pub(super) fn render_scrollbar(
         };
 
         let paragraph = Paragraph::new(" ").style(style);
-        frame.render_widget(paragraph, cell_area);
+        paragraph.render(cell_area, buf);
     }
 
     (thumb_start, thumb_end)
@@ -227,7 +227,7 @@ pub(super) fn render_scrollbar(
 /// (from [`compute_max_line_length`]).
 /// Returns (thumb_start_col, thumb_end_col) for mouse hit testing.
 pub(super) fn render_horizontal_scrollbar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     viewport: &Viewport,
     hscrollbar_rect: Rect,
     _is_active: bool,
@@ -245,7 +245,7 @@ pub(super) fn render_horizontal_scrollbar(
         for col in 0..width {
             let cell_area = Rect::new(hscrollbar_rect.x + col as u16, hscrollbar_rect.y, 1, 1);
             let paragraph = Paragraph::new(" ").style(Style::default().bg(track_color));
-            frame.render_widget(paragraph, cell_area);
+            paragraph.render(cell_area, buf);
         }
         return (0, width);
     }
@@ -283,7 +283,7 @@ pub(super) fn render_horizontal_scrollbar(
         };
 
         let paragraph = Paragraph::new(" ").style(style);
-        frame.render_widget(paragraph, cell_area);
+        paragraph.render(cell_area, buf);
     }
 
     (thumb_start, thumb_end)
@@ -291,7 +291,7 @@ pub(super) fn render_horizontal_scrollbar(
 
 /// Render a scrollbar for composite buffer views.
 pub(super) fn render_composite_scrollbar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     scrollbar_rect: Rect,
     total_rows: usize,
     scroll_row: usize,
@@ -342,7 +342,7 @@ pub(super) fn render_composite_scrollbar(
         };
 
         let paragraph = Paragraph::new(" ").style(style);
-        frame.render_widget(paragraph, cell_area);
+        paragraph.render(cell_area, buf);
     }
 
     (thumb_start, thumb_end)

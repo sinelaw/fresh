@@ -30,8 +30,8 @@ use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::Widget;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 /// Output of the pure layout computation phase of buffer rendering.
 ///
@@ -414,7 +414,7 @@ pub(crate) fn compute_buffer_layout(
 /// Draw a buffer into a frame using pre-computed layout output.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_buffer_in_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     state: &EditorState,
     cursors: &Cursors,
     layout_output: BufferLayoutOutput,
@@ -437,7 +437,7 @@ pub(crate) fn draw_buffer_in_split(
     let starting_line_num = 0; // used only for background offset
 
     render_compose_margins(
-        frame,
+        buf,
         area,
         &layout_output.compose_layout,
         &layout_output.view_mode,
@@ -461,11 +461,11 @@ pub(crate) fn draw_buffer_in_split(
         );
     }
 
-    frame.render_widget(Clear, render_area);
+    Clear.render(render_area, buf);
     let editor_block = Block::default()
         .borders(Borders::NONE)
         .style(Style::default().bg(effective_editor_bg));
-    frame.render_widget(Paragraph::new(lines).block(editor_block), render_area);
+    Paragraph::new(lines).block(editor_block).render(render_area, buf);
 
     let cursor = resolve_cursor_fallback(
         layout_output.render_output.cursor,
@@ -492,7 +492,7 @@ pub(crate) fn draw_buffer_in_split(
     if !rulers.is_empty() {
         let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
         render_ruler_bg(
-            frame,
+            buf,
             &ruler_cols,
             theme.ruler_bg,
             render_area,
@@ -510,7 +510,7 @@ pub(crate) fn draw_buffer_in_split(
             // so skip highlighting if it falls inside the gutter.
             if (cx as usize) >= gutter_width {
                 render_cursor_column_bg(
-                    frame,
+                    buf,
                     render_area,
                     cx,
                     theme.current_line_bg,
@@ -526,7 +526,7 @@ pub(crate) fn draw_buffer_in_split(
             .fg(theme.line_number_fg)
             .add_modifier(Modifier::DIM);
         render_column_guides(
-            frame,
+            buf,
             &guides,
             guide_style,
             render_area,
@@ -547,7 +547,6 @@ pub(crate) fn draw_buffer_in_split(
         // When software_cursor_only the backend has no hardware cursor, so
         // ensure the cell at the cursor position always has REVERSED style.
         if software_cursor_only {
-            let buf = frame.buffer_mut();
             let area = buf.area;
             if screen_x < area.x + area.width && screen_y < area.y + area.height {
                 let cell = &mut buf[(screen_x, screen_y)];
@@ -573,7 +572,7 @@ pub(crate) fn draw_buffer_in_split(
 /// Returns the view line mappings for mouse click handling.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_buffer_in_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     state: &mut EditorState,
     cursors: &Cursors,
     viewport: &mut Viewport,
@@ -639,7 +638,7 @@ pub(crate) fn render_buffer_in_split(
     let view_line_mappings = layout_output.view_line_mappings.clone();
 
     draw_buffer_in_split(
-        frame,
+        buf,
         state,
         cursors,
         layout_output,

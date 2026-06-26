@@ -17,8 +17,8 @@ use crate::view::ui::view_pipeline::{should_show_line_number, ViewLine};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::Widget;
 use ratatui::widgets::{Clear, Paragraph};
-use ratatui::Frame;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -26,7 +26,7 @@ use std::ops::Range;
 /// Uses `ViewLine`s for proper syntax highlighting, ANSI handling, etc.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_composite_buffer(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     composite: &CompositeBuffer,
     buffers: &mut HashMap<BufferId, EditorState>,
@@ -44,7 +44,7 @@ pub(crate) fn render_composite_buffer(
     };
 
     // Clear the area first.
-    frame.render_widget(Clear, area);
+    Clear.render(area, buf);
 
     if composite.sources.is_empty() {
         return;
@@ -55,7 +55,7 @@ pub(crate) fn render_composite_buffer(
     view_state.pane_widths = layout.widths.clone();
 
     render_pane_headers(
-        frame,
+        buf,
         area,
         composite,
         &layout,
@@ -87,11 +87,11 @@ pub(crate) fn render_composite_buffer(
         let display_row = scroll_row + view_row;
         let row_y = content_y + view_row as u16;
         if display_row >= total_rows {
-            render_past_end_row(frame, area.x, row_y, &layout, show_tilde, theme);
+            render_past_end_row(buf, area.x, row_y, &layout, show_tilde, theme);
             continue;
         }
         render_aligned_row(
-            frame,
+            buf,
             area.x,
             row_y,
             display_row,
@@ -161,7 +161,7 @@ fn compute_pane_layout(composite: &CompositeBuffer, area_width: u16) -> PaneLayo
 /// Render the one-row header bar for each pane (the source label), with the
 /// focused pane drawn in the active-tab style.
 fn render_pane_headers(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     composite: &CompositeBuffer,
     layout: &PaneLayout,
@@ -184,7 +184,7 @@ fn render_pane_headers(
 
         let header_text = format!(" {} ", source.label);
         let header = Paragraph::new(header_text).style(header_style);
-        frame.render_widget(header, header_area);
+        header.render(header_area, buf);
 
         x_offset += width + layout.separator_width;
     }
@@ -301,7 +301,7 @@ fn build_pane_render_data(
 /// Paint the panes of a row that lies past the end of the aligned content:
 /// blank cells, with a leading `~` per pane when `show_tilde` is set.
 fn render_past_end_row(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area_x: u16,
     row_y: u16,
     layout: &PaneLayout,
@@ -322,7 +322,7 @@ fn render_past_end_row(
                 .fg(theme.line_number_fg)
                 .bg(theme.after_eof_bg),
         );
-        frame.render_widget(eof, eof_area);
+        eof.render(eof_area, buf);
         x += width + layout.separator_width;
     }
 }
@@ -366,7 +366,7 @@ fn compute_modification_inline_diffs(
 /// them, at `row_y`.
 #[allow(clippy::too_many_arguments)]
 fn render_aligned_row(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area_x: u16,
     row_y: u16,
     display_row: usize,
@@ -403,7 +403,7 @@ fn render_aligned_row(
     for (pane_idx, &width) in layout.widths.iter().enumerate() {
         let pane_area = Rect::new(x_offset, row_y, width, 1);
         render_row_pane(
-            frame,
+            buf,
             pane_area,
             pane_idx,
             width,
@@ -426,7 +426,7 @@ fn render_aligned_row(
                     .fg(theme.split_separator_fg)
                     .bg(theme.editor_bg),
             );
-            frame.render_widget(sep, sep_area);
+            sep.render(sep_area, buf);
             x_offset += layout.separator_width;
         }
     }
@@ -436,7 +436,7 @@ fn render_aligned_row(
 /// content or a blank gap/padding cell (carrying the focused-pane cursor).
 #[allow(clippy::too_many_arguments)]
 fn render_row_pane(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     pane_area: Rect,
     pane_idx: usize,
     width: u16,
@@ -484,11 +484,11 @@ fn render_row_pane(
                 Span::styled(" ", cursor_style),
                 Span::styled(padding, Style::default().bg(bg)),
             ]);
-            frame.render_widget(Paragraph::new(line), pane_area);
+            Paragraph::new(line).render(pane_area, buf);
         } else {
             let gap_style = Style::default().bg(bg);
             let empty_content = " ".repeat(width as usize);
-            frame.render_widget(Paragraph::new(empty_content).style(gap_style), pane_area);
+            Paragraph::new(empty_content).style(gap_style).render(pane_area, buf);
         }
         return;
     };
@@ -564,7 +564,7 @@ fn render_row_pane(
         spans.push(Span::styled(padding, base_style));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), pane_area);
+    Paragraph::new(Line::from(spans)).render(pane_area, buf);
 }
 
 /// Render ViewLine content with syntax highlighting to spans.

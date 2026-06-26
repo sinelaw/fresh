@@ -10,13 +10,12 @@ use crate::view::overlay::Overlay;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::Frame;
 use std::ops::Range;
 
 /// Render vertical column guide lines in the editor content area.
 /// Used for both config-based vertical rulers and compose-mode column guides.
 pub(super) fn render_column_guides(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     columns: &[u16],
     style: Style,
     render_area: Rect,
@@ -33,7 +32,7 @@ pub(super) fn render_column_guides(
         let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
         if guide_x < render_area.x + render_area.width {
             for row in 0..guide_height {
-                let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+                let cell = &mut buf[(guide_x, render_area.y + row as u16)];
                 cell.set_symbol("│");
                 if let Some(fg) = style.fg {
                     cell.set_fg(fg);
@@ -51,7 +50,7 @@ pub(super) fn render_column_guides(
 /// `render_area.x` (i.e. the same coordinate as `cursor` from
 /// `resolve_cursor_fallback`), and already includes any gutter offset.
 pub(super) fn render_cursor_column_bg(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     render_area: Rect,
     column_x: u16,
     color: Color,
@@ -63,7 +62,7 @@ pub(super) fn render_cursor_column_bg(
     let guide_x = render_area.x + column_x;
     let guide_height = content_height.min(render_area.height as usize);
     for row in 0..guide_height {
-        let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+        let cell = &mut buf[(guide_x, render_area.y + row as u16)];
         cell.set_bg(color);
     }
 }
@@ -72,7 +71,7 @@ pub(super) fn render_cursor_column_bg(
 /// Unlike `render_column_guides` which draws │ characters (for compose guides),
 /// this preserves the existing text content and only adjusts the background color.
 pub(super) fn render_ruler_bg(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     columns: &[u16],
     color: Color,
     render_area: Rect,
@@ -88,7 +87,7 @@ pub(super) fn render_ruler_bg(
         let guide_x = render_area.x + gutter_width as u16 + scrolled_col as u16;
         if guide_x < render_area.x + render_area.width {
             for row in 0..guide_height {
-                let cell = &mut frame.buffer_mut()[(guide_x, render_area.y + row as u16)];
+                let cell = &mut buf[(guide_x, render_area.y + row as u16)];
                 cell.set_bg(color);
             }
         }
@@ -103,7 +102,7 @@ pub(super) fn render_ruler_bg(
 /// become clickable in terminals that support the protocol.
 #[allow(dead_code)]
 pub(super) fn apply_hyperlink_overlays(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     viewport_overlays: &[(Overlay, Range<usize>)],
     view_line_mappings: &[ViewLineMapping],
     render_area: Rect,
@@ -119,7 +118,6 @@ pub(super) fn apply_hyperlink_overlays(
         return;
     }
 
-    let buf = frame.buffer_mut();
     for (screen_row, mapping) in view_line_mappings.iter().enumerate() {
         let y = render_area.y + screen_row as u16;
         if y >= render_area.y + render_area.height {
