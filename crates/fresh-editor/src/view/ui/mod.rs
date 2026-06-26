@@ -52,7 +52,7 @@ pub use expanded_menus_cache::ExpandedMenusCache;
 #[cfg(feature = "runtime")]
 pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
 #[cfg(feature = "runtime")]
-pub use file_explorer::FileExplorerRenderer;
+pub use file_explorer::{ExplorerDecorations, FileExplorerRenderer};
 pub use focus::FocusManager;
 pub use layout::point_in_rect;
 #[cfg(feature = "runtime")]

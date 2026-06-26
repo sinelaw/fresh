@@ -17,6 +17,19 @@ use ratatui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+/// The plugin-driven decoration inputs for the file explorer: the slot
+/// resolver plus the decoration and slot-override caches. These three always
+/// travel together through the render pipeline, so they're bundled rather
+/// than threaded as three parallel parameters. `Copy` (the resolver is two
+/// `&dyn` pointers, the caches are shared refs), so it passes by value into
+/// the per-row closure without cloning.
+#[derive(Clone, Copy)]
+pub struct ExplorerDecorations<'a> {
+    pub slot_resolver: ExplorerSlotResolver<'a>,
+    pub decorations: &'a FileExplorerDecorationCache,
+    pub slot_overrides: &'a FileExplorerSlotOverrideCache,
+}
+
 pub struct FileExplorerRenderer;
 
 impl FileExplorerRenderer {
@@ -39,11 +52,9 @@ impl FileExplorerRenderer {
         view: &mut FileTreeView,
         frame: &mut Frame,
         area: Rect,
-        slot_resolver: ExplorerSlotResolver<'static>,
+        deco: ExplorerDecorations<'_>,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
-        decorations: &FileExplorerDecorationCache,
-        slot_overrides: &FileExplorerSlotOverrideCache,
         keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
         current_context: crate::input::keybindings::KeyContext,
         theme: &Theme,
@@ -125,15 +136,13 @@ impl FileExplorerRenderer {
                 };
                 Self::render_node(
                     view,
-                    slot_resolver,
+                    deco,
                     node_id,
                     indent,
                     is_selected,
                     is_multi_selected,
                     is_focused,
                     files_with_unsaved_changes,
-                    decorations,
-                    slot_overrides,
                     theme,
                     content_width,
                     fuzzy_match.as_ref(),
@@ -288,15 +297,13 @@ impl FileExplorerRenderer {
     #[allow(clippy::too_many_arguments)]
     fn render_node(
         view: &FileTreeView,
-        slot_resolver: ExplorerSlotResolver<'static>,
+        deco: ExplorerDecorations<'_>,
         node_id: NodeId,
         indent: usize,
         is_selected: bool,
         is_multi_selected: bool,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
-        decorations: &FileExplorerDecorationCache,
-        slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
@@ -306,15 +313,13 @@ impl FileExplorerRenderer {
     ) -> ListItem<'static> {
         let line = Self::build_node_line(
             view,
-            slot_resolver,
+            deco,
             node_id,
             indent,
             is_selected,
             is_multi_selected,
             is_focused,
             files_with_unsaved_changes,
-            decorations,
-            slot_overrides,
             theme,
             content_width,
             fuzzy_match,
@@ -333,15 +338,13 @@ impl FileExplorerRenderer {
     #[allow(clippy::too_many_arguments)]
     fn build_node_line(
         view: &FileTreeView,
-        slot_resolver: ExplorerSlotResolver<'static>,
+        deco: ExplorerDecorations<'_>,
         node_id: NodeId,
         indent: usize,
         is_selected: bool,
         is_multi_selected: bool,
         is_focused: bool,
         files_with_unsaved_changes: &HashSet<PathBuf>,
-        decorations: &FileExplorerDecorationCache,
-        slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
         content_width: usize,
         fuzzy_match: Option<&FuzzyMatch>,
@@ -402,12 +405,12 @@ impl FileExplorerRenderer {
                 .as_ref()
                 .map(|m| m.is_hidden)
                 .unwrap_or(false),
-            decorations,
-            slot_overrides,
+            decorations: deco.decorations,
+            slot_overrides: deco.slot_overrides,
             theme,
             neutral_fg,
         };
-        let slot_resolution = slot_resolver.resolve(&slot_context);
+        let slot_resolution = deco.slot_resolver.resolve(&slot_context);
         let leading_slot_width = slot_resolution
             .leading
             .as_ref()
@@ -669,17 +672,20 @@ mod tests {
         slot_overrides: &FileExplorerSlotOverrideCache,
         theme: &Theme,
     ) -> Line<'static> {
+        let deco = ExplorerDecorations {
+            slot_resolver: crate::view::file_tree::default_slot_providers().resolver(),
+            decorations,
+            slot_overrides,
+        };
         FileExplorerRenderer::build_node_line(
             view,
-            crate::view::file_tree::default_slot_providers().resolver(),
+            deco,
             node_id,
             indent,
             false,
             false,
             false,
             &HashSet::new(),
-            decorations,
-            slot_overrides,
             theme,
             80,
             None,

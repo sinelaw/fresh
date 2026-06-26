@@ -209,7 +209,8 @@ use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
 use crate::view::ui::{
-    FileExplorerRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
+    ExplorerDecorations, FileExplorerRenderer, SplitRenderer, StatusBarRenderer,
+    SuggestionsRenderer,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{

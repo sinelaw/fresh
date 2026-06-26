@@ -1528,15 +1528,18 @@ impl Editor {
                 .filter(|cb| cb.is_cut)
                 .map(|cb| cb.paths.as_slice())
                 .unwrap_or(empty.as_slice());
+            let deco = ExplorerDecorations {
+                slot_resolver,
+                decorations: &__win.file_explorer_decoration_cache,
+                slot_overrides: &__win.file_explorer_slot_override_cache,
+            };
             FileExplorerRenderer::render(
                 explorer,
                 frame,
                 area,
-                slot_resolver,
+                deco,
                 is_focused,
                 &files_with_unsaved_changes,
-                &__win.file_explorer_decoration_cache,
-                &__win.file_explorer_slot_override_cache,
                 &keybindings,
                 key_context_clone,
                 &*self.theme.read().unwrap(),
