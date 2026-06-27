@@ -112,6 +112,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Auto-indent**: a braceless control-flow body (`if (…)`, `for (…)`, `while (…)` with no `{`) now indents one level in TypeScript and JavaScript, matching the C-family behavior (#2492).
 * **Regex search**: `^` / `$` now anchor per line in multi-line `Ctrl+F` search (#2495).
 * **Splits**: closing a buffer shown in two splits no longer desyncs the surviving cursor (#2496).
 * **Terminal**: a terminal restores its live/scrollback mode on refocus, and the last split is no longer left read-only after closing a second terminal (#2485).
