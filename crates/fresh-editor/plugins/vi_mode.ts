@@ -2475,27 +2475,32 @@ async function applyTextObject(objectType: string): Promise<void> {
       const line = text.substring(lineStart, lineEnd);
       const colInLine = posInChunk - lineStart;
 
-      // Find quote pair containing cursor
+      // Find the quote pair to operate on. Vim's rule for i"/a" is to use the
+      // pair the cursor is inside, or — when the cursor is before the quotes on
+      // the line — to search forward on the current line for the next pair. We
+      // therefore pick the first complete pair whose closing quote is at or
+      // after the cursor (covers both "inside" and "before" the quotes), which
+      // makes ci"/di" work from the start of a line (the common case).
       let quoteStart = -1;
       let quoteEnd = -1;
-      let inQuote = false;
+      let openIdx = -1;
 
       for (let i = 0; i < line.length; i++) {
-        if (line[i] === objectType) {
-          if (!inQuote) {
-            quoteStart = i;
-            inQuote = true;
-          } else {
+        if (line[i] !== objectType) continue;
+        if (openIdx === -1) {
+          openIdx = i; // opening quote of a candidate pair
+        } else {
+          // Completed a pair [openIdx, i].
+          if (colInLine <= i) {
+            quoteStart = openIdx;
             quoteEnd = i;
-            if (colInLine >= quoteStart && colInLine <= quoteEnd) {
-              break; // Found the pair containing cursor
-            }
-            inQuote = false;
+            break; // first pair at/after the cursor wins (forward search)
           }
+          openIdx = -1; // pair is entirely before the cursor; keep searching
         }
       }
 
-      if (quoteStart !== -1 && quoteEnd !== -1 && colInLine >= quoteStart && colInLine <= quoteEnd) {
+      if (quoteStart !== -1 && quoteEnd !== -1) {
         if (isInner) {
           selectStart = startOffset + lineStart + quoteStart + 1;
           selectEnd = startOffset + lineStart + quoteEnd;
@@ -2584,6 +2589,9 @@ async function applyTextObject(objectType: string): Promise<void> {
         editor.setClipboard(deletedText);
       }
       editor.deleteRange(bufferId, selectStart, selectEnd);
+      // Land the cursor where the text object was, even if it was forward of the
+      // cursor on the line (e.g. di" from before the quotes).
+      editor.setBufferCursor(bufferId, selectStart);
       state.lastYankWasLinewise = false;
       break;
     }
@@ -2593,6 +2601,9 @@ async function applyTextObject(objectType: string): Promise<void> {
         editor.setClipboard(deletedText);
       }
       editor.deleteRange(bufferId, selectStart, selectEnd);
+      // Insert at the deletion point so ci" works even when the quoted string
+      // was forward of the cursor on the line (not just when already inside it).
+      editor.setBufferCursor(bufferId, selectStart);
       state.lastYankWasLinewise = false;
       switchMode("insert");
       return;

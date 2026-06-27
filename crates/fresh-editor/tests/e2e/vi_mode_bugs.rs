@@ -1040,3 +1040,77 @@ fn test_vi_bug_2442_goal_column_preserved_through_short_line() {
     send_key(&mut harness, 'j');
     harness.wait_until(|h| h.cursor_position() == 40).unwrap();
 }
+
+// =============================================================================
+// Bug #2439: quote text-objects i"/a" don't search forward on the line
+// =============================================================================
+
+/// Helper: send an operator + inner/around text-object (e.g. `di"`).
+fn send_operator_text_object(
+    harness: &mut EditorTestHarness,
+    op: char,
+    modifier: char,
+    object: char,
+) {
+    send_key(harness, op);
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(harness, modifier);
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-text-object".to_string()))
+        .unwrap();
+    send_key(harness, object);
+}
+
+/// `di"` from the start of a line (before the opening quote) should, like Vim,
+/// search forward on the current line and delete the contents of the quoted
+/// string — `the "quick" brown fox` → `the "" brown fox`.
+///
+/// BUG: the quote text object only selected the pair the cursor was already
+/// *inside*, so `di"`/`ci"` were silent no-ops when the cursor sat before the
+/// quotes (the common case, e.g. right after `0`).
+#[test]
+fn test_vi_bug_di_quote_searches_forward_on_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "the \"quick\" brown fox\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Cursor is at column 0 (before the opening quote).
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+
+    // di" should delete inside the forward quoted string.
+    send_operator_text_object(&mut harness, 'd', 'i', '"');
+
+    harness
+        .wait_for_buffer_content("the \"\" brown fox\n")
+        .unwrap();
+}
+
+/// `ci"` from before the quotes should delete inside the quoted string, enter
+/// insert mode, and let you type the replacement — same forward-search rule as
+/// `di"`.
+#[test]
+fn test_vi_bug_ci_quote_searches_forward_on_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "the \"quick\" brown fox\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+
+    // ci" should clear inside the quotes and drop into insert mode.
+    send_operator_text_object(&mut harness, 'c', 'i', '"');
+    wait_insert(&mut harness);
+
+    harness.type_text("WXYZ").unwrap();
+    harness.render().unwrap();
+    escape(&mut harness);
+
+    harness
+        .wait_for_buffer_content("the \"WXYZ\" brown fox\n")
+        .unwrap();
+}
