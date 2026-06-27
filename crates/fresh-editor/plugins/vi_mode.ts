@@ -751,6 +751,43 @@ function endWORDIndex(text: string, startIndex: number): number {
   return index;
 }
 
+// Word-class helpers for the `cw` special case (lowercase `w`, which — unlike
+// the whitespace-delimited WORD motions above — treats a run of word characters
+// and a run of punctuation as separate words).
+
+// Return the string index of the last character of the same-class (word or
+// punctuation) run that `index` is in. `index` must point at a non-whitespace
+// character.
+function tokenRunEnd(text: string, index: number): number {
+  const startIsWord = isWordChar(charAtStringIndex(text, index));
+  while (true) {
+    const next = nextStringIndex(text, index);
+    if (next >= text.length || isWhitespaceAt(text, next)) {
+      break;
+    }
+    if (isWordChar(charAtStringIndex(text, next)) !== startIsWord) {
+      break;
+    }
+    index = next;
+  }
+  return index;
+}
+
+// Vim `e`-style advance: from `index`, move forward one character, skip any
+// whitespace, then return the last character of the next word. Used for the
+// trailing words of a `cNw` change. Returns `index` unchanged if there is no
+// further word.
+function viWordEndAdvance(text: string, index: number): number {
+  let next = nextStringIndex(text, index);
+  while (next < text.length && isWhitespaceAt(text, next)) {
+    next = nextStringIndex(text, next);
+  }
+  if (next >= text.length) {
+    return index;
+  }
+  return tokenRunEnd(text, next);
+}
+
 function computeWORDMotionTargetIndex(text: string, startIndex: number, kind: WORDMotionKind, count: number): number {
   let index = startIndex;
   for (let i = 0; i < Math.max(1, count); i++) {
@@ -944,6 +981,36 @@ async function computeWORDOperatorRange(
   }
 
   return { start, end, cursorAfter };
+}
+
+// Compute the change range for `cw` / `cNw`. Vim treats `cw` like `ce` when the
+// cursor is on a non-blank: it changes only up to the end of the word and does
+// NOT consume the trailing whitespace (`:help cw`). Returns null when the cursor
+// is on a blank (or past EOF), in which case the caller falls back to plain `w`
+// (i.e. `dw`-style) semantics.
+async function computeWordChangeRange(count: number): Promise<{ start: number; end: number } | null> {
+  const start = editor.getCursorPosition();
+  if (start === null) {
+    return null;
+  }
+
+  const bufferId = editor.getActiveBufferId();
+  const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
+  const startIndex = byteOffsetToStringIndex(bufferText, start);
+  if (startIndex >= bufferText.length || isWhitespaceAt(bufferText, startIndex)) {
+    return null;
+  }
+
+  // First word: stop at the end of the current word (no forward advance, so the
+  // cursor sitting on a word's last character changes only that character).
+  // Each additional count behaves like Vim's `e` motion.
+  let endIndex = tokenRunEnd(bufferText, startIndex);
+  for (let i = 1; i < Math.max(1, count); i++) {
+    endIndex = viWordEndAdvance(bufferText, endIndex);
+  }
+
+  const endTarget = stringIndexToByteOffset(bufferText, endIndex);
+  return { start, end: endTarget + byteLengthOfCharAt(bufferText, endIndex) };
 }
 
 async function applyWORDOperatorMotion(
@@ -1732,6 +1799,20 @@ async function vi_repeat() : Promise<void> {
     case "operator-motion": {
       // Operator + motion like dw, cw, d$
       if (change.operator && change.motion) {
+        if (change.motion === "vi_word_change") {
+          // `cw`/`cNw` special case — recompute the change range at the current
+          // cursor position (mirrors the WORD `cW` repeat path).
+          const range = await computeWordChangeRange(count);
+          if (range !== null) {
+            await applyOperatorWithRange("d", range.start, range.end);
+          } else {
+            await applyOperatorWithMotion("d", "move_word_right", count);
+          }
+          if (change.insertedText) {
+            editor.insertAtCursor(change.insertedText);
+          }
+          break;
+        }
         const WORDKind = WORDMotionKindFromRepeatMotion(change.motion);
         if (change.operator === "c") {
           if (WORDKind) {
@@ -2766,6 +2847,21 @@ async function vi_op_right(): Promise<void> {
 registerHandler("vi_op_right", vi_op_right);
 
 async function vi_op_word(): Promise<void> {
+  // Vim special case (`:help cw`): when changing (`c`) with the cursor on a
+  // non-blank character, `cw` behaves like `ce` — it changes only up to the end
+  // of the word and does NOT consume the trailing whitespace. Plain `dw`/`yw`
+  // and `cw` on a blank keep the regular word-forward semantics.
+  if (state.pendingOperator === "c") {
+    const count = consumeCount();
+    const range = await computeWordChangeRange(count);
+    if (range !== null) {
+      state.lastChange = { type: "operator-motion", operator: "c", motion: "vi_word_change", count };
+      await applyOperatorWithRange("c", range.start, range.end);
+      return;
+    }
+    await applyOperatorWithMotion("c", "move_word_right", count);
+    return;
+  }
   await handleMotionWithOperator("move_word_right");
 }
 registerHandler("vi_op_word", vi_op_word);

@@ -398,6 +398,105 @@ fn test_vi_vim_compat_repeat_change_word_keeps_change_semantics() {
     harness.wait_for_buffer_content("X X four.five\n").unwrap();
 }
 
+// `cw` on a non-blank must behave like `ce` (Vim `:help cw`): change up to the
+// end of the word WITHOUT consuming the trailing whitespace. Regression test for
+// issue #2437, where `cw` ate the following space like `dw`.
+#[test]
+fn test_vi_vim_compat_change_lower_word_keeps_following_space() {
+    let (mut harness, _temp_dir) = vi_mode_harness(100, 30);
+
+    let fixture = TestFixture::new("test.txt", "hello world foo bar\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    // Cursor starts on `h` of `hello`. `cw` should change only `hello`, keeping
+    // the space before `world`.
+    send_vi_operator_motion(&mut harness, 'c', 'w');
+    harness.type_text("X").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("X world foo bar\n");
+}
+
+// Unlike the whitespace-delimited `cW`, lowercase `cw` stops at punctuation:
+// `cw` on `one.two` changes only `one`.
+#[test]
+fn test_vi_vim_compat_change_lower_word_stops_at_punctuation() {
+    let (mut harness, _temp_dir) = vi_mode_harness(100, 30);
+
+    let fixture = TestFixture::new("test.txt", "one.two three\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    send_vi_operator_motion(&mut harness, 'c', 'w');
+    harness.type_text("X").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("X.two three\n");
+}
+
+// `cNw` honors the count and still keeps the trailing whitespace: `c2w` on
+// `hello world foo` changes `hello world`, leaving the space before `foo`.
+#[test]
+fn test_vi_vim_compat_change_lower_word_honors_count() {
+    let (mut harness, _temp_dir) = vi_mode_harness(100, 30);
+
+    let fixture = TestFixture::new("test.txt", "hello world foo\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    send_vi_key(&mut harness, 'c');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_vi_key(&mut harness, '2');
+    send_vi_key(&mut harness, 'w');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("X").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_buffer_content("X foo\n");
+}
+
+// `.` repeat of `cw` replays the change semantics (keep trailing space), not a
+// `dw`-style delete.
+#[test]
+fn test_vi_vim_compat_repeat_change_lower_word_keeps_change_semantics() {
+    let (mut harness, _temp_dir) = vi_mode_harness(100, 30);
+
+    let fixture = TestFixture::new("test.txt", "hello world foo bar\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+
+    enable_vi_mode(&mut harness);
+
+    send_vi_operator_motion(&mut harness, 'c', 'w');
+    harness.type_text("X").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+    harness.assert_buffer_content("X world foo bar\n");
+
+    // `w` moves to the start of `world` (byte 2), then `.` repeats `cw`.
+    send_vi_key(&mut harness, 'w');
+    harness.wait_until(|h| h.cursor_position() == 2).unwrap();
+    send_vi_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("X X foo bar\n").unwrap();
+}
+
 #[test]
 fn test_vi_vim_compat_repeat_uses_original_operator_count() {
     let (mut harness, _temp_dir) = vi_mode_harness(100, 30);

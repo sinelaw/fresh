@@ -66,6 +66,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Regex search**: `^` / `$` now anchor per line in multi-line `Ctrl+F` search (#2495).
 * **Splits**: closing a buffer shown in two splits no longer desyncs the surviving cursor (#2496).
 * **Terminal**: a terminal restores its live/scrollback mode on refocus, and the last split is no longer left read-only after closing a second terminal (#2485).
+* **Vi mode**: `cw` on a non-blank now changes up to the end of the word like Vim (matching `ce`) instead of swallowing the trailing whitespace (#2437).
 * **Per-language indentation rules** are now actually applied — previously custom patterns were ignored (#2314).
 * **Brackets** are no longer highlighted inside comments and strings (#2405, reported by @TakemiSora).
 * **Quick-open `#` buffer switcher** now lists virtual buffers (#2373).
