@@ -1,10 +1,12 @@
 # Glossary & Naming Conventions
 
-This is the source of truth for what we call things in user-facing docs, UI
-strings, and (where non-breaking) code. It has two parts: the **naming scheme**
-for daemon/workspace/backend (the word "session" was retired because it meant
-nine different things), and a **core architecture vocabulary** that the
-sibling docs in this directory assume.
+> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+
+This is the source of truth for naming across user-facing docs, UI strings,
+and (where non-breaking) code. It has two parts: the **naming scheme** for
+daemon/workspace/backend (the word "session" was retired because it meant nine
+different things), and a **core architecture vocabulary** that the sibling docs
+in this directory assume.
 
 ---
 
@@ -15,7 +17,7 @@ sibling docs in this directory assume.
 | **daemon** | user-facing | The background process that outlives a client connection — you **attach** / **detach** / **reattach** to it (tmux-like). One daemon hosts many workspaces. |
 | **workspace** | user-facing | One project/root the editor manages: its files, layout, terminals, buffers, trust level, and saved state all belong to it. The thing the Orchestrator lists and switches between. (Internal code type: `Window`/`WindowId`.) |
 | **backend** | user-facing | *Where* a workspace runs: **local**, **SSH host**, **dev container**, or **k8s environment**. |
-| **`Authority`** | internal only | The code implementation of a backend (routes filesystem, process spawning, terminal, trust, env). Not exposed to users. See `remote-authority-trust.md`. |
+| **`Authority`** | internal only | The code implementation of a backend, routing filesystem, process spawning, terminal, trust, and env. Not exposed to users. See `remote-authority-trust.md`. |
 
 **One sentence:** *A daemon hosts workspaces; each workspace runs on a backend.*
 
@@ -57,7 +59,7 @@ on-disk filename and the UI label.
 
 | Term | Means | Doc |
 |---|---|---|
-| **`Editor`** | The "god object" — the central mutable struct holding all state. Most logic is `impl Editor` spread across ~90 `app/` modules. | `00-overview.md` |
+| **`Editor`** | The central mutable struct holding all state. Most logic is `impl Editor` spread across the app modules. | `00-overview.md` |
 | **`EditorState`** | Per-**buffer** shared state: the document, authoritative cursors, overlays/margins/virtual-text, highlight caches. Implements the `DocumentModel` trait. | `00-overview.md`, `text-model.md` |
 | **`SplitViewState`** | Per-**split** view state: viewport/scroll, wrap mode, a render copy of cursors, plugin `view_transform`. The same buffer can show in many splits. | `buffers-splits-undo.md`, `rendering-and-layout.md` |
 | **Action** | The "what the user wants" intent layer (`Save`, `MoveLeft`, `LspHover`, `PluginAction`). Produced by keybindings/menus/palette; rebindable and serializable. | `input-keybindings-actions.md` |
@@ -72,7 +74,7 @@ on-disk filename and the UI label.
 | **`AsyncBridge`** | The std-mpsc channel hub that delivers background results (LSP, file I/O, terminal, watch) into the per-frame `process_async_messages` drain. | `00-overview.md` |
 | **Provider pattern** | Plugins/subsystems register as ordered *providers* for a capability (completion, finder rows, view transform) rather than the core hard-coding behavior. | `plugins.md`, `input-keybindings-actions.md` |
 | **Orchestrator / Dock** | The UI and machinery for managing many concurrent workspaces/agent sessions. | `orchestrator-sessions.md` |
-| **GPM (disambiguation)** | In the plugin marketplace, **G**it **P**ackage **M**anager (`pkg.ts`). In `services/gpm/`, the unrelated Linux-console **G**eneral **P**urpose **M**ouse FFI. | `plugins.md` |
+| **GPM (disambiguation)** | In the plugin marketplace, **G**it **P**ackage **M**anager. In the mouse-input service, the unrelated Linux-console **G**eneral **P**urpose **M**ouse FFI. | `plugins.md` |
 
 ---
 
