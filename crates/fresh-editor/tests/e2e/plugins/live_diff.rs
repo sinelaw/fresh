@@ -1039,3 +1039,64 @@ fn test_live_diff_word_highlight_on_low_similarity_removed_added_pair() {
          NOT be bold + underlined",
     );
 }
+
+/// Regression (#2503): in `vs HEAD` mode, committing the buffer's changes to
+/// git must clear the diff automatically — *without* a manual
+/// `Live Diff: Refresh`. Before the fix the plugin cached the HEAD reference
+/// for the buffer's lifetime and only re-fetched it on a mode change or an
+/// explicit refresh, so the gutter kept showing the change against the
+/// pre-commit HEAD even though HEAD now matched the buffer exactly.
+///
+/// In production the plugin notices the HEAD move via a watch on the HEAD
+/// reflog (`logs/HEAD`); `focus_gained` is the same-effect fallback (a commit
+/// made in an external terminal while fresh was unfocused). This test drives
+/// the `focus_gained` path because it's deterministic — the reflog watch is
+/// real-filesystem-notify-driven, which is timing-flaky under parallel test
+/// load — but both triggers funnel into the same reference-refresh code.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_clears_after_commit() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    // HEAD has the original two lines; the working tree adds a third so the
+    // diff shows a `+` glyph against HEAD.
+    repo.create_file("src/demo.txt", "line one\nline two\n");
+    repo.git_add(&["src/demo.txt"]);
+    repo.git_commit("init");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    repo.modify_file("src/demo.txt", "line one\nline two\nline three ADDED\n");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/demo.txt");
+
+    // The added line shows a `+` against HEAD.
+    harness
+        .wait_until(|h| has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+
+    // Commit the working-tree change so HEAD now matches the buffer exactly.
+    repo.git_add_all();
+    repo.git_commit("commit the added line");
+
+    // Refocus (as if returning from the terminal where the commit ran): the
+    // plugin re-fetches its HEAD reference and, finding it identical to the
+    // buffer, clears the diff. Before the fix the cached reference stayed put
+    // and the `+` persisted until a manual refresh.
+    harness.editor_mut().focus_gained();
+
+    harness
+        .wait_until(|h| !has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+}

@@ -7010,6 +7010,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.spawnBackgroundProcess = _wrapAsyncThenable("_spawnBackgroundProcessStart", "spawnBackgroundProcess");
                 editor.httpFetch = _wrapAsyncThenable("_httpFetchStart", "httpFetch");
                 editor.spawnProcessWait = _wrapAsync("_spawnProcessWaitStart", "spawnProcessWait");
+                editor.watchPath = _wrapAsync("_watchPathStart", "watchPath");
                 editor.getBufferText = _wrapAsync("_getBufferTextStart", "getBufferText");
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");

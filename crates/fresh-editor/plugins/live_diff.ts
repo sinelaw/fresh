@@ -1252,13 +1252,129 @@ async function live_diff_set_default(): Promise<void> {
 registerHandler("live_diff_set_default", live_diff_set_default);
 
 // =============================================================================
+// Git reference watching (#2503)
+// =============================================================================
+//
+// In `head` / `branch` mode the reference (left) side is the *committed* file,
+// not the working copy. Committing the buffer's changes moves HEAD so the
+// reference now matches the buffer and the diff should empty out — but a commit
+// doesn't touch the buffer, so none of the edit-driven recompute hooks fire and
+// the cached reference goes stale: the gutter keeps showing the change against
+// the pre-commit HEAD until a manual "Live Diff: Refresh".
+//
+// Fix: watch the HEAD reflog and drop the cached reference when it moves. A
+// plain `git commit` on the current branch appends to `logs/HEAD` (and updates
+// the branch ref) but leaves the bare `HEAD` file untouched, so the reflog —
+// not `HEAD` — is the file that reliably moves on every commit, checkout, reset
+// and merge (it also covers detached-HEAD commits, which rewrite `HEAD`
+// itself). `focus_gained` is a cheap fallback for the rare repo with reflogs
+// disabled, or when the watch can't be registered.
+
+let headWatchHandle: number | null = null;
+let watchedCwd: string | null = null;
+let ensureWatchInFlight: Promise<void> | null = null;
+
+// Resolve a directory inside the repo we should watch. The plugin loads each
+// reference relative to its *file's* directory (see `loadReference`), not
+// `editor.getCwd()` — the active buffer can live in a different repo than the
+// editor cwd — so we resolve the reflog the same way for consistency.
+function gitWatchCwd(): string | null {
+  const activeState = states.get(editor.getActiveBufferId());
+  if (activeState) return fileDir(activeState.filePath);
+  for (const s of states.values()) return fileDir(s.filePath);
+  return null;
+}
+
+async function discoverHeadLogPath(cwd: string): Promise<string | null> {
+  // `--absolute-git-dir` resolves the git dir (worktrees / submodules /
+  // `--git-dir` setups all included) as a normalized *absolute* path. We must
+  // not use `--git-path logs/HEAD` here: it returns a path *relative to cwd*
+  // (e.g. `../.git/logs/HEAD` when the buffer is in a sub-directory), and the
+  // file watcher compares against notify's canonical, `..`-free event paths —
+  // a `..` in the watch path means the reflog event never matches (#2503).
+  const result = await editor.spawnProcess(
+    "git", ["rev-parse", "--absolute-git-dir"], cwd,
+  );
+  if (result.exit_code !== 0) return null;
+  const gitDir = result.stdout.trim();
+  if (!gitDir) return null;
+  return `${gitDir}/logs/HEAD`;
+}
+
+async function ensureHeadWatch(): Promise<void> {
+  const cwd = gitWatchCwd();
+  if (!cwd) return;
+  if (watchedCwd === cwd && headWatchHandle !== null) return;
+  if (ensureWatchInFlight) return ensureWatchInFlight;
+
+  ensureWatchInFlight = (async () => {
+    try {
+      if (headWatchHandle !== null) {
+        editor.unwatchPath(headWatchHandle);
+        headWatchHandle = null;
+      }
+      watchedCwd = cwd;
+      const headLog = await discoverHeadLogPath(cwd);
+      if (!headLog) return;
+      try {
+        headWatchHandle = await editor.watchPath(headLog, false);
+      } catch (_e) {
+        // Watch registration failed (reflog missing in a fresh repo with no
+        // commits yet, kernel watch limit). focus_gained is the fallback.
+      }
+    } finally {
+      ensureWatchInFlight = null;
+    }
+  })();
+  return ensureWatchInFlight;
+}
+
+// Drop the cached git reference for every git-backed (head/branch) buffer and
+// recompute, so the diff re-fetches its reference and clears if the buffer now
+// matches the committed tree. `disk` mode tracks the working copy, not a
+// committed ref, so a HEAD move doesn't affect it.
+function refreshGitReferences(): void {
+  for (const state of states.values()) {
+    if (state.mode.kind === "disk") continue;
+    if (!isEnabledForBuffer(state)) continue;
+    // Re-fetch the reference (HEAD may have moved) but keep `lastHunksKey`:
+    // this path fires on every window focus, so when the diff is in fact
+    // unchanged the recompute's hunk-equality guard suppresses the repaint
+    // and there's no flicker. `lastBufferText` must still be cleared so the
+    // "same buffer text" early-return doesn't skip recomputing against the
+    // new reference.
+    state.oldText = null;
+    state.oldLines = [];
+    state.lastBufferText = null;
+    recompute(state.bufferId).catch((e) => editor.error(`live-diff: ${e}`));
+  }
+}
+
+// =============================================================================
 // Event wiring
 // =============================================================================
 
 editor.on("after_file_open", (args) => {
   const state = ensureState(args.buffer_id);
   if (!state) return true;
+  ensureHeadWatch().catch((e) => editor.error(`live-diff: ${e}`));
   recompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
+  return true;
+});
+
+// A git HEAD movement (commit, checkout, reset, merge) makes every "vs HEAD" /
+// "vs <branch>" reference potentially stale — re-fetch and repaint (#2503).
+editor.on("path_changed", (args) => {
+  if (args.handle !== headWatchHandle) return true;
+  refreshGitReferences();
+  return true;
+});
+
+// Picks up commits made while fresh was unfocused (e.g. via an external
+// terminal), and is the fallback when the reflog watch couldn't be registered.
+editor.on("focus_gained", () => {
+  ensureHeadWatch().catch((e) => editor.error(`live-diff: ${e}`));
+  refreshGitReferences();
   return true;
 });
 
@@ -1364,6 +1480,8 @@ editor.exportPluginApi("live-diff", {
 // =============================================================================
 // Initialization
 // =============================================================================
+
+ensureHeadWatch().catch((e) => editor.error(`live-diff: ${e}`));
 
 const initBid = editor.getActiveBufferId();
 if (initBid !== 0) {

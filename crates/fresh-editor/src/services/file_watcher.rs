@@ -27,7 +27,20 @@ use notify::{
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Allocate a process-globally-unique watch handle. The notify-callback
+/// lookup table ([`handle_map`]) is process-global, so handles must be
+/// unique across *every* [`FileWatcherManager`] in the process — not just
+/// within one. A per-manager counter (the old design) hands out `1, 2, …`
+/// in each manager, so two managers (e.g. two editor instances in one
+/// process, or two parallel tests) would collide on handle `1` and clobber
+/// each other's entry in the shared map, silently dropping events.
+fn alloc_global_handle() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Manages plugin-registered file watchers. Created on demand the
 /// first time a `WatchPath` arrives — the `notify::Watcher` is
@@ -43,7 +56,6 @@ pub struct FileWatcherManager {
     /// when notify fires events for a path that was just
     /// unwatched (rare but possible — events are queued).
     handles: HashMap<u64, (PathBuf, RecursiveMode)>,
-    next_handle: u64,
 }
 
 impl FileWatcherManager {
@@ -51,7 +63,6 @@ impl FileWatcherManager {
         Self {
             watcher: None,
             handles: HashMap::new(),
-            next_handle: 1,
         }
     }
 
@@ -84,8 +95,7 @@ impl FileWatcherManager {
         watcher
             .watch(path, mode)
             .map_err(|e| format!("watchPath({}): {}", path.display(), e))?;
-        let handle = self.next_handle;
-        self.next_handle += 1;
+        let handle = alloc_global_handle();
         self.handles.insert(handle, (path.to_path_buf(), mode));
         // The notify event callback uses a shared `handles` map
         // (set up below in `build_watcher`) to look up which

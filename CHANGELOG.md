@@ -45,6 +45,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Switch Project** re-roots the active window in place instead of restarting the editor (#2472).
 * **New Workspace (Local)** seeds its path from a local root even when the active window is remote (#2480).
 * **Markdown compose**: table cells are measured by display width (fixing emoji-row border flicker), and table borders clear when compose mode is disabled (#2475, #2478).
+* **Live Diff**: a *vs HEAD* (or *vs branch*) diff now clears itself after you commit the buffer's changes — the plugin watches the HEAD reflog and refreshes its reference on every commit/checkout/reset, instead of leaving a stale diff until a manual *Live Diff: Refresh* (#2503).
 * **Terminal scrollback**: ANSI colors survive soft-wrapped rows (#2449); the backing file stays local in remote mode, fixing a hang when toggling scrollback over SSH (#2424).
 * **Shebang language detection** now covers interpreters with no first-line regex (Fish, Lua, PowerShell, Tcl, Elixir, R, Julia, …), handling `env` indirection and versioned names; an existing extension match still wins (#2357, reported by @shemgp).
 * The asm-lsp "no `.asm-lsp.toml`" offer is scoped to its triggering buffer instead of floating over every buffer.
