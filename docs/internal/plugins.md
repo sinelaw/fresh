@@ -536,28 +536,3 @@ PLANNED / PARTIAL:
 - Transpile cache and an inter-plugin runtime export API (`parallel-plugin-
   loading.md` phases 4–5).
 ```
-
----
-
-RETURN below.
-
-## Summary
-
-I documented the Fresh plugin system in a single architecture doc at `/home/user/fresh/docs/internal/_new/plugins.md` (~360 lines). It covers the QuickJS-on-a-dedicated-thread runtime model (and the Deno→QuickJS migration rationale from commit `562925f15`), the bidirectional `PluginCommand`/hook protocol with its deliberate one-frame async lag, the `JsEditorApi` surface and generated `fresh.d.ts`, the provider pattern (design-decisions §13), the declarative widget runtime, two-phase parallel package/plugin loading, the git-based marketplace, and the sandbox/security trade-offs. Every major claim carries a `path:line` anchor, and IMPLEMENTED vs PLANNED is split throughout plus in a closing summary. I verified all claims against the code via four parallel exploration agents plus direct reads of the core protocol files (`api.rs`, `hooks.rs`, `command.rs`, `action.rs`, `overlay.rs`, `text_property.rs`, `bridge.rs`, parser, macros).
-
-Key findings worth flagging: (1) there is **no security sandbox** — no memory limit, execution timeout, gas, or interrupt handler on QuickJS; "isolation" is per-plugin context + IIFE scope only, and trust is install-time (git provenance + a consent dialog). (2) There is **no WASM plugin backend** — `backend/mod.rs` re-exports only `QuickJsBackend`; `docs/wasm.md` is about compiling the editor to the browser, and the "WASM OOM" notes in `lsp-plugin-testing.md` are about LSP servers, not plugins. (3) **"GPM" is overloaded**: in the marketplace it means Git Package Manager (the `pkg.ts` model), but the `services/gpm/` module is the unrelated Linux-console *General Purpose Mouse* FFI — I flagged this collision explicitly. (4) `docs/quickjs.md` has stale module paths and an outdated "75/122 methods" status.
-
-## Old docs superseded (or partially folded in)
-
-These remain in `docs/internal/` and are not deleted by this task, but the new doc consolidates/supersedes their plugin-architecture content:
-
-- `docs/quickjs.md` — superseded; stale paths (`src/services/plugins/api.rs` etc. now live in `fresh-plugin-runtime`) and outdated method-count status.
-- `docs/internal/plugin-marketplace-design.md` — design source; §9 records implemented-vs-planned reality.
-- `docs/internal/plugin-widget-library-design.md` — design source; §7 captures shipped catalogue + planned compositor/theming.
-- `docs/internal/package-loader-plan.md` — plan now fully implemented; folded into §8.
-- `docs/internal/parallel-plugin-loading.md` — phases 1–3 implemented (§6.2); phases 4–5 (transpile cache, plugin export API) still planned.
-- `docs/internal/plugin-usability-review.md` — motivating bug list behind the provider pattern (§5); review artifact, not architecture.
-- `docs/internal/PLAN-lsp-plugin-buffer.md` — partly realized by `PluginDevWorkspace` (§6.4); rest still design.
-- `docs/internal/live-diff-plugin-plan.md` and `docs/internal/lsp-plugin-testing.md` — consumer/test artifacts, not superseded; referenced only for context (the "WASM OOM" clarification).
-- `docs/internal/design-decisions.md` §13 — remains the canonical decision record; the new doc cross-references it rather than replacing it.
-

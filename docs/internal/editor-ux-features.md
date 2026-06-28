@@ -94,7 +94,7 @@ virtual dock buffer. **Built and functional**, but it landed differently from
   comes from `action_popup_result` buttons (`:385-399`).
 - `crates/fresh-editor/plugins/schemas/tour.schema.json` — the validation schema
   (renamed from the proposed `tour-schema.json`).
-- `/home/user/fresh/.fresh-tour.json` — a working 4-step sample touring Fresh's
+- `.fresh-tour.json` (repo root) — a working 4-step sample touring Fresh's
   own plugin system (QuickJS backend → `PluginCommand` enum → `fresh.d.ts` →
   `git_find_file.ts`). Note its `$schema` points at the new schema path; it
   omits the optional `commit_hash` field.
