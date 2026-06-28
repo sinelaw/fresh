@@ -1,7 +1,5 @@
 # Syntax Highlighting Architecture
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: document Fresh's syntax-highlighting engine — grammar selection, the
 syntect (TextMate) checkpoint/incremental engine, the tree-sitter fallback, how
 spans reach the renderer, and the bracket- and reference-highlight overlays that

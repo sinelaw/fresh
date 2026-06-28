@@ -1,7 +1,5 @@
 # Remote Authority & Workspace Trust
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: the one map of *where the editor acts* (the `Authority` backend slot — local / SSH / docker-exec / kubectl-exec), how a remote backend is built, kept alive, and reconnected, and *whether code may run there* (Workspace Trust + the live env provider). Covers what is implemented today versus what is forward-looking design.
 
 This doc is the as-built companion to the `Authority` abstraction design, the per-session-backends design, the K8s authority design, and the trust/env design set. Where those describe direction, this records what the tree actually does.

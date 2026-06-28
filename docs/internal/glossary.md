@@ -1,7 +1,5 @@
 # Glossary & Naming Conventions
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 This is the source of truth for naming across user-facing docs, UI strings,
 and (where non-breaking) code. It has two parts: the **naming scheme** for
 daemon/workspace/backend (the word "session" was retired because it meant nine

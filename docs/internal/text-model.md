@@ -1,7 +1,5 @@
 # Text Model Architecture
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: explain how Fresh stores, edits, indexes, snapshots, anchors, and persists text — the `model/` layer — and the decisions, trade-offs, and concessions behind each part.
 
 ---

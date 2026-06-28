@@ -1,7 +1,5 @@
 # Input, Keybindings, and the Action/Event Model
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: explain how Fresh turns a raw terminal keystroke (or mouse event) into a
 buffer change — the key-translation layer, the modal dispatch priority, unified
 keybinding resolution, the command → action → event pipeline, multi-cursor, and

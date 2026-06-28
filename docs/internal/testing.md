@@ -1,7 +1,5 @@
 # Testing Architecture
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: map Fresh's testing infrastructure — its layers, the headless
 scenario framework, the determinism strategy, the ANSI capture backend, and
 the meta-testing/migration efforts — distinguishing what is implemented from

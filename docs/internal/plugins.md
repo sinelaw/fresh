@@ -1,7 +1,5 @@
 # Plugin System Architecture
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: explain how Fresh runs sandboxed TypeScript plugins in a QuickJS
 runtime on a dedicated thread, the `PluginCommand`/hook protocol that connects
 that thread to the editor, the provider pattern, the declarative widget

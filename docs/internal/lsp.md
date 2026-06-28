@@ -1,7 +1,5 @@
 # LSP Integration
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: document how Fresh embeds a full Language Server Protocol client — multi-server routing, the queuing/concurrency model, async result flow, diagnostics-as-markers, completion merging, and the feature set with its concessions vs. a full LSP client.
 
 Scope: the LSP service layer (the LSP manager, the async client, diagnostics), the completion service, and the app-level glue (LSP actions, requests, event notification, status, diagnostic navigation, hover, dabbrev). The source is authoritative; several of the older internal design notes referenced here are now implemented or partially superseded (see end).

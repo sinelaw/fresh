@@ -1,7 +1,5 @@
 # Terminal & Terminal Emulation
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: document Fresh's integrated terminal — PTY spawning, the embedded VT
 emulation layer, the live/scrollback per-buffer model, mouse/link/title/clipboard
 handling, and the Windows-specific VT input crate — marking what is implemented

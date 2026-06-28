@@ -1,7 +1,5 @@
 # Editor UX Features (Catch-All)
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Records the design decisions, trade-offs, and shipped-vs-planned status of editor
 UX features that don't warrant their own dedicated doc. Each section is
 self-contained.

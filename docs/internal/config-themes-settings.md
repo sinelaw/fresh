@@ -1,7 +1,5 @@
 # Configuration, Settings UI & Themes
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: explain how Fresh resolves layered configuration, generates and consumes
 its JSON Schema, renders the schema-driven Settings UI, preserves user comments
 through JSONC read/write, and manages themes, the keybinding editor, and the

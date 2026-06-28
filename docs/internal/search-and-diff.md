@@ -1,7 +1,5 @@
 # Search, Replace, Diff/Review & Macros
 
-> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
-
 Purpose: explain how Fresh implements in-buffer search/replace, project-wide search and live grep, the diff/review (hunk) viewer, git-log viewing, and the keyboard-macro system — the decisions, the scan/diff algorithms, and what is shipped vs. planned.
 
 Throughout: features split into a thin **Rust host** layer (incremental scans, piece-tree diff, overlays, search/replace orchestration, macro codegen) and **TypeScript/QuickJS plugins** that own list/picker UIs (live grep, search/replace, git log, audit mode). The design history repeatedly justifies *adding a host primitive* over a *plugin-side workaround*. Labels below: **IMPLEMENTED** (in code), **PLANNED** (design only / partially stubbed).
