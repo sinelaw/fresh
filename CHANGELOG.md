@@ -16,6 +16,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Improvements
 
+* **Project Search & Replace** lists files with matches in natural path order (so `file2` precedes `file10`) instead of the random order the parallel project walk produced, making it easy to track progress while reviewing matches (#2435, requested by @mandolyte).
 * **Open Terminal to the Right / Below** — open a new terminal in a fresh split beside or below the active pane.
 * **File Open: reveal hidden files** when the filter starts with `.` (#2407, requested by @dragonfyre13).
 * **Vim compatibility options** for vi mode — extra compatibility motions and word search (#2398, by @NihilDigit).

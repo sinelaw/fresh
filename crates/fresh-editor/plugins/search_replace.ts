@@ -341,6 +341,39 @@ function getFileExtBadge(path: string): string {
   return ext.slice(0, 2);
 }
 
+/** Natural ("human") ordering of two display paths (#2435). Splits each
+ *  string into alternating non-digit / digit runs and compares digit
+ *  runs by numeric value so `file2` sorts before `file10` rather than
+ *  after it. Non-digit runs compare case-insensitively first (so `B`
+ *  doesn't jump ahead of `a`) with a case-sensitive tiebreak to keep
+ *  the order total and stable. Path separators are ordinary characters,
+ *  which keeps each directory's files grouped together. */
+function naturalCompare(a: string, b: string): number {
+  const re = /\d+|\D+/g;
+  const ap = a.match(re) ?? [];
+  const bp = b.match(re) ?? [];
+  const n = Math.min(ap.length, bp.length);
+  for (let i = 0; i < n; i++) {
+    const x = ap[i];
+    const y = bp[i];
+    const xNum = x.charCodeAt(0) >= 48 && x.charCodeAt(0) <= 57;
+    const yNum = y.charCodeAt(0) >= 48 && y.charCodeAt(0) <= 57;
+    if (xNum && yNum) {
+      const dx = parseInt(x, 10);
+      const dy = parseInt(y, 10);
+      if (dx !== dy) return dx < dy ? -1 : 1;
+      // Equal value but different width (leading zeros): shorter first.
+      if (x.length !== y.length) return x.length - y.length;
+    } else {
+      const xl = x.toLowerCase();
+      const yl = y.toLowerCase();
+      if (xl !== yl) return xl < yl ? -1 : 1;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+  }
+  return ap.length - bp.length;
+}
+
 function buildFileGroups(results: SearchResult[]): FileGroup[] {
   const map = new Map<string, SearchResult[]>();
   const order: string[] = [];
@@ -352,12 +385,42 @@ function buildFileGroups(results: SearchResult[]): FileGroup[] {
     }
     map.get(key)!.push(r);
   }
-  return order.map(absPath => ({
+  const groups = order.map(absPath => ({
     relPath: getRelativePath(absPath),
     absPath,
     expanded: true,
     matches: map.get(absPath)!,
   }));
+  groups.sort((a, b) => naturalCompare(a.relPath, b.relPath));
+  return groups;
+}
+
+/** Re-order `panel.fileGroups` into natural path order in place,
+ *  preserving each file's expansion state across the re-index. The
+ *  streaming search path appends files in completion order (the project
+ *  walk runs them through a parallel pool, so arrival order is
+ *  effectively random); call this once a search finishes so the
+ *  reviewer sees a stable, sorted list (#2435). Expansion keys are
+ *  positional (`file:<index>`), so the set is rebuilt from the files
+ *  that were expanded before the sort. */
+function sortFileGroups(): void {
+  if (!panel) return;
+  const expandedPaths = new Set<string>();
+  for (let i = 0; i < panel.fileGroups.length; i++) {
+    if (panel.expandedFileKeys.has(`file:${i}`)) {
+      expandedPaths.add(panel.fileGroups[i].absPath);
+    }
+  }
+  panel.fileGroups.sort((a, b) => naturalCompare(a.relPath, b.relPath));
+  panel.expandedFileKeys.clear();
+  panel.knownFileKeys.clear();
+  for (let i = 0; i < panel.fileGroups.length; i++) {
+    const key = `file:${i}`;
+    panel.knownFileKeys.add(key);
+    if (expandedPaths.has(panel.fileGroups[i].absPath)) {
+      panel.expandedFileKeys.add(key);
+    }
+  }
 }
 
 interface FlatItem {
@@ -1494,10 +1557,15 @@ async function rerunSearch(): Promise<void> {
         // Cheap: the tree is empty (no per-node serialization cost).
         updatePanelContent();
       } else {
-        // Only one tiny mutation needed: refresh matchStats since it
-        // depends on the busy flag and searchPerformed. The tree's
-        // nodes already reflect the final state — no full re-emit.
-        panel.widgetPanel.setRawEntries("matchStats", buildMatchStatsEntries());
+        // The tree was built incrementally in file-arrival order while
+        // streaming. Now that the search is finished, re-order the file
+        // groups into natural path order and re-emit once so the
+        // reviewer sees a stable, sorted list (#2435). This is the only
+        // full re-emit of the run — it happens after streaming has
+        // stopped and the user is about to start reviewing, so it
+        // doesn't compete with input the way per-batch re-emits would.
+        sortFileGroups();
+        updatePanelContent();
       }
     }
   }

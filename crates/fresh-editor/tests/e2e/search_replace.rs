@@ -2116,6 +2116,62 @@ fn test_widget_text_shift_right_copy_paste_duplicates_substring() {
         .unwrap();
 }
 
+/// Result file groups are presented in natural (human) path order once
+/// a search finishes, not in the random file-arrival order the parallel
+/// project walk produces (#2435). `item2.txt` must sort before
+/// `item10.txt` — plain lexicographic order would place `item10.txt`
+/// second, so this also guards against an accidental string sort.
+#[test]
+fn test_search_replace_natural_sort_order() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // The searched files (each holds one match). Created in an order
+    // that is neither natural nor lexicographic so the rendered order
+    // can only come from an explicit sort.
+    for name in ["item10.txt", "item1.txt", "item2.txt"] {
+        fs::write(project_root.join(name), "needle here\n").unwrap();
+    }
+    // A start buffer with no match, so the searched names appear only in
+    // the matches section (not in the tab bar, which would offset the
+    // first-occurrence lookups below).
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "nothing to find\n").unwrap();
+
+    // A tall window so the results split has room for all six tree rows
+    // (3 file rows + 3 match rows) without scrolling.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 60, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("needle").unwrap();
+    harness.render().unwrap();
+
+    // The natural sort is applied once the search finishes and the tree
+    // is re-emitted. Wait for the terminal state: all three file rows
+    // present, in natural order (item1 < item2 < item10). Without the
+    // sort the final order is the random file-arrival order, so this
+    // condition never settles and the test fails.
+    let row_of =
+        |s: &str, needle: &str| -> Option<usize> { s.lines().position(|l| l.contains(needle)) };
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            match (
+                row_of(&s, "item1.txt"),
+                row_of(&s, "item2.txt"),
+                row_of(&s, "item10.txt"),
+            ) {
+                (Some(r1), Some(r2), Some(r10)) => r1 < r2 && r2 < r10,
+                _ => false,
+            }
+        })
+        .unwrap();
+}
+
 /// Shift+Right twice selects two chars; Backspace deletes the
 /// whole selection, not just one char. Regression test for the
 /// pre-unification behaviour where the widget framework had no
