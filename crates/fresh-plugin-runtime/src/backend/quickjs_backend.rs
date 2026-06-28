@@ -4117,6 +4117,26 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Clear virtual lines in a namespace whose anchor byte falls in
+    /// `[start, end)`. The per-line analogue of `clearConcealsInRange`, so a
+    /// plugin can rebuild one line's virtual lines without nuking the namespace.
+    pub fn clear_virtual_lines_in_range(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearVirtualLinesInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+                start: start as usize,
+                end: end as usize,
+            })
+            .is_ok()
+    }
+
     /// Add a virtual line (full line above/below a position)
     ///
     /// The `options` object accepts:

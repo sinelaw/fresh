@@ -470,6 +470,14 @@ impl Editor {
             } => {
                 self.handle_clear_virtual_text_namespace(buffer_id, namespace);
             }
+            PluginCommand::ClearVirtualLinesInRange {
+                buffer_id,
+                namespace,
+                start,
+                end,
+            } => {
+                self.handle_clear_virtual_lines_in_range(buffer_id, namespace, start, end);
+            }
 
             // ==================== Conceal Commands ====================
             PluginCommand::AddConceal {

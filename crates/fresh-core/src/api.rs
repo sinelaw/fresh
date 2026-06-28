@@ -2653,6 +2653,20 @@ pub enum PluginCommand {
         namespace: String,
     },
 
+    /// Remove virtual lines whose anchor byte falls in `[start, end)`, restricted
+    /// to a single namespace. The per-line analogue of `ClearConcealsInRange`
+    /// (which virtual lines previously lacked) — lets a plugin rebuild one line's
+    /// virtual lines without nuking the whole namespace, so per-line decorations
+    /// (e.g. markdown table borders) need no stored block model. Anchors are
+    /// resolved live from the marker list, so a shifted line is matched at its
+    /// current position.
+    ClearVirtualLinesInRange {
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+    },
+
     /// Add a conceal range that hides or replaces a byte range during rendering.
     /// Used for Typora-style seamless markdown: hiding syntax markers like `**`, `[](url)`, etc.
     AddConceal {

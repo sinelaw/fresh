@@ -1377,6 +1377,7 @@ mod tests {
             "removeVirtualTextsByPrefix",
             "clearVirtualTexts",
             "clearVirtualTextNamespace",
+            "clearVirtualLinesInRange",
             "addVirtualLine",
             "prompt",
             "startPrompt",

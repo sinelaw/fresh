@@ -2701,6 +2701,12 @@ interface EditorAPI {
 	*/
 	clearVirtualTextNamespace(bufferId: number, namespace: string): boolean;
 	/**
+	* Clear virtual lines in a namespace whose anchor byte falls in
+	* `[start, end)`. The per-line analogue of `clearConcealsInRange`, so a
+	* plugin can rebuild one line's virtual lines without nuking the namespace.
+	*/
+	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number): boolean;
+	/**
 	* Add a virtual line (full line above/below a position)
 	* 
 	* The `options` object accepts:

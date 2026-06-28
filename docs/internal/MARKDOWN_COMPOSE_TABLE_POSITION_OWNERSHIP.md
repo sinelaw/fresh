@@ -1,10 +1,10 @@
 # Markdown Compose: Table Position Ownership
 
-Status: current code ships the **event-authoritative** fix (§3). This document
-records the cross-thread desync that the marker-based design's original timing
-analysis missed, the surgical fix on the branch, and the **alternatives** for a
-fuller rewrite that moves position ownership entirely into the editor so the
-plugin tracks no byte positions at all.
+Status: **Alternative 1 (§4) is now implemented** — table borders are emitted
+per line, anchored to the editor's auto-shifting virtual-line markers, and the
+plugin holds no table byte positions at all. §6 records what shipped. §1–§3
+record the original cross-thread desync and the event-authoritative interim fix
+that preceded it; §4–§5 are the alternatives analysis that led here.
 
 Companion to [`MARKDOWN_COMPOSE_MARKER_DESIGN.md`](./MARKDOWN_COMPOSE_MARKER_DESIGN.md),
 which describes the move from line-number bookkeeping to byte-range interval
@@ -256,3 +256,68 @@ The shipped fix (§3) is the surgical version of the same philosophy — event
 positions are truth, the marker is identity + width memory. Alternatives 1 and 2
 take it to its conclusion: make the editor the sole keeper of positions, so the
 plugin has nothing left to get wrong.
+
+---
+
+## 6. What shipped (Alternative 1, refined)
+
+The implementation matched Alternative 1's *goal* — the plugin holds no table
+byte positions — but the realization differs from the "anchor once, update in
+place" sketch in §4, because investigating it surfaced two facts:
+
+1. **Decorations already auto-shift.** A plugin virtual line stores a
+   `marker_id` (`virtual_text.rs`), and `marker_list` is shifted on every edit
+   inside `apply_insert`/`apply_delete`. So a border, once created, rides the
+   text on its own — the plugin never needed to re-derive its position. The bug
+   was that the plugin kept a *second, parallel* position store (the table block
+   `rows`) and redrew borders from it; that parallel store is what desynced.
+
+2. **Virtual lines lacked a per-range clear.** Conceals had
+   `clearConcealsInRange`, which is why the conceal pass could run per line;
+   virtual lines only had whole-namespace clear, which forced the borders into
+   the stored-block workaround. The genuinely missing primitive was a per-range
+   virtual-line clear.
+
+So the change is:
+
+- **New editor primitive** `clearVirtualLinesInRange(buffer, namespace, start,
+  end)` — `PluginCommand::ClearVirtualLinesInRange` →
+  `VirtualTextManager::clear_lines_in_range`, the direct analogue of the conceal
+  range-clear (resolves each line's anchor live from the marker list).
+- **Per-line borders.** `markdown_compose.ts` deletes the entire block model
+  (`updateTableBlocks`, the table interval markers, `rows`/`sepRows`,
+  accumulation, off-screen retention). The `lines_changed` handler now, for each
+  line in the batch: clears that row's border range, then re-emits its frame
+  (`emitRowBorders`) by role. Role (first / last / source-sep-adjacent) is local
+  — from the row plus its immediate neighbours in the same batch. Column widths
+  are computed per render from the batch's table groups (`computeRowWidths`) and
+  shared with the conceal pass.
+- All borders live in **one namespace** (`md-tb`); the per-line clears are
+  byte-range scoped, so adjacent rows and distinct tables never collide.
+
+### The subtlety that bit, and the rule that fixes it
+
+The clear must span the row's **whole content range** `[byteStart, byteEnd)`,
+not a single byte. Under the same async lag, a previously-emitted border rides a
+few bytes ahead of the event's `byteStart`; a one-byte clear misses it and
+strands a doubled separator (observed interactively, and it does *not* self-heal
+because every frame re-misses by the same lag). A line-wide clear tolerates the
+lag exactly as `clearConcealsInRange` does — the border anchor is always well
+inside its row's range. Guarded by
+`test_clear_lines_in_range_tolerates_offset_anchor`.
+
+### What this buys, and the one trade
+
+- No table state in the plugin → the marker/event desync class is **structurally
+  impossible**, not merely patched. Tall tables, partial scroll, and edits are
+  all just per-line work, like conceals.
+- Trade: column widths reflect the rows *currently in the batch*, so there is no
+  cross-frame width accumulation. A wider row off-screen during a partial
+  mouse-wheel scroll doesn't widen the visible columns until the table is
+  measured together again (any cursor move re-measures the whole viewport).
+  Within any single render every visible row of a table shares one width array,
+  so borders and cell conceals always line up.
+
+`clearVirtualLinesInRange` is reusable by any plugin doing per-line virtual-line
+decoration; it is the virtual-line counterpart of the conceal/overlay range
+clears that already existed.

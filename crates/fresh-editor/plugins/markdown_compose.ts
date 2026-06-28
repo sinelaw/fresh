@@ -47,36 +47,37 @@ function isComposingInAnySplit(bufferId: number): boolean {
 }
 
 // =============================================================================
-// Table blocks via core interval markers (byte-range, stable id, NO line numbers)
+// Table borders: per-line, like conceals (NO stored table model, NO byte state)
 // =============================================================================
 //
-// Each table is one editor interval marker: a byte range `[start, end)` keyed by
-// a stable string id, carrying a payload `{ rows, sepRows, maxW, allocated }`.
-// The marker id is also the border namespace (`md-tb-${id}`).
+// Table border virtual lines (the `┌─┬─┐` / `├─┼─┤` / `└─┴─┘` frame) are emitted
+// PER LINE, in lockstep with the per-line conceal pass, and that is the whole
+// design:
 //
-// Position source of truth: the `lines_changed` event byte positions, which
-// always reflect the live buffer (the conceals rendered from them are always
-// correct). The marker's stored byte coordinates are NOT trusted to track the
-// table across edits: `lines_changed` is fired fire-and-forget to the plugin
-// thread, which reads markers off a snapshot the editor mutates concurrently,
-// so a batch for edit N can be processed after the marker is already shifted
-// for edit N+1. Trusting the marker's (then-offset) coordinates stretched it
-// and produced doubled/displaced borders. The event positions are the only
-// internally-consistent position source for a given hook, so they win.
+//   * For every line in a `lines_changed` batch we `clearVirtualLinesInRange`
+//     the single byte at that row's start (removing its old frame) and re-add
+//     the frame for its role. Role — first / last / source-separator-adjacent —
+//     is local: it comes from the row plus its immediate neighbours in the same
+//     batch (see the `lines_changed` handler + `emitRowBorders`).
+//   * All borders live in ONE namespace (`md-tb`); the clears are byte-range
+//     scoped, so adjacent rows and distinct tables never collide.
+//   * Column widths are computed per render from the batch's table groups
+//     (`computeRowWidths`) and shared by the border and conceal passes, so they
+//     always line up. There is no cross-frame width memory.
 //
-//   * `updateTableBlocks` rebuilds each table from the current `lines_changed`
-//     group every render: it reuses an overlapping marker's id (for a stable
-//     border namespace) but discards its coordinates, and refreshes the marker
-//     from the live row positions via createMarker.
-//   * Edits need no special handling: the next render's batch carries the new
-//     positions and the block is rebuilt from them. (after_insert/after_delete
-//     still drop a marker whose interior was edited, as a fast invalidation.)
-//   * Borders are drawn from the (freshly rebuilt) marker payload's row
-//     positions; clearing `md-tb-${id}` before redraw is idempotent.
-//
-// createMarker/queryMarkers write through to / read from the shared state
-// snapshot, so a marker created earlier in a pass is visible to a query later in
-// the same pass (no one-frame gap).
+// Why per-line instead of a stored table model: the previous design held each
+// table as a core interval marker with a stored row array and rebuilt the whole
+// frame from it. But `lines_changed` is fired fire-and-forget to the plugin
+// thread, which reads markers off a snapshot the editor mutates concurrently —
+// so a batch for edit N could be processed after the marker was shifted for edit
+// N+1, leaving the stored rows a few bytes off the event and doubling the
+// separators. The fix removes the stored model entirely: positions come only
+// from the live event each frame (the conceals are rendered from them, so they
+// are always correct), and the marker-backed border virtual lines auto-shift
+// between frames, so nothing the plugin persists can desync. Edits need no
+// special handling — the affected lines re-fire `lines_changed` and are
+// cleared+rebuilt; unaffected rows' borders just ride. See
+// docs/internal/MARKDOWN_COMPOSE_TABLE_POSITION_OWNERSHIP.md.
 
 type LineInfoLike = {
   line_number: number;
@@ -85,85 +86,31 @@ type LineInfoLike = {
   content: string;
 };
 
-interface TableBlock {
-  id: string;
-  startByte: number;
-  endByte: number;
-  rows: number[]; // byte_start of each known row, ascending
-  sepRows: number[]; // byte_start of source-separator rows (`|---|`)
-  maxW: number[]; // accumulated max raw cell width per column
-  allocated: number[]; // viewport-constrained per-column widths used to draw
-}
+// Table borders are emitted PER LINE, exactly like conceals: for each table row
+// in a `lines_changed` batch we clear the virtual lines anchored at that row and
+// re-add its frame, reading column widths from a per-render map. There is no
+// stored table model — row positions come straight from the live event each
+// frame, and the marker-backed border virtual lines auto-shift between frames,
+// so nothing the plugin persists can desync. This replaced an interval-marker
+// "block" model whose stored byte positions desynced across the async
+// `lines_changed` thread boundary and doubled separators
+// (see docs/internal/MARKDOWN_COMPOSE_TABLE_POSITION_OWNERSHIP.md).
 
-let nextTableBlockId = 1;
+// All table borders share one namespace; per-line clears are byte-range scoped
+// via `clearVirtualLinesInRange`, so adjacent rows / distinct tables never
+// collide and a tall table needs no whole-table rebuild.
+const TABLE_BORDER_NS = "md-tb";
 
-// A queryMarkers/getMarker result -> our working TableBlock.
-//
-// `rows`/`sepRows` are persisted in the payload RELATIVE to the marker start,
-// so they survive a round-trip through the marker store and a same-pass edit
-// shift without the plugin tracking byte offsets. updateTableBlocks rewrites
-// them from live event positions every batch; the reconstructed absolute rows
-// are read back only to retain a tall table's *off-screen* rows between batches
-// (the visible rows always come straight from the event).
-function toBlock(m: { id: string; start: number; end: number; payload: unknown }): TableBlock {
-  const p = (m.payload || {}) as {
-    rows?: number[]; sepRows?: number[]; maxW?: number[]; allocated?: number[];
-  };
-  return {
-    id: m.id,
-    startByte: m.start,
-    endByte: m.end,
-    rows: (p.rows ?? []).map((r) => r + m.start),
-    sepRows: (p.sepRows ?? []).map((r) => r + m.start),
-    maxW: p.maxW ?? [],
-    allocated: p.allocated ?? [],
-  };
-}
+// Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
+// every `lines_changed` pass (computeRowWidths) and read synchronously in the
+// same pass by the conceal and border code.
+let currentRowWidths: Map<number, number[]> = new Map();
 
-// The marker payload for a block (row positions RELATIVE to start; see toBlock).
-function blockPayload(b: TableBlock): {
-  rows: number[]; sepRows: number[]; maxW: number[]; allocated: number[];
-} {
-  return {
-    rows: b.rows.map((r) => r - b.startByte),
-    sepRows: b.sepRows.map((r) => r - b.startByte),
-    maxW: b.maxW,
-    allocated: b.allocated,
-  };
-}
-
-// Create a block's marker, SETTING its byte coordinates from the block's live
-// (event-derived) row positions. updateTableBlocks rewrites these every batch,
-// so the marker's coordinates are never trusted to track edits on their own.
-function saveBlock(bufferId: number, b: TableBlock): void {
-  editor.createMarker(bufferId, b.id, b.startByte, b.endByte, blockPayload(b));
-}
-
-function queryBlocks(bufferId: number, start: number, end: number): TableBlock[] {
-  const res = editor.queryMarkers(bufferId, start, end) as Array<{
-    id: string; start: number; end: number; payload: unknown;
-  }>;
-  return (res || []).map(toBlock);
-}
-
-// The table block covering `byte` (a row's byte_start), if any.
-function blockAt(bufferId: number, byte: number): TableBlock | undefined {
-  const res = queryBlocks(bufferId, byte, byte);
-  return res.length ? res[0] : undefined;
-}
-
-// Allocated column widths for the table covering `byte`, if any.
-function allocatedWidthsAt(bufferId: number, byte: number): number[] | undefined {
-  const b = blockAt(bufferId, byte);
-  return b && b.allocated.length ? b.allocated : undefined;
-}
-
-// Drop all table markers for a buffer and clear their border namespaces.
-function clearTableBlocks(bufferId: number): void {
-  for (const b of queryBlocks(bufferId, 0, 0x7fffffff)) {
-    editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
-    editor.deleteMarker(bufferId, b.id);
-  }
+// Allocated column widths for the table row starting at `byte`, for the current
+// render pass. Undefined if it isn't a width-resolved table row this pass.
+function widthsForRow(byte: number): number[] | undefined {
+  const w = currentRowWidths.get(byte);
+  return w && w.length ? w : undefined;
 }
 
 function isTableRowContent(content: string): boolean {
@@ -182,12 +129,12 @@ function tableCells(content: string): string[] {
   return inner.split("|");
 }
 
-// Recompute a block's `allocated` widths from its `maxW` and the viewport.
-function rebuildAllocatedWidths(block: TableBlock): void {
+// Viewport-constrained per-column widths from accumulated max raw widths.
+function allocatedFor(maxW: number[]): number[] {
   const viewport = editor.getViewport();
   const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
-  const available = composeW - (block.maxW.length + 1);
-  block.allocated = distributeColumnWidths(block.maxW, available);
+  const available = composeW - (maxW.length + 1);
+  return distributeColumnWidths(maxW, available);
 }
 
 // Static map of named HTML entities to their Unicode replacements
@@ -215,14 +162,14 @@ const HTML_ENTITY_MAP: Record<string, string> = {
 //
 // Implementation:
 //
-//   * Borders are virtual lines (no source bytes) drawn from a table block's
-//     own row positions, in the block's stable namespace `md-tb-${block.id}`.
-//     The id never depends on line numbers, so an insert above the table can't
-//     misclassify or strand a border (the previous line-number scheme did).
-//   * First/last/source-separator classification comes from the block's row
-//     list and `sepRows` set — see redrawBlockBorders.
-//   * Border column widths are the block's `allocated` widths, the same ones
-//     processLineConceals uses, so borders line up with the cell conceals.
+//   * Borders are virtual lines (no source bytes) anchored at a row's
+//     byte_start, emitted PER LINE in the shared namespace `md-tb`. Each row's
+//     frame is cleared (byte-range scoped) and re-added every time that line is
+//     in a `lines_changed` batch — exactly like the per-line conceal pass.
+//   * First/last/source-separator classification is local: it comes from the
+//     row plus its immediate neighbours in the same batch (see emitRowBorders).
+//   * Border column widths are this render's `widthsForRow`, the same widths the
+//     conceal pass uses, so borders line up with the cell conceals.
 
 /** Build a horizontal table border line of the given style for a row. */
 function buildTableBorderLine(
@@ -248,65 +195,64 @@ function buildTableBorderLine(
 // with the page rather than carving an opaque slab.
 const tableBorderOptions = { fg: "editor.fg", bg: "editor.bg" };
 
-/** Redraw the entire border frame for one block from its own row positions.
+/** Remove table border virtual lines for this row, clearing its *whole content
+ * range* `[byteStart, byteEnd)` — exactly like the per-line conceal clear.
  *
- * Borders are derived from `block.rows` (not the current `lines_changed`
- * batch), so a partial batch still renders the whole frame.  The namespace is
- * the block's stable id, so the clear+rebuild is idempotent and never strands
- * a row's border the way per-line-number namespaces did.
- */
-function redrawBlockBorders(bufferId: number, block: TableBlock): void {
-  const ns = `md-tb-${block.id}`;
-  editor.clearVirtualTextNamespace(bufferId, ns);
-  if (block.allocated.length === 0 || block.rows.length === 0) return;
-
-  const rows = block.rows; // ascending byte_starts
-  const sep = new Set(block.sepRows);
-  for (let i = 0; i < rows.length; i++) {
-    const rowByte = rows[i];
-    const isSourceSep = sep.has(rowByte);
-
-    // Top border above the first row. ┌─┬─┐
-    if (i === 0) {
-      editor.addVirtualLine(
-        bufferId, rowByte,
-        buildTableBorderLine(block.allocated, "┌", "┬", "┐"),
-        tableBorderOptions, true, ns, 0,
-      );
-    }
-
-    // Inter-row separator above this row — skip when either side is the
-    // source separator (`|---|`), which the conceals already render as ├─┼─┤.
-    const prevIsSourceSep = i > 0 && sep.has(rows[i - 1]);
-    if (i > 0 && !isSourceSep && !prevIsSourceSep) {
-      editor.addVirtualLine(
-        bufferId, rowByte,
-        buildTableBorderLine(block.allocated, "├", "┼", "┤"),
-        tableBorderOptions, true, ns, 1,
-      );
-    }
-
-    // Bottom border below the last row. └─┴─┘
-    if (i === rows.length - 1) {
-      const anchor = Math.max(block.startByte, block.endByte - 1);
-      editor.addVirtualLine(
-        bufferId, anchor,
-        buildTableBorderLine(block.allocated, "└", "┴", "┘"),
-        tableBorderOptions, false, ns, 0,
-      );
-    }
-  }
+ * The frame is anchored at `byteStart`, but the clear must be range-wide, not a
+ * single byte: under the async `lines_changed` lag a previously-emitted frame
+ * rides a few bytes ahead of the event's `byteStart`, so a one-byte clear would
+ * miss it and leave a stale doubled separator. A line-wide range tolerates that
+ * lag the same way `clearConcealsInRange` does. The next row's frame (anchored
+ * at this row's `byte_end`) is excluded by the half-open range, and re-emitted
+ * by its own line. Called for *every* line in a batch — table or not — so a row
+ * that stops being a table row loses its frame. */
+function clearRowBorders(bufferId: number, byteStart: number, byteEnd: number): void {
+  editor.clearVirtualLinesInRange(
+    bufferId, TABLE_BORDER_NS, byteStart, Math.max(byteEnd, byteStart + 1),
+  );
 }
 
-/** Redraw borders for every block touched by the rows in `lines`. */
-function drawTableBorders(bufferId: number, lines: LineInfoLike[]): void {
-  const touched = new Map<string, TableBlock>();
-  for (const line of lines) {
-    if (!isTableRowContent(line.content)) continue;
-    const b = blockAt(bufferId, line.byte_start);
-    if (b) touched.set(b.id, b);
+/** Emit this row's border frame, anchored at `byteStart`, for the current
+ * render. Role is local: `isFirst`/`isLast` come from the row's immediate
+ * neighbours in the same batch; `isSep`/`prevIsSep` skip the virtual separator
+ * adjacent to the source `|---|` row (the conceals already render it). Pairs
+ * with `clearRowBorders` (called first) so the clear+add land in one
+ * `process_commands` batch — no one-frame strobe. */
+function emitRowBorders(
+  bufferId: number,
+  byteStart: number,
+  widths: number[],
+  isFirst: boolean,
+  isSep: boolean,
+  prevIsSep: boolean,
+  isLast: boolean,
+): void {
+  if (widths.length === 0) return;
+
+  if (isFirst) {
+    // Top border above the first row. ┌─┬─┐
+    editor.addVirtualLine(
+      bufferId, byteStart,
+      buildTableBorderLine(widths, "┌", "┬", "┐"),
+      tableBorderOptions, true, TABLE_BORDER_NS, 0,
+    );
+  } else if (!isSep && !prevIsSep) {
+    // Inter-row separator above this row. ├─┼─┤
+    editor.addVirtualLine(
+      bufferId, byteStart,
+      buildTableBorderLine(widths, "├", "┼", "┤"),
+      tableBorderOptions, true, TABLE_BORDER_NS, 1,
+    );
   }
-  for (const block of touched.values()) redrawBlockBorders(bufferId, block);
+
+  if (isLast) {
+    // Bottom border below the last row. └─┴─┘
+    editor.addVirtualLine(
+      bufferId, byteStart,
+      buildTableBorderLine(widths, "└", "┴", "┘"),
+      tableBorderOptions, false, TABLE_BORDER_NS, 0,
+    );
+  }
 }
 
 // =============================================================================
@@ -630,11 +576,9 @@ function enableMarkdownCompose(bufferId: number): void {
 function disableMarkdownCompose(bufferId: number): void {
   if (isComposing(bufferId)) {
     editor.setViewState(bufferId, "last-cursor-line", null);
-    // Clear table border virtual lines (each block owns the namespace
-    // `md-tb-${id}`) and discard the cached blocks. `clearTableBlocks`
-    // enumerates every tracked block and clears its border namespace, so the
-    // frame can't linger as orphaned virtual lines after compose is toggled off.
-    clearTableBlocks(bufferId);
+    // Clear all table border virtual lines (one shared namespace) so the frame
+    // can't linger as orphaned virtual lines after compose is toggled off.
+    editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
 
     // Tell Rust side this buffer is back in source mode
     editor.setViewMode(bufferId, "source");
@@ -1141,9 +1085,9 @@ function processLineConceals(
     isTableRow = true;
     const isSeparator = /^\|[-:\s|]+\|$/.test(trimmed);
 
-    // Column widths come from the table block covering this row (byte-keyed,
-    // stable id — no line-number lookup).
-    const colWidths = allocatedWidthsAt(bufferId, byteStart);
+    // Column widths come from this render's per-row width map (computed from the
+    // batch's table groups at the top of the lines_changed pass).
+    const colWidths = widthsForRow(byteStart);
 
     // Split the line into cells to compute per-cell padding
     let inner = trimmed;
@@ -1447,7 +1391,7 @@ function processLineSoftBreaks(
     const trimmedLine = lineContent.trim();
     const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
     if (!isSep) {
-      const colWidths = allocatedWidthsAt(bufferId, byteStart);
+      const colWidths = widthsForRow(byteStart);
       if (colWidths) {
         let innerLine = trimmedLine;
         if (innerLine.startsWith('|')) innerLine = innerLine.slice(1);
@@ -1551,20 +1495,10 @@ function processLineSoftBreaks(
   }
 }
 
-/**
- * Merge the table rows present in a `lines_changed` batch into the block index.
- *
- * Consecutive table rows are grouped, then each group is merged into the block
- * whose byte range it touches (or a new block is created). Column widths use an
- * accumulate-and-grow strategy keyed to the *block* (stable id), not line
- * numbers, so they converge as a tall table scrolls into view and never rot
- * when lines renumber. Returns true if any block's allocated widths grew (so
- * the caller forces a refresh of already-visible rows).
- */
-function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
-  let grew = false;
-
-  // Group consecutive table rows in this batch (adjacency by line_number).
+/** Group consecutive table rows in a `lines_changed` batch (adjacency by
+ * line_number). Each group is one table's currently-visible run; column widths
+ * are uniform within a group. */
+function groupTableRows(lines: LineInfoLike[]): LineInfoLike[][] {
   const groups: LineInfoLike[][] = [];
   let cur: LineInfoLike[] = [];
   let lastLn = -2;
@@ -1581,113 +1515,37 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
     lastLn = line.line_number;
   }
   if (cur.length) groups.push(cur);
+  return groups;
+}
 
-  for (const group of groups) {
-    const gStart = group[0].byte_start;
-    const gEnd = group[group.length - 1].byte_end;
-    const groupRows = group.map((l) => l.byte_start);
-    const gLo = groupRows[0];
-    const gHi = groupRows[groupRows.length - 1];
-
-    // Find an existing block overlapping this group. We reuse its stable id
-    // (the border namespace `md-tb-${id}`) and its accumulated column widths,
-    // but we DO NOT trust its stored byte coordinates or row positions.
-    //
-    // Why: `lines_changed` is fired fire-and-forget to the plugin thread, which
-    // reads the marker off a shared snapshot the editor mutates concurrently.
-    // Under load the plugin can process a `lines_changed` for edit N only after
-    // the editor has already shifted the marker for edit N+1, so the marker
-    // sits a few bytes off the event's live row positions. Merging the event
-    // rows into those offset stored rows stretched the marker and baked in a
-    // duplicate set of rows → doubled `├─┼─┤` separators. The event positions
-    // are the only internally-consistent source of truth for this hook (the
-    // conceals are rendered from them), so the rows for this batch come
-    // straight from `group`, and the marker coordinates are rewritten from
-    // them every time. See the file header.
-    //
-    // Tolerance of 1 byte on the query covers the single `\n` between adjacent
-    // rows; a blank line between two tables is a >1-byte gap, so distinct
-    // tables stay separate. queryMarkers reflects same-pass creates
-    // (write-through), so two groups of one table in the same batch reuse one
-    // id. Consolidate any duplicate overlapping markers (rare).
-    const near = queryBlocks(bufferId, gStart - 1, gEnd + 1);
-    const existing = near.length ? near[0] : undefined;
-    for (let k = 1; k < near.length; k++) {
-      editor.clearVirtualTextNamespace(bufferId, `md-tb-${near[k].id}`);
-      editor.deleteMarker(bufferId, near[k].id);
-    }
-
-    const block: TableBlock = {
-      id: existing ? existing.id : `t${nextTableBlockId++}`,
-      startByte: gLo,
-      endByte: gEnd,
-      rows: [],
-      sepRows: [],
-      // Column widths accumulate across batches (a wider row scrolling into
-      // view widens the columns); they carry no position semantics, so they
-      // are unaffected by the marker/event offset and are safe to keep.
-      maxW: existing ? existing.maxW.slice() : [],
-      allocated: existing ? existing.allocated.slice() : [],
-    };
-
-    // Retain previously-known rows that sit clearly *beyond* this batch's span
-    // — the off-screen continuation of a tall table only partially scrolled
-    // into view. "Clearly beyond" = more than half a row-gap past the group's
-    // ends. Genuine contiguous off-screen rows are a full row-gap away (kept),
-    // while any stale near-duplicate of a visible row that a lagged marker left
-    // a few bytes off the group boundary is discarded (the corruption source).
-    if (existing && existing.rows.length) {
-      let rowGap = gEnd - gStart; // fallback: this row's own byte length
-      for (let i = 1; i < groupRows.length; i++) {
-        rowGap = Math.min(rowGap, groupRows[i] - groupRows[i - 1]);
-      }
-      const margin = Math.max(1, Math.floor(rowGap / 2));
-      const sepSet = new Set(existing.sepRows);
-      for (const r of existing.rows) {
-        if (r < gLo - margin || r > gHi + margin) {
-          block.rows.push(r);
-          if (sepSet.has(r)) block.sepRows.push(r);
-        }
-      }
-    }
-
-    // This batch's rows, from the live event positions (the source of truth).
+/** Populate `currentRowWidths` for this render: one allocated-width array per
+ * table row in the batch, uniform within each consecutive group. Computed from
+ * the live batch content only — no stored block, no cross-frame position state.
+ *
+ * Trade-off vs. the old accumulate-and-grow block: column widths reflect the
+ * rows *currently in the batch*, so a wider row that is off-screen during a
+ * partial mouse-wheel scroll doesn't widen the visible columns until it (and,
+ * via the cursor-move refresh, the rest of the table) are measured together.
+ * Within any one render every visible row of a table shares one width array, so
+ * borders and cell conceals always line up. */
+function computeRowWidths(lines: LineInfoLike[]): void {
+  currentRowWidths = new Map();
+  for (const group of groupTableRows(lines)) {
+    const maxW: number[] = [];
     for (const line of group) {
-      block.rows.push(line.byte_start);
       const isSep = isSepRowContent(line.content);
-      if (isSep) block.sepRows.push(line.byte_start);
       const cells = tableCells(line.content);
       for (let c = 0; c < cells.length; c++) {
         // Separator-row cells (`---`) adapt to data rows: width 0. Use RAW
         // display width (not concealed) so columns fit revealed emphasis markers
         // and wide/CJK/emoji cells.
         const w = isSep || /^[-:\s]+$/.test(cells[c]) ? 0 : displayWidth(cells[c]);
-        block.maxW[c] = Math.max(block.maxW[c] ?? 0, w);
+        maxW[c] = Math.max(maxW[c] ?? 0, w);
       }
     }
-
-    block.rows.sort((a, b) => a - b);
-    block.sepRows.sort((a, b) => a - b);
-    // A retained off-screen row could coincide with a group row at a batch
-    // boundary; collapse exact duplicates.
-    block.rows = block.rows.filter((r, i) => i === 0 || r !== block.rows[i - 1]);
-    block.sepRows = block.sepRows.filter((r, i) => i === 0 || r !== block.sepRows[i - 1]);
-
-    // Coordinates follow the live rows, never a stale marker.
-    block.startByte = block.rows[0];
-    block.endByte = Math.max(gEnd, block.rows[block.rows.length - 1] + 1);
-
-    const prevAlloc = block.allocated.slice();
-    rebuildAllocatedWidths(block);
-    if (block.allocated.some((w, i) => w > (prevAlloc[i] ?? 0))) grew = true;
-
-    // Always write coordinates from the live positions (createMarker). The
-    // marker is now purely a stable id + width memory + redraw anchor; its
-    // coordinates are authoritative only until the next batch rebuilds them.
-    saveBlock(bufferId, block);
+    const widths = allocatedFor(maxW);
+    for (const line of group) currentRowWidths.set(line.byte_start, widths);
   }
-
-  return grew;
 }
 
 
@@ -1736,53 +1594,49 @@ editor.on("lines_changed", (data) => {
   // shared across splits.
   const cursors = isComposing(data.buffer_id) ? [editor.getCursorPosition()] : [];
 
-  // Merge the batch's table rows into the block index (byte-keyed, stable id).
-  // If a block's widths grew (e.g. a wider row scrolled into view), force a
-  // re-render so already-visible rows pick up the wider columns. The second
-  // pass is a no-op (widths converged) so this doesn't loop.
-  const tableWidthsGrew = updateTableBlocks(data.buffer_id, data.lines);
+  // Column widths for every table row in this batch (uniform per group).
+  computeRowWidths(data.lines);
 
+  // Line-number → line, for local first/last-row classification of borders.
+  const byLineNum = new Map<number, LineInfoLike>();
+  for (const line of data.lines) byLineNum.set(line.line_number, line);
+
+  // Per line: clear+rebuild conceals, soft-breaks, and the table border frame —
+  // all anchored to this one line. No whole-table rebuild, no stored row model;
+  // borders for lines not in this batch keep riding their auto-shift markers.
   for (const line of data.lines) {
+    // Clear this row's border range first (covers a row that stopped being a
+    // table row, e.g. its pipes were deleted, and stale frames left a few bytes
+    // off by the async lag).
+    clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
+
     processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
-  }
 
-  // Redraw the frame for every table touched by this batch. Borders come from
-  // each block's own row positions, so a partial batch still renders the whole
-  // frame; the stable `md-tb-${id}` namespace makes clear+rebuild idempotent.
-  drawTableBorders(data.buffer_id, data.lines);
-
-  if (tableWidthsGrew) {
-    editor.refreshLines(data.buffer_id);
-  }
-});
-// Drop any table marker whose *interior* was edited, so the next render
-// re-discovers and redraws it from the new text. The editor has already shifted
-// every marker for the edit (so pure displacement — e.g. an insert above the
-// table — needs nothing here); we only react when the edit landed inside a
-// table's range, which the core shift can't reinterpret structurally.
-function invalidateEditedTableBlocks(bufferId: number, affStart: number, affEnd: number): void {
-  for (const b of queryBlocks(bufferId, affStart, affEnd)) {
-    // Strict interior overlap (boundary-above / boundary-after are excluded,
-    // so they remain pure shifts).
-    if (affStart < b.endByte && affEnd > b.startByte) {
-      editor.clearVirtualTextNamespace(bufferId, `md-tb-${b.id}`);
-      editor.deleteMarker(bufferId, b.id);
+    if (isTableRowContent(line.content)) {
+      const widths = currentRowWidths.get(line.byte_start) ?? [];
+      const prev = byLineNum.get(line.line_number - 1);
+      const next = byLineNum.get(line.line_number + 1);
+      // First/last is local. A row is first if it's the buffer's line 0 or its
+      // previous line is present in this batch and is NOT a table row; last if
+      // its next line is present and not a table row. When a neighbour is
+      // off-screen (absent from the batch) we conservatively treat the row as
+      // mid-table, so a tall table scrolled past its top/bottom never draws a
+      // spurious frame edge — it redraws when that neighbour re-enters a batch.
+      const isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
+      const isLast = next !== undefined && !isTableRowContent(next.content);
+      const isSep = isSepRowContent(line.content);
+      const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
+      emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
   }
-}
-
-editor.on("after_insert", (data) => {
-  if (!isComposingInAnySplit(data.buffer_id)) return;
-  editor.debug(`[mc] after_insert: pos=${data.position} text="${data.text.replace(/\n/g,'\\n')}" affected=${data.affected_start}..${data.affected_end}`);
-  invalidateEditedTableBlocks(data.buffer_id, data.affected_start, data.affected_end);
 });
-editor.on("after_delete", (data) => {
-  if (!isComposingInAnySplit(data.buffer_id)) return;
-  editor.debug(`[mc] after_delete: start=${data.start} end=${data.end} deleted="${data.deleted_text.replace(/\n/g,'\\n')}" affected_start=${data.affected_start} deleted_len=${data.deleted_len}`);
-  // After a deletion the affected range is a single point at affected_start.
-  invalidateEditedTableBlocks(data.buffer_id, data.affected_start, data.affected_start);
-});
+// after_insert / after_delete: no table-specific work. An edit invalidates
+// `seen_byte_ranges` for the affected lines, so `lines_changed` re-fires for
+// them on the next render and the per-line pass clears+rebuilds each affected
+// row's conceals AND its border frame. Border virtual lines for unaffected rows
+// auto-shift with the edit, so they need no redraw. (There is no longer a table
+// marker to invalidate.)
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
 
@@ -1795,11 +1649,9 @@ editor.on("cursor_moved", (data) => {
   // the cursor sits on) and table-row un/re-wrap stay consistent across the
   // whole viewport, including intra-line moves.
   //
-  // This re-fires `lines_changed` for the viewport, which used to corrupt
-  // tables because the border/alignment pass was keyed by line number. That is
-  // no longer true: tables are tracked as byte-range blocks with stable ids
-  // (see "Table blocks"), so `updateTableBlocks` + `drawTableBorders` are
-  // idempotent under repeated refreshes and the frame stays correct no matter
+  // This re-fires `lines_changed` for the viewport. Tables are emitted per line
+  // (clear+rebuild each row's conceals and border frame from the live event),
+  // so repeated refreshes are idempotent and the frame stays correct no matter
   // how often the cursor moves.
   editor.refreshLines(data.buffer_id);
 });
@@ -1812,13 +1664,9 @@ editor.on("viewport_changed", (data) => {
   if (data.width === lastViewportWidth) return;
   lastViewportWidth = data.width;
 
-  // Recompute allocated column widths for the new viewport width, then redraw
-  // each table's borders (the row text is re-rendered by refreshLines below).
-  for (const block of queryBlocks(data.buffer_id, 0, 0x7fffffff)) {
-    rebuildAllocatedWidths(block);
-    saveBlock(data.buffer_id, block);
-    redrawBlockBorders(data.buffer_id, block);
-  }
+  // Refresh all visible lines: the per-line pass recomputes column widths for
+  // the new viewport width (allocatedFor reads the live viewport) and re-emits
+  // each row's border frame to match.
   editor.refreshLines(data.buffer_id);
 });
 editor.on("prompt_confirmed", (args) => {

@@ -478,6 +478,28 @@ impl Editor {
         }
     }
 
+    /// Handle ClearVirtualLinesInRange command — per-line virtual-line clear.
+    pub(super) fn handle_clear_virtual_lines_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            use crate::view::virtual_text::VirtualTextNamespace;
+            let ns = VirtualTextNamespace::from_string(namespace);
+            state
+                .virtual_texts
+                .clear_lines_in_range(&mut state.marker_list, &ns, start, end);
+        }
+    }
+
     // ==================== Conceal Commands ====================
 
     /// Handle AddConceal command - add a conceal range that hides or replaces bytes

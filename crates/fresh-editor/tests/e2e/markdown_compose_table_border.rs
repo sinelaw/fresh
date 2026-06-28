@@ -295,37 +295,30 @@ fn assert_table_frame_well_formed(screen: &str) {
 /// catch *doubled inter-row separators* (`├─┼─┤` with no `│` row between them),
 /// which is what this guards against.
 ///
-/// ## What actually goes wrong
+/// ## History and what this now guards
 ///
-/// In compose mode the table plugin runs on a separate thread and reads table
-/// markers from a shared state snapshot. The editor shifts those markers as the
-/// buffer is edited, but `lines_changed` is fired *fire-and-forget*: its line
-/// byte-positions are captured at render time, while the plugin reads the marker
-/// coordinates *later*, off the live snapshot. Under load the plugin processes a
-/// `lines_changed` for edit *N* only after the editor has already shifted the
-/// marker for edit *N+1* — so the marker sits one byte off the event's row
-/// positions. `updateTableBlocks` then unions the event rows into the marker's
-/// (offset) stored rows, stretches the marker (`min` start / `max` end), and
-/// bakes a *duplicate* set of row positions into the marker payload, so the
-/// border pass draws two separators per row. The damage is persistent — it
-/// survives a convergence redraw.
+/// The original bug: tables were tracked as core interval markers with a stored
+/// row array. `lines_changed` is fired *fire-and-forget* to the plugin thread,
+/// which read the marker off a shared snapshot the editor mutates concurrently,
+/// so a batch for edit *N* could be processed after the marker was shifted for
+/// edit *N+1*. The marker then sat one byte off the event positions, the plugin
+/// merged the event rows into the offset stored rows, and baked a *duplicate*
+/// set of rows into the payload — doubled separators that survived convergence.
 ///
-/// ## Why this test injects the offset directly
+/// Tables no longer hold any marker or stored byte positions: borders are
+/// emitted per line, anchored to auto-shifting virtual-line markers, and rebuilt
+/// from the live `lines_changed` event each frame (Alternative 1 in
+/// docs/internal/MARKDOWN_COMPOSE_TABLE_POSITION_OWNERSHIP.md). So the historical
+/// desync is now *structurally impossible*. This test nudges a plugin marker one
+/// byte ahead of the buffer via `shift_plugin_markers_for_edit` and forces a
+/// redraw — exactly the state that used to corrupt — and asserts the frame stays
+/// strictly well-formed: a forward guard that the table no longer depends on any
+/// marker coordinate. (The per-line clear's tolerance of an offset border anchor
+/// — the new model's own failure mode — is unit-tested in
+/// `view::virtual_text::tests::test_clear_lines_in_range_tolerates_offset_anchor`.)
 ///
-/// The corruption requires that one-byte marker/event disagreement, which in
-/// production is a cross-thread timing race. The deterministic test harness
-/// serializes the plugin pipeline (it drains async work to quiescence after each
-/// keypress), so the race cannot be provoked through the normal key API. Instead
-/// we reproduce the race's *exact consequence* deterministically: set up a
-/// stable, correctly-rendered table, then nudge the plugin marker one byte ahead
-/// of the live buffer via `shift_plugin_markers_for_edit` *without editing the
-/// buffer*, and force a `lines_changed` redraw. That is precisely the state a
-/// lagging plugin thread observes. A correct plugin (event positions are the
-/// source of truth) rebuilds a clean frame; the buggy marker-trusting merge
-/// produces — and then preserves — doubled separators.
-///
-/// Gated on `plugins`: it drives the plugins-only `markdown_compose` pipeline
-/// and injects the offset via the plugins-gated `shift_plugin_markers_for_edit`.
+/// Gated on `plugins`: drives the plugins-only `markdown_compose` pipeline and
+/// uses the plugins-gated `shift_plugin_markers_for_edit`.
 #[cfg(feature = "plugins")]
 #[test]
 fn test_table_border_no_doubled_separators_on_marker_event_desync() {

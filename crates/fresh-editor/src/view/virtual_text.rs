@@ -701,6 +701,45 @@ impl VirtualTextManager {
         }
     }
 
+    /// Remove virtual LINES in `namespace` whose anchor byte (resolved live from
+    /// the marker list) falls in `[start, end)`. The per-line analogue of
+    /// `clear_namespace`, so a plugin can rebuild one line's virtual lines
+    /// without dropping the rest of the namespace. Non-line virtual texts and
+    /// other namespaces are left untouched.
+    pub fn clear_lines_in_range(
+        &mut self,
+        marker_list: &mut MarkerList,
+        namespace: &VirtualTextNamespace,
+        start: usize,
+        end: usize,
+    ) {
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if !vtext.position.is_line() || vtext.namespace.as_ref() != Some(namespace) {
+                    return None;
+                }
+                let pos = marker_list.get_position(vtext.marker_id)?;
+                if pos >= start && pos < end {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let removed = !to_remove.is_empty();
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+            }
+        }
+        if removed {
+            self.bump_version();
+        }
+    }
+
     /// Query only virtual LINES (LineAbove/LineBelow) in a byte range
     ///
     /// Used by the render pipeline to inject header/footer lines.
@@ -1089,6 +1128,54 @@ mod tests {
         let results = manager.query_range(&marker_list, 0, 20);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, 15);
+    }
+
+    #[test]
+    fn test_clear_lines_in_range_tolerates_offset_anchor() {
+        // The per-line markdown table border pass clears `[byteStart, byteEnd)`
+        // and re-adds. Under the async lines_changed lag a previously-emitted
+        // border rides a few bytes ahead of the event's byteStart, so the clear
+        // must be range-wide (not single-byte) to catch it — otherwise a stale
+        // doubled separator is stranded. This is the regression guard for that.
+        let mut marker_list = MarkerList::new();
+        let mut manager = VirtualTextManager::new();
+        let ns = VirtualTextNamespace::from_string("md-tb".to_string());
+
+        // Two row borders: one for the row at byte 10, one for the row at 30.
+        manager.add_line(
+            &mut marker_list,
+            10,
+            "─".to_string(),
+            hint_style(),
+            VirtualTextPosition::LineAbove,
+            ns.clone(),
+            0,
+        );
+        manager.add_line(
+            &mut marker_list,
+            30,
+            "─".to_string(),
+            hint_style(),
+            VirtualTextPosition::LineAbove,
+            ns.clone(),
+            0,
+        );
+
+        // An edit inserts 1 byte at pos 5: both borders ride forward to 11 / 31.
+        marker_list.adjust_for_insert(5, 1);
+
+        // The event still reports the first row at its pre-lag span [10, 20). A
+        // single-byte clear at byte 10 would MISS the border now at 11; the
+        // range clear catches it and leaves the far row (at 31) intact.
+        manager.clear_lines_in_range(&mut marker_list, &ns, 10, 20);
+
+        let remaining = manager.query_lines_in_range(&marker_list, 0, 100);
+        assert_eq!(
+            remaining.len(),
+            1,
+            "offset border in range should be cleared"
+        );
+        assert_eq!(remaining[0].0, 31, "the far row's border must survive");
     }
 
     #[test]
