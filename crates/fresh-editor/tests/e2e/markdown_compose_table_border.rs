@@ -267,7 +267,11 @@ fn assert_table_frame_well_formed(screen: &str) {
             line,
             screen
         );
-        let want = if expect_border { Kind::Border } else { Kind::Content };
+        let want = if expect_border {
+            Kind::Border
+        } else {
+            Kind::Content
+        };
         assert_eq!(
             kind, want,
             "table frame is not strictly alternating border/content at frame-row {} ({:?}); \
@@ -350,13 +354,9 @@ Tail paragraph.
     let md_path = project_root.join("files.md");
     std::fs::write(&md_path, md_content).unwrap();
 
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        80,
-        40,
-        Default::default(),
-        project_root,
-    )
-    .unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
+            .unwrap();
 
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
