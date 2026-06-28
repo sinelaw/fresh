@@ -208,6 +208,11 @@ Tail paragraph two.
 /// `border`  = a horizontal box-drawing line (contains `─`).
 /// `content` = a cell line (contains `│`, no `─`).
 /// Anything else inside the frame (e.g. a blank line) is a violation.
+///
+/// Only built with the `plugins` feature — without it `markdown_compose` does
+/// not run and there is no table frame to check (and the test below that uses
+/// this helper relies on a plugins-gated editor hook).
+#[cfg(feature = "plugins")]
 fn assert_table_frame_well_formed(screen: &str) {
     let lines: Vec<&str> = screen.lines().collect();
     let top = lines
@@ -318,6 +323,10 @@ fn assert_table_frame_well_formed(screen: &str) {
 /// lagging plugin thread observes. A correct plugin (event positions are the
 /// source of truth) rebuilds a clean frame; the buggy marker-trusting merge
 /// produces — and then preserves — doubled separators.
+///
+/// Gated on `plugins`: it drives the plugins-only `markdown_compose` pipeline
+/// and injects the offset via the plugins-gated `shift_plugin_markers_for_edit`.
+#[cfg(feature = "plugins")]
 #[test]
 fn test_table_border_no_doubled_separators_on_marker_event_desync() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
