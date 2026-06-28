@@ -1310,3 +1310,135 @@ fn test_vi_visual_line_indent_stops_at_selection() {
         .wait_for_buffer_content("    one\n    two\n    three\nfour\n")
         .unwrap();
 }
+
+// =============================================================================
+// Bug #2441: find-char motions (f/t/F/T) broken with operators and ; / , repeat
+// =============================================================================
+
+/// `dfr` should delete from the cursor up to and including the first `r`,
+/// leaving "ld foo bar baz". BUG: stuck in operator-pending, nothing deleted.
+#[test]
+fn test_vi_bug_2441_dfr_deletes_through_target() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'd');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'f');
+    send_key(&mut harness, 'r');
+
+    harness.wait_for_buffer_content("ld foo bar baz\n").unwrap();
+}
+
+/// `dfw` should delete up to and including the first `w` ("hello w"),
+/// leaving "orld foo bar baz". BUG: `f` is dropped and `w` runs as a plain
+/// word motion, so `dfw` silently degrades to `dw`.
+#[test]
+fn test_vi_bug_2441_dfw_target_is_motion_key() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'd');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'f');
+    send_key(&mut harness, 'w');
+
+    harness
+        .wait_for_buffer_content("orld foo bar baz\n")
+        .unwrap();
+}
+
+/// `dtr` (till) should delete up to but NOT including the first `r`,
+/// leaving "rld foo bar baz".
+#[test]
+fn test_vi_bug_2441_dtr_deletes_until_target() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'd');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, 't');
+    send_key(&mut harness, 'r');
+
+    harness
+        .wait_for_buffer_content("rld foo bar baz\n")
+        .unwrap();
+}
+
+/// `cfr` should delete up to and including the first `r` and enter insert mode,
+/// then typed text replaces it. Leaves "Xld foo bar baz".
+#[test]
+fn test_vi_bug_2441_cfr_changes_through_target() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'c');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'f');
+    send_key(&mut harness, 'r');
+    wait_insert(&mut harness);
+    harness.type_text("X").unwrap();
+    harness.render().unwrap();
+    escape(&mut harness);
+
+    harness
+        .wait_for_buffer_content("Xld foo bar baz\n")
+        .unwrap();
+}
+
+/// `;` should repeat the last `f`/`t`. After `fo` (lands on first 'o', col 4),
+/// `;` should advance to the next 'o' (col 7). BUG: `;` is a no-op.
+#[test]
+fn test_vi_bug_2441_semicolon_repeats_find() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'f');
+    send_key(&mut harness, 'o');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
+}
+
+/// `,` should repeat the last find in the opposite direction. After `fo;`
+/// (cursor at col 7), `,` should move back to the previous 'o' (col 4).
+#[test]
+fn test_vi_bug_2441_comma_repeats_find_reverse() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world foo bar baz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'f');
+    send_key(&mut harness, 'o');
+    send_key(&mut harness, ';');
+    harness.wait_until(|h| h.cursor_position() == 7).unwrap();
+
+    send_key(&mut harness, ',');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+}

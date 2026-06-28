@@ -28,7 +28,7 @@ type WordSearchDirection = "forward" | "backward";
 type WordSearchTarget = { start: number; end: number; text: string; wholeWord: boolean };
 
 // Types for tracking repeatable changes
-type ChangeType = "simple" | "operator-motion" | "operator-textobj" | "insert" | "line-op";
+type ChangeType = "simple" | "operator-motion" | "operator-textobj" | "operator-find-char" | "insert" | "line-op";
 
 interface LastChange {
   type: ChangeType;
@@ -36,6 +36,8 @@ interface LastChange {
   operator?: string;         // For operator+motion/textobj: "d", "c", "y"
   motion?: string;           // For operator+motion: the motion action
   textObject?: { modifier: TextObjectType; object: string }; // For operator+textobj
+  findType?: FindCharType;   // For operator+find-char (df/dt/cf/ct): the f/t/F/T variant
+  findCharTarget?: string;   // For operator+find-char: the target character
   count?: number;            // Count used with the command
   insertedText?: string;     // Text inserted during insert mode
 }
@@ -202,7 +204,8 @@ async function captureInsertedText(): Promise<void> {
         insertedText: text,
       };
     } else if (state.lastChange.type === "simple" || state.lastChange.type === "operator-motion" ||
-               state.lastChange.type === "operator-textobj" || state.lastChange.type === "line-op") {
+               state.lastChange.type === "operator-textobj" || state.lastChange.type === "operator-find-char" ||
+               state.lastChange.type === "line-op") {
       // A change command (c, s, etc.) was used - append the inserted text
       state.lastChange.insertedText = text;
     }
@@ -2044,6 +2047,22 @@ async function vi_repeat() : Promise<void> {
       break;
     }
 
+    case "operator-find-char": {
+      // Operator + find-char like dfx, dtx, cfx
+      if (change.operator && change.findType && change.findCharTarget) {
+        if (change.operator === "c") {
+          // Replay change as delete-then-insert so '.' doesn't block on input.
+          await executeFindCharOperator("d", change.findType, change.findCharTarget, count);
+          if (change.insertedText) {
+            editor.insertAtCursor(change.insertedText);
+          }
+        } else {
+          await executeFindCharOperator(change.operator, change.findType, change.findCharTarget, count);
+        }
+      }
+      break;
+    }
+
     case "insert": {
       // Pure insert (i, a, o, O)
       if (change.insertedText) {
@@ -2954,6 +2973,75 @@ async function enterFindCharMode(findType: FindCharType): Promise<void> {
   switchMode("normal");
 }
 
+// Extract the current cursor line as a string plus the cursor's column index
+// within it. Returns null if the buffer text can't be read. Used by both the
+// pure find-char motion and the operator-pending find-char paths.
+async function getFindCharLineContext(
+  bufferId: number,
+  cursorPos: number,
+): Promise<{ lineText: string; col: number } | null> {
+  // Read up to 10KB before and after cursor for context.
+  const windowSize = 10000;
+  const startOffset = Math.max(0, cursorPos - windowSize);
+  const bufLen = editor.getBufferLength(bufferId);
+  const endOffset = Math.min(bufLen, cursorPos + windowSize);
+
+  const text = await editor.getBufferText(bufferId, startOffset, endOffset);
+  if (!text) return null;
+
+  const posInChunk = cursorPos - startOffset;
+
+  // Find line start (last newline before cursor, or start of chunk).
+  let lineStart = 0;
+  for (let i = posInChunk - 1; i >= 0; i--) {
+    if (text[i] === '\n') {
+      lineStart = i + 1;
+      break;
+    }
+  }
+
+  // Find line end (next newline after cursor, or end of chunk).
+  let lineEnd = text.length;
+  for (let i = posInChunk; i < text.length; i++) {
+    if (text[i] === '\n') {
+      lineEnd = i;
+      break;
+    }
+  }
+
+  return { lineText: text.substring(lineStart, lineEnd), col: posInChunk - lineStart };
+}
+
+// Compute the landing column for a find-char motion on a single line.
+// `count` selects the Nth occurrence (1-based). Returns the target column
+// within `lineText`, or -1 if the target isn't found.
+function computeFindCharTargetCol(
+  findType: FindCharType,
+  char: string,
+  lineText: string,
+  col: number,
+  count: number,
+): number {
+  let remaining = Math.max(1, count);
+
+  if (findType === "f" || findType === "t") {
+    // Search forward on the line.
+    for (let i = col + 1; i < lineText.length; i++) {
+      if (lineText[i] === char && --remaining === 0) {
+        return findType === "f" ? i : i - 1;
+      }
+    }
+  } else {
+    // Search backward (F/T).
+    for (let i = col - 1; i >= 0; i--) {
+      if (lineText[i] === char && --remaining === 0) {
+        return findType === "F" ? i : i + 1;
+      }
+    }
+  }
+  return -1;
+}
+
 // Execute find char motion (async because getBufferText is async)
 async function executeFindChar(findType: FindCharType, char: string): Promise<void> {
   if (!findType) return;
@@ -2965,61 +3053,11 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
     return;
   }
 
-  // Get text around cursor to find line boundaries
-  // Read up to 10KB before and after cursor for context
-  const windowSize = 10000;
-  const startOffset = Math.max(0, cursorPos - windowSize);
-  const bufLen = editor.getBufferLength(bufferId);
-  const endOffset = Math.min(bufLen, cursorPos + windowSize);
+  const ctx = await getFindCharLineContext(bufferId, cursorPos);
+  if (!ctx) return;
+  const { lineText, col } = ctx;
 
-  // Get buffer text around cursor
-  const text = await editor.getBufferText(bufferId, startOffset, endOffset);
-  if (!text) return;
-
-  // Calculate position within this text chunk
-  const posInChunk = cursorPos - startOffset;
-
-  // Find line start (last newline before cursor, or start of chunk)
-  let lineStart = 0;
-  for (let i = posInChunk - 1; i >= 0; i--) {
-    if (text[i] === '\n') {
-      lineStart = i + 1;
-      break;
-    }
-  }
-
-  // Find line end (next newline after cursor, or end of chunk)
-  let lineEnd = text.length;
-  for (let i = posInChunk; i < text.length; i++) {
-    if (text[i] === '\n') {
-      lineEnd = i;
-      break;
-    }
-  }
-
-  // Extract line text and calculate column
-  const lineText = text.substring(lineStart, lineEnd);
-  const col = posInChunk - lineStart;
-
-  let targetCol = -1;
-
-  if (findType === "f" || findType === "t") {
-    // Search forward on the line
-    for (let i = col + 1; i < lineText.length; i++) {
-      if (lineText[i] === char) {
-        targetCol = findType === "f" ? i : i - 1;
-        break;
-      }
-    }
-  } else {
-    // Search backward (F/T)
-    for (let i = col - 1; i >= 0; i--) {
-      if (lineText[i] === char) {
-        targetCol = findType === "F" ? i : i + 1;
-        break;
-      }
-    }
-  }
+  const targetCol = computeFindCharTargetCol(findType, char, lineText, col, 1);
 
   if (targetCol >= 0 && targetCol !== col) {
     // Move to target column
@@ -3032,6 +3070,78 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
     // Save for ; and , repeat
     state.lastFindChar = { type: findType, char };
   }
+}
+
+// Apply a pending operator (d/c/y) over a find-char motion (df/dt/cf/ct/dF/dT…).
+// In vim these are *inclusive* motions: the found character is part of the
+// affected range. Forward (f/t) deletes from the cursor up to and including the
+// landing column; backward (F/T) deletes from the landing column up to (but not
+// including) the cursor.
+async function executeFindCharOperator(
+  operator: string,
+  findType: FindCharType,
+  char: string,
+  count: number,
+): Promise<void> {
+  if (!findType) {
+    switchMode("normal");
+    return;
+  }
+
+  const bufferId = editor.getActiveBufferId();
+  const cursorPos = editor.getCursorPosition();
+  if (cursorPos === null || (cursorPos === 0 && (findType === "F" || findType === "T"))) {
+    switchMode("normal");
+    return;
+  }
+
+  const ctx = await getFindCharLineContext(bufferId, cursorPos);
+  if (!ctx) {
+    switchMode("normal");
+    return;
+  }
+  const { lineText, col } = ctx;
+
+  const targetCol = computeFindCharTargetCol(findType, char, lineText, col, count);
+  if (targetCol < 0 || targetCol === col) {
+    // Target not found on the line: vim leaves the buffer unchanged and cancels
+    // the operator. Do NOT consume the operator as a different motion.
+    switchMode("normal");
+    return;
+  }
+
+  // Save for ; and , repeat (vim records the find even in operator form).
+  state.lastFindChar = { type: findType, char };
+
+  // Convert the cursor→target column span into a byte range. Column indices are
+  // measured in the line string; byte offsets are derived from the live cursor
+  // byte offset plus the UTF-8 length of the intervening text.
+  let start: number;
+  let end: number;
+  if (targetCol > col) {
+    // Forward: include the landing character.
+    const between = editor.utf8ByteLength(lineText.substring(col, targetCol));
+    start = cursorPos;
+    end = cursorPos + between + byteLengthOfCharAt(lineText, targetCol);
+  } else {
+    // Backward: from the landing column up to the cursor.
+    const between = editor.utf8ByteLength(lineText.substring(targetCol, col));
+    start = cursorPos - between;
+    end = cursorPos;
+  }
+
+  // Record for '.' repeat (delete/change only, matching operator-motion).
+  if (operator === "d" || operator === "c") {
+    state.lastChange = {
+      type: "operator-find-char",
+      operator,
+      findType,
+      findCharTarget: char,
+      count,
+    };
+  }
+
+  await applyOperatorWithRange(operator, start, end);
 }
 
 // Commands to enter find-char mode (async; await getNextKey internally)
@@ -3066,6 +3176,51 @@ async function vi_find_char_repeat_reverse(): Promise<void> {
   }
 }
 registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
+
+// Enter find-char mode with a pending operator (df/dt/cf/ct/dF/dT/…). Awaits the
+// target keypress, then applies the operator over the find-char range. Mirrors
+// enterFindCharMode but preserves the pending operator across the await and
+// dispatches to the operator-aware executor.
+async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> {
+  if (!state.pendingOperator) {
+    switchMode("normal");
+    return;
+  }
+  const operator = state.pendingOperator;
+  // Consume any count now (e.g. d2fx); the find-char await must not lose it.
+  const count = consumeCountOrDefault(1);
+
+  state.pendingFindChar = findType;
+  state.mode = "find-char";
+  editor.setEditorMode("vi-find-char");
+  editor.setStatus(getModeIndicator("find-char"));
+
+  editor.beginKeyCapture();
+  try {
+    const ev = await editor.getNextKey();
+    state.pendingFindChar = null;
+    if (ev.key.length === 1) {
+      await executeFindCharOperator(operator, findType, ev.key, count);
+    } else {
+      // Escape (or any non-character key) cancels the operator.
+      switchMode("normal");
+    }
+  } finally {
+    editor.endKeyCapture();
+  }
+}
+
+async function vi_op_find_char_f(): Promise<void> { return enterFindCharOperatorMode("f"); }
+registerHandler("vi_op_find_char_f", vi_op_find_char_f);
+
+async function vi_op_find_char_t(): Promise<void> { return enterFindCharOperatorMode("t"); }
+registerHandler("vi_op_find_char_t", vi_op_find_char_t);
+
+async function vi_op_find_char_F(): Promise<void> { return enterFindCharOperatorMode("F"); }
+registerHandler("vi_op_find_char_F", vi_op_find_char_F);
+
+async function vi_op_find_char_T(): Promise<void> { return enterFindCharOperatorMode("T"); }
+registerHandler("vi_op_find_char_T", vi_op_find_char_T);
 
 // ============================================================================
 // Operator-Pending Mode Commands
@@ -3376,6 +3531,12 @@ editor.defineMode("vi-operator-pending", [
   ["%", "vi_op_matching_bracket"],
   ["{", "vi_op_paragraph_up"],
   ["}", "vi_op_paragraph_down"],
+
+  // Find-char motions (df/dt/cf/ct and backward dF/dT) — inclusive motions
+  ["f", "vi_op_find_char_f"],
+  ["t", "vi_op_find_char_t"],
+  ["F", "vi_op_find_char_F"],
+  ["T", "vi_op_find_char_T"],
 
   // Text objects
   ["i", "vi_text_object_inner"],
