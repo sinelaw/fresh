@@ -844,9 +844,6 @@ pub struct Window {
     pub previous_click_position: Option<(u16, u16)>,
     pub click_count: u8,
 
-    /// Whether mouse capture is enabled in this window.
-    pub mouse_enabled: bool,
-
     /// GPM software-cursor position for this window (when GPM is
     /// active and we draw our own cursor).
     pub mouse_cursor_position: Option<(u16, u16)>,
@@ -2016,11 +2013,6 @@ impl Window {
             previous_click_time: None,
             previous_click_position: None,
             click_count: 0,
-            // Terminal mouse capture is enabled unconditionally at startup
-            // (see `services::terminal_modes`), so a window reflects that
-            // reality from the start — otherwise the View -> Mouse Support
-            // checkbox shows unticked while the mouse actually works (#2504).
-            mouse_enabled: true,
             mouse_cursor_position: None,
             gpm_active: false,
             menu_bar_visible: resources.config.editor.show_menu_bar,

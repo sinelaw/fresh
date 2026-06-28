@@ -3980,6 +3980,12 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_gpm_active(true);
         }
 
+        // Seed the shared mouse-capture flag from the real terminal state so
+        // the View -> Mouse Support checkbox matches the capture that
+        // `TerminalModes::enable` turned on above (#2504). Re-applied on every
+        // editor instance (authority-swap restarts rebuild the editor).
+        editor.set_mouse_capture(terminal_modes.mouse_capture_enabled());
+
         // Re-wire the tracing log paths into every editor instance,
         // not just the first. Status-bar click → open log, warning
         // indicator click → open log all break otherwise after the

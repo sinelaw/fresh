@@ -66,6 +66,7 @@ impl crate::app::Editor {
             theme: std::sync::Arc::clone(&self.theme),
             event_broadcaster: self.event_broadcaster.clone(),
             recovery_service: std::sync::Arc::clone(&self.recovery_service),
+            mouse_capture: std::sync::Arc::clone(&self.mouse_capture),
         }
     }
 

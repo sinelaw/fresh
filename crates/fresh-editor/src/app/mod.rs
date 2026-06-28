@@ -671,8 +671,10 @@ pub struct Editor {
     // `file_explorer_clipboard` moved onto `Window`.
 
     // `menu_bar_visible`, `menu_bar_auto_shown`, `tab_bar_visible`,
-    // `status_bar_visible`, `prompt_line_visible`, `mouse_enabled`
-    // moved onto `Window` — per-window UI toggles.
+    // `status_bar_visible`, `prompt_line_visible` moved onto `Window` —
+    // per-window UI toggles. (Mouse capture is the exception: it is one
+    // global terminal property, so it lives on `Editor.mouse_capture`,
+    // shared into every window — see that field.)
 
     // `same_buffer_scroll_sync` moved onto `Window` — per-window UX
     // toggle, since the split tree it controls is per-window.
@@ -911,6 +913,16 @@ pub struct Editor {
     /// `WindowResources` so per-window restore / auto-save can reach it
     /// without an active-window flip.
     recovery_service: std::sync::Arc<std::sync::Mutex<RecoveryService>>,
+
+    /// Live terminal mouse-capture state — the single source of truth for
+    /// the **View → Mouse Support** toggle. Mouse capture is a property of
+    /// the one controlling terminal, not of any individual window
+    /// (toggling it issues `Enable`/`DisableMouseCapture` on the process
+    /// stdout), so it is shared by `Arc` into every `Window` via
+    /// `WindowResources` rather than stored per-window. Seeded at startup
+    /// from the real `TerminalModes` state. Switching windows always shows
+    /// the same, accurate value (#2504).
+    pub(crate) mouse_capture: std::sync::Arc<std::sync::atomic::AtomicBool>,
 
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,

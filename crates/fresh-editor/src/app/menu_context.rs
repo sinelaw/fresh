@@ -71,7 +71,9 @@ impl Editor {
         let page_view = self.active_window().is_page_view();
         let file_explorer_visible = self.file_explorer_visible();
         let file_explorer_focused = self.active_window().is_file_explorer_focused();
-        let mouse_capture = self.active_window_mut().mouse_enabled;
+        let mouse_capture = self
+            .mouse_capture
+            .load(std::sync::atomic::Ordering::Relaxed);
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
         // True for any real buffer; false when the active buffer is the

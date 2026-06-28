@@ -384,8 +384,8 @@ impl Editor {
     }
 
     /// Apply only the **editor-global** config overrides from a
-    /// workspace (the global `Config`). The window-local override
-    /// (`mouse_enabled`) is applied by
+    /// workspace (the global `Config`). The shared mouse-capture
+    /// override (`mouse_enabled`) is applied by
     /// `Window::apply_workspace_layout`.
     fn restore_config_overrides(&mut self, overrides: &WorkspaceConfigOverrides) {
         if let Some(line_numbers) = overrides.line_numbers {
@@ -2142,10 +2142,13 @@ impl crate::app::window::Window {
             workspace.split_states.len()
         );
 
-        // Window-local config override (the rest of the overrides mutate
-        // the editor-global `Config` and are applied by the caller).
+        // Mouse capture is a single global terminal property shared by every
+        // window (see `Editor::mouse_capture`); restoring a persisted value
+        // updates that shared flag.
         if let Some(mouse_enabled) = workspace.config_overrides.mouse_enabled {
-            self.mouse_enabled = mouse_enabled;
+            self.resources
+                .mouse_capture
+                .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
         self.restore_search_options(&workspace.search_options);
@@ -2351,7 +2354,11 @@ impl crate::app::window::Window {
             line_wrap: Some(cfg.line_wrap),
             syntax_highlighting: Some(cfg.syntax_highlighting),
             enable_inlay_hints: Some(cfg.enable_inlay_hints),
-            mouse_enabled: Some(self.mouse_enabled),
+            mouse_enabled: Some(
+                self.resources
+                    .mouse_capture
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
             menu_bar_hidden: None,
         };
 

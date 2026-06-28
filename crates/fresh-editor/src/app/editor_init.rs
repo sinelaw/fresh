@@ -383,6 +383,7 @@ pub(super) struct EditorParts {
     pub(super) quick_open_registry: QuickOpenRegistry,
     pub(super) plugin_manager: std::rc::Rc<RwLock<PluginManager>>,
     pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
+    pub(super) mouse_capture: Arc<std::sync::atomic::AtomicBool>,
     pub(super) key_translator: crate::input::key_translator::KeyTranslator,
     pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
@@ -590,6 +591,7 @@ impl Editor {
             lsp_uri_schemes: std::collections::HashSet::new(),
             plugin_manager: parts.plugin_manager,
             recovery_service: parts.recovery_service,
+            mouse_capture: parts.mouse_capture,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
             update_checker: parts.update_checker,
@@ -1237,6 +1239,14 @@ impl Editor {
             )))
         };
 
+        // The single source of truth for terminal mouse capture, shared by
+        // every window (mouse capture is one global terminal property, not a
+        // per-window setting). Defaults to enabled, matching the always-on
+        // capture that `TerminalModes::enable` turns on at startup; the real
+        // TUI seeds it from the live terminal state right after construction
+        // (see `Editor::set_mouse_capture`). #2504
+        let mouse_capture = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
         // Build the resource bundle every `Window` gets a clone of. The
         // base window receives one clone here; subsequent windows
         // (created via `Editor::create_window_at` or first-dive seeding
@@ -1260,6 +1270,7 @@ impl Editor {
             theme: Arc::clone(&theme),
             event_broadcaster: event_broadcaster.clone(),
             recovery_service: Arc::clone(&recovery_service),
+            mouse_capture: Arc::clone(&mouse_capture),
         };
 
         // Build the active window — the one that holds the seed
@@ -1420,6 +1431,7 @@ impl Editor {
             quick_open_registry,
             plugin_manager,
             recovery_service,
+            mouse_capture,
             key_translator,
             update_checker,
             time_source: time_source.clone(),

@@ -421,10 +421,15 @@ impl Editor {
     /// Toggle mouse capture on/off
     pub fn toggle_mouse_capture(&mut self) {
         use std::io::stdout;
+        use std::sync::atomic::Ordering;
 
-        self.active_window_mut().mouse_enabled = !self.active_window_mut().mouse_enabled;
+        // Mouse capture is a single global terminal property, so flip the
+        // shared flag (every window observes the same value) and apply the
+        // matching terminal sequence.
+        let enabled = !self.mouse_capture.load(Ordering::Relaxed);
+        self.mouse_capture.store(enabled, Ordering::Relaxed);
 
-        if self.active_window_mut().mouse_enabled {
+        if enabled {
             // Best-effort terminal mouse capture toggle.
             #[allow(clippy::let_underscore_must_use)]
             let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
@@ -439,7 +444,20 @@ impl Editor {
 
     /// Check if mouse capture is enabled
     pub fn is_mouse_enabled(&self) -> bool {
-        self.active_window().mouse_enabled
+        self.mouse_capture
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Seed the shared mouse-capture flag from the real terminal state.
+    ///
+    /// The authoritative state lives in `TerminalModes` (owned by the event
+    /// loop), which enables mouse capture at startup. Calling this right
+    /// after construction keeps the **View → Mouse Support** checkbox in sync
+    /// with reality instead of a constructor default (#2504). Takes `&self`
+    /// because the flag is interior-mutable (`Arc<AtomicBool>`).
+    pub fn set_mouse_capture(&self, enabled: bool) {
+        self.mouse_capture
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Toggle mouse hover for LSP on/off
