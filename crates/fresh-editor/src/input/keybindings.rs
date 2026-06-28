@@ -373,6 +373,8 @@ pub enum Action {
     MoveRight,
     MoveUp,
     MoveDown,
+    ViMoveUp,   // Vim 'k' - move up, clamping the caret to the line's last char
+    ViMoveDown, // Vim 'j' - move down, clamping the caret to the line's last char
     MoveWordLeft,
     MoveWordRight,
     MoveWordEnd,     // Move to end of current word (Ctrl+Right style, past the end)
@@ -935,6 +937,8 @@ impl Action {
             "move_right" => MoveRight,
             "move_up" => MoveUp,
             "move_down" => MoveDown,
+            "vi_move_up" => ViMoveUp,
+            "vi_move_down" => ViMoveDown,
             "move_word_left" => MoveWordLeft,
             "move_word_right" => MoveWordRight,
             "move_word_end" => MoveWordEnd,
@@ -1453,6 +1457,8 @@ impl Action {
                 | Action::MoveRight
                 | Action::MoveUp
                 | Action::MoveDown
+                | Action::ViMoveUp
+                | Action::ViMoveDown
                 | Action::MoveWordLeft
                 | Action::MoveWordRight
                 | Action::MoveWordEnd
@@ -2457,6 +2463,8 @@ impl KeybindingResolver {
             Action::MoveRight => t!("action.move_right"),
             Action::MoveUp => t!("action.move_up"),
             Action::MoveDown => t!("action.move_down"),
+            Action::ViMoveUp => t!("action.move_up"),
+            Action::ViMoveDown => t!("action.move_down"),
             Action::MoveWordLeft => t!("action.move_word_left"),
             Action::MoveWordRight => t!("action.move_word_right"),
             Action::MoveWordEnd => t!("action.move_word_end"),

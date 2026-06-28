@@ -630,7 +630,10 @@ fn test_vi_vim_compat_search_count_does_not_leak_to_next_motion() {
     harness.wait_for_screen_contains("Ln 1, Col 19").unwrap();
 
     send_vi_key(&mut harness, 'j');
-    harness.wait_for_screen_contains("Ln 2, Col 4").unwrap();
+    // The count must not leak into `j`: the cursor moves down exactly one line
+    // (to line 2, not line 4). The column clamps to the last char of the shorter
+    // line "one" (Col 3, like Vim) rather than resting one past it.
+    harness.wait_for_screen_contains("Ln 2, Col 3").unwrap();
 }
 
 #[test]

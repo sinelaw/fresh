@@ -854,10 +854,10 @@ impl Editor {
             }
 
             // Cursor movement (without selection)
-            Action::MoveDown => {
+            Action::MoveDown | Action::ViMoveDown => {
                 self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Down, false)
             }
-            Action::MoveUp => {
+            Action::MoveUp | Action::ViMoveUp => {
                 self.handle_cursor_movement_action(split_id, buffer_id, CursorMovement::Up, false)
             }
             Action::MoveLeft => {

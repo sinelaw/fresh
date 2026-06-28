@@ -56,6 +56,23 @@ fn content_len_without_line_ending(content: &str) -> usize {
     content.trim_end_matches(LINE_ENDING_CHARS).len()
 }
 
+/// In vi NORMAL mode the caret may not rest past a line's last character.
+///
+/// Given a destination line (its start offset and full content, line ending
+/// included) and a tentative byte position on that line, clamp the position to
+/// the start of the line's last character — or to the line start for an empty
+/// line. Used by the vi-aware vertical motions so `j`/`k` onto a shorter line
+/// land on the last char (like Vim) instead of one past it.
+fn clamp_to_last_char_on_line(line_start: usize, line_content: &str, pos: usize) -> usize {
+    let line_len = content_len_without_line_ending(line_content);
+    let last_char_pos = line_content[..line_len]
+        .char_indices()
+        .next_back()
+        .map(|(i, _)| line_start + i)
+        .unwrap_or(line_start);
+    pos.min(last_char_pos)
+}
+
 fn find_paragraph_up(buffer: &mut Buffer, pos: usize, estimated_line_length: usize) -> usize {
     let mut iter = buffer.line_iterator(pos, estimated_line_length);
     let mut found_pos = None;
@@ -1500,6 +1517,7 @@ fn handle_vertical_up(
     events: &mut Vec<Event>,
     estimated_line_length: usize,
     extend_selection: bool,
+    clamp_to_last_char: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let from_pos = if !extend_selection && cursor.deselect_on_move {
@@ -1523,7 +1541,10 @@ fn handle_vertical_up(
         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
             let prev_line_text = prev_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(prev_line_text, goal_visual_column);
-            let new_pos = prev_line_start + byte_offset;
+            let mut new_pos = prev_line_start + byte_offset;
+            if clamp_to_last_char {
+                new_pos = clamp_to_last_char_on_line(prev_line_start, &prev_line_content, new_pos);
+            }
 
             let new_anchor = if extend_selection {
                 Some(cursor.anchor.unwrap_or(cursor.position))
@@ -1554,6 +1575,7 @@ fn handle_vertical_down(
     events: &mut Vec<Event>,
     estimated_line_length: usize,
     extend_selection: bool,
+    clamp_to_last_char: bool,
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let from_pos = if !extend_selection && cursor.deselect_on_move {
@@ -1579,7 +1601,10 @@ fn handle_vertical_down(
         if let Some((next_line_start, next_line_content)) = iter.next_line() {
             let next_line_text = next_line_content.trim_end_matches('\n');
             let byte_offset = byte_offset_at_visual_column(next_line_text, goal_visual_column);
-            let new_pos = next_line_start + byte_offset;
+            let mut new_pos = next_line_start + byte_offset;
+            if clamp_to_last_char {
+                new_pos = clamp_to_last_char_on_line(next_line_start, &next_line_content, new_pos);
+            }
 
             let new_anchor = if extend_selection {
                 Some(cursor.anchor.unwrap_or(cursor.position))
@@ -2405,11 +2430,50 @@ pub fn action_to_events(
         }
 
         Action::MoveUp => {
-            handle_vertical_up(state, cursors, &mut events, estimated_line_length, false);
+            handle_vertical_up(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                false,
+                false,
+            );
         }
 
         Action::MoveDown => {
-            handle_vertical_down(state, cursors, &mut events, estimated_line_length, false);
+            handle_vertical_down(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                false,
+                false,
+            );
+        }
+
+        // Vi NORMAL-mode `k`/`j`: like MoveUp/MoveDown but the caret is clamped
+        // to the destination line's last character (it may never rest past it),
+        // while the goal column is still remembered for the next vertical move.
+        Action::ViMoveUp => {
+            handle_vertical_up(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                false,
+                true,
+            );
+        }
+
+        Action::ViMoveDown => {
+            handle_vertical_down(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                false,
+                true,
+            );
         }
 
         Action::MoveLineStart => {
@@ -2541,11 +2605,25 @@ pub fn action_to_events(
         }
 
         Action::SelectUp => {
-            handle_vertical_up(state, cursors, &mut events, estimated_line_length, true);
+            handle_vertical_up(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                true,
+                false,
+            );
         }
 
         Action::SelectDown => {
-            handle_vertical_down(state, cursors, &mut events, estimated_line_length, true);
+            handle_vertical_down(
+                state,
+                cursors,
+                &mut events,
+                estimated_line_length,
+                true,
+                false,
+            );
         }
 
         Action::SelectToParagraphUp => {

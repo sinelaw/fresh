@@ -936,3 +936,107 @@ fn test_vi_bug_d_percent_ignored() {
 
     harness.wait_for_buffer_content("foobaz\n").unwrap();
 }
+
+// =============================================================================
+// Bug #2442: j/k onto a shorter line park the cursor one past the last char,
+// so `x` deletes the newline and joins lines.
+// =============================================================================
+
+/// In NORMAL mode the cursor must never rest past the last character of a line.
+/// Moving down (`j`) from a long line onto a *shorter* line must clamp the
+/// cursor to the shorter line's last character — like Vim — not the insert
+/// position one past it. Otherwise `x` deletes the line-ending newline and
+/// joins the following line (silent corruption from navigate-then-delete).
+#[test]
+fn test_vi_bug_2442_j_onto_shorter_line_then_x_joins_lines() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new(
+        "motions.txt",
+        "hello world foo bar baz\nshort\na longer line with many words here\n",
+    )
+    .unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // $ -> last char of line 1 (the 'z'). j -> down onto "short".
+    send_key(&mut harness, '$');
+    let pos_eol = harness.cursor_position();
+    send_key(&mut harness, 'j');
+    harness
+        .wait_until(|h| h.cursor_position() > pos_eol)
+        .unwrap();
+
+    // x deletes one character. In Vim the cursor sits on the 't' of "short",
+    // so x gives "shor" and never joins line 3.
+    send_key(&mut harness, 'x');
+
+    harness
+        .wait_for_buffer_content(
+            "hello world foo bar baz\nshor\na longer line with many words here\n",
+        )
+        .unwrap();
+}
+
+/// Same off-by-one for upward motion (`k`) onto a shorter line.
+#[test]
+fn test_vi_bug_2442_k_onto_shorter_line_then_x_joins_lines() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new(
+        "motions.txt",
+        "hello world foo bar baz\nshort\na longer line with many words here\n",
+    )
+    .unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Go to line 3, end of line, then k up onto "short".
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '$');
+    let pos_eol = harness.cursor_position();
+    send_key(&mut harness, 'k');
+    harness
+        .wait_until(|h| h.cursor_position() < pos_eol)
+        .unwrap();
+
+    send_key(&mut harness, 'x');
+
+    harness
+        .wait_for_buffer_content(
+            "hello world foo bar baz\nshor\na longer line with many words here\n",
+        )
+        .unwrap();
+}
+
+/// The desired (goal) column must survive the clamp: long -> short -> long
+/// returns to the original column, matching Vim's remembered column.
+#[test]
+fn test_vi_bug_2442_goal_column_preserved_through_short_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    // Column 10 (0-indexed byte 10) is 'd' of "world" on line 1 and 'l' of
+    // "longer" on line 3; line 2 "short" is only 5 chars.
+    let fixture = TestFixture::new(
+        "motions.txt",
+        "hello world foo bar baz\nshort\na longer line with many words here\n",
+    )
+    .unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Move to byte column 10 on line 1 via 10 'l' presses.
+    for _ in 0..10 {
+        send_key(&mut harness, 'l');
+    }
+    harness.wait_until(|h| h.cursor_position() == 10).unwrap();
+
+    // j onto "short" clamps to its last char ('t', byte 4 on the line ->
+    // absolute byte 24+4 = 28), then j onto line 3 must restore column 10
+    // (absolute byte 24 + 6 + 10 = 40).
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 28).unwrap();
+    send_key(&mut harness, 'j');
+    harness.wait_until(|h| h.cursor_position() == 40).unwrap();
+}

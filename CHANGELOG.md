@@ -30,6 +30,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Vi mode**: moving with `j` / `k` onto a shorter line now clamps the cursor to that line's last character (like Vim) instead of parking it one past the end, so a following `x` deletes a character rather than the newline and joins lines. The desired column is still remembered for the next vertical move (#2442).
 * **Regex search**: `^` / `$` now anchor per line in multi-line `Ctrl+F` search (#2495).
 * **Splits**: closing a buffer shown in two splits no longer desyncs the surviving cursor (#2496).
 * **Terminal**: a terminal restores its live/scrollback mode on refocus, and the last split is no longer left read-only after closing a second terminal (#2485).

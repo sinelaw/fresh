@@ -1081,12 +1081,15 @@ function vi_left() : void {
 registerHandler("vi_left", vi_left);
 
 function vi_down() : void {
-  executeWithCount("move_down");
+  // vi_move_down clamps the caret to the destination line's last char (Vim
+  // never lets the cursor rest past it in NORMAL mode), while still
+  // remembering the goal column for the next vertical move.
+  executeWithCount("vi_move_down");
 }
 registerHandler("vi_down", vi_down);
 
 function vi_up() : void {
-  executeWithCount("move_up");
+  executeWithCount("vi_move_up");
 }
 registerHandler("vi_up", vi_up);
 
