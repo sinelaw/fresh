@@ -2016,7 +2016,11 @@ impl Window {
             previous_click_time: None,
             previous_click_position: None,
             click_count: 0,
-            mouse_enabled: false,
+            // Terminal mouse capture is enabled unconditionally at startup
+            // (see `services::terminal_modes`), so a window reflects that
+            // reality from the start — otherwise the View -> Mouse Support
+            // checkbox shows unticked while the mouse actually works (#2504).
+            mouse_enabled: true,
             mouse_cursor_position: None,
             gpm_active: false,
             menu_bar_visible: resources.config.editor.show_menu_bar,
