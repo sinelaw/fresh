@@ -2198,6 +2198,29 @@ impl SettingsState {
         }
     }
 
+    /// Commit the currently-edited `Text` control's value into the pending
+    /// change set, mirroring what the `Enter` path does via `text_add_item`.
+    ///
+    /// A `Text` field's typed value lives only in the control's own state until
+    /// `on_value_changed()` flushes it into `pending_changes` (the set that Save
+    /// persists). The `Enter` path commits, but exiting the edit with `Tab` only
+    /// called `stop_editing`, so the typed value was silently dropped on Save
+    /// even though the row still showed as modified (issue #2515). Returns
+    /// `true` when a `Text` value was committed. Other editable controls
+    /// (DualList/Map/TextList) already record their changes as they are mutated,
+    /// and `Esc` keeps its dismiss semantics, so this is only wired into the
+    /// `Tab` exit path.
+    pub fn commit_text_edit(&mut self) -> bool {
+        let is_text = matches!(
+            self.current_item().map(|item| &item.control),
+            Some(SettingControl::Text(_))
+        );
+        if is_text {
+            self.on_value_changed();
+        }
+        is_text
+    }
+
     /// Stop text editing mode
     pub fn stop_editing(&mut self) {
         self.editing_text = false;
@@ -3183,6 +3206,85 @@ mod tests {
 
         state.discard_changes();
         assert!(!state.has_changes());
+    }
+
+    /// Regression test for issue #2515: committing a text-field edit with Tab
+    /// (which routes through `stop_editing`, unlike Enter which routes through
+    /// `text_add_item`) must still flush the typed value into `pending_changes`
+    /// so Save persists it. Previously only the Enter path committed, so a
+    /// value typed and then dismissed with Tab/Esc was lost on Save even though
+    /// the row showed as modified.
+    #[test]
+    fn test_text_edit_committed_on_stop_editing() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // `theme` is a plain string property -> a Text control. Items are
+        // sorted within the page, so select it explicitly by path.
+        let theme_idx = state.pages[0]
+            .items
+            .iter()
+            .position(|i| i.path == "/theme")
+            .expect("theme item present");
+        state.selected_category = 0;
+        state.selected_item = theme_idx;
+
+        assert!(matches!(
+            state.current_item().map(|i| &i.control),
+            Some(SettingControl::Text(_))
+        ));
+
+        // Enter edit mode and type a new value (first keystroke replaces the
+        // armed default, mirroring the real key flow).
+        state.start_editing();
+        for c in "light".chars() {
+            state.text_insert(c);
+        }
+
+        // Exit via the Tab path (NOT Enter): commit then stop. This is the bug
+        // surface — Tab previously skipped the commit.
+        assert!(state.commit_text_edit());
+        state.stop_editing();
+
+        assert_eq!(
+            state.pending_changes.get("/theme"),
+            Some(&serde_json::Value::String("light".to_string())),
+            "typed value must be flushed to pending_changes on Tab commit"
+        );
+
+        // And it survives a Save into the live config.
+        let config = state.apply_changes(&config).unwrap();
+        assert_eq!(config.theme.0, "light");
+    }
+
+    /// `Esc` keeps its dismiss semantics: it stops editing without flushing the
+    /// in-progress value into `pending_changes`, so it must not record a change
+    /// the way the Tab/Enter commit paths do.
+    #[test]
+    fn test_text_edit_esc_does_not_commit() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        let theme_idx = state.pages[0]
+            .items
+            .iter()
+            .position(|i| i.path == "/theme")
+            .expect("theme item present");
+        state.selected_category = 0;
+        state.selected_item = theme_idx;
+
+        state.start_editing();
+        for c in "light".chars() {
+            state.text_insert(c);
+        }
+
+        // Esc path: stop_editing without commit_text_edit.
+        state.stop_editing();
+
+        assert!(
+            !state.pending_changes.contains_key("/theme"),
+            "Esc must not record a pending change"
+        );
     }
 
     #[test]

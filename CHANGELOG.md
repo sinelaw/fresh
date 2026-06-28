@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Bug Fixes
+
+* **Settings UI**: committing a text field with `Tab` now persists the typed value on Save, matching `Enter`. Previously the row showed as modified but Save wrote an empty value (#2515).
+
 ## 0.4.2
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
