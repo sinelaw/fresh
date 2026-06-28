@@ -130,7 +130,13 @@ impl Editor {
     /// coordinates. Insert gives `start` right-gravity / `end` left-gravity at
     /// the boundary; delete clamps into the deletion. Markers whose interior is
     /// touched keep shifting here (the plugin deletes + re-discovers them).
-    pub(crate) fn shift_plugin_markers_for_edit(
+    ///
+    /// Also a `#[doc(hidden)]` test hook: integration tests call this to
+    /// deterministically reproduce the cross-thread marker/event desync (shift a
+    /// plugin marker without editing the buffer) that the async `lines_changed`
+    /// pipeline otherwise only produces as a timing race.
+    #[doc(hidden)]
+    pub fn shift_plugin_markers_for_edit(
         &self,
         buffer_id: BufferId,
         pos: usize,

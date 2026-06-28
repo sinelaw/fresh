@@ -57,9 +57,12 @@ function isComposingInAnySplit(bufferId: number): boolean {
 // Position source of truth: the `lines_changed` event byte positions, which
 // always reflect the live buffer (the conceals rendered from them are always
 // correct). The marker's stored byte coordinates are NOT trusted to track the
-// table across edits — the editor does not reliably shift plugin markers across
-// every edit path (single-cursor Enter, auto-indent, paste and other bulk edits
-// bypass the shift), so trusting them produced corrupted/displaced borders.
+// table across edits: `lines_changed` is fired fire-and-forget to the plugin
+// thread, which reads markers off a snapshot the editor mutates concurrently,
+// so a batch for edit N can be processed after the marker is already shifted
+// for edit N+1. Trusting the marker's (then-offset) coordinates stretched it
+// and produced doubled/displaced borders. The event positions are the only
+// internally-consistent position source for a given hook, so they win.
 //
 //   * `updateTableBlocks` rebuilds each table from the current `lines_changed`
 //     group every render: it reuses an overlapping marker's id (for a stable
@@ -96,11 +99,12 @@ let nextTableBlockId = 1;
 
 // A queryMarkers/getMarker result -> our working TableBlock.
 //
-// `rows`/`sepRows` are persisted in the payload RELATIVE to the marker start.
-// The editor shifts the marker's start/end on every edit, but it cannot shift
-// byte positions buried in the opaque payload — so storing them relative and
-// reconstructing absolute from the (already-shifted) start keeps them correct
-// across edits without the plugin tracking byte offsets.
+// `rows`/`sepRows` are persisted in the payload RELATIVE to the marker start,
+// so they survive a round-trip through the marker store and a same-pass edit
+// shift without the plugin tracking byte offsets. updateTableBlocks rewrites
+// them from live event positions every batch; the reconstructed absolute rows
+// are read back only to retain a tall table's *off-screen* rows between batches
+// (the visible rows always come straight from the event).
 function toBlock(m: { id: string; start: number; end: number; payload: unknown }): TableBlock {
   const p = (m.payload || {}) as {
     rows?: number[]; sepRows?: number[]; maxW?: number[]; allocated?: number[];
@@ -128,17 +132,11 @@ function blockPayload(b: TableBlock): {
   };
 }
 
-// Create a block's marker, SETTING its byte coordinates. Use when the marker is
-// new or its extent changed this batch.
+// Create a block's marker, SETTING its byte coordinates from the block's live
+// (event-derived) row positions. updateTableBlocks rewrites these every batch,
+// so the marker's coordinates are never trusted to track edits on their own.
 function saveBlock(bufferId: number, b: TableBlock): void {
   editor.createMarker(bufferId, b.id, b.startByte, b.endByte, blockPayload(b));
-}
-
-// Update ONLY a block's payload, leaving start/end to the editor — which shifts
-// the marker on every edit. Used in steady state (extent unchanged) so a
-// concurrent edit-shift is never clobbered by a slightly-lagged event position.
-function savePayload(bufferId: number, b: TableBlock): void {
-  editor.updateMarker(bufferId, b.id, blockPayload(b));
 }
 
 function queryBlocks(bufferId: number, start: number, end: number): TableBlock[] {
@@ -1587,43 +1585,77 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
   for (const group of groups) {
     const gStart = group[0].byte_start;
     const gEnd = group[group.length - 1].byte_end;
+    const groupRows = group.map((l) => l.byte_start);
+    const gLo = groupRows[0];
+    const gHi = groupRows[groupRows.length - 1];
 
-    // Find the table marker this group belongs to. The marker rides edits (the
-    // editor shifts it on every edit path), so its stored coordinates — and the
-    // row positions reconstructed from its payload — are current. We merge this
-    // batch's rows/widths into it. A pure displacement (e.g. inserting lines
-    // above the table) is absorbed by the editor's shift: the marker and its
-    // border virtual lines simply ride down, the merge is a no-op, and the
-    // upsert below keeps the editor-owned coordinates untouched.
+    // Find an existing block overlapping this group. We reuse its stable id
+    // (the border namespace `md-tb-${id}`) and its accumulated column widths,
+    // but we DO NOT trust its stored byte coordinates or row positions.
     //
-    // Tolerance of 1 byte covers the single `\n` between adjacent rows; a blank
-    // line between two tables is a >1-byte gap, so distinct tables stay separate.
-    // queryMarkers reflects same-pass creates (write-through), so two groups of
-    // one table in the same batch merge into one marker. Consolidate any
-    // duplicate overlapping markers (rare, from a missed query).
+    // Why: `lines_changed` is fired fire-and-forget to the plugin thread, which
+    // reads the marker off a shared snapshot the editor mutates concurrently.
+    // Under load the plugin can process a `lines_changed` for edit N only after
+    // the editor has already shifted the marker for edit N+1, so the marker
+    // sits a few bytes off the event's live row positions. Merging the event
+    // rows into those offset stored rows stretched the marker and baked in a
+    // duplicate set of rows → doubled `├─┼─┤` separators. The event positions
+    // are the only internally-consistent source of truth for this hook (the
+    // conceals are rendered from them), so the rows for this batch come
+    // straight from `group`, and the marker coordinates are rewritten from
+    // them every time. See the file header.
+    //
+    // Tolerance of 1 byte on the query covers the single `\n` between adjacent
+    // rows; a blank line between two tables is a >1-byte gap, so distinct
+    // tables stay separate. queryMarkers reflects same-pass creates
+    // (write-through), so two groups of one table in the same batch reuse one
+    // id. Consolidate any duplicate overlapping markers (rare).
     const near = queryBlocks(bufferId, gStart - 1, gEnd + 1);
-    const block: TableBlock = near.length ? near[0] : {
-      id: `t${nextTableBlockId++}`,
-      startByte: gStart,
-      endByte: gEnd,
-      rows: [],
-      sepRows: [],
-      maxW: [],
-      allocated: [],
-    };
+    const existing = near.length ? near[0] : undefined;
     for (let k = 1; k < near.length; k++) {
       editor.clearVirtualTextNamespace(bufferId, `md-tb-${near[k].id}`);
       editor.deleteMarker(bufferId, near[k].id);
     }
 
-    const origStart = block.startByte;
-    const origEnd = block.endByte;
-    block.startByte = Math.min(block.startByte, gStart);
-    block.endByte = Math.max(block.endByte, gEnd);
+    const block: TableBlock = {
+      id: existing ? existing.id : `t${nextTableBlockId++}`,
+      startByte: gLo,
+      endByte: gEnd,
+      rows: [],
+      sepRows: [],
+      // Column widths accumulate across batches (a wider row scrolling into
+      // view widens the columns); they carry no position semantics, so they
+      // are unaffected by the marker/event offset and are safe to keep.
+      maxW: existing ? existing.maxW.slice() : [],
+      allocated: existing ? existing.allocated.slice() : [],
+    };
+
+    // Retain previously-known rows that sit clearly *beyond* this batch's span
+    // — the off-screen continuation of a tall table only partially scrolled
+    // into view. "Clearly beyond" = more than half a row-gap past the group's
+    // ends. Genuine contiguous off-screen rows are a full row-gap away (kept),
+    // while any stale near-duplicate of a visible row that a lagged marker left
+    // a few bytes off the group boundary is discarded (the corruption source).
+    if (existing && existing.rows.length) {
+      let rowGap = gEnd - gStart; // fallback: this row's own byte length
+      for (let i = 1; i < groupRows.length; i++) {
+        rowGap = Math.min(rowGap, groupRows[i] - groupRows[i - 1]);
+      }
+      const margin = Math.max(1, Math.floor(rowGap / 2));
+      const sepSet = new Set(existing.sepRows);
+      for (const r of existing.rows) {
+        if (r < gLo - margin || r > gHi + margin) {
+          block.rows.push(r);
+          if (sepSet.has(r)) block.sepRows.push(r);
+        }
+      }
+    }
+
+    // This batch's rows, from the live event positions (the source of truth).
     for (const line of group) {
-      if (!block.rows.includes(line.byte_start)) block.rows.push(line.byte_start);
+      block.rows.push(line.byte_start);
       const isSep = isSepRowContent(line.content);
-      if (isSep && !block.sepRows.includes(line.byte_start)) block.sepRows.push(line.byte_start);
+      if (isSep) block.sepRows.push(line.byte_start);
       const cells = tableCells(line.content);
       for (let c = 0; c < cells.length; c++) {
         // Separator-row cells (`---`) adapt to data rows: width 0. Use RAW
@@ -1633,21 +1665,26 @@ function updateTableBlocks(bufferId: number, lines: LineInfoLike[]): boolean {
         block.maxW[c] = Math.max(block.maxW[c] ?? 0, w);
       }
     }
+
     block.rows.sort((a, b) => a - b);
     block.sepRows.sort((a, b) => a - b);
+    // A retained off-screen row could coincide with a group row at a batch
+    // boundary; collapse exact duplicates.
+    block.rows = block.rows.filter((r, i) => i === 0 || r !== block.rows[i - 1]);
+    block.sepRows = block.sepRows.filter((r, i) => i === 0 || r !== block.sepRows[i - 1]);
+
+    // Coordinates follow the live rows, never a stale marker.
+    block.startByte = block.rows[0];
+    block.endByte = Math.max(gEnd, block.rows[block.rows.length - 1] + 1);
 
     const prevAlloc = block.allocated.slice();
     rebuildAllocatedWidths(block);
     if (block.allocated.some((w, i) => w > (prevAlloc[i] ?? 0))) grew = true;
 
-    // Upsert. createMarker (sets coordinates) only when the marker is new or its
-    // extent changed this batch; otherwise updateMarker (payload only) so the
-    // editor stays the sole writer of the start/end it shifts on edits.
-    if (!near.length || block.startByte !== origStart || block.endByte !== origEnd) {
-      saveBlock(bufferId, block);
-    } else {
-      savePayload(bufferId, block);
-    }
+    // Always write coordinates from the live positions (createMarker). The
+    // marker is now purely a stable id + width memory + redraw anchor; its
+    // coordinates are authoritative only until the next batch rebuilds them.
+    saveBlock(bufferId, block);
   }
 
   return grew;
