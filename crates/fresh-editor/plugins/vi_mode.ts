@@ -906,6 +906,15 @@ async function applyOperatorWithRange(operator: string, start: number, end: numb
   }
 
   const bufferId = editor.getActiveBufferId();
+
+  // Indent/dedent are line-wise: resolve the byte range to the whole lines it
+  // touches and shift them, rather than operating on the exact byte span.
+  if (operator === ">" || operator === "<") {
+    const span = await lineSpanOfRange(bufferId, rangeStart, rangeEnd);
+    await applyIndentToLineRange(operator, span.firstLineStart, span.lineCount);
+    return;
+  }
+
   if ((operator === "d" || operator === "c") && isActiveBufferEditingDisabled(bufferId)) {
     switchMode("normal");
     return;
@@ -934,6 +943,147 @@ async function applyOperatorWithRange(operator: string, start: number, end: numb
       break;
   }
 
+  switchMode("normal");
+}
+
+// ============================================================================
+// Indent / dedent operators ( >>, <<, >motion/<motion, and visual >/< )
+// ============================================================================
+//
+// Indentation is inherently line-wise, so each entry point resolves a byte
+// range to the whole lines it touches and then reuses the editor's own
+// `insert_tab` / `dedent_selection` actions. Routing through the built-in
+// actions keeps tab width and tabs-vs-spaces a single source of truth
+// (per-language config, `use_tabs`, …) instead of the plugin re-deriving them.
+
+// Count the line terminators contained in `text` (handles LF, CR and CRLF).
+function countLineTerminators(text: string): number {
+  let count = 0;
+  let searchFrom = 0;
+  while (true) {
+    const end = nextLineTerminatorEnd(text, searchFrom);
+    if (end === null) {
+      break;
+    }
+    count++;
+    searchFrom = end;
+  }
+  return count;
+}
+
+// Resolve a byte range to the first line it starts on and the number of whole
+// lines it spans. An exclusive end sitting exactly on a line start does not
+// pull in the following line.
+async function lineSpanOfRange(
+  bufferId: number,
+  startByte: number,
+  endByte: number,
+): Promise<{ firstLineStart: number; lineCount: number }> {
+  const lo = Math.min(startByte, endByte);
+  const hi = Math.max(startByte, endByte);
+  const firstLineStart = await findLineStartAtPosition(bufferId, lo);
+  const lastTouched = hi > lo ? hi - 1 : lo;
+  const lastLineStart = await findLineStartAtPosition(bufferId, lastTouched);
+  const between = await editor.getBufferText(bufferId, firstLineStart, lastLineStart);
+  return { firstLineStart, lineCount: 1 + countLineTerminators(between) };
+}
+
+// Move the cursor to the first non-blank character of the line starting at
+// `lineStart` (Vim leaves the cursor there after >>/<<).
+async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): Promise<void> {
+  const bufferLength = editor.getBufferLength(bufferId);
+  const sampleEnd = Math.min(bufferLength, lineStart + 4096);
+  const sample = await editor.getBufferText(bufferId, lineStart, sampleEnd);
+  let index = 0;
+  while (index < sample.length && (sample[index] === " " || sample[index] === "\t")) {
+    index++;
+  }
+  const offset = lineStart + editor.utf8ByteLength(sample.slice(0, index));
+  editor.setBufferCursor(bufferId, Math.min(offset, bufferLength));
+}
+
+// Indent (">") or dedent ("<") `lineCount` whole lines starting at
+// `firstLineStart`, leave the cursor on the first non-blank of the first line,
+// and return to normal mode.
+async function applyIndentToLineRange(
+  operator: string,
+  firstLineStart: number,
+  lineCount: number,
+): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    switchMode("normal");
+    return;
+  }
+
+  // Build a whole-line selection [firstLineStart .. end of last line] so the
+  // editor's selection-aware indent/dedent acts on every line in the range.
+  editor.setBufferCursor(bufferId, firstLineStart);
+  editor.executeAction("move_line_start");
+  for (let i = 1; i < Math.max(1, lineCount); i++) {
+    editor.executeAction("select_down");
+  }
+  editor.executeAction("select_line_end");
+
+  editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
+
+  state.lastYankWasLinewise = false;
+  await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
+  switchMode("normal");
+}
+
+// >>/<<: indent or dedent `count` lines starting at the cursor's line.
+async function applyLineOpIndent(operator: string, count: number): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    switchMode("normal");
+    return;
+  }
+  const position = editor.getCursorPosition();
+  if (position === null) {
+    switchMode("normal");
+    return;
+  }
+  const firstLineStart = await findLineStartAtPosition(bufferId, position);
+  await applyIndentToLineRange(operator, firstLineStart, Math.max(1, count));
+}
+
+// >motion / <motion: indent the whole lines the motion spans. Built entirely
+// from ordered editor actions (select-by-motion, then indent the selection) so
+// it never relies on reading a position back mid-handler — the plugin's cursor
+// snapshot is not refreshed until the handler yields. Extending the active end
+// to its line end makes a forward/downward motion include the destination line
+// even when it stops at column 0, matching Vim's line-wise `>`.
+async function applyIndentViaMotion(
+  operator: string,
+  selectAction: string,
+  motionAction: string,
+  count: number,
+): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    switchMode("normal");
+    return;
+  }
+  const startPos = editor.getCursorPosition();
+  state.lastChange = { type: "operator-motion", operator, motion: motionAction, count };
+
+  for (let i = 0; i < Math.max(1, count); i++) {
+    editor.executeAction(selectAction);
+  }
+  editor.executeAction("select_line_end");
+  editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
+  state.lastYankWasLinewise = false;
+
+  // Leave the cursor on the first non-blank of the line the motion started on
+  // (its byte offset is unchanged by indenting at line starts).
+  if (startPos !== null) {
+    const firstLineStart = await findLineStartAtPosition(bufferId, startPos);
+    await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
+  } else {
+    switchMode("normal");
+    return;
+  }
   switchMode("normal");
 }
 
@@ -1052,7 +1202,7 @@ async function handleWORDMotionWithOperator(kind: WORDMotionKind): Promise<void>
 
   const operator = state.pendingOperator;
   const count = consumeCount();
-  if (operator === "d" || operator === "c") {
+  if (operator === "d" || operator === "c" || operator === ">" || operator === "<") {
     state.lastChange = { type: "operator-motion", operator, motion: `vi_WORD_${kind}`, count };
   }
 
@@ -1100,6 +1250,11 @@ async function applyOperatorWithMotion(operator: string, motionAction: string, c
   if (!selectAction) {
     editor.debug(`No selection equivalent for motion: ${motionAction}`);
     switchMode("normal");
+    return;
+  }
+
+  if (operator === ">" || operator === "<") {
+    await applyIndentViaMotion(operator, selectAction, motionAction, count);
     return;
   }
 
@@ -1635,6 +1790,44 @@ async function vi_yank_line() : Promise<void> {
 }
 registerHandler("vi_yank_line", vi_yank_line);
 
+// `>` / `<` operators: enter operator-pending so a motion or a doubled
+// operator (>>/<<) can follow, mirroring d/c/y.
+function vi_indent_operator() : void {
+  state.pendingOperator = ">";
+  switchMode("operator-pending");
+}
+registerHandler("vi_indent_operator", vi_indent_operator);
+
+function vi_dedent_operator() : void {
+  state.pendingOperator = "<";
+  switchMode("operator-pending");
+}
+registerHandler("vi_dedent_operator", vi_dedent_operator);
+
+// Doubled operators >> and <<. Only fire when the matching operator is
+// pending, so invalid combos like `d>` cancel instead of indenting.
+async function vi_indent_line() : Promise<void> {
+  if (state.pendingOperator !== ">") {
+    switchMode("normal");
+    return;
+  }
+  const count = consumeCount();
+  state.lastChange = { type: "line-op", action: "indent_line", count };
+  await applyLineOpIndent(">", count);
+}
+registerHandler("vi_indent_line", vi_indent_line);
+
+async function vi_dedent_line() : Promise<void> {
+  if (state.pendingOperator !== "<") {
+    switchMode("normal");
+    return;
+  }
+  const count = consumeCount();
+  state.lastChange = { type: "line-op", action: "dedent_line", count };
+  await applyLineOpIndent("<", count);
+}
+registerHandler("vi_dedent_line", vi_dedent_line);
+
 // Single character operations - support count prefix (3x = delete 3 chars)
 async function vi_delete_char() : Promise<void> {
   const count = consumeCount();
@@ -1792,6 +1985,10 @@ async function vi_repeat() : Promise<void> {
         if (change.insertedText) {
           editor.insertAtCursor(change.insertedText);
         }
+      } else if (change.action === "indent_line") {
+        await applyLineOpIndent(">", count);
+      } else if (change.action === "dedent_line") {
+        await applyLineOpIndent("<", count);
       }
       break;
     }
@@ -2356,6 +2553,43 @@ async function vi_vis_yank() : Promise<void> {
   switchMode("normal");
 }
 registerHandler("vi_vis_yank", vi_vis_yank);
+
+// Visual mode > / < — indent or dedent every line the selection touches, then
+// return to normal mode (Vim behavior). The editor's indent/dedent already act
+// on the live selection per line (the same selection visual-mode d/y operate
+// on), so we drive them directly rather than recomputing the line span — that
+// keeps the affected lines exactly in sync with what's highlighted.
+async function applyVisualIndent(operator: string): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    switchMode("normal");
+    return;
+  }
+  // Remember the first selected line so the cursor can land there afterwards.
+  const range = state.visualRange ?? editor.getPrimaryCursor()?.selection ?? null;
+  const firstByte = range
+    ? Math.min(range.start, range.end)
+    : editor.getCursorPosition();
+
+  editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
+  state.lastYankWasLinewise = false;
+
+  if (firstByte !== null && firstByte !== undefined) {
+    const firstLineStart = await findLineStartAtPosition(bufferId, firstByte);
+    await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
+  }
+  switchMode("normal");
+}
+
+async function vi_vis_indent() : Promise<void> {
+  await applyVisualIndent(">");
+}
+registerHandler("vi_vis_indent", vi_vis_indent);
+
+async function vi_vis_dedent() : Promise<void> {
+  await applyVisualIndent("<");
+}
+registerHandler("vi_vis_dedent", vi_vis_dedent);
 
 // Exit visual mode without doing anything
 function vi_vis_escape() : void {
@@ -3046,6 +3280,8 @@ editor.defineMode("vi-normal", [
   ["d", "vi_delete_operator"],
   ["c", "vi_change_operator"],
   ["y", "vi_yank_operator"],
+  [">", "vi_indent_operator"],
+  ["<", "vi_dedent_operator"],
 
   // Single char operations
   ["x", "vi_delete_char"],
@@ -3149,6 +3385,8 @@ editor.defineMode("vi-operator-pending", [
   ["d", "vi_delete_line"],
   ["c", "vi_change_line"],
   ["y", "vi_yank_line"],
+  [">", "vi_indent_line"],
+  ["<", "vi_dedent_line"],
 
   // Cancel
   ["Escape", "vi_cancel"],
@@ -3229,6 +3467,8 @@ editor.defineMode("vi-visual", [
   ["c", "vi_vis_change"],
   ["s", "vi_vis_change"],
   ["y", "vi_vis_yank"],
+  [">", "vi_vis_indent"],
+  ["<", "vi_vis_dedent"],
 
   // Exit
   ["Escape", "vi_vis_escape"],
@@ -3272,6 +3512,8 @@ editor.defineMode("vi-visual-line", [
   ["c", "vi_vis_change"],
   ["s", "vi_vis_change"],
   ["y", "vi_vis_yank"],
+  [">", "vi_vis_indent"],
+  ["<", "vi_vis_dedent"],
 
   // Exit
   ["Escape", "vi_vis_escape"],

@@ -14,6 +14,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Vi mode**: the indent operators `>>` / `<<` (with counts and motions like `>j`) and visual-mode `>` / `<` now shift lines by one level instead of doing nothing; `.` repeats them (#2438).
 * **Vi mode**: quote text objects `i"`/`a"` (and `'`/`` ` ``) now search forward on the line, so `ci"`/`di"` work from before the quotes — e.g. from the start of the line — instead of only when the cursor is already inside them (#2439).
 * **Cursor column** is preserved on vertical moves that used to drift it - indented soft-wrapped lines, off-screen up/down over short lines (#2565), and blank lines with indentation guides (#2564).
 * **LSP args** - an empty `args` list now overrides a built-in server's defaults, so you can use one that takes no arguments (e.g. markdown-oxide for marksman) (#2549, reported by @alex-ball).

@@ -1114,3 +1114,199 @@ fn test_vi_bug_ci_quote_searches_forward_on_line() {
         .wait_for_buffer_content("the \"WXYZ\" brown fox\n")
         .unwrap();
 }
+
+// =============================================================================
+// Bug #2438: vi mode indent operators >>/<< (and visual >/<) do nothing
+// =============================================================================
+//
+// `>>`/`<<` in normal mode and `>`/`<` in visual mode were never bound, so they
+// were silent no-ops. They now shift whole lines by one indent level (the
+// default `text` buffer uses 4 spaces) and leave the cursor on the first
+// non-blank of the first line, matching Vim.
+
+/// `>>` indents the current line by one shiftwidth.
+#[test]
+fn test_vi_indent_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbeta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // >> on line 1
+    send_key(&mut harness, '>');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '>');
+
+    harness
+        .wait_for_buffer_content("    alpha\nbeta\n")
+        .unwrap();
+}
+
+/// `<<` dedents the current line by one shiftwidth.
+#[test]
+fn test_vi_dedent_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "        alpha\nbeta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // << on line 1 removes one 4-space level.
+    send_key(&mut harness, '<');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '<');
+
+    harness
+        .wait_for_buffer_content("    alpha\nbeta\n")
+        .unwrap();
+}
+
+/// A count applies the indent to N lines: `2>>` indents two lines.
+#[test]
+fn test_vi_indent_line_with_count() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "one\ntwo\nthree\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // 2>> indents lines 1 and 2, leaving line 3 untouched.
+    send_key(&mut harness, '2');
+    send_key(&mut harness, '>');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '>');
+
+    harness
+        .wait_for_buffer_content("    one\n    two\nthree\n")
+        .unwrap();
+}
+
+/// `>` plus a linewise motion (`>j`) indents the spanned lines.
+#[test]
+fn test_vi_indent_motion() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "one\ntwo\nthree\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // >j indents the current line and the one below.
+    send_operator_motion(&mut harness, '>', 'j');
+
+    harness
+        .wait_for_buffer_content("    one\n    two\nthree\n")
+        .unwrap();
+}
+
+/// `.` repeats the last `>>`.
+#[test]
+fn test_vi_indent_line_repeat() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbeta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, '>');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '>');
+    harness
+        .wait_for_buffer_content("    alpha\nbeta\n")
+        .unwrap();
+
+    // `.` indents the same line again -> two levels (8 spaces).
+    send_key(&mut harness, '.');
+    harness
+        .wait_for_buffer_content("        alpha\nbeta\n")
+        .unwrap();
+}
+
+/// Visual-line `>` indents the selected line and returns to normal mode.
+#[test]
+fn test_vi_visual_line_indent() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbeta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // V selects line 1, > indents it.
+    harness
+        .send_key(KeyCode::Char('V'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .unwrap();
+
+    send_key(&mut harness, '>');
+
+    harness
+        .wait_for_buffer_content("    alpha\nbeta\n")
+        .unwrap();
+    // Returns to normal mode after the operation (Vim behavior).
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+}
+
+/// Visual-line `<` dedents the selected lines.
+#[test]
+fn test_vi_visual_line_dedent() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "    alpha\n    beta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // V then j to select both lines, then <.
+    harness
+        .send_key(KeyCode::Char('V'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '<');
+
+    harness.wait_for_buffer_content("alpha\nbeta\n").unwrap();
+}
+
+/// Visual-line `>` indents exactly the highlighted lines and nothing past them.
+/// It operates on the same live selection as visual-mode `d`/`y`, so it stays
+/// consistent with them; the regression this guards against is the indent
+/// bleeding into the line below the selection.
+#[test]
+fn test_vi_visual_line_indent_stops_at_selection() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "one\ntwo\nthree\nfour\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // V then j highlights the first three lines (vi visual-line selection);
+    // `four` is not selected and must stay unindented.
+    harness
+        .send_key(KeyCode::Char('V'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-line".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '>');
+
+    harness
+        .wait_for_buffer_content("    one\n    two\n    three\nfour\n")
+        .unwrap();
+}
