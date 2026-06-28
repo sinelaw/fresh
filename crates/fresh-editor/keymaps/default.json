@@ -560,6 +560,21 @@
       "when": "normal"
     },
     {
+      "comment": "Jump to the next/previous Project Search & Replace match without leaving the editor (issue #2434). Lets you review a large result set one keystroke at a time instead of Down+Enter in the panel then Alt+] back. Ctrl+Alt+Arrow chosen because Alt+n/p and F3 are taken and arrows avoid the Ctrl+[ (ESC) / shifted-punctuation pitfalls.",
+      "key": "Right",
+      "modifiers": ["ctrl", "alt"],
+      "action": "search_replace_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "alt"],
+      "action": "search_replace_prev_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "r",
       "modifiers": ["ctrl", "alt"],
       "action": "query_replace",

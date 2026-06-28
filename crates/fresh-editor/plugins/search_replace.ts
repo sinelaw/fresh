@@ -301,6 +301,12 @@ const modeBindings: [string, string][] = [
   ["M-w", "search_replace_toggle_whole_word"],
   ["M-Return", "search_replace_replace_all"],
   ["S-Return", "search_replace_replace_scoped"],
+  // Match navigation (issue #2434). Also bound in keymaps/default.json
+  // for the editor (normal) context; binding them in the panel mode too
+  // means the same key advances matches whether focus is in the panel
+  // or back in the source buffer after an edit.
+  ["C-M-Right", "search_replace_next_match"],
+  ["C-M-Left", "search_replace_prev_match"],
   ["Escape", "search_replace_close"],
   ["Backspace", "search_replace_backspace"],
   ["Delete", "search_replace_delete"],
@@ -1816,6 +1822,111 @@ async function doReplaceScopedInner(): Promise<void> {
   updatePanelContent();
 }
 
+// =============================================================================
+// Match navigation (issue #2434)
+// =============================================================================
+//
+// Reviewing a large result set match-by-match used to cost three
+// keystrokes each: Down (select the next row in the panel), Enter
+// (open it in the editor — which moves focus to the source split), and
+// Alt+] to return to the panel before repeating. These two commands
+// collapse that to a single keystroke usable *from the editor*: advance
+// the panel's selection to the next/previous match row, open it in the
+// source split (cursor lands on the match, ready to edit), and leave
+// focus where it is. Press again to move to the next one. Mirrors the
+// next/prev idiom in diff_nav.ts.
+
+/** 1-based ordinal of the match row at flat index `flatIdx` among all
+ *  match rows (file-header rows don't count). Used for "Match n/total"
+ *  status feedback. */
+function matchOrdinal(flat: FlatItem[], flatIdx: number): number {
+  let count = 0;
+  for (let i = 0; i <= flatIdx && i < flat.length; i++) {
+    if (flat[i].type === "match") count++;
+  }
+  return count;
+}
+
+/** Flat index of the next (dir=1) / previous (dir=-1) match row
+ *  relative to `from`, skipping file-header rows and wrapping around.
+ *  Returns -1 when there are no match rows at all. */
+function adjacentMatchIndex(flat: FlatItem[], from: number, dir: 1 | -1): number {
+  const n = flat.length;
+  if (n === 0) return -1;
+  // Normalize the start so the first step lands on a real neighbour
+  // even when `from` is out of range or sits on a file header.
+  let start = from;
+  if (start < 0 || start >= n) start = dir === 1 ? -1 : n;
+  for (let step = 1; step <= n; step++) {
+    const idx = (((start + dir * step) % n) + n) % n;
+    if (flat[idx].type === "match") return idx;
+  }
+  return -1;
+}
+
+/** Open the match at flat index `flatIdx` in the source split and sync
+ *  the panel's selection/expansion so the row is highlighted and
+ *  scrolled into view. `openFileInSplit` focuses the source split, so
+ *  the user can edit the match immediately and press the nav key again
+ *  to move on — no detour back through the panel. */
+function jumpToMatch(flat: FlatItem[], flatIdx: number): void {
+  if (!panel) return;
+  const item = flat[flatIdx];
+  if (!item || item.type !== "match") return;
+  panel.matchIndex = flatIdx;
+  // Keep the selection meaningful for a subsequent full re-render and
+  // for Shift+Enter (replace-scoped), which both key off focusPanel.
+  panel.focusPanel = "matches";
+  // Ensure the file group is expanded so the selected row is visible.
+  const fileKey = `file:${item.fileIndex}`;
+  panel.expandedFileKeys.add(fileKey);
+  if (panel.widgetPanel) {
+    panel.widgetPanel.setExpandedKeys("matchTree", [...panel.expandedFileKeys]);
+    panel.widgetPanel.setSelectedIndex("matchTree", flatIdx);
+  }
+  // Opening a result is a clear "this is the search I wanted" signal —
+  // commit the pattern to history (matches the Enter/activate path).
+  if (historyIndex < 0) historyPush(panel.searchPattern);
+  const group = panel.fileGroups[item.fileIndex];
+  const result = group.matches[item.matchIndex!];
+  editor.openFileInSplit(
+    panel.sourceSplitId,
+    result.match.file,
+    result.match.line,
+    result.match.column,
+  );
+}
+
+function navigateMatch(dir: 1 | -1): void {
+  if (!panel || panel.searchResults.length === 0) {
+    editor.setStatus(
+      editor.t(panel?.busy ? "panel.searching" : "status.no_active_search"),
+    );
+    return;
+  }
+  const flat = buildFlatItems();
+  const idx = adjacentMatchIndex(flat, panel.matchIndex, dir);
+  if (idx < 0) {
+    editor.setStatus(editor.t("status.no_active_search"));
+    return;
+  }
+  jumpToMatch(flat, idx);
+  editor.setStatus(editor.t("status.match_position", {
+    n: String(matchOrdinal(flat, idx)),
+    total: String(panel.searchResults.length),
+  }));
+}
+
+function search_replace_next_match(): void {
+  navigateMatch(1);
+}
+registerHandler("search_replace_next_match", search_replace_next_match);
+
+function search_replace_prev_match(): void {
+  navigateMatch(-1);
+}
+registerHandler("search_replace_prev_match", search_replace_prev_match);
+
 function search_replace_close(): void {
   if (!panel) return;
   // If the user actually ran a search to completion with this
@@ -2160,6 +2271,24 @@ editor.registerCommand(
   "%cmd.search_replace_in_buffer",
   "%cmd.search_replace_in_buffer_desc",
   "start_search_replace_in_buffer",
+  null
+);
+
+// Match navigation (issue #2434). Always visible — these operate on the
+// last search's results and are most useful from the editor while
+// reviewing matches, so no panel context is required. Default bindings
+// live in keymaps/default.json (Ctrl+Alt+Right / Ctrl+Alt+Left).
+editor.registerCommand(
+  "%cmd.next_match",
+  "%cmd.next_match_desc",
+  "search_replace_next_match",
+  null
+);
+
+editor.registerCommand(
+  "%cmd.prev_match",
+  "%cmd.prev_match_desc",
+  "search_replace_prev_match",
   null
 );
 

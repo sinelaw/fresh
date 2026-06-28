@@ -2157,3 +2157,66 @@ fn test_widget_text_shift_right_then_backspace_deletes_selection() {
         })
         .unwrap();
 }
+
+/// Issue #2434: a single keystroke walks through the result set from the
+/// editor. Ctrl+Alt+Right opens the next match (focus moves to the source
+/// split so it can be edited) and reports "Match n/total"; Ctrl+Alt+Left
+/// steps back. The first press is sent while the panel is focused (mode
+/// binding); later presses land in the editor (normal-context keymap
+/// binding), so this exercises both wiring paths.
+#[test]
+fn test_search_replace_next_match_navigation() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    // "hello" appears twice in alpha.txt and once in beta.txt. The total
+    // denominator is left unchecked below because the plugin sources
+    // copied into the temp project can contribute extra matches; the
+    // assertions only depend on the ordinal moving 1 → 2 → 1.
+    let start_file = project_root.join("gamma.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("hello").unwrap();
+
+    // Wait until the search has settled with the test files in the
+    // result set.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("matches") && s.contains("alpha.txt") && s.contains("beta.txt")
+        })
+        .unwrap();
+
+    // First match (from the panel via the mode binding).
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Match 1/"))
+        .unwrap();
+
+    // Next match (now from the editor via the normal-context keymap binding).
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Match 2/"))
+        .unwrap();
+
+    // Previous match steps back.
+    harness
+        .send_key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Match 1/"))
+        .unwrap();
+}

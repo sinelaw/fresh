@@ -20,6 +20,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **JSONC config files** — config files now accept comments and trailing commas, a stray syntax slip no longer silently resets you to defaults, and saves never clobber an unparseable file (the error is surfaced instead) (#2497).
 * **Per-buffer view toggles** — *Toggle Line Numbers (Current Buffer)* and *Toggle Line Wrap (Current Buffer)* scope to the active buffer and persist across restarts.
 * **LSP Go to Implementation** (`textDocument/implementation`) (#2384, by @Crocmagnon).
+* **Step through Search & Replace matches from the editor** — `Ctrl+Alt+→` / `Ctrl+Alt+←` (also available as palette commands and inside the panel) jump to the next/previous match, opening each in the source split so you can review or edit it without the Down → Enter → `Alt+]` round-trip back to the panel (#2434, requested by @mandolyte).
 
 ### Improvements
 

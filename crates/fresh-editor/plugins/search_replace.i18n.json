@@ -46,7 +46,13 @@
     "panel.scope_row_file": "Only in: %{file}",
     "panel.scope_row_unnamed": "Only in: (unsaved buffer)",
     "panel.replace_all_in_file_btn": "Replace All in %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Search still running — please wait, then try again."
+    "status.replace_wait_for_search": "Search still running — please wait, then try again.",
+    "cmd.next_match": "Next Search Match",
+    "cmd.next_match_desc": "Jump to the next Search & Replace match in the editor",
+    "cmd.prev_match": "Previous Search Match",
+    "cmd.prev_match_desc": "Jump to the previous Search & Replace match in the editor",
+    "status.no_active_search": "No Search & Replace results — run a search first",
+    "status.match_position": "Match %{n}/%{total}"
   },
   "cs": {
     "cmd.search_replace": "Hledat a nahradit v projektu",
@@ -95,7 +101,13 @@
     "panel.scope_row_file": "Pouze v: %{file}",
     "panel.scope_row_unnamed": "Pouze v: (neuložený buffer)",
     "panel.replace_all_in_file_btn": "Nahradit vše v %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Vyhledávání probíhá — počkejte prosím a zkuste to znovu."
+    "status.replace_wait_for_search": "Vyhledávání probíhá — počkejte prosím a zkuste to znovu.",
+    "cmd.next_match": "Dalsi shoda",
+    "cmd.next_match_desc": "Prejit na dalsi shodu hledani a nahrazeni v editoru",
+    "cmd.prev_match": "Predchozi shoda",
+    "cmd.prev_match_desc": "Prejit na predchozi shodu hledani a nahrazeni v editoru",
+    "status.no_active_search": "Zadne vysledky hledani a nahrazeni — nejprve spustte hledani",
+    "status.match_position": "Shoda %{n}/%{total}"
   },
   "de": {
     "cmd.search_replace": "Suchen und Ersetzen im Projekt",
@@ -144,7 +156,13 @@
     "panel.scope_row_file": "Nur in: %{file}",
     "panel.scope_row_unnamed": "Nur in: (ungespeicherter Puffer)",
     "panel.replace_all_in_file_btn": "Alle in %{file} ersetzen (Alt+Ret)",
-    "status.replace_wait_for_search": "Suche läuft noch — bitte warten und erneut versuchen."
+    "status.replace_wait_for_search": "Suche läuft noch — bitte warten und erneut versuchen.",
+    "cmd.next_match": "Nächster Treffer",
+    "cmd.next_match_desc": "Zum nächsten Treffer von Suchen und Ersetzen im Editor springen",
+    "cmd.prev_match": "Vorheriger Treffer",
+    "cmd.prev_match_desc": "Zum vorherigen Treffer von Suchen und Ersetzen im Editor springen",
+    "status.no_active_search": "Keine Such- und Ersetzungsergebnisse — führen Sie zuerst eine Suche aus",
+    "status.match_position": "Treffer %{n}/%{total}"
   },
   "es": {
     "cmd.search_replace": "Buscar y Reemplazar en Proyecto",
@@ -193,7 +211,13 @@
     "panel.scope_row_file": "Solo en: %{file}",
     "panel.scope_row_unnamed": "Solo en: (buffer sin guardar)",
     "panel.replace_all_in_file_btn": "Reemplazar todo en %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Búsqueda en curso — espere y vuelva a intentar."
+    "status.replace_wait_for_search": "Búsqueda en curso — espere y vuelva a intentar.",
+    "cmd.next_match": "Siguiente coincidencia",
+    "cmd.next_match_desc": "Saltar a la siguiente coincidencia de Buscar y Reemplazar en el editor",
+    "cmd.prev_match": "Coincidencia anterior",
+    "cmd.prev_match_desc": "Saltar a la coincidencia anterior de Buscar y Reemplazar en el editor",
+    "status.no_active_search": "No hay resultados de Buscar y Reemplazar — ejecuta una búsqueda primero",
+    "status.match_position": "Coincidencia %{n}/%{total}"
   },
   "fr": {
     "cmd.search_replace": "Rechercher et Remplacer dans le Projet",
@@ -242,7 +266,13 @@
     "panel.scope_row_file": "Seulement dans : %{file}",
     "panel.scope_row_unnamed": "Seulement dans : (tampon non enregistré)",
     "panel.replace_all_in_file_btn": "Tout remplacer dans %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Recherche en cours — veuillez patienter puis réessayer."
+    "status.replace_wait_for_search": "Recherche en cours — veuillez patienter puis réessayer.",
+    "cmd.next_match": "Correspondance suivante",
+    "cmd.next_match_desc": "Aller à la correspondance suivante de Rechercher et Remplacer dans l'éditeur",
+    "cmd.prev_match": "Correspondance précédente",
+    "cmd.prev_match_desc": "Aller à la correspondance précédente de Rechercher et Remplacer dans l'éditeur",
+    "status.no_active_search": "Aucun résultat de Rechercher et Remplacer — lancez d'abord une recherche",
+    "status.match_position": "Correspondance %{n}/%{total}"
   },
   "it": {
     "cmd.search_replace": "Cerca e sostituisci nel progetto",
@@ -291,7 +321,13 @@
     "panel.scope_row_file": "Solo in: %{file}",
     "panel.scope_row_unnamed": "Solo in: (buffer non salvato)",
     "panel.replace_all_in_file_btn": "Sostituisci tutto in %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Ricerca in corso — attendere e riprovare."
+    "status.replace_wait_for_search": "Ricerca in corso — attendere e riprovare.",
+    "cmd.next_match": "Corrispondenza successiva",
+    "cmd.next_match_desc": "Vai alla corrispondenza successiva di Cerca e sostituisci nell'editor",
+    "cmd.prev_match": "Corrispondenza precedente",
+    "cmd.prev_match_desc": "Vai alla corrispondenza precedente di Cerca e sostituisci nell'editor",
+    "status.no_active_search": "Nessun risultato di Cerca e sostituisci — esegui prima una ricerca",
+    "status.match_position": "Corrispondenza %{n}/%{total}"
   },
   "ja": {
     "cmd.search_replace": "プロジェクト内で検索と置換",
@@ -340,7 +376,13 @@
     "panel.scope_row_file": "対象: %{file}",
     "panel.scope_row_unnamed": "対象: (未保存バッファ)",
     "panel.replace_all_in_file_btn": "%{file} 内ですべて置換 (Alt+Ret)",
-    "status.replace_wait_for_search": "検索中です — 完了後にもう一度お試しください。"
+    "status.replace_wait_for_search": "検索中です — 完了後にもう一度お試しください。",
+    "cmd.next_match": "次の一致",
+    "cmd.next_match_desc": "エディタで検索と置換の次の一致へ移動",
+    "cmd.prev_match": "前の一致",
+    "cmd.prev_match_desc": "エディタで検索と置換の前の一致へ移動",
+    "status.no_active_search": "検索と置換の結果がありません — 先に検索を実行してください",
+    "status.match_position": "一致 %{n}/%{total}"
   },
   "ko": {
     "cmd.search_replace": "프로젝트에서 검색 및 바꾸기",
@@ -389,7 +431,13 @@
     "panel.scope_row_file": "범위: %{file}",
     "panel.scope_row_unnamed": "범위: (저장되지 않은 버퍼)",
     "panel.replace_all_in_file_btn": "%{file} 에서 모두 바꾸기 (Alt+Ret)",
-    "status.replace_wait_for_search": "검색 중입니다 — 완료된 후 다시 시도하세요."
+    "status.replace_wait_for_search": "검색 중입니다 — 완료된 후 다시 시도하세요.",
+    "cmd.next_match": "다음 일치 항목",
+    "cmd.next_match_desc": "편집기에서 검색 및 바꾸기의 다음 일치 항목으로 이동",
+    "cmd.prev_match": "이전 일치 항목",
+    "cmd.prev_match_desc": "편집기에서 검색 및 바꾸기의 이전 일치 항목으로 이동",
+    "status.no_active_search": "검색 및 바꾸기 결과가 없습니다 — 먼저 검색을 실행하세요",
+    "status.match_position": "일치 %{n}/%{total}"
   },
   "pt-BR": {
     "cmd.search_replace": "Pesquisar e Substituir no Projeto",
@@ -438,7 +486,13 @@
     "panel.scope_row_file": "Somente em: %{file}",
     "panel.scope_row_unnamed": "Somente em: (buffer não salvo)",
     "panel.replace_all_in_file_btn": "Substituir tudo em %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Pesquisa em andamento — aguarde e tente novamente."
+    "status.replace_wait_for_search": "Pesquisa em andamento — aguarde e tente novamente.",
+    "cmd.next_match": "Próxima correspondência",
+    "cmd.next_match_desc": "Ir para a próxima correspondência de Pesquisar e Substituir no editor",
+    "cmd.prev_match": "Correspondência anterior",
+    "cmd.prev_match_desc": "Ir para a correspondência anterior de Pesquisar e Substituir no editor",
+    "status.no_active_search": "Nenhum resultado de Pesquisar e Substituir — execute uma pesquisa primeiro",
+    "status.match_position": "Correspondência %{n}/%{total}"
   },
   "ru": {
     "cmd.search_replace": "Поиск и замена в проекте",
@@ -487,7 +541,13 @@
     "panel.scope_row_file": "Только в: %{file}",
     "panel.scope_row_unnamed": "Только в: (несохранённый буфер)",
     "panel.replace_all_in_file_btn": "Заменить все в %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Поиск ещё выполняется — подождите и попробуйте снова."
+    "status.replace_wait_for_search": "Поиск ещё выполняется — подождите и попробуйте снова.",
+    "cmd.next_match": "Следующее совпадение",
+    "cmd.next_match_desc": "Перейти к следующему совпадению поиска и замены в редакторе",
+    "cmd.prev_match": "Предыдущее совпадение",
+    "cmd.prev_match_desc": "Перейти к предыдущему совпадению поиска и замены в редакторе",
+    "status.no_active_search": "Нет результатов поиска и замены — сначала выполните поиск",
+    "status.match_position": "Совпадение %{n}/%{total}"
   },
   "th": {
     "cmd.search_replace": "ค้นหาและแทนที่ในโปรเจกต์",
@@ -536,7 +596,13 @@
     "panel.scope_row_file": "เฉพาะใน: %{file}",
     "panel.scope_row_unnamed": "เฉพาะใน: (บัฟเฟอร์ที่ยังไม่ได้บันทึก)",
     "panel.replace_all_in_file_btn": "แทนที่ทั้งหมดใน %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "กำลังค้นหา — กรุณารอแล้วลองอีกครั้ง"
+    "status.replace_wait_for_search": "กำลังค้นหา — กรุณารอแล้วลองอีกครั้ง",
+    "cmd.next_match": "รายการที่ตรงกันถัดไป",
+    "cmd.next_match_desc": "ไปยังรายการที่ตรงกันถัดไปของค้นหาและแทนที่ในตัวแก้ไข",
+    "cmd.prev_match": "รายการที่ตรงกันก่อนหน้า",
+    "cmd.prev_match_desc": "ไปยังรายการที่ตรงกันก่อนหน้าของค้นหาและแทนที่ในตัวแก้ไข",
+    "status.no_active_search": "ไม่มีผลลัพธ์ค้นหาและแทนที่ — โปรดค้นหาก่อน",
+    "status.match_position": "รายการที่ตรงกัน %{n}/%{total}"
   },
   "uk": {
     "cmd.search_replace": "Пошук та заміна в проекті",
@@ -585,7 +651,13 @@
     "panel.scope_row_file": "Лише в: %{file}",
     "panel.scope_row_unnamed": "Лише в: (незбережений буфер)",
     "panel.replace_all_in_file_btn": "Замінити все в %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Триває пошук — зачекайте та спробуйте знову."
+    "status.replace_wait_for_search": "Триває пошук — зачекайте та спробуйте знову.",
+    "cmd.next_match": "Наступний збіг",
+    "cmd.next_match_desc": "Перейти до наступного збігу пошуку та заміни в редакторі",
+    "cmd.prev_match": "Попередній збіг",
+    "cmd.prev_match_desc": "Перейти до попереднього збігу пошуку та заміни в редакторі",
+    "status.no_active_search": "Немає результатів пошуку та заміни — спочатку виконайте пошук",
+    "status.match_position": "Збіг %{n}/%{total}"
   },
   "vi": {
     "cmd.search_replace": "Tìm và Thay thế trong Dự án",
@@ -634,7 +706,13 @@
     "panel.scope_row_file": "Chỉ trong: %{file}",
     "panel.scope_row_unnamed": "Chỉ trong: (bộ đệm chưa lưu)",
     "panel.replace_all_in_file_btn": "Thay thế tất cả trong %{file} (Alt+Ret)",
-    "status.replace_wait_for_search": "Đang tìm kiếm — vui lòng chờ rồi thử lại."
+    "status.replace_wait_for_search": "Đang tìm kiếm — vui lòng chờ rồi thử lại.",
+    "cmd.next_match": "Kết quả tiếp theo",
+    "cmd.next_match_desc": "Chuyển đến kết quả khớp tiếp theo của Tìm và Thay thế trong trình soạn thảo",
+    "cmd.prev_match": "Kết quả trước đó",
+    "cmd.prev_match_desc": "Chuyển đến kết quả khớp trước đó của Tìm và Thay thế trong trình soạn thảo",
+    "status.no_active_search": "Không có kết quả Tìm và Thay thế — hãy tìm kiếm trước",
+    "status.match_position": "Kết quả %{n}/%{total}"
   },
   "zh-CN": {
     "cmd.search_replace": "在项目中搜索和替换",
@@ -683,6 +761,12 @@
     "panel.scope_row_file": "仅在: %{file}",
     "panel.scope_row_unnamed": "仅在: (未保存的缓冲区)",
     "panel.replace_all_in_file_btn": "在 %{file} 中全部替换 (Alt+Ret)",
-    "status.replace_wait_for_search": "搜索仍在进行中 — 请稍候再试。"
+    "status.replace_wait_for_search": "搜索仍在进行中 — 请稍候再试。",
+    "cmd.next_match": "下一个匹配项",
+    "cmd.next_match_desc": "在编辑器中跳转到下一个搜索和替换匹配项",
+    "cmd.prev_match": "上一个匹配项",
+    "cmd.prev_match_desc": "在编辑器中跳转到上一个搜索和替换匹配项",
+    "status.no_active_search": "没有搜索和替换结果 — 请先执行搜索",
+    "status.match_position": "匹配项 %{n}/%{total}"
   }
 }

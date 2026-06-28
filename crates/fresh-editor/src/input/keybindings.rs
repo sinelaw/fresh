@@ -3809,6 +3809,12 @@ mod tests {
 
         const ALLOWED_PLUGIN_ACTIONS_IN_DEFAULTS: &[&str] = &[
             "start_search_replace",
+            // Project Search & Replace match navigation (issue #2434) —
+            // handled by the search_replace plugin; bound in the default
+            // keymap so reviewing a result set costs one keystroke per
+            // match from the editor.
+            "search_replace_next_match",
+            "search_replace_prev_match",
             // Universal Search scope toggles — handled by the live_grep
             // plugin; dispatched as plugin actions from the prompt context.
             "live_grep_toggle_files",
