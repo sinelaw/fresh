@@ -1,6 +1,6 @@
 # Glossary & Naming Conventions
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 This is the source of truth for naming across user-facing docs, UI strings,
 and (where non-breaking) code. It has two parts: the **naming scheme** for

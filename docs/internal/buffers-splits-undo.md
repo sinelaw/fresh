@@ -1,6 +1,6 @@
 # Buffers, Splits, Undo & Recovery (App Layer)
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 Purpose: explain how Fresh owns and identifies buffers, lays out split panes via the
 window tree, separates per-buffer from per-view state, displaces/preserves markers across

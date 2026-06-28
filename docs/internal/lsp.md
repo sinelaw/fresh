@@ -1,6 +1,6 @@
 # LSP Integration
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 Purpose: document how Fresh embeds a full Language Server Protocol client — multi-server routing, the queuing/concurrency model, async result flow, diagnostics-as-markers, completion merging, and the feature set with its concessions vs. a full LSP client.
 

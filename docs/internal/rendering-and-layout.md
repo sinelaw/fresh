@@ -1,6 +1,6 @@
 # Rendering & Layout
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 Purpose: how Fresh turns buffer bytes into terminal cells — the per-frame render loop, the token→`ViewLine` pipeline, the line-wrap and visual-row caches that make huge files scroll cheaply, folding/wrapping/conceal/virtual-text decorations, split-pane layout, the `Scene` semantic projections shared with the web frontend, and mouse hit-testing.
 

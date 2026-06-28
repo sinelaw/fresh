@@ -1,6 +1,6 @@
 # System Overview & Runtime Model
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 Purpose: the keystone map of Fresh — an 8-crate Rust workspace that ships a terminal text editor. This document covers the crate split and why it exists, cargo feature gating, the main entrypoint and ~60fps event loop, the threading model, the client/server+daemon architecture, async message flow, the `Editor` god object, and the Action-vs-Event distinction. It indexes the sibling subsystem docs at the end. Status: **IMPLEMENTED** unless flagged **PLANNED**.
 

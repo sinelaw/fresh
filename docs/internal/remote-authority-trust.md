@@ -1,6 +1,6 @@
 # Remote Authority & Workspace Trust
 
-> _This document is AI-generated. It records Fresh's architecture and the reasoning behind its design, derived from the source and commit history. Volatile implementation details — line numbers, exact constants, and source locations — are deliberately omitted; where this document and the source disagree, the source is authoritative._
+> _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
 Purpose: the one map of *where the editor acts* (the `Authority` backend slot — local / SSH / docker-exec / kubectl-exec), how a remote backend is built, kept alive, and reconnected, and *whether code may run there* (Workspace Trust + the live env provider). Covers what is implemented today versus what is forward-looking design.
 
