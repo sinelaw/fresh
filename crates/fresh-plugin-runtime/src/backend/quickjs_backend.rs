@@ -1479,14 +1479,6 @@ impl JsEditorApi {
             HashMap::new()
         };
         let res = self.services.translate(&plugin_name, &key, &args_map);
-
-        tracing::debug!(
-            "Translating: key={}, plugin={}, args={:?} => res='{}'",
-            key,
-            plugin_name,
-            args_map,
-            res
-        );
         res
     }
 
