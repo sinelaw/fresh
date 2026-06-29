@@ -4402,11 +4402,20 @@ where
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
         {
             let _span = tracing::info_span!("editor_tick").entered();
+            // DIAGNOSTIC (ssh-workspace-nav-lag): time editor_tick so a slow
+            // tick (e.g. a synchronous remote op in the polls / plugin-command
+            // processing) shows up as an `input_lag` WARN even if it never
+            // goes through the agent channel's blocking helpers.
+            let tick_start = std::time::Instant::now();
             if fresh::app::editor_tick(editor, || {
                 terminal.clear()?;
                 Ok(())
             })? {
                 needs_render = true;
+            }
+            let tick_ms = tick_start.elapsed().as_millis();
+            if tick_ms > 40 {
+                tracing::warn!(target: "input_lag", phase = "editor_tick", elapsed_ms = tick_ms);
             }
         }
 
@@ -4576,7 +4585,23 @@ where
             ),
             _ => None,
         };
-        if editor.handle_input_event(event)? {
+        // DIAGNOSTIC (ssh-workspace-nav-lag): time raw input dispatch so a
+        // slow keystroke (cursor move firing a synchronous remote/plugin op)
+        // shows up as an `input_lag` WARN with the key that triggered it.
+        // `event` is moved into the dispatch, so capture a descriptor first.
+        let ev_dbg = format!("{event:?}");
+        let input_start = std::time::Instant::now();
+        let input_needs_render = editor.handle_input_event(event)?;
+        let input_ms = input_start.elapsed().as_millis();
+        if input_ms > 40 {
+            tracing::warn!(
+                target: "input_lag",
+                phase = "handle_input_event",
+                elapsed_ms = input_ms,
+                event = ev_dbg,
+            );
+        }
+        if input_needs_render {
             needs_render = true;
         }
     }
