@@ -1,5 +1,40 @@
 use crate::common::harness::EditorTestHarness;
 
+/// Within one rendered table every frame line — borders and content rows — must
+/// have the same right edge (the table is a rectangle). Returns the sorted set
+/// of distinct right-edge columns of the contiguous run of box-drawing lines, so
+/// a caller can assert it has exactly one element. A mismatch means rows were
+/// laid out at different column widths (the partial-batch width wobble).
+#[cfg(feature = "plugins")]
+fn table_frame_right_edges(screen: &str) -> Vec<usize> {
+    const BOX: &[char] = &['┌', '┬', '┐', '├', '┼', '┤', '└', '┴', '┘', '│', '─'];
+    let right_edge = |line: &str| -> Option<usize> {
+        line.chars()
+            .enumerate()
+            .filter(|(_, c)| BOX.contains(c))
+            .map(|(i, _)| i)
+            .last()
+    };
+    // Take the first contiguous run of table lines (skip any stray box glyphs
+    // elsewhere on screen).
+    let mut edges = std::collections::BTreeSet::new();
+    let mut in_table = false;
+    for line in screen.lines() {
+        match right_edge(line) {
+            Some(col) => {
+                in_table = true;
+                edges.insert(col);
+            }
+            None => {
+                if in_table {
+                    break;
+                }
+            }
+        }
+    }
+    edges.into_iter().collect()
+}
+
 /// Regression test: inserting a blank line *above* a table in compose mode must
 /// not corrupt the table's borders.
 ///
@@ -415,4 +450,107 @@ Tail paragraph.
     // …and that frame must be strictly well-formed: no doubled `├─┼─┤`
     // separators, no blank line under the top border.
     assert_table_frame_well_formed(&after);
+}
+
+/// Regression test: a table's column widths must stay uniform across all its
+/// rows even when a *partial* `lines_changed` batch (a mouse-wheel scroll that
+/// reveals new rows without a cursor-move refresh) re-measures only some rows.
+///
+/// The per-line border model computes column widths from the rows present in
+/// each batch. When the table content fits the compose width, columns are
+/// content-sized, so a batch that does NOT include the table's widest row lays
+/// its rows out narrower than a batch that does — and since a mouse-wheel scroll
+/// fires `lines_changed` only for newly-revealed rows (no cursor move to refresh
+/// the whole viewport), rows measured in different batches end up at different
+/// widths on screen at the same time: mismatched right edges, the corruption
+/// reproduced interactively with a continuous edit storm.
+///
+/// Deterministic because it needs no async lag — just a partial batch. Asserts
+/// every visible table frame line shares one right edge.
+///
+/// CURRENTLY FAILING (`#[ignore]`d so it doesn't red the PR): it reproduces the
+/// open partial-batch column-width wobble. Un-ignore it together with the fix
+/// (grow-only width accumulation, or editor-side frame rendering).
+#[cfg(feature = "plugins")]
+#[ignore = "reproduces the open partial-scroll column-width wobble; un-ignore with the fix"]
+#[test]
+fn test_table_columns_uniform_width_under_partial_scroll() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // A table taller than the viewport whose widest first-column cell sits near
+    // the bottom, so the top rows render narrow and revealing the wide row later
+    // (via scroll) would widen only the rows in that batch. Content fits the
+    // width, so columns are content-sized (mismatches show as different right
+    // edges, not just a moved interior junction).
+    let mut md = String::from("# Wide Table\n\n| Key | Value |\n|-----|-------|\n");
+    for i in 1..=24 {
+        if i == 20 {
+            md.push_str("| this-is-a-very-long-key-column-cell-here | v |\n");
+        } else {
+            md.push_str(&format!("| k{:02} | v |\n", i));
+        }
+    }
+    md.push_str("\nTail.\n");
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("wide.md");
+    std::fs::write(&md_path, &md).unwrap();
+
+    // Short viewport so the table can't all fit — scrolling reveals new rows in
+    // partial batches.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 18, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("wide.md");
+
+    // Enable compose.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    // Mouse-wheel scroll down a step at a time (no cursor move → no
+    // whole-viewport refresh). Rows measured in an earlier batch keep their
+    // width as they ride; rows revealed later are measured in their own batch.
+    // After each step assert the whole visible frame still has one right edge —
+    // a wobble shows the moment a row measured with the wide "Value" header is
+    // on screen next to one measured without it.
+    for step in 0..10 {
+        harness.mouse_scroll_down(50, 9).unwrap();
+        harness.wait_for_async_quiescence(4).unwrap();
+
+        let after = harness.screen_to_string();
+        let edges = table_frame_right_edges(&after);
+        assert_eq!(
+            edges.len(),
+            1,
+            "after scroll step {}, table frame lines have mismatched right edges \
+             (column widths wobbled across a partial scroll batch): distinct \
+             right-edge columns = {:?}.\nScreen:\n{}",
+            step,
+            edges,
+            after,
+        );
+    }
 }
