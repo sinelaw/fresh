@@ -372,6 +372,113 @@ for line in sys.stdin:
     Some((reader, stdin))
 }
 
+/// Spawn an agent that, per request, streams several data chunks slowly — each
+/// gap well under the request timeout, but the *total* transfer well over it —
+/// then sends the final result. Models a large file read over a bandwidth-
+/// throttled link (each chunk arrives steadily; the whole download takes
+/// minutes).
+async fn spawn_slow_streaming_agent(chunks: u32, gap_secs: f64) -> Option<Arc<AgentChannel>> {
+    let script = format!(
+        r#"
+import sys, json, time
+sys.stdout.write(json.dumps({{"id": 0, "ok": True, "v": 1}}) + "\n")
+sys.stdout.flush()
+for line in sys.stdin:
+    req = json.loads(line)
+    rid = req["id"]
+    for i in range({chunks}):
+        time.sleep({gap_secs})
+        sys.stdout.write(json.dumps({{"id": rid, "d": "chunk-%d" % i}}) + "\n")
+        sys.stdout.flush()
+    sys.stdout.write(json.dumps({{"id": rid, "r": {{"ok": True}}}}) + "\n")
+    sys.stdout.flush()
+    break
+for line in sys.stdin:
+    pass
+"#
+    );
+
+    let mut child = TokioCommand::new("python3")
+        .arg("-u")
+        .arg("-c")
+        .arg(script)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let stdin = child.stdin.take()?;
+    let stdout = child.stdout.take()?;
+    let mut reader = BufReader::new(stdout);
+
+    let mut ready_line = String::new();
+    reader.read_line(&mut ready_line).await.ok()?;
+    let ready: AgentResponse = serde_json::from_str(&ready_line).ok()?;
+    if !ready.is_ready() {
+        return None;
+    }
+
+    Some(Arc::new(AgentChannel::new(reader, stdin)))
+}
+
+/// Test: a streaming read that makes steady progress must NOT be killed just
+/// because its *total* duration exceeds the request timeout. The timeout is an
+/// idle (no-progress) deadline, reset on each chunk.
+///
+/// Regression: `request_with_data` previously wrapped the entire chunk
+/// collection in a single `timeout(total)`, so a healthy-but-slow read over a
+/// throttled link (a 390 KB file at 2 KB/s ≈ 3 min) was aborted at the first
+/// deadline with `Request timed out` — and the connection was falsely marked
+/// dead. Here: 5 chunks 0.6 s apart (total 3 s) under a 2 s timeout. With the
+/// bug this fails (total 3 s > 2 s); with the fix it succeeds (each gap < 2 s).
+#[test]
+fn test_slow_streaming_read_survives_when_total_exceeds_timeout() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let Some(channel) = rt.block_on(spawn_slow_streaming_agent(5, 0.6)) else {
+        eprintln!("Skipping test: could not spawn slow streaming agent");
+        return;
+    };
+
+    channel.set_request_timeout(Duration::from_secs(2));
+
+    let result = channel.request_with_data_blocking("read", serde_json::json!({"path": "/big"}));
+
+    let (data, _final) =
+        result.expect("slow-but-steady streaming read should succeed, not time out");
+    assert_eq!(data.len(), 5, "all streamed chunks should be collected");
+    assert!(
+        channel.is_connected(),
+        "a healthy streaming read must not mark the connection dead"
+    );
+}
+
+/// Test: a streaming read that genuinely *stalls* (a gap longer than the
+/// timeout with no data) is still aborted — the idle deadline must keep
+/// detecting dead connections, not just slow ones.
+#[test]
+fn test_streaming_read_stalled_gap_still_times_out() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // One chunk after a 5 s gap — longer than the 2 s timeout, so the very
+    // first await stalls past the idle deadline.
+    let Some(channel) = rt.block_on(spawn_slow_streaming_agent(1, 5.0)) else {
+        eprintln!("Skipping test: could not spawn slow streaming agent");
+        return;
+    };
+
+    channel.set_request_timeout(Duration::from_secs(2));
+
+    let result = channel.request_with_data_blocking("read", serde_json::json!({"path": "/big"}));
+
+    assert!(result.is_err(), "a stalled stream should time out");
+    assert!(
+        !channel.is_connected(),
+        "a stalled stream should mark the connection dead"
+    );
+}
+
 /// Test: spawn_reconnect_task_with automatically reconnects when the channel
 /// disconnects.
 ///

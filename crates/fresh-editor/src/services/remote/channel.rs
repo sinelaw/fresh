@@ -524,36 +524,53 @@ impl AgentChannel {
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
         let (mut data_rx, result_rx) = self.request_streaming(method, params).await?;
 
-        let timeout = self.request_timeout();
+        // Idle deadline, reset on every chunk — NOT a cap on total transfer
+        // time. A large file streaming over a slow link (e.g. a bandwidth-
+        // throttled SSH host) makes steady progress but can take minutes in
+        // total; a single `timeout(total)` around the whole collection killed
+        // those healthy reads at the first deadline (and flipped `connected`
+        // to false, falsely marking the session dead). Here the timeout only
+        // fires when *no* chunk arrives for `idle_timeout` — a genuine stall.
+        let idle_timeout = self.request_timeout();
 
-        let result = tokio::time::timeout(timeout, async {
-            // Collect all streaming data
-            let mut data = Vec::new();
-            while let Some(chunk) = data_rx.recv().await {
-                data.push(chunk);
+        // Collect all streaming data, bounding each await on progress.
+        let mut data = Vec::new();
+        loop {
+            match tokio::time::timeout(idle_timeout, data_rx.recv()).await {
+                Ok(Some(chunk)) => {
+                    data.push(chunk);
 
-                // Test hook: simulate slow consumer for backpressure testing.
-                // Zero-cost in production (atomic load + branch-not-taken).
-                let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
-                if delay_us > 0 {
-                    tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+                    // Test hook: simulate slow consumer for backpressure testing.
+                    // Zero-cost in production (atomic load + branch-not-taken).
+                    let delay_us = TEST_RECV_DELAY_US.load(Ordering::Relaxed);
+                    if delay_us > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_micros(delay_us)).await;
+                    }
+                }
+                Ok(None) => break, // stream closed: all data received
+                Err(_elapsed) => {
+                    warn!("streaming request stalled: no data for {:?}", idle_timeout);
+                    self.connected.store(false, Ordering::SeqCst);
+                    return Err(ChannelError::Timeout);
                 }
             }
+        }
 
-            // Wait for final result
-            let result = result_rx
-                .await
-                .map_err(|_| ChannelError::ChannelClosed)?
-                .map_err(ChannelError::Remote)?;
-
-            Ok((data, result))
-        })
-        .await;
-
-        match result {
-            Ok(inner) => inner,
+        // Wait for the final result, also bounded by the idle deadline: once
+        // the stream has closed the result should follow promptly, so a hang
+        // here is a stall, not slow progress.
+        match tokio::time::timeout(idle_timeout, result_rx).await {
+            Ok(result) => {
+                let result = result
+                    .map_err(|_| ChannelError::ChannelClosed)?
+                    .map_err(ChannelError::Remote)?;
+                Ok((data, result))
+            }
             Err(_elapsed) => {
-                warn!("streaming request timed out after {:?}", timeout);
+                warn!(
+                    "streaming request stalled awaiting result after {:?}",
+                    idle_timeout
+                );
                 self.connected.store(false, Ordering::SeqCst);
                 Err(ChannelError::Timeout)
             }
