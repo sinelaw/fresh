@@ -15,6 +15,32 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
+/// DIAGNOSTIC (ssh-workspace-nav-lag): emit a `remote_block` WARN when a
+/// synchronous agent round-trip blocks its calling thread for longer than
+/// this. 30ms is below a single keystroke's frame budget but well above a
+/// local round-trip, so on a laggy SSH link any per-keystroke blocking call
+/// crosses it and is logged once per keystroke.
+const REMOTE_BLOCK_WARN_THRESHOLD_MS: u128 = 30;
+
+/// DIAGNOSTIC (ssh-workspace-nav-lag): log a blocking agent round-trip that
+/// exceeded the warn threshold, naming the method, the elapsed time, and the
+/// thread it blocked. The thread name pinpoints whether the stall is on the
+/// UI/main thread (felt as input lag) or a background poller (harmless).
+/// Filter with `RUST_LOG=remote_block=warn` or grep the warnings log for
+/// `remote_block`.
+fn log_blocking_roundtrip(method: &str, started: std::time::Instant) {
+    let elapsed_ms = started.elapsed().as_millis();
+    if elapsed_ms > REMOTE_BLOCK_WARN_THRESHOLD_MS {
+        tracing::warn!(
+            target: "remote_block",
+            method,
+            elapsed_ms,
+            thread = std::thread::current().name().unwrap_or("unnamed"),
+            "blocking agent round-trip"
+        );
+    }
+}
+
 /// Default capacity for the per-request streaming data channel.
 const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 64;
 
@@ -513,7 +539,16 @@ impl AgentChannel {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ChannelError> {
-        self.runtime_handle.block_on(self.request(method, params))
+        // DIAGNOSTIC (ssh-workspace-nav-lag): time every synchronous agent
+        // round-trip and warn when one blocks the calling thread for a
+        // noticeable stretch. On a laggy SSH link, a per-keystroke blocking
+        // call shows up here as one WARN per keystroke, naming the method and
+        // the thread it blocked (the UI/main thread is the one that matters).
+        // Grep the warnings log for the `remote_block` target.
+        let started = std::time::Instant::now();
+        let result = self.runtime_handle.block_on(self.request(method, params));
+        log_blocking_roundtrip(method, started);
+        result
     }
 
     /// Send a request and collect all streaming data along with the final result
@@ -585,8 +620,13 @@ impl AgentChannel {
         method: &str,
         params: serde_json::Value,
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
-        self.runtime_handle
-            .block_on(self.request_with_data(method, params))
+        // DIAGNOSTIC (ssh-workspace-nav-lag): see `request_blocking`.
+        let started = std::time::Instant::now();
+        let result = self
+            .runtime_handle
+            .block_on(self.request_with_data(method, params));
+        log_blocking_roundtrip(method, started);
+        result
     }
 
     /// Send a streaming request synchronously, returning receivers for
