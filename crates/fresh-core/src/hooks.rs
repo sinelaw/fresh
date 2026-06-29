@@ -174,6 +174,13 @@ pub enum HookArgs {
     LinesChanged {
         buffer_id: BufferId,
         lines: Vec<LineInfo>,
+        /// Buffer version (`buffer.version()`) at which these line byte ranges
+        /// were captured. Because this hook fires fire-and-forget, the plugin
+        /// processes it after later edits may have landed; passing the epoch
+        /// lets the editor remap any stale coordinate the plugin echoes back
+        /// (see `coordMap`-backed decoration commands). Surfaced to JS as
+        /// `data.epoch`.
+        epoch: u64,
     },
 
     /// Prompt input changed (user typed/edited)

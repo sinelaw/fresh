@@ -345,6 +345,7 @@ impl Editor {
                                 crate::services::plugins::hooks::HookArgs::LinesChanged {
                                     buffer_id,
                                     lines: new_lines,
+                                    epoch: state.buffer.version(),
                                 },
                             );
                         }

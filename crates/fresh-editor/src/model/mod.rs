@@ -6,6 +6,7 @@ pub mod buffer;
 pub mod buffer_position;
 pub mod composite_buffer;
 pub mod control_event;
+pub mod coord_map;
 pub mod cursor;
 pub mod document_model;
 pub mod edit;

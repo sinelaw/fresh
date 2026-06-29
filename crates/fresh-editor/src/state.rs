@@ -251,6 +251,14 @@ pub struct EditorState {
     /// version + geometry).  See
     /// `crate::view::visual_row_index` for invariants.
     pub visual_row_index: crate::view::visual_row_index::VisualRowIndex,
+
+    /// Forward coordinate mapper: remaps a byte coordinate captured at an older
+    /// buffer `version()` to the current version. Fed at the marker-adjustment
+    /// chokepoint (`apply_insert` / `apply_delete` / `replay_bulk_marker_adjustments`)
+    /// so its coverage matches the marker tree's by construction. Used to repair
+    /// stale coordinates that plugins echo back from fire-and-forget
+    /// `lines_changed` hooks. See `crate::model::coord_map`.
+    pub coord_map: crate::model::coord_map::CoordMap,
 }
 
 impl EditorState {
@@ -307,6 +315,7 @@ impl EditorState {
             display_name: "Text".to_string(),
             line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
             visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
+            coord_map: crate::model::coord_map::CoordMap::default(),
         }
     }
 
@@ -443,6 +452,11 @@ impl EditorState {
         // Insert text into buffer
         self.buffer.insert(position, text);
 
+        // Record the edit for forward coordinate mapping, keyed by the
+        // post-edit version — same shift the marker tree just applied.
+        self.coord_map
+            .record_insert(self.buffer.version(), position, text.len());
+
         // Notify highlighter of the insert (adjusts checkpoint marker positions)
         // and invalidate span cache for the edited range.
         self.highlighter.notify_insert(position, text.len());
@@ -514,6 +528,11 @@ impl EditorState {
 
         // Delete from buffer
         self.buffer.delete(range.clone());
+
+        // Record the edit for forward coordinate mapping, keyed by the
+        // post-edit version — same shift the marker tree just applied.
+        self.coord_map
+            .record_delete(self.buffer.version(), range.start, len);
 
         // Notify highlighter of the delete (adjusts checkpoint marker positions)
         // and invalidate span cache for the edited range.
@@ -885,6 +904,14 @@ impl EditorState {
         // consolidate_after_save() can replace buffers between snapshot and restore.
         if let Some(snapshot) = new_snapshot {
             self.buffer.restore_buffer_state(snapshot);
+
+            // A snapshot restore with no per-edit triples (hot-exit recovery,
+            // logs loaded from disk) changes content opaquely: the ring can't
+            // replay it, so bar any map across this version. When `edits` is
+            // populated the per-tuple records below describe the delta exactly.
+            if edits.is_empty() {
+                self.coord_map.record_barrier(self.buffer.version());
+            }
         }
 
         self.replay_bulk_marker_adjustments(edits);
@@ -939,7 +966,12 @@ impl EditorState {
     /// marker-at-boundary problem where a sequential delete+insert pushes
     /// markers incorrectly.
     fn replay_bulk_marker_adjustments(&mut self, edits: &[(usize, usize, usize)]) {
+        let version = self.buffer.version();
         for &(pos, del_len, ins_len) in edits {
+            // Feed the coordinate ring the same tuples, in the same
+            // descending-position order, all sharing the post-bulk version.
+            self.coord_map
+                .record_replace(version, pos, del_len, ins_len);
             match (del_len, ins_len) {
                 (d, i) if d > 0 && i > 0 => {
                     // Replacement: adjust by net delta only.
