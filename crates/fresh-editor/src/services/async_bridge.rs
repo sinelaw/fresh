@@ -292,6 +292,11 @@ pub enum AsyncMessage {
         view: FileTreeView,
     },
 
+    /// Initial file-explorer build failed for the requesting window. Carries
+    /// the window id (see `FileExplorerInitialized`) so the column reservation
+    /// taken in `init_file_explorer` is released on the right window.
+    FileExplorerInitFailed { window: fresh_core::WindowId },
+
     /// File explorer node toggle completed
     FileExplorerToggleNode(NodeId),
 

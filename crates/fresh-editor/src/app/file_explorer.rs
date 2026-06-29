@@ -1624,6 +1624,14 @@ impl crate::app::window::Window {
         // Tag the result with *this* window so it lands here even if another
         // window is active by the time the async build finishes.
         let window_id = self.id;
+        // Reserve the sidebar column for the duration of the (potentially slow,
+        // e.g. remote-SSH) build. Without this the layout only allocates the
+        // explorer once `file_explorer` is `Some`, so toggling it on a remote
+        // workspace shows *nothing* until the round-trip completes — the user
+        // sees a toggle that did nothing. The flag is cleared when the build
+        // lands (`install_initialized_file_explorer`) or fails
+        // (`FileExplorerInitFailed`). Mirrors `sync_file_explorer_to_active_file`.
+        self.file_explorer_sync_in_progress = true;
         runtime.spawn(async move {
             match FileTree::new(root_path, fs_manager).await {
                 Ok(mut tree) => {
@@ -1641,6 +1649,11 @@ impl crate::app::window::Window {
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize file explorer: {}", e);
+                    // Release the reserved column so it doesn't stay blank
+                    // forever on a build failure (mid-build connection drop,
+                    // vanished dir). Narrow recovery: only this failure path.
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::FileExplorerInitFailed { window: window_id });
                 }
             }
         });
@@ -1689,11 +1702,22 @@ impl crate::app::window::Window {
         }
         view.set_compact_directories(defaults.compact_directories);
         self.file_explorer = Some(view);
+        // The initial build is done; release the column reservation set in
+        // `init_file_explorer`. Clear it *before* the expand-to-path sync below
+        // so that sync can re-acquire it (it early-returns if it's still set).
+        self.file_explorer_sync_in_progress = false;
         // Auto-expand to reveal the active file on first open (issue #1569),
         // but only when this window is actually showing the explorer.
         if self.file_explorer_visible {
             self.sync_file_explorer_to_active_file();
         }
+    }
+
+    /// Release the sidebar-column reservation after a failed initial build
+    /// (see `init_file_explorer`). The explorer stays `None`, so the column
+    /// collapses back to the editor rather than hanging blank forever.
+    pub(crate) fn file_explorer_init_failed(&mut self) {
+        self.file_explorer_sync_in_progress = false;
     }
 
     /// Install an async expand-to-path result onto *this* window (routed

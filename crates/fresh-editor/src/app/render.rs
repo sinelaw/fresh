@@ -1560,9 +1560,57 @@ impl Editor {
                 &mut crate::app::types::CellThemeRecorder::new(&mut fe_runs),
                 fe_draw,
             );
+        } else if fe_draw {
+            // The tree isn't materialised yet but the column is reserved
+            // (initial build or expand-to-path sync in progress). Paint a
+            // placeholder panel — border, title, and an "Initializing…" line — so the
+            // explorer *visibly* appears the instant it's toggled on, even when
+            // the build is slow (e.g. a remote SSH workspace). Previously this
+            // was left blank, so a remote toggle looked like it did nothing.
+            use ratatui::layout::Alignment;
+            use ratatui::style::{Modifier, Style};
+            use ratatui::widgets::{Block, Borders, Paragraph};
+
+            let theme = self.theme.read().unwrap();
+            let title = match remote_connection.as_deref() {
+                Some(host) => {
+                    let hostname = host
+                        .split('@')
+                        .next_back()
+                        .unwrap_or(host)
+                        .split(':')
+                        .next()
+                        .unwrap_or(host);
+                    format!(" [{}] ", hostname)
+                }
+                None => " File Explorer ".to_string(),
+            };
+            let (title_style, border_style) = if is_focused {
+                (
+                    Style::default()
+                        .fg(theme.editor_bg)
+                        .bg(theme.editor_fg)
+                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.cursor),
+                )
+            } else {
+                (
+                    Style::default().fg(theme.line_number_fg),
+                    Style::default().fg(theme.split_separator_fg),
+                )
+            };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_style(title_style)
+                .border_style(border_style)
+                .style(Style::default().bg(theme.editor_bg));
+            let placeholder = Paragraph::new(rust_i18n::t!("explorer.initializing").to_string())
+                .style(Style::default().fg(theme.line_number_fg))
+                .alignment(Alignment::Center)
+                .block(block);
+            frame.render_widget(placeholder, area);
         }
-        // Note: if file_explorer is None but sync_in_progress is true,
-        // we just leave the area blank (or could render a placeholder)
         self.active_chrome_mut().apply_theme_runs(&fe_runs);
     }
 

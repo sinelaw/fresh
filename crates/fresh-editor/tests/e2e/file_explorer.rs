@@ -4079,3 +4079,53 @@ fn test_file_explorer_applies_custom_ignore_patterns() {
         "file matching custom_ignore_patterns (*.log) should be hidden:\n{screen}"
     );
 }
+
+/// Regression (issue #2522): toggling the file explorer on a workspace whose
+/// directory listing is slow — e.g. a remote SSH workspace — must *visibly*
+/// show the explorer panel immediately, rather than leaving a blank gap until
+/// the (possibly multi-second) async tree build completes.
+///
+/// The explorer tree is built asynchronously (`init_file_explorer` spawns a
+/// task that lists the directory and only then installs the view). Before the
+/// fix, the layout reserved the sidebar column only once `file_explorer` was
+/// `Some`, so on a slow/remote backend the toggle appeared to do nothing until
+/// the build landed. A slow `read_dir` reproduces the remote latency locally:
+/// it stalls only the async build, so when we render right after the toggle the
+/// tree is still `None` — yet the panel (a "File Explorer" placeholder) must be
+/// on screen.
+#[test]
+fn test_file_explorer_shows_placeholder_during_slow_build() {
+    use fresh::services::fs::SlowFsConfig;
+    use std::time::Duration;
+
+    // Delay only directory listings. `is_dir`/`metadata` stay instant so the
+    // synchronous root check in `init_file_explorer` doesn't block the main
+    // thread; only the async `expand_node` -> `read_dir` is slow. 400ms is well
+    // above the harness async-drain cap (~200ms), so the build is guaranteed to
+    // still be in flight when we render right after the toggle.
+    let mut slow = SlowFsConfig::none();
+    slow.read_dir_delay = Duration::from_millis(400);
+
+    let mut harness = EditorTestHarness::with_slow_fs(120, 40, slow).unwrap();
+
+    // Sanity: the explorer starts hidden.
+    harness.render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("File Explorer"),
+        "file explorer should start hidden"
+    );
+
+    // Toggle the explorer on (Ctrl+B). The async build is still running when
+    // `send_key`'s bounded drain returns, so `file_explorer` is still `None`.
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("File Explorer"),
+        "explorer panel (placeholder) must be visible while the slow build is \
+         in progress, not a blank gap; screen:\n{screen}"
+    );
+}

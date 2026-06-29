@@ -310,6 +310,11 @@ impl Editor {
                 AsyncMessage::FileExplorerInitialized { window, view } => {
                     self.handle_file_explorer_initialized(window, view);
                 }
+                AsyncMessage::FileExplorerInitFailed { window } => {
+                    if let Some(win) = self.windows.get_mut(&window) {
+                        win.file_explorer_init_failed();
+                    }
+                }
                 AsyncMessage::FileExplorerToggleNode(node_id) => {
                     self.handle_file_explorer_toggle_node(node_id);
                 }
