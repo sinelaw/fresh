@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Не удалось применить настройки: %{error}",
   "settings.failed_to_open": "Не удалось открыть настройки: %{error}",
   "settings.failed_to_save": "Не удалось сохранить настройки: %{error}",
+  "settings.save_failed_title": "Не удалось сохранить настройки",
+  "settings.save_failed_unchanged": "Ваш файл конфигурации остался без изменений, чтобы вы могли его исправить.",
+  "settings.save_failed_open_hint": "Нажмите Esc, чтобы открыть файл конфигурации и исправить его.",
   "settings.field.editor.auto_close": "Автозакрытие",
   "settings.field.editor.whitespace_show": "Показать пробелы",
   "settings.field.editor.whitespace_spaces_inner": "Внутренние пробелы",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Показать меню «только чтение»",
   "read_only.menu.title": "Буфер только для чтения",
   "read_only.menu.enable_editing": "Включить редактирование",
-  "read_only.menu.cancel": "Отмена"
+  "read_only.menu.cancel": "Отмена",
+  "cmd.save_macro_to_init": "Макрос: Сохранить в init.ts",
+  "cmd.save_macro_to_init_desc": "Сохранить записанный макрос в init.ts как редактируемый блок defineMacro()",
+  "cmd.promote_macro": "Макрос: Преобразовать в команду",
+  "cmd.promote_macro_desc": "Превратить записанный макрос в редактируемую команду init.ts, которую можно расширить произвольным кодом",
+  "action.prompt_save_macro_to_init": "Сохранить макрос в init.ts (запрашивает регистр)",
+  "action.prompt_promote_macro": "Преобразовать макрос в команду init.ts (запрашивает регистр)",
+  "macro.init_write_failed": "Не удалось записать init.ts: %{error}",
+  "macro.promoted_to_init": "Макрос '%{key}' преобразован в редактируемую команду в init.ts (перезагружено)",
+  "macro.saved_to_init": "Макрос '%{key}' сохранён в init.ts (перезагружено)"
 }

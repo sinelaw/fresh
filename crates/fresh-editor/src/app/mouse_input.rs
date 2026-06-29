@@ -517,10 +517,14 @@ impl Editor {
                     .active_window()
                     .is_terminal_buffer(self.active_buffer())
             {
-                {
-                    let __b = self.active_buffer();
-                    self.active_window_mut().sync_terminal_to_buffer(__b);
-                };
+                // Scrolling up drops the terminal to read-only scrollback:
+                // remember that mode so re-focusing keeps it in scrollback.
+                let __b = self.active_buffer();
+                self.active_window_mut().set_terminal_interaction_mode(
+                    __b,
+                    crate::app::window::TerminalInteractionMode::Scrollback,
+                );
+                self.active_window_mut().sync_terminal_to_buffer(__b);
                 self.active_window_mut().terminal_mode = false;
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
@@ -1003,8 +1007,8 @@ impl Editor {
     fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(
-                self.active_chrome().last_frame_width,
-                self.active_chrome().last_frame_height,
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
             );
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();
@@ -1285,9 +1289,9 @@ impl Editor {
 
         // Check status bar indicators — one generic hit-test over every
         // clickable segment recorded last frame (encoding, LSP, remote, …).
-        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar_area {
+        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar.area {
             if row == status_row {
-                for (id, indicator_row, start, end) in &self.active_chrome().status_bar_clickable {
+                for (id, indicator_row, start, end) in &self.active_chrome().status_bar.clickable {
                     if row == *indicator_row && col >= *start && col < *end {
                         return Some(HoverTarget::StatusBarClickable(*id));
                     }
@@ -2433,14 +2437,14 @@ impl Editor {
     }
 
     fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar_area?;
+        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar.area?;
         if row != status_row {
             return None;
         }
         // Generic click rail: one hit-test over every clickable segment drawn
         // last frame. The id→Action mapping (and each element's popup-dismiss
         // nuance) lives in `dispatch_status_bar_click`.
-        let clickables = self.active_chrome().status_bar_clickable.clone();
+        let clickables = self.active_chrome().status_bar.clickable.clone();
         for (id, r, s, e) in clickables {
             if row == r && col >= s && col < e {
                 return Some(self.dispatch_status_bar_click(id));
@@ -2451,7 +2455,7 @@ impl Editor {
         // so the registering plugin can react. We split the registry key
         // (`"<plugin>:<token>"`) on the first colon — that's how
         // `register_status_bar_element` builds it.
-        let plugin_areas = self.active_chrome().status_bar_plugin_token_areas.clone();
+        let plugin_areas = self.active_chrome().status_bar.plugin_token_areas.clone();
         for (key, (r, s, e)) in plugin_areas {
             if row == r && col >= s && col < e {
                 let (plugin_name, token_name) = match key.split_once(':') {
@@ -3291,8 +3295,8 @@ impl Editor {
             }
         }
 
-        let frame_w = self.active_chrome().last_frame_width;
-        let frame_h = self.active_chrome().last_frame_height;
+        let frame_w = self.active_chrome().last_frame.width;
+        let frame_h = self.active_chrome().last_frame.height;
         if let Some(ref menu) = self.active_window().file_explorer_context_menu {
             let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
             let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
@@ -3682,8 +3686,8 @@ impl Editor {
         row: u16,
     ) -> Option<AnyhowResult<()>> {
         // Extract all needed values while the immutable borrow is live, then mutate.
-        let frame_w = self.active_chrome().last_frame_width;
-        let frame_h = self.active_chrome().last_frame_height;
+        let frame_w = self.active_chrome().last_frame.width;
+        let frame_h = self.active_chrome().last_frame.height;
         let clicked_item: Option<super::types::FileExplorerContextMenuItem> = {
             let menu = self.active_window().file_explorer_context_menu.as_ref()?;
             let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);

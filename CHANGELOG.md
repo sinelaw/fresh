@@ -1,5 +1,68 @@
 # Release Notes
 
+## Unreleased
+
+### Bug Fixes
+
+* **Settings UI**: committing a text field with `Tab` now persists the typed value on Save, matching `Enter`. Previously the row showed as modified but Save wrote an empty value (#2515).
+
+## 0.4.2
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** — run **Open Settings** from the command palette (`Ctrl+P`). Hand-editing config files is rarely necessary.
+
+### Features
+
+* **Indentation guides** — optional vertical guides for leading whitespace (off, all levels, or just the active block), with a customizable glyph and theme color. Enable and tune them in Settings (#2388, by @maupin).
+* **Persistable, editable macros** — recorded macros can now leave the in-memory register: **Macro: Save to init.ts** writes an editable block, and **Macro: Promote to command** turns a macro into a real command you can extend with code (#2487).
+* **JSONC config files** — config files now accept comments and trailing commas, a stray syntax slip no longer silently resets you to defaults, and saves never clobber an unparseable file (the error is surfaced instead) (#2497).
+* **Per-buffer view toggles** — *Toggle Line Numbers (Current Buffer)* and *Toggle Line Wrap (Current Buffer)* scope to the active buffer and persist across restarts.
+* **LSP Go to Implementation** (`textDocument/implementation`) (#2384, by @Crocmagnon).
+
+### Improvements
+
+* **Open Terminal to the Right / Below** — open a new terminal in a fresh split beside or below the active pane.
+* **File Open: reveal hidden files** when the filter starts with `.` (#2407, requested by @dragonfyre13).
+* **Vim compatibility options** for vi mode — extra compatibility motions and word search (#2398, by @NihilDigit).
+* **Read-only `[RO]` indicator** now actually renders in the status bar, and is clickable (#2309).
+* **Terminal mode** hides the unused scrollbar and reclaims its column for the live grid.
+* **Copy** strips ANSI escape codes, so text yanked from terminal output pastes clean (#2408).
+* Settings UI: smoother mouse interaction and clearer dirty-state markers (#2395, by @NihilDigit).
+* **Remote workspaces (SSH / Kubernetes)**:
+  * A dropped connection offers **Reconnect** from the status indicator, and reconnecting respawns the workspace's embedded terminals (#2413, #2482).
+  * Remote sessions stay in the Orchestrator dock across restarts, and reconnect failures surface on the status line (#2412).
+  * Agents (e.g. `claude`) launched in a remote workspace now run on the remote host / in the pod, not silently on the local machine (#2409).
+
+### Bug Fixes
+
+* **Regex search**: `^` / `$` now anchor per line in multi-line `Ctrl+F` search (#2495).
+* **Splits**: closing a buffer shown in two splits no longer desyncs the surviving cursor (#2496).
+* **Terminal**: a terminal restores its live/scrollback mode on refocus, and the last split is no longer left read-only after closing a second terminal (#2485).
+* **Per-language indentation rules** are now actually applied — previously custom patterns were ignored (#2314).
+* **Brackets** are no longer highlighted inside comments and strings (#2405, reported by @TakemiSora).
+* **Quick-open `#` buffer switcher** now lists virtual buffers (#2373).
+* **Review Diff**: line-level visual stage/unstage/discard (`v` then `s`/`u`/`d`) works, and discard shows a localized message (#2317, #2420).
+* **Project search & replace**: plugin edits no longer leave phantom match highlights (#2414, reported by @mandolyte).
+* **Keybindings**: switching keybinding maps no longer hides plugin bindings until restart (#2307); `Shift`+letter bindings match even when the terminal omits the `SHIFT` modifier (#1899, reported by @RandomGHUser).
+* **Git Blame** lands on the user's current source line, including files with multi-byte characters (#1957).
+* **Mark mode**: movement commands (bracket jump, Home) extend the selection instead of dropping it (#2489).
+* **File explorer**: a deliberately-closed explorer no longer reopens on relaunch (#2476); configured ignore patterns are applied to the tree (#2404, by @sfjohansson).
+* **Switch Project** re-roots the active window in place instead of restarting the editor (#2472).
+* **New Workspace (Local)** seeds its path from a local root even when the active window is remote (#2480).
+* **Markdown compose**: table cells are measured by display width (fixing emoji-row border flicker), and table borders clear when compose mode is disabled (#2475, #2478).
+* **Terminal scrollback**: ANSI colors survive soft-wrapped rows (#2449); the backing file stays local in remote mode, fixing a hang when toggling scrollback over SSH (#2424).
+* **Shebang language detection** now covers interpreters with no first-line regex (Fish, Lua, PowerShell, Tcl, Elixir, R, Julia, …), handling `env` indirection and versioned names; an existing extension match still wins (#2357, reported by @shemgp).
+* The asm-lsp "no `.asm-lsp.toml`" offer is scoped to its triggering buffer instead of floating over every buffer.
+* The tab bar's "+" popup and tab context menu grab the keyboard while open, so keys no longer leak into the buffer underneath.
+
+### Internals
+
+* Plugin API: core unicode display-width is exposed to plugins (`charWidth`/`stringWidth`) (#2401, by @Agrejus), and conceal ranges can be cleared by namespace (#2399, by @Agrejus).
+* A large refactor decomposed many oversized functions across rendering, settings, the plugin runtime, and terminals, and reworked the UI rendering pipeline.
+* `fresh-gui` now uses the published `ratatui-wgpu` from crates.io, making it publishable (#2488).
+* Docs: dropped remaining "experimental" disclaimers, added the 0.4.0 "What's New" blog post, and documented the SSH "jump box" pattern (#2377, by @Monear).
+
 ## 0.4.1
 
 This is mostly a bug-fix release.
@@ -26,7 +89,6 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
 * **Windows on ARM** release artifacts (#784, requested by @teobugslayer; by @NihilDigit).
 * `CancelMark` / `ClearMark` actions for fine-grained selection-anchor management (#2371, by @masmu).
 * **Git Log (Current File)** command, plus concurrent git-blame buffers.
-* **Open Terminal to the Right** / **Open Terminal Below** commands — create a new terminal in a fresh split beside (vertical) or below (horizontal) the active pane.
 
 ### Improvements
 
@@ -45,22 +107,18 @@ The cli now supports `--cmd daemon`, but still accepts the now-deprecated `--cmd
   * Opening the theme editor no longer breaks Orchestrator dock clicks/scrolling — plugin panels are scoped to their owning plugin.
   * Ctrl+Right-Click reports accurate theme keys for the status bar, tab bar, scrollbar, file explorer, menus, and dock, drawing above the dock.
   * The plugin bridge no longer corrupts integers larger than 32 bits (timestamps, byte offsets).
-* Shebang language detection now covers interpreters whose grammars ship no first-line regex — `#!/usr/bin/fish`, Lua, PowerShell, Tcl, Groovy, Elixir, R, Julia, Nushell, Dart, Deno, … — so extensionless scripts highlight from the shebang instead of falling through to plain text (#2357, reported by @shemgp). `env` indirection (`env -S`, `env VAR=val`) and versioned interpreters (`python3.11`) are handled; an existing extension match still wins.
 * Java (jdtls) and other Eclipse LSP4J servers: features registered via `client/registerCapability` now work — their string JSON-RPC ids were misparsed as notifications and dropped (#2340, reported by @maxandersen).
 * LSP/plugin popups follow the active theme's `popup_*` colors instead of a hard-wired dark background (#2379, by @peanball).
-* The asm-lsp "no `.asm-lsp.toml` found" offer is now scoped to the assembly buffer that triggered it — it renders only while that buffer is active instead of floating over every other buffer. Plugins can opt into this with the new `buffer_id` field on `showActionPopup`.
 * Paste falls back to the internal clipboard and works again on Termux (#2343, reported by @nightshade427).
 * npm `.cmd`/`.bat` shims resolve on Windows, so npm-installed language servers spawn (#2324, reported by @SupertigerDev).
 * Occurrence highlighting uses a theme-appropriate background in every shipped theme (#2312).
 * Review Diff lists files inside untracked directories (#2315).
 * The embedded terminal forwards the wheel as a mouse report to mouse-tracking programs, so scrolling no longer cycles their history (#2366).
-* The tab bar's "+" new-tab popup and the tab right-click context menu now grab the keyboard while open: Up/Down navigate, Enter selects, Esc dismisses, and every other key is filtered out instead of leaking into the active buffer underneath.
 * Replace toolbar: checked search options are visible in every theme (#2363).
 * Alt+W and other search toggles no longer leak into the close prompt (#2359).
 * Fixed a crash on a stale soft-wrap position in multi-byte text (#2320).
 * Trusting a workspace with a shell or virtualenv environment (`.envrc` / `mise` / `.venv`) no longer restarts the whole editor: other windows keep their running terminals, language servers, and Orchestrator dock; only the active window refreshes to pick up the new environment.
 * A file opened while a split is maximized — for example via an embedded `fresh <file>` forwarded from a maximized terminal dock — is now revealed instead of rendering hidden behind the maximized split (which previously looked like the terminal had hung).
-* Launching an agent (e.g. `claude`) in an SSH or Kubernetes workspace now runs it **on the remote host / in the pod**, rooted at the workspace's remote path, instead of silently running it on the local machine. The agent's launch and resume commands compose with the session's backend via a `cd <dir>; exec <argv>` shell hop (the argv is shell-quoted and handed to a remote login shell so its `PATH` resolves the agent).
 
 ### Internals
 

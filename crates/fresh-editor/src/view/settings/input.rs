@@ -1112,7 +1112,12 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Tab => {
-                // Tab exits text editing mode and advances focus to the next panel
+                // Tab commits the typed value (like Enter) before exiting text
+                // editing mode and advancing focus to the next panel. Without
+                // the commit, a value typed and then dismissed with Tab was
+                // dropped on Save even though the row showed as modified
+                // (issue #2515).
+                self.commit_text_edit();
                 self.stop_editing();
                 self.toggle_focus();
                 InputResult::Consumed

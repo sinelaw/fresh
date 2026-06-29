@@ -368,14 +368,15 @@ impl Editor {
     /// derivation shared by both frontends.
     pub fn status_view(&self) -> Option<StatusView> {
         let chrome = self.active_chrome();
-        let (sy, sx, sw) = chrome.status_bar_area?;
+        let (sy, sx, sw) = chrome.status_bar.area?;
 
         // Read the status bar's semantic model captured by the renderer — no
         // cell scraping. Each rendered element (indicators + text) is a segment,
         // and `side` is the renderer's actual left/right tiling (carried on the
         // segment), not a midpoint guess from `x`.
         let segments: Vec<StatusSegment> = chrome
-            .status_bar_segments
+            .status_bar
+            .segments
             .iter()
             .filter(|s| !s.text.trim().is_empty())
             .map(|s| StatusSegment {
@@ -831,7 +832,7 @@ impl Editor {
         let w = self.active_window();
         let chrome = self.active_chrome();
         if let Some(m) = &w.file_explorer_context_menu {
-            let (x, y) = m.clamped_position(chrome.last_frame_width, chrome.last_frame_height);
+            let (x, y) = m.clamped_position(chrome.last_frame.width, chrome.last_frame.height);
             return Some(ContextMenuView {
                 kind: "fileExplorer",
                 x,

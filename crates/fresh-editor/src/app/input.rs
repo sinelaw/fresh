@@ -2103,6 +2103,18 @@ impl Editor {
                     self.set_status_message(t!("status.no_macro_recorded").to_string());
                 }
             }
+            Action::PromptSaveMacroToInit => {
+                self.start_prompt(
+                    "Save macro to init.ts (0-9): ".to_string(),
+                    PromptType::SaveMacroToInit,
+                );
+            }
+            Action::PromptPromoteMacro => {
+                self.start_prompt(
+                    "Promote macro to command (0-9): ".to_string(),
+                    PromptType::PromoteMacro,
+                );
+            }
             Action::PromptSetBookmark => {
                 self.start_prompt("Set bookmark (0-9): ".to_string(), PromptType::SetBookmark);
             }
@@ -2322,6 +2334,12 @@ impl Editor {
                     .active_window()
                     .is_terminal_buffer(self.active_buffer())
                 {
+                    // Mode change to live: remember it for the next focus.
+                    let active = self.active_buffer();
+                    self.active_window_mut().set_terminal_interaction_mode(
+                        active,
+                        crate::app::window::TerminalInteractionMode::Live,
+                    );
                     self.active_window_mut().terminal_mode = true;
                     self.active_window_mut().key_context = KeyContext::Terminal;
                     self.set_status_message(t!("status.terminal_mode_enabled").to_string());
@@ -2330,6 +2348,12 @@ impl Editor {
             Action::TerminalEscape => {
                 // Exit terminal mode back to editor
                 if self.active_window().terminal_mode {
+                    // User dropped to read-only scrollback: remember that mode.
+                    let active = self.active_buffer();
+                    self.active_window_mut().set_terminal_interaction_mode(
+                        active,
+                        crate::app::window::TerminalInteractionMode::Scrollback,
+                    );
                     self.active_window_mut().terminal_mode = false;
                     self.active_window_mut().key_context = KeyContext::Normal;
                     self.set_status_message(t!("status.terminal_mode_disabled").to_string());
@@ -3073,7 +3097,9 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .set_active_split(new_leaf);
 
-        // Mirror open_terminal's post-attach bookkeeping.
+        // Mirror open_terminal's post-attach bookkeeping. The buffer was
+        // created via `create_terminal_buffer_detached`, so its remembered
+        // mode is already Live.
         self.active_window_mut().terminal_mode = true;
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
         self.active_window_mut().resize_visible_terminals();

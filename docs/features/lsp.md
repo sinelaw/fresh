@@ -5,7 +5,8 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 *   **Real-time diagnostics:** See errors and warnings in your code as you type.
 *   **Code completion:** Auto-imports are applied when you accept a completion. Fresh also provides [basic buffer-word completions](./editing.md#basic-completions) without an LSP.
 *   **Code actions:** Quick fixes, refactorings, and server-initiated file create/rename/delete, all through a single popup that merges actions from every configured server.
-*   **Go-to-definition, hover, rename, find references**, and **signature help**.
+*   **Navigation:** Go to Definition (`F12`), Find References (`Shift+F12`), and Go to Implementation (`Ctrl+F12`).
+*   **Hover, rename, and signature help.**
 *   **Formatting:** "Format Buffer" from the command palette uses the configured external formatter, falling back to LSP formatting (including range formatting) when none is set.
 
 All LSP operations are available as palette commands (search for "LSP"). Use the [Keybinding Editor](./keybinding-editor.md) to see or change the keys bound to each one.

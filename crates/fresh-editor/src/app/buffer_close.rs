@@ -84,8 +84,9 @@ impl Editor {
         }
 
         // If closing a terminal buffer, tear down its terminal-side state.
-        if let Some(terminal_id) = self.active_window_mut().terminal_buffers.remove(&id) {
-            self.cleanup_closed_terminal(id, terminal_id);
+        // Removing the entry drops the buffer's remembered mode with it.
+        if let Some(tb) = self.active_window_mut().terminal_buffers.remove(&id) {
+            self.cleanup_closed_terminal(id, tb.terminal_id);
         }
 
         // Capture before resolving the replacement: the last-resort
@@ -228,8 +229,8 @@ impl Editor {
             }
         }
 
-        // Remove from terminal_mode_resume to prevent stale entries
-        self.active_window_mut().terminal_mode_resume.remove(&id);
+        // The buffer's remembered mode was dropped when its `terminal_buffers`
+        // entry was removed by the caller — nothing else to clean up here.
 
         // Exit terminal mode if we were in it
         if self.active_window().terminal_mode {
@@ -612,6 +613,11 @@ impl Editor {
                         e
                     );
                 }
+                // Focus snapped to the surviving split via the low-level
+                // split-collapse path; restore terminal mode for the now-active
+                // buffer. Runs after `close_buffer` so its terminal-mode
+                // teardown can't clobber the restore (issue #2485).
+                self.sync_terminal_mode_to_active_buffer();
                 self.set_status_message(t!("buffer.tab_closed").to_string());
                 return true;
             }
@@ -646,6 +652,7 @@ impl Editor {
             if !has_other_tab {
                 // This is genuinely the only tab in this split — close it.
                 self.handle_close_split(split_id.into());
+                self.sync_terminal_mode_to_active_buffer();
                 return true;
             }
 
@@ -663,32 +670,49 @@ impl Editor {
                     .expect("has_other_tab")
             };
 
-            // Remove buffer from this split's tabs
-            if let Some(view_state) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&split_id)
-            {
-                view_state.remove_buffer(buffer_id);
-            }
-
-            // Activate the replacement tab — either a sibling buffer or the
-            // remaining group panel.
+            // Activate the replacement tab and drop the closed one. The buffer
+            // case must move the split tree AND the `SplitViewState.active_buffer`
+            // together: routing it through `set_pane_buffer` (not the tree-only
+            // `set_split_buffer`) is the fix for the cursor desync — updating
+            // only the tree stranded the view-state on the just-closed buffer,
+            // so the cursor and render read its zeroed view-state while edits
+            // applied to the tree's (different) buffer.
             match replacement {
                 TabTarget::Buffer(replacement_buffer) => {
-                    self.windows
+                    self.active_window_mut()
+                        .set_pane_buffer(split_id, replacement_buffer);
+                    // The replacement is active now, so removing the closed
+                    // buffer also frees its keyed view-state (`remove_buffer`
+                    // refuses to drop the state of whatever is still active).
+                    if let Some(view_state) = self
+                        .windows
                         .get_mut(&self.active_window)
-                        .and_then(|w| w.split_manager_mut())
+                        .and_then(|w| w.split_view_states_mut())
                         .expect("active window must have a populated split layout")
-                        .set_split_buffer(split_id, replacement_buffer);
+                        .get_mut(&split_id)
+                    {
+                        view_state.remove_buffer(buffer_id);
+                    }
                 }
                 TabTarget::Group(group_leaf) => {
+                    // Drop the closed buffer's tab before activating the group,
+                    // matching the original ordering for the group path.
+                    if let Some(view_state) = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .and_then(|w| w.split_view_states_mut())
+                        .expect("active window must have a populated split layout")
+                        .get_mut(&split_id)
+                    {
+                        view_state.remove_buffer(buffer_id);
+                    }
                     self.activate_group_tab(split_id, group_leaf);
                 }
             }
 
+            // The replacement tab was activated through the split manager,
+            // bypassing the buffer-focus path; restore terminal mode for it.
+            self.sync_terminal_mode_to_active_buffer();
             self.set_status_message(t!("buffer.tab_closed").to_string());
         }
         true

@@ -343,6 +343,70 @@ fn test_macro_move_line_end_uses_current_line_length() {
     );
 }
 
+/// Record a macro, then "Macro: Save to init.ts" — the rendered status must
+/// confirm the macro was persisted (and init.ts reloaded). Drives the palette
+/// + register prompt and asserts only on screen output. The harness uses an
+/// isolated tempdir config, so this writes to a throwaway init.ts.
+#[test]
+fn test_macro_save_to_init_shows_confirmation() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.render().unwrap();
+
+    // Record macro on register 0 typing "abc".
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Record Macro").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("0").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Recording");
+    harness.type_text("abc").unwrap();
+    harness.render().unwrap();
+
+    // Stop recording.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Stop Recording").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Save to init.ts via the palette.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Save to init.ts").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Save macro to init.ts");
+
+    // Choose register 0.
+    harness.type_text("0").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The status line confirms the macro was persisted to init.ts.
+    harness.assert_screen_contains("saved to init.ts");
+    harness.assert_screen_not_contains("error");
+}
+
 /// Test that macro playback is undoable as a single operation
 #[test]
 fn test_macro_playback_is_undoable() {

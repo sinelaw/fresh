@@ -15,6 +15,12 @@ When regex mode is enabled, the replacement string supports capture groups: `$1`
 
 The replacement also interprets the standard escape sequences `\n` (newline), `\t` (tab), `\r` (carriage return), and `\\` (literal backslash), so you can insert line breaks or indentation. Plain-text (non-regex) replacement treats these as literal characters.
 
+In regex mode, `^` and `$` anchor at line boundaries, so an anchored pattern matches on every line.
+
+## Clearing Highlights
+
+Run **Clear Search Highlights** from the command palette to remove the active search highlights from the buffer.
+
 ## Project-Wide Search and Replace
 
 Use "Search and Replace in Project" from the command palette to search across all git-tracked files in the project. Press `Alt+Enter` to replace all matches across the project. Works with unsaved buffers and large files, up to 10,000 results.

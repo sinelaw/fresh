@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "설정 적용 실패: %{error}",
   "settings.failed_to_open": "설정 열기 실패: %{error}",
   "settings.failed_to_save": "설정 저장 실패: %{error}",
+  "settings.save_failed_title": "설정을 저장할 수 없습니다",
+  "settings.save_failed_unchanged": "구성 파일이 변경되지 않았으므로 수정할 수 있습니다.",
+  "settings.save_failed_open_hint": "Esc 키를 누르면 구성 파일을 열어 수정할 수 있습니다.",
   "settings.field.editor.auto_close": "자동 닫기",
   "settings.field.editor.whitespace_show": "공백 표시",
   "settings.field.editor.whitespace_spaces_inner": "내부 공백",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "읽기 전용 메뉴 표시",
   "read_only.menu.title": "읽기 전용 버퍼",
   "read_only.menu.enable_editing": "편집 활성화",
-  "read_only.menu.cancel": "취소"
+  "read_only.menu.cancel": "취소",
+  "cmd.save_macro_to_init": "매크로: init.ts에 저장",
+  "cmd.save_macro_to_init_desc": "녹화한 매크로를 편집 가능한 defineMacro() 블록으로 init.ts에 저장합니다",
+  "cmd.promote_macro": "매크로: 명령으로 승격",
+  "cmd.promote_macro_desc": "녹화한 매크로를 임의의 코드로 확장할 수 있는 편집 가능한 init.ts 명령으로 변환합니다",
+  "action.prompt_save_macro_to_init": "매크로를 init.ts에 저장 (레지스터 입력)",
+  "action.prompt_promote_macro": "매크로를 init.ts 명령으로 승격 (레지스터 입력)",
+  "macro.init_write_failed": "init.ts 쓰기에 실패했습니다: %{error}",
+  "macro.promoted_to_init": "매크로 '%{key}'을(를) init.ts의 편집 가능한 명령으로 승격했습니다 (다시 불러옴)",
+  "macro.saved_to_init": "매크로 '%{key}'을(를) init.ts에 저장했습니다 (다시 불러옴)"
 }

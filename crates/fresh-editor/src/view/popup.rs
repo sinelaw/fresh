@@ -123,6 +123,12 @@ pub enum PopupResolver {
     /// segment). Confirm dispatches the selected row's `data`
     /// ("toggle_read_only" / "cancel") through `handle_read_only_menu_action`.
     ReadOnly,
+    /// "Couldn't save settings" error popup. Acknowledging it (confirm or
+    /// cancel) opens the offending config file for `layer` in a buffer so the
+    /// user can fix the syntax error that blocked the save.
+    SettingsSaveError {
+        layer: crate::config_io::ConfigLayer,
+    },
 }
 
 /// Content of a popup window

@@ -549,6 +549,15 @@ type ActionSpec = {
 	* Number of times to repeat the action (default 1)
 	*/
 	count: number;
+	/**
+	* Action payload arguments for actions that carry data, e.g.
+	* `{ "char": "x" }` for `insert_char` or `{ "text": "hello" }` for
+	* `prompt_confirm_with_text`. Empty/absent for the common no-arg
+	* actions (motions, edits, commands). This is what lets a recorded
+	* macro — which contains `InsertChar` and other payload actions —
+	* round-trip losslessly through `executeActions`.
+	*/
+	args: Record<string, unknown>;
 };
 type TsActionPopupAction = {
 	/**
@@ -1473,8 +1482,9 @@ type CreateVirtualBufferInExistingSplitOptions = {
 	*/
 	entries?: Array<TextPropertyEntry>;
 	/**
-	* Initial cursor line (0-indexed); see `initialCursorLine` on
-	* `CreateVirtualBufferOptions`.
+	* Initial cursor line (0-indexed). Applied to the new buffer *before*
+	* it becomes the active buffer; see the matching field on
+	* `CreateVirtualBufferOptions` for the rationale.
 	*/
 	initialCursorLine?: number;
 };
@@ -1573,8 +1583,10 @@ type CreateVirtualBufferOptions = {
 	* it becomes the active buffer, so plugins that want to land the
 	* cursor on a specific line don't have to chase a race against user
 	* input between "buffer becomes active" and a follow-up
-	* `setBufferCursor`. Using a line index keeps the UTF-8 byte math
-	* on the host side.
+	* `setBufferCursor`. Using a line index (rather than a byte offset)
+	* keeps the byte-math on the host side where the buffer content is
+	* already in UTF-8 bytes, avoiding the UTF-16-vs-UTF-8 mismatch a
+	* plugin would otherwise have to navigate.
 	*/
 	initialCursorLine?: number;
 };
@@ -1813,6 +1825,30 @@ interface EditorAPI {
 	* List all available grammars with source info - returns array of GrammarInfo objects
 	*/
 	listGrammars(): GrammarInfoSnapshot[];
+	/**
+	* Register keys of all recorded macros in the active session, sorted.
+	* Reads the per-tick snapshot, so it never crosses the IPC boundary.
+	*/
+	listMacros(): string[];
+	/**
+	* The recorded steps of the macro under `register` as `ActionSpec[]`, or
+	* `null` if no macro is stored there. The returned array is the exact
+	* shape `editor.executeActions` accepts, so a macro round-trips into a
+	* replay script with no translation — this equivalence is the core of the
+	* macro<->code bridge.
+	*/
+	getMacro(register: string): ActionSpec[] | null;
+	/**
+	* Define (or replace) the macro under `register` from a step list. Lets
+	* `init.ts` seed registers at startup so a saved macro plays back exactly
+	* like a hand-recorded one. Returns true if the command was queued.
+	*/
+	defineMacro(register: string, steps: ActionSpec[]): boolean;
+	/**
+	* Play the macro stored under `register` (same effect as the built-in
+	* "play macro" action). Returns true if the command was queued.
+	*/
+	playMacro(register: string): boolean;
 	debug(msg: string): void;
 	info(msg: string): void;
 	warn(msg: string): void;
@@ -2135,7 +2171,7 @@ interface EditorAPI {
 	envActive(): boolean;
 	/**
 	* The environment core detected in the workspace, as a JSON string
-	* (`{name, kind, snippet}`) or empty when none. Exposed as
+	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
 	* plugin consumes this result instead of probing the filesystem itself.
 	*/
@@ -2546,7 +2582,7 @@ interface EditorAPI {
 	/**
 	* Display width of a single Unicode code point, in terminal columns
 	* (0 for control/zero-width, 2 for CJK/fullwidth and most emoji, else 1).
-	*
+	* 
 	* Backed by the editor's own width logic (`fresh_core::display_width`), so
 	* plugins measure width exactly as the editor lays out cells — no
 	* per-plugin width tables. An invalid code point returns 0.

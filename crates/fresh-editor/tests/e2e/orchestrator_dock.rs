@@ -1371,6 +1371,62 @@ fn click_un_dive_switches_to_clicked_session() {
         .unwrap();
 }
 
+/// Regression: clicking a session row in a *focused* dock must switch to
+/// that session AND hand keyboard focus to the activated window — exactly
+/// like pressing Enter. The `select` handler in `orchestrator.ts` used to
+/// treat a click identically to arrow-nav: it live-switched the active
+/// window but left focus on the dock, so the editor showed the clicked
+/// session while keystrokes still drove the dock. The fix routes a
+/// click (`payload.via === "click"`) through `diveDockSelectionFromClick`,
+/// which switches and blurs the dock; arrow-nav (no `via`) keeps its
+/// debounced live-switch and stays on the dock.
+///
+/// Observed through rendered output only (CONTRIBUTING §2): after the
+/// click the dock must report blurred, and a sentinel typed into the
+/// keyboard must land in the clicked session's empty buffer (proving both
+/// that focus left the dock and that the active window is the clicked one).
+#[test]
+fn click_on_focused_dock_row_dives_focus_into_session() {
+    init_tracing_from_env();
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    // The dock mounts with keyboard focus; alphaproj is the active window.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("alphaproj") && s.contains("beta")
+    })
+    .unwrap();
+    assert!(
+        h.editor().is_dock_focused(),
+        "precondition: the dock holds keyboard focus on mount"
+    );
+
+    // Click beta's row. The fix switches the active window to beta and
+    // dives focus into it — so the dock blurs without any Enter.
+    let beta_row = row_of(&h, "beta") as u16;
+    h.mouse_click(3, beta_row).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // Focus now sits on beta's empty `[No Name]` buffer: a typed sentinel
+    // lands in the buffer (visible on screen) rather than being swallowed
+    // by the dock. `ZZ` avoids false matches with any chrome label.
+    h.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("ZZ"))
+        .unwrap();
+    assert_eq!(
+        h.editor().active_window().root,
+        root.join("wt-beta"),
+        "clicking beta's row must make it the active window"
+    );
+}
+
 #[test]
 fn dock_initial_sort_is_lex_stable_not_current_first() {
     // Smoking-gun reproducer for the dock-reorder hypothesis behind the

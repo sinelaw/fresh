@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "ใช้การตั้งค่าไม่สำเร็จ: %{error}",
   "settings.failed_to_open": "เปิดการตั้งค่าไม่สำเร็จ: %{error}",
   "settings.failed_to_save": "บันทึกการตั้งค่าไม่สำเร็จ: %{error}",
+  "settings.save_failed_title": "ไม่สามารถบันทึกการตั้งค่าได้",
+  "settings.save_failed_unchanged": "ไฟล์การตั้งค่าของคุณไม่ถูกเปลี่ยนแปลง คุณจึงสามารถแก้ไขได้",
+  "settings.save_failed_open_hint": "กด Esc เพื่อเปิดไฟล์การตั้งค่าและแก้ไข",
   "settings.field.editor.auto_close": "ปิดอัตโนมัติ",
   "settings.field.editor.whitespace_show": "แสดงช่องว่าง",
   "settings.field.editor.whitespace_spaces_inner": "ช่องว่างภายใน",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "แสดงเมนูอ่านอย่างเดียว",
   "read_only.menu.title": "บัฟเฟอร์อ่านอย่างเดียว",
   "read_only.menu.enable_editing": "เปิดใช้การแก้ไข",
-  "read_only.menu.cancel": "ยกเลิก"
+  "read_only.menu.cancel": "ยกเลิก",
+  "cmd.save_macro_to_init": "มาโคร: บันทึกไปยัง init.ts",
+  "cmd.save_macro_to_init_desc": "บันทึกมาโครที่บันทึกไว้ลงใน init.ts เป็นบล็อก defineMacro() ที่แก้ไขได้",
+  "cmd.promote_macro": "มาโคร: เลื่อนเป็นคำสั่ง",
+  "cmd.promote_macro_desc": "เปลี่ยนมาโครที่บันทึกไว้ให้เป็นคำสั่ง init.ts ที่แก้ไขได้ และขยายด้วยโค้ดใด ๆ ก็ได้",
+  "action.prompt_save_macro_to_init": "บันทึกมาโครไปยัง init.ts (ถามรีจิสเตอร์)",
+  "action.prompt_promote_macro": "เลื่อนมาโครเป็นคำสั่ง init.ts (ถามรีจิสเตอร์)",
+  "macro.init_write_failed": "เขียน init.ts ไม่สำเร็จ: %{error}",
+  "macro.promoted_to_init": "เลื่อนมาโคร '%{key}' เป็นคำสั่งที่แก้ไขได้ใน init.ts แล้ว (โหลดใหม่แล้ว)",
+  "macro.saved_to_init": "บันทึกมาโคร '%{key}' ไปยัง init.ts แล้ว (โหลดใหม่แล้ว)"
 }

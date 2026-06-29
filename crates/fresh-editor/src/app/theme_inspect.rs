@@ -318,8 +318,8 @@ impl Editor {
         let height = line_count + 2; // +2 for borders
 
         // Use the same screen-aware positioning as render to match the actual drawn rect
-        let screen_w = self.active_chrome().last_frame_width;
-        let screen_h = self.active_chrome().last_frame_height;
+        let screen_w = self.active_chrome().last_frame.width;
+        let screen_h = self.active_chrome().last_frame.height;
         let rect = compute_popup_rect(popup.position, width, height, screen_w, screen_h);
 
         Some((rect, button_row_offset))

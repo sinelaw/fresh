@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "应用设置失败：%{error}",
   "settings.failed_to_open": "打开设置失败：%{error}",
   "settings.failed_to_save": "保存设置失败：%{error}",
+  "settings.save_failed_title": "无法保存设置",
+  "settings.save_failed_unchanged": "你的配置文件未被更改，你可以修复它。",
+  "settings.save_failed_open_hint": "按 Esc 打开你的配置文件并修复它。",
   "settings.field.editor.auto_close": "自动关闭",
   "settings.field.editor.whitespace_show": "显示空白字符",
   "settings.field.editor.whitespace_spaces_inner": "行内空格",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "显示只读菜单",
   "read_only.menu.title": "只读缓冲区",
   "read_only.menu.enable_editing": "启用编辑",
-  "read_only.menu.cancel": "取消"
+  "read_only.menu.cancel": "取消",
+  "cmd.save_macro_to_init": "宏：保存到 init.ts",
+  "cmd.save_macro_to_init_desc": "将录制的宏作为可编辑的 defineMacro() 块保存到 init.ts",
+  "cmd.promote_macro": "宏：提升为命令",
+  "cmd.promote_macro_desc": "将录制的宏转换为可编辑的 init.ts 命令，可用任意代码进行扩展",
+  "action.prompt_save_macro_to_init": "将宏保存到 init.ts（提示输入寄存器）",
+  "action.prompt_promote_macro": "将宏提升为 init.ts 命令（提示输入寄存器）",
+  "macro.init_write_failed": "写入 init.ts 失败：%{error}",
+  "macro.promoted_to_init": "已将宏 '%{key}' 提升为 init.ts 中的可编辑命令（已重新加载）",
+  "macro.saved_to_init": "已将宏 '%{key}' 保存到 init.ts（已重新加载）"
 }

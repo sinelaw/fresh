@@ -379,8 +379,13 @@ impl Editor {
         {
             let leaves = state.buffer.piece_tree_leaves();
             // Build a bytes::Regex from the same pattern for the chunked scanner
+            // `as_str()` carries only the pattern, not the builder flags, so
+            // re-apply line-anchoring here to keep `^`/`$` matching every
+            // line boundary in the chunked scan (matches the inline path).
             let bytes_regex = regex::bytes::RegexBuilder::new(regex.as_str())
                 .case_insensitive(!case_sensitive)
+                .multi_line(true)
+                .crlf(true)
                 .build()
                 .expect("regex already validated");
             let scan = state.buffer.search_scan_init(

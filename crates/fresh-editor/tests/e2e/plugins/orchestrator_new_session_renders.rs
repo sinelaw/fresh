@@ -123,7 +123,7 @@ fn new_session_renders_terminal_output_without_keypress() {
     harness
         .wait_until(|h| {
             let win = h.editor().active_window();
-            let Some(&terminal_id) = win.terminal_buffers.get(&terminal_buffer) else {
+            let Some(terminal_id) = win.get_terminal_id(terminal_buffer) else {
                 return false;
             };
             let Some(handle) = win.terminal_manager.get(terminal_id) else {
@@ -231,7 +231,7 @@ fn new_session_atomic_api_seeds_terminal_as_only_tab() {
     harness
         .wait_until(|h| {
             let win = h.editor().active_window();
-            let Some(&tid) = win.terminal_buffers.get(&terminal_buffer) else {
+            let Some(tid) = win.get_terminal_id(terminal_buffer) else {
                 return false;
             };
             let Some(handle) = win.terminal_manager.get(tid) else {

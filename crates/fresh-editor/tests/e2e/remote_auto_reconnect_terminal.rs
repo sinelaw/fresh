@@ -244,11 +244,10 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
         .editor_mut()
         .test_dispatch_remote_reconnected(CHANNEL_ID);
 
-    let new_id = *harness
+    let new_id = harness
         .editor()
         .active_window()
-        .terminal_buffers
-        .get(&buffer_id)
+        .get_terminal_id(buffer_id)
         .expect("buffer is still bound to a terminal after reconnect");
     assert_ne!(
         new_id, old_id,
@@ -271,12 +270,8 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
         .editor_mut()
         .test_dispatch_remote_reconnected(CHANNEL_ID);
     assert_eq!(
-        harness
-            .editor()
-            .active_window()
-            .terminal_buffers
-            .get(&buffer_id),
-        Some(&new_id),
+        harness.editor().active_window().get_terminal_id(buffer_id),
+        Some(new_id),
         "a duplicate reconnect event does not respawn an already-live terminal"
     );
 }

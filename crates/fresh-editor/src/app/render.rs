@@ -81,8 +81,8 @@ impl Editor {
         self.active_window_mut().animations.capture_before_all();
 
         // Save frame dimensions for recompute_layout (used by macro replay)
-        self.active_chrome_mut().last_frame_width = size.width;
-        self.active_chrome_mut().last_frame_height = size.height;
+        self.active_chrome_mut().last_frame.width = size.width;
+        self.active_chrome_mut().last_frame.height = size.height;
 
         // Reset per-cell theme key map for this frame
         self.active_chrome_mut().reset_cell_theme_map();
@@ -193,131 +193,13 @@ impl Editor {
         let search_options_idx = 3;
         let prompt_line_idx = 4;
 
-        // Split main content area based on file explorer visibility
-        // Also keep the layout split if a sync is in progress (to avoid flicker)
-        let editor_content_area;
-        let file_explorer_should_show = self.file_explorer_visible()
-            && (self.file_explorer().is_some()
-                || self.active_window().file_explorer_sync_in_progress);
-
-        if file_explorer_should_show {
-            // Split horizontally based on side placement
-            tracing::trace!(
-                "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
-                self.file_explorer().is_some(),
-                self.active_window().file_explorer_sync_in_progress,
-                self.active_window().file_explorer_side
-            );
-            let explorer_cols = self
-                .active_window()
-                .file_explorer_width
-                .to_cols(main_content_area.width);
-
-            let (explorer_area, editor_area) = match self.active_window().file_explorer_side {
-                FileExplorerSide::Left => {
-                    let chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
-                        .split(main_content_area);
-                    (chunks[0], chunks[1])
-                }
-                FileExplorerSide::Right => {
-                    let chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Min(0), Constraint::Length(explorer_cols)])
-                        .split(main_content_area);
-                    (chunks[1], chunks[0])
-                }
-            };
-
-            self.active_layout_mut().file_explorer_area = Some(explorer_area);
-            editor_content_area = editor_area;
-
-            // Get connection string before mutable borrow of file_explorer.
-            let remote_connection = self.connection_display_string();
-
-            // Render file explorer (only if we have it - during sync we just keep the area reserved).
-            // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
-            // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
-            // splits the borrow on `self.windows` from the borrows on those other fields.
-            let active_id = self.active_window;
-            // Read window-state inputs before taking the &mut borrow on the
-            // window for the explorer/buffer access below.
-            // The explorer reads as focused only when it actually owns the
-            // keyboard — not when a focused orchestrator dock has stolen it
-            // out from under the (still-FileExplorer) window context. Without
-            // this guard the explorer keeps its accent border while the dock
-            // is driving, making it ambiguous which panel is focused.
-            let is_focused = self.active_window().key_context == KeyContext::FileExplorer
-                && !self.dock.as_ref().is_some_and(|d| d.focused);
-            let key_context_clone = self.active_window().key_context.clone();
-            let close_button_hovered = matches!(
-                &self.active_window().mouse_state.hover_target,
-                Some(HoverTarget::FileExplorerCloseButton)
-            );
-            let slot_resolver = self.file_explorer_slot_resolver();
-            // Theme-key runs the explorer records as it paints; applied to the
-            // chrome cell map after the window borrow is released.
-            let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            // Web renders the sidebar natively from `file_explorer_view`; skip
-            // its cell drawing (layout/viewport still applied).
-            let fe_draw = !self.suppress_chrome_cells;
-            // Take one &mut on the active window; the explorer + buffers
-            // come from disjoint sub-fields so they can coexist.
-            let __win = self
-                .windows
-                .get_mut(&active_id)
-                .expect("active window must exist");
-            let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
-            if let Some(explorer) = __win.file_explorer.as_mut() {
-                // Build set of files with unsaved changes
-                let mut files_with_unsaved_changes = std::collections::HashSet::new();
-                for (buffer_id, state) in __buffers_ref {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
-                            if let Some(file_path) = metadata.file_path() {
-                                files_with_unsaved_changes.insert(file_path.clone());
-                            }
-                        }
-                    }
-                }
-
-                let keybindings = self.keybindings.read().unwrap();
-                let empty: Vec<std::path::PathBuf> = Vec::new();
-                let cut_paths = __win
-                    .file_explorer_clipboard
-                    .as_ref()
-                    .filter(|cb| cb.is_cut)
-                    .map(|cb| cb.paths.as_slice())
-                    .unwrap_or(empty.as_slice());
-                FileExplorerRenderer::render(
-                    explorer,
-                    frame,
-                    explorer_area,
-                    slot_resolver,
-                    is_focused,
-                    &files_with_unsaved_changes,
-                    &__win.file_explorer_decoration_cache,
-                    &__win.file_explorer_slot_override_cache,
-                    &keybindings,
-                    key_context_clone,
-                    &*self.theme.read().unwrap(),
-                    close_button_hovered,
-                    remote_connection.as_deref(),
-                    cut_paths,
-                    &self.config.file_explorer.tree_indicator_collapsed,
-                    &self.config.file_explorer.tree_indicator_expanded,
-                    Some(&mut crate::app::types::CellThemeRecorder::new(&mut fe_runs)),
-                    fe_draw,
-                );
-            }
-            // Note: if file_explorer is None but sync_in_progress is true,
-            // we just leave the area blank (or could render a placeholder)
-            self.active_chrome_mut().apply_theme_runs(&fe_runs);
-        } else {
-            // No file explorer: use entire main content area for editor
-            self.active_layout_mut().file_explorer_area = None;
-            editor_content_area = main_content_area;
+        // Split the main content area into the explorer sidebar (when shown)
+        // and the editor content area beside it. Painting the explorer is a
+        // separate, composable step that draws only into the returned rect.
+        let (editor_content_area, file_explorer_area) =
+            self.split_file_explorer_area(main_content_area);
+        if let Some(file_explorer_area) = file_explorer_area {
+            self.render_file_explorer(frame, file_explorer_area);
         }
 
         // Note: Tabs are now rendered within each split by SplitRenderer
@@ -648,6 +530,18 @@ impl Editor {
         // Web renders the tab bar natively from `tab_bar_view`; skip painting it
         // to cells (its TabLayout is still computed). Panes always draw.
         let split_draw_tab_bar = !self.suppress_chrome_cells;
+        // Bundle the immutable editor render settings. Built before the
+        // `&mut self.windows` borrow below; it only borrows `self.config`,
+        // so the two coexist.
+        let cfg = crate::view::ui::EditorRenderConfig::new(
+            &self.config.editor,
+            self.background_fade,
+            self.software_cursor_only,
+        );
+        // `cfg` is captured by the render closure; the theme read-guard and the
+        // `RenderStyle` wrapping it are built *inside* the closure so the
+        // `self.theme` borrow is released before the post-render `&mut self`
+        // chrome updates.
         // Take a single mutable borrow on the active window's splits and
         // split it into (&SplitManager, &mut HashMap<...>) — Rust can
         // destructure the tuple, but we can't make two separate
@@ -683,8 +577,16 @@ impl Editor {
         ) = __win
             .buffers
             .with_all_mut(|__buffers_mut, __mgr, __vs_map| {
+                // Built here so the `self.theme` read-guard lives only for the
+                // render call, not the later `&mut self` chrome updates.
+                let theme_guard = self.theme.read().unwrap();
+                let style = crate::view::ui::RenderStyle {
+                    theme: &theme_guard,
+                    ansi_background: self.ansi_background.as_ref(),
+                    cfg,
+                };
                 SplitRenderer::render_content(
-                    frame,
+                    frame.buffer_mut(),
                     editor_content_area,
                     &*__mgr,
                     __buffers_mut,
@@ -693,14 +595,8 @@ impl Editor {
                     __event_logs_mut,
                     __composite_buffers_mut,
                     __composite_view_states_mut,
-                    &*self.theme.read().unwrap(),
-                    self.ansi_background.as_ref(),
-                    self.background_fade,
+                    style,
                     lsp_waiting,
-                    self.config.editor.large_file_threshold_bytes,
-                    self.config.editor.line_wrap,
-                    self.config.editor.estimated_line_length,
-                    self.config.editor.highlight_context_bytes,
                     Some(__vs_map),
                     __grouped_ref,
                     hide_cursor,
@@ -708,20 +604,9 @@ impl Editor {
                     hovered_close_split,
                     hovered_maximize_split,
                     is_maximized,
-                    self.config.editor.relative_line_numbers,
                     __tab_bar_visible,
-                    self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
-                    self.software_cursor_only,
-                    self.config.editor.show_vertical_scrollbar,
-                    self.config.editor.show_horizontal_scrollbar,
                     __terminal_mode,
-                    self.config.editor.diagnostics_inline_text,
-                    self.config.editor.show_tilde,
-                    self.config.editor.highlight_current_column,
-                    self.config.editor.indentation_guide,
-                    &self.config.editor.indentation_guide_glyph,
-                    self.config.editor.hide_current_line_on_selection,
                     __cell_theme_map_mut,
                     size.width,
                     &mut pending_hardware_cursor,
@@ -905,283 +790,34 @@ impl Editor {
         // with OSC sequences every frame.
         self.update_terminal_title(&display_name);
 
-        let status_message = self.active_window().status_message.clone();
-        let plugin_status_message = self.active_window().plugin_status_message.clone();
         let prompt = self.active_window().prompt.clone();
-        // Compute a simple buffer-aware LSP indicator.
-        // Compose the LSP status-bar segment for the active buffer. This
-        // runs every render — the editor has no precomputed LSP-status
-        // string cached anywhere else, so there is a single source of
-        // truth for what the user sees.
-        //
-        // Priority order (first non-empty wins):
-        //
-        //   1. Active `$/progress` work for this language — e.g.
-        //      "LSP (cpp): indexing (42%)". Conveys the transient
-        //      startup/indexing phase.
-        //   2. A running server — "LSP". Short because detail belongs
-        //      in LSP-specific UI, not the compact status bar pill.
-        //   3. Configured `auto_start=true` servers that haven't started
-        //      (error / crashed / pending) — "LSP off".
-        //   4. Configured `enabled && !auto_start` servers that the user
-        //      has to opt into — "LSP: off (N)".
-        //   5. Nothing.
-        //
-        // Rules 3 and 4 address heuristic eval H-1: without them, a
-        // configured-but-dormant server is indistinguishable from "no
-        // LSP at all."
-        let current_language = self
-            .buffers()
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-            .unwrap_or_default();
-        let buffer_lsp_disabled_reason = self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .filter(|m| !m.lsp_enabled)
-            .and_then(|m| m.lsp_disabled_reason.as_deref());
-        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
-            &current_language,
-            buffer_lsp_disabled_reason,
-            &self.active_window().lsp_progress,
-            &self.active_window().lsp_server_statuses,
-            &self.config.lsp,
-            &self.active_window().user_dismissed_lsp_languages,
-            self.config.lsp_enabled,
-        );
         let theme = self.theme.read().unwrap().clone();
         let keybindings_cloned = self.keybindings.read().unwrap().clone(); // Clone the keybindings
-        let chord_state_cloned = self.active_window_mut().chord_state.clone(); // Clone the chord state
 
-        // Get update availability info
-        let update_available = self.latest_version().map(|v| v.to_string());
+        // Status bar (hidden when toggled off, or when a suggestions/file-
+        // browser popup covers the bottom row).
+        self.render_status_bar_row(
+            frame,
+            main_chunks[status_bar_idx],
+            &display_name,
+            &theme,
+            &keybindings_cloned,
+            has_suggestions,
+            has_file_browser,
+        );
 
-        // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
-        if self.active_window_mut().status_bar_visible && !has_suggestions && !has_file_browser {
-            // Get warning level for colored indicator (respects config setting)
-            // LSP warning level is scoped to the current buffer's language
-            let (warning_level, general_warning_count) =
-                if self.config.warnings.show_status_indicator {
-                    let lsp_level = {
-                        use crate::services::async_bridge::LspServerStatus;
-                        let mut level = WarningLevel::None;
-                        for ((lang, _), status) in &self.active_window().lsp_server_statuses {
-                            if lang == &current_language {
-                                match status {
-                                    LspServerStatus::Error => {
-                                        level = WarningLevel::Error;
-                                        break;
-                                    }
-                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
-                                        if level != WarningLevel::Error {
-                                            level = WarningLevel::Warning;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        level
-                    };
-                    (
-                        lsp_level,
-                        self.active_window().warning_domains.general.count,
-                    )
-                } else {
-                    (WarningLevel::None, 0)
-                };
+        // Search-options bar (case / whole-word / regex / confirm toggles),
+        // shown only while a search-style prompt is active.
+        self.render_search_options_bar(
+            frame,
+            main_chunks[search_options_idx],
+            show_search_options,
+            &theme,
+            &keybindings_cloned,
+        );
 
-            // Which clickable status-bar segment (if any) the mouse is over —
-            // drives hover styling generically (one variant for the whole bar).
-            let status_bar_hovered = match &self.active_window_mut().mouse_state.hover_target {
-                Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
-                _ => None,
-            };
-
-            let remote_connection = self.connection_display_string();
-            // Active window's last failed-reconnect error (drives a core
-            // FailedAttach indicator for a dormant remote workspace).
-            let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
-
-            // Get session name for display (only in session mode)
-            let session_name = self.session_name().map(|s| s.to_string());
-
-            let active_split = self.effective_active_split();
-            let active_buf = self.active_buffer();
-            let default_cursors = crate::model::cursor::Cursors::new();
-            let is_read_only = self
-                .active_window()
-                .buffer_metadata
-                .get(&active_buf)
-                .map(|m| m.read_only)
-                .unwrap_or(false);
-            let is_synthetic_placeholder = self
-                .active_window()
-                .buffer_metadata
-                .get(&active_buf)
-                .map(|m| m.synthetic_placeholder)
-                .unwrap_or(false);
-            // Compute plugin-provided status-bar values before taking the
-            // mutable window borrow below.
-            let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
-            // Active session's trust level for the always-present `{trust}`
-            // indicator — read here (Copy) before the mutable window borrow.
-            let workspace_trust_level = self.authority().workspace_trust.level();
-            // Single window borrow, split into buffers + cursors so the
-            // status-bar context can hold both.
-            let __active_id = self.active_window;
-            // Theme-key runs the status bar records as it paints; applied to
-            // the chrome's cell map after the window borrow is released.
-            let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            // Web renders the status bar natively from `status_view`; skip painting
-            // it (the semantic segments + indicator rects are still captured).
-            let sb_draw = !self.suppress_chrome_cells;
-            let __win = self
-                .windows
-                .get_mut(&__active_id)
-                .expect("active window must exist");
-            let status_bar_layout = __win
-                .buffers
-                .with_buffer_and_view_states(active_buf, |state, vs_map| {
-                    let cursors = vs_map
-                        .get(&active_split)
-                        .map(|v| &v.cursors)
-                        .unwrap_or(&default_cursors);
-                    let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
-                        state,
-                        cursors,
-                        status_message: &status_message,
-                        plugin_status_message: &plugin_status_message,
-                        lsp_status: &lsp_status,
-                        lsp_indicator_state,
-                        theme: &theme,
-                        display_name: &display_name,
-                        keybindings: &keybindings_cloned,
-                        chord_state: &chord_state_cloned,
-                        update_available: update_available.as_deref(),
-                        warning_level,
-                        general_warning_count,
-                        hovered: status_bar_hovered,
-                        remote_connection: remote_connection.as_deref(),
-                        session_name: session_name.as_deref(),
-                        read_only: is_read_only,
-                        remote_state_override: self.remote_indicator_override.as_ref(),
-                        remote_reconnect_error: remote_reconnect_error.as_deref(),
-                        is_synthetic_placeholder,
-                        // Filled in by `render_status` from the user's
-                        // status_bar config; the value here is just a
-                        // safe default for the rare path that builds the
-                        // ctx but doesn't run `render_status`.
-                        remote_indicator_on_bar: false,
-                        dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
-                        workspace_trust_level,
-                    };
-                    let mut sb_rec =
-                        crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);
-                    StatusBarRenderer::render_status_bar(
-                        frame,
-                        main_chunks[status_bar_idx],
-                        &mut status_ctx,
-                        &self.config.editor.status_bar,
-                        Some(&mut sb_rec),
-                        sb_draw,
-                    )
-                })
-                .expect("active buffer must be present");
-            self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
-
-            // Store status bar layout for click detection
-            let status_bar_area = main_chunks[status_bar_idx];
-            self.active_chrome_mut().status_bar_area =
-                Some((status_bar_area.y, status_bar_area.x, status_bar_area.width));
-            self.active_chrome_mut().status_bar_clickable = status_bar_layout.clickable;
-            self.active_chrome_mut().status_bar_plugin_token_areas =
-                status_bar_layout.plugin_token_areas;
-            self.active_chrome_mut().status_bar_segments = status_bar_layout.segments;
-        }
-
-        // Render search options bar when in search prompt
-        if show_search_options {
-            // Show "Confirm" option only in replace modes
-            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
-                if matches!(
-                    p.prompt_type,
-                    PromptType::ReplaceSearch
-                        | PromptType::Replace { .. }
-                        | PromptType::QueryReplaceSearch
-                        | PromptType::QueryReplace { .. }
-                ) {
-                    Some(self.active_window().search_confirm_each)
-                } else {
-                    None
-                }
-            });
-
-            // Determine hover state for search options
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            let search_options_hover = match &self.active_window_mut().mouse_state.hover_target {
-                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
-                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
-                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
-                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
-                _ => SearchOptionsHover::None,
-            };
-
-            let search_options_layout = StatusBarRenderer::render_search_options(
-                frame,
-                main_chunks[search_options_idx],
-                self.active_window().search_case_sensitive,
-                self.active_window().search_whole_word,
-                self.active_window().search_use_regex,
-                confirm_each,
-                &theme,
-                &keybindings_cloned,
-                search_options_hover,
-            );
-            self.active_chrome_mut().search_options_layout = Some(search_options_layout);
-        } else {
-            self.active_chrome_mut().search_options_layout = None;
-        }
-
-        // Render prompt line if active. Overlay prompts (Live Grep)
-        // skip the bottom-row render entirely — they paint their own
-        // input row inside the centred overlay frame, so the user's
-        // editor view stays unobstructed at the bottom.
-        if let Some(prompt) = &prompt {
-            if !prompt.overlay {
-                // Use specialized renderer for file/folder open prompt to show colorized path
-                if matches!(
-                    prompt.prompt_type,
-                    crate::view::prompt::PromptType::OpenFile
-                        | crate::view::prompt::PromptType::SwitchProject
-                ) {
-                    if let Some(file_open_state) = &self.active_window_mut().file_open_state {
-                        StatusBarRenderer::render_file_open_prompt(
-                            frame,
-                            main_chunks[prompt_line_idx],
-                            prompt,
-                            file_open_state,
-                            &theme,
-                        );
-                    } else {
-                        StatusBarRenderer::render_prompt(
-                            frame,
-                            main_chunks[prompt_line_idx],
-                            prompt,
-                            &theme,
-                        );
-                    }
-                } else {
-                    StatusBarRenderer::render_prompt(
-                        frame,
-                        main_chunks[prompt_line_idx],
-                        prompt,
-                        &theme,
-                    );
-                }
-            }
-        }
+        // Prompt input line (non-overlay prompts only).
+        self.render_prompt_line(frame, main_chunks[prompt_line_idx], &prompt, &theme);
 
         // Float-overlay preview: load the selected match's file (if
         // the file changed) and seed the phantom leaf's cursor before
@@ -1205,6 +841,221 @@ impl Editor {
         let theme_clone = self.theme.read().unwrap().clone();
         let hover_target = self.active_window_mut().mouse_state.hover_target.clone();
 
+        // Cursor-anchored buffer popups (completion, hover, signature help):
+        // recompute their areas for hit-testing and paint them.
+        self.render_buffer_popups(frame, chrome_area, &theme_clone, &hover_target);
+
+        // Render editor-level popups (e.g. plugin action popups) on top of any
+        // buffer content so they stay visible across buffer switches and over
+        // virtual buffers (Dashboard, diagnostics) that own the whole split.
+        // These don't need cursor-relative positioning — they all use absolute
+        // positions like BottomRight or Centered.
+        //
+        // Queue semantics: concurrent action popups stack in `global_popups`,
+        // but only the top one renders & receives input. Deeper popups
+        // surface as the top is resolved — the alternative (drawing all at
+        // the same BottomRight slot) makes them illegible.
+        self.active_chrome_mut().global_popup_areas.clear();
+        // The workspace-trust prompt is a blocking modal: it renders later in
+        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
+        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
+        // Everything else on the global stack renders here, above buffer content.
+        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
+            matches!(
+                p.resolver,
+                crate::view::popup::PopupResolver::WorkspaceTrust
+            )
+        });
+        if !top_is_trust_modal {
+            // Global popups render within the chrome area (right of a
+            // left dock) so corner/centred popups don't overrun it.
+            let draw_global_popup = !self.suppress_chrome_cells;
+            self.render_top_global_popup(
+                frame,
+                chrome_area,
+                &theme_clone,
+                hover_target.as_ref(),
+                draw_global_popup,
+            );
+        }
+
+        // Render menu bar last so dropdown appears on top of all other content
+        // Update menu context with current editor state
+        self.update_menu_context();
+
+        // Settings / calibration-wizard / keybinding-editor / event-debug
+        // modals, dimming the chrome behind each. Rendered before the menu
+        // bar so open menus overlay them.
+        self.render_modal_overlays(frame, chrome_area);
+
+        // The workspace-trust prompt is a blocking, top-most security modal.
+        // It dims the *entire* frame (the dock included) and centres in the
+        // full window, so it is rendered at the very end of this method —
+        // after the dock and floating panels — rather than here, where the
+        // dock's later pass would overpaint its left edge. See the bottom of
+        // `render`.
+
+        // Menu bar, drawn last so its dropdowns sit above all other content.
+        self.render_menu_bar(frame, menu_bar_area);
+
+        // Tab / file-explorer / new-tab context menus (TUI cell drawing only).
+        self.render_context_menus(frame);
+
+        // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
+        // scrollbars) is now recorded during each region's own paint.
+
+        // Render tab drag drop zone overlay if dragging a tab
+        let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
+        if let Some(ref drag_state) = drag_state_clone {
+            if drag_state.is_dragging() {
+                self.render_tab_drop_zone(frame, drag_state);
+            }
+        }
+
+        // Software mouse cursor (GPM) and keyboard-capture dimming — both
+        // read already-painted cells, so they run after the main draw.
+        self.render_software_cursor_and_capture(frame, size);
+
+        // Commit the active-split hardware cursor (deferred since
+        // `render_content`) unless a popup has been drawn over that cell.
+        // Ratatui draws the hardware caret on top of every cell, so a
+        // popup cannot hide the cursor by painting cells — the only way
+        // to hide it is to leave `Frame::cursor_position` as `None`, which
+        // triggers `Terminal::hide_cursor` at the end of the draw.
+        //
+        // When a prompt is active the prompt renderer already placed the
+        // caret on the prompt line via `frame.set_cursor_position`; don't
+        // override it with the (now-irrelevant) buffer cursor.
+        if let Some((cx, cy)) = pending_hardware_cursor {
+            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
+                frame.set_cursor_position((cx, cy));
+            }
+        }
+
+        // Convert all colors for terminal capability (256/16 color fallback)
+        crate::view::color_support::convert_buffer_colors(
+            frame.buffer_mut(),
+            self.color_capability,
+        );
+
+        // Frame-buffer animations run last so they mutate the final paint.
+        self.active_window_mut()
+            .animations
+            .apply_all(frame.buffer_mut());
+
+        // Dock, floating panel, theme-info popup, and the workspace-trust
+        // modal — the topmost layers, drawn above prompts/popups/animations.
+        self.render_panels_and_modals(
+            frame,
+            size,
+            chrome_area,
+            dock_area,
+            top_is_trust_modal,
+            &theme_clone,
+        );
+    }
+
+    /// Render the search-options bar into `area` when `show_search_options`
+    /// is set (a search-style prompt is active), or clear its cached layout
+    /// otherwise.
+    fn render_search_options_bar(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        show_search_options: bool,
+        theme: &crate::view::theme::Theme,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+    ) {
+        if show_search_options {
+            // Show "Confirm" option only in replace modes
+            let confirm_each = self.active_window().prompt.as_ref().and_then(|p| {
+                if matches!(
+                    p.prompt_type,
+                    PromptType::ReplaceSearch
+                        | PromptType::Replace { .. }
+                        | PromptType::QueryReplaceSearch
+                        | PromptType::QueryReplace { .. }
+                ) {
+                    Some(self.active_window().search_confirm_each)
+                } else {
+                    None
+                }
+            });
+
+            // Determine hover state for search options
+            use crate::view::ui::status_bar::SearchOptionsHover;
+            let search_options_hover = match &self.active_window().mouse_state.hover_target {
+                Some(HoverTarget::SearchOptionCaseSensitive) => SearchOptionsHover::CaseSensitive,
+                Some(HoverTarget::SearchOptionWholeWord) => SearchOptionsHover::WholeWord,
+                Some(HoverTarget::SearchOptionRegex) => SearchOptionsHover::Regex,
+                Some(HoverTarget::SearchOptionConfirmEach) => SearchOptionsHover::ConfirmEach,
+                _ => SearchOptionsHover::None,
+            };
+
+            let search_options_layout = StatusBarRenderer::render_search_options(
+                frame,
+                area,
+                self.active_window().search_case_sensitive,
+                self.active_window().search_whole_word,
+                self.active_window().search_use_regex,
+                confirm_each,
+                theme,
+                keybindings,
+                search_options_hover,
+            );
+            self.active_chrome_mut().search_options_layout = Some(search_options_layout);
+        } else {
+            self.active_chrome_mut().search_options_layout = None;
+        }
+    }
+
+    /// Render the bottom prompt input line into `area`. Overlay prompts (e.g.
+    /// Live Grep) paint their own input row inside their centred frame and so
+    /// skip this; file/folder open prompts use a path-colorising renderer.
+    fn render_prompt_line(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        prompt: &Option<crate::view::prompt::Prompt>,
+        theme: &crate::view::theme::Theme,
+    ) {
+        if let Some(prompt) = prompt {
+            if !prompt.overlay {
+                // Use specialized renderer for file/folder open prompt to show colorized path
+                if matches!(
+                    prompt.prompt_type,
+                    crate::view::prompt::PromptType::OpenFile
+                        | crate::view::prompt::PromptType::SwitchProject
+                ) {
+                    if let Some(file_open_state) = &self.active_window().file_open_state {
+                        StatusBarRenderer::render_file_open_prompt(
+                            frame,
+                            area,
+                            prompt,
+                            file_open_state,
+                            theme,
+                        );
+                    } else {
+                        StatusBarRenderer::render_prompt(frame, area, prompt, theme);
+                    }
+                } else {
+                    StatusBarRenderer::render_prompt(frame, area, prompt, theme);
+                }
+            }
+        }
+    }
+
+    /// Recompute the on-screen areas of the active buffer's cursor-anchored
+    /// popups (completion / hover / signature help), cache them for mouse
+    /// hit-testing, and paint them. `theme_clone` and `hover_target` are
+    /// passed in because `render` reuses them for the global-popup pass.
+    fn render_buffer_popups(
+        &mut self,
+        frame: &mut Frame,
+        chrome_area: ratatui::layout::Rect,
+        theme_clone: &crate::view::theme::Theme,
+        hover_target: &Option<HoverTarget>,
+    ) {
         // Clear popup areas and recalculate
         self.active_chrome_mut().popup_areas.clear();
 
@@ -1376,218 +1227,27 @@ impl Editor {
         if draw_popups && state.popups.is_visible() {
             for (popup_idx, popup) in state.popups.all().iter().enumerate() {
                 if let Some((_, popup_area, _, _, _, _, _)) = popup_info.get(popup_idx) {
-                    popup.render_with_hover(
-                        frame,
-                        *popup_area,
-                        &theme_clone,
-                        hover_target.as_ref(),
-                    );
+                    popup.render_with_hover(frame, *popup_area, theme_clone, hover_target.as_ref());
                 }
             }
         }
+    }
 
-        // Render editor-level popups (e.g. plugin action popups) on top of any
-        // buffer content so they stay visible across buffer switches and over
-        // virtual buffers (Dashboard, diagnostics) that own the whole split.
-        // These don't need cursor-relative positioning — they all use absolute
-        // positions like BottomRight or Centered.
-        //
-        // Queue semantics: concurrent action popups stack in `global_popups`,
-        // but only the top one renders & receives input. Deeper popups
-        // surface as the top is resolved — the alternative (drawing all at
-        // the same BottomRight slot) makes them illegible.
-        self.active_chrome_mut().global_popup_areas.clear();
-        // The workspace-trust prompt is a blocking modal: it renders later in
-        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
-        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
-        // Everything else on the global stack renders here, above buffer content.
-        let top_is_trust_modal = self.global_popups.top().is_some_and(|p| {
-            matches!(
-                p.resolver,
-                crate::view::popup::PopupResolver::WorkspaceTrust
-            )
-        });
-        if !top_is_trust_modal {
-            // Global popups render within the chrome area (right of a
-            // left dock) so corner/centred popups don't overrun it.
-            let draw_global_popup = !self.suppress_chrome_cells;
-            self.render_top_global_popup(
-                frame,
-                chrome_area,
-                &theme_clone,
-                hover_target.as_ref(),
-                draw_global_popup,
-            );
-        }
-
-        // Render menu bar last so dropdown appears on top of all other content
-        // Update menu context with current editor state
-        self.update_menu_context();
-
-        // Render settings modal (before menu bar so menus can overlay)
-        // Check visibility first to avoid borrow conflict with dimming
-        // The web renders Settings natively from `settings_view`; paint cells
-        // only for the TUI.
-        let draw_settings = !self.suppress_chrome_cells;
-        let settings_visible = draw_settings
-            && self
-                .settings_state
-                .as_ref()
-                .map(|s| s.visible)
-                .unwrap_or(false);
-        if settings_visible {
-            // Dim the editor content behind the settings modal. Use the
-            // chrome area (right of a left dock) so the modal sits beside
-            // the persistent dock instead of being overlapped by it.
-            crate::view::dimming::apply_dimming(frame, chrome_area);
-        }
-        if let Some(ref mut settings_state) = self.settings_state {
-            if !draw_settings {
-                // keyboard-driven native render; skip cells (and the focus-state
-                // update tied to the cell layout pass).
-            } else if settings_state.visible {
-                settings_state.update_focus_states();
-                let settings_layout = crate::view::settings::render_settings(
-                    frame,
-                    chrome_area,
-                    settings_state,
-                    &*self.theme.read().unwrap(),
-                );
-                self.active_chrome_mut().settings_layout = Some(settings_layout);
-            }
-        }
-
-        // Render calibration wizard if active. (Deprecated; the web has no native
-        // projection for it, so suppress its cells there rather than bleed.)
-        if !self.suppress_chrome_cells {
-            if let Some(ref wizard) = self.calibration_wizard {
-                // Dim the editor content behind the wizard modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::calibration_wizard::render_calibration_wizard(
-                    frame,
-                    chrome_area,
-                    wizard,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
-
-        // Event-debug: the web renders it natively from `aux_modals_view`; paint
-        // cells only for the TUI.
-        let draw_aux = !self.suppress_chrome_cells;
-
-        // Keybinding editor: web renders it natively from `keybinding_editor_view`;
-        // paint cells only for the TUI.
-        if draw_aux {
-            if let Some(ref mut kb_editor) = self.keybinding_editor {
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::keybinding_editor::render_keybinding_editor(
-                    frame,
-                    chrome_area,
-                    kb_editor,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
-
-        // Render event debug dialog if active
-        if draw_aux {
-            if let Some(ref debug) = self.active_window().event_debug {
-                // Dim the editor content behind the dialog modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
-                crate::view::event_debug::render_event_debug(
-                    frame,
-                    chrome_area,
-                    debug,
-                    &*self.theme.read().unwrap(),
-                );
-            }
-        }
-
-        // The workspace-trust prompt is a blocking, top-most security modal.
-        // It dims the *entire* frame (the dock included) and centres in the
-        // full window, so it is rendered at the very end of this method —
-        // after the dock and floating panels — rather than here, where the
-        // dock's later pass would overpaint its left edge. See the bottom of
-        // `render`.
-
-        if self.active_window_mut().menu_bar_visible {
-            // Pre-expand DynamicSubmenu items once per registry; without this
-            // MenuRenderer::render rescans + reparses every theme JSON file
-            // on every frame.
-            self.expanded_menus_cache.update(
-                &self.theme_registry,
-                &self.menus,
-                &self.menu_state.themes_dir,
-            );
-            let hover_target = self.active_window().mouse_state.hover_target.clone();
-            let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
-            let draw_chrome = !self.suppress_chrome_cells;
-            // The single content source shared with the web `menu_view()`
-            // projection (uses the cache populated just above).
-            let all_menus = self.all_menus_expanded();
-            let keybindings = self.keybindings.read().unwrap();
-            let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-            let new_menu_layout = crate::view::ui::MenuRenderer::render(
-                frame,
-                menu_bar_area,
-                &all_menus,
-                &self.menu_state,
-                &keybindings,
-                &*self.theme.read().unwrap(),
-                hover_target.as_ref(),
-                menu_bar_mnemonics,
-                Some(&mut crate::app::types::CellThemeRecorder::new(
-                    &mut menu_runs,
-                )),
-                draw_chrome,
-            );
-            drop(keybindings);
-            self.active_chrome_mut().menu_layout = Some(new_menu_layout);
-            self.active_chrome_mut().apply_theme_runs(&menu_runs);
-        } else {
-            self.active_chrome_mut().menu_layout = None;
-        }
-
-        // Context menus: the web renders these natively from `context_menu_view`
-        // (no cell drawing); the TUI draws them as before.
-        if !self.suppress_chrome_cells {
-            // Render tab context menu if open
-            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
-            if let Some(menu) = tab_ctx_menu {
-                self.render_tab_context_menu(frame, &menu);
-            }
-
-            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
-            if let Some(menu) = fe_ctx_menu {
-                self.render_file_explorer_context_menu(frame, &menu);
-            }
-
-            // Render the "+" new-tab popup menu if open
-            let new_tab_menu = self.active_window().new_tab_menu.clone();
-            if let Some(menu) = new_tab_menu {
-                self.render_new_tab_menu(frame, &menu);
-            }
-        }
-
-        // Chrome theme-key provenance (status bar, menu, tabs, file explorer,
-        // scrollbars) is now recorded during each region's own paint.
-
-        // Render tab drag drop zone overlay if dragging a tab
-        let drag_state_clone = self.active_window().mouse_state.dragging_tab.clone();
-        if let Some(ref drag_state) = drag_state_clone {
-            if drag_state.is_dragging() {
-                self.render_tab_drop_zone(frame, drag_state);
-            }
-        }
-
+    /// Draw the software mouse cursor (GPM, which can't paint its own caret on
+    /// the alt-screen) and the keyboard-capture dimming. Both read cells that
+    /// the main draw already painted, so they run near the end of `render`.
+    fn render_software_cursor_and_capture(
+        &mut self,
+        frame: &mut Frame,
+        size: ratatui::layout::Rect,
+    ) {
         // Render software mouse cursor when GPM is active
         // GPM can't draw its cursor on the alternate screen buffer used by TUI apps,
         // so we draw our own cursor at the tracked mouse position.
         // This must happen LAST in the render flow so we can read the already-rendered
         // cell content and invert it.
-        if self.active_window_mut().gpm_active {
-            if let Some((col, row)) = self.active_window_mut().mouse_cursor_position {
+        if self.active_window().gpm_active {
+            if let Some((col, row)) = self.active_window().mouse_cursor_position {
                 use ratatui::style::Modifier;
 
                 // Only render if within screen bounds
@@ -1603,7 +1263,7 @@ impl Editor {
 
         // When keyboard capture mode is active, dim all UI elements outside the terminal
         // to visually indicate that focus is exclusively on the terminal
-        if self.active_window_mut().keyboard_capture && self.active_window().terminal_mode {
+        if self.active_window().keyboard_capture && self.active_window().terminal_mode {
             // Find the active split's content area
             let active_split = self
                 .windows
@@ -1623,34 +1283,20 @@ impl Editor {
                 self.apply_keyboard_capture_dimming(frame, terminal_area);
             }
         }
+    }
 
-        // Commit the active-split hardware cursor (deferred since
-        // `render_content`) unless a popup has been drawn over that cell.
-        // Ratatui draws the hardware caret on top of every cell, so a
-        // popup cannot hide the cursor by painting cells — the only way
-        // to hide it is to leave `Frame::cursor_position` as `None`, which
-        // triggers `Terminal::hide_cursor` at the end of the draw.
-        //
-        // When a prompt is active the prompt renderer already placed the
-        // caret on the prompt line via `frame.set_cursor_position`; don't
-        // override it with the (now-irrelevant) buffer cursor.
-        if let Some((cx, cy)) = pending_hardware_cursor {
-            if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
-                frame.set_cursor_position((cx, cy));
-            }
-        }
-
-        // Convert all colors for terminal capability (256/16 color fallback)
-        crate::view::color_support::convert_buffer_colors(
-            frame.buffer_mut(),
-            self.color_capability,
-        );
-
-        // Frame-buffer animations run last so they mutate the final paint.
-        self.active_window_mut()
-            .animations
-            .apply_all(frame.buffer_mut());
-
+    /// Render the topmost layers: the dock and floating widget panel (each in
+    /// its own slot), the theme-info popup, and the blocking workspace-trust
+    /// modal. Drawn after every other layer so they sit on top.
+    fn render_panels_and_modals(
+        &mut self,
+        frame: &mut Frame,
+        size: ratatui::layout::Rect,
+        chrome_area: ratatui::layout::Rect,
+        dock_area: Option<ratatui::layout::Rect>,
+        top_is_trust_modal: bool,
+        theme_clone: &crate::view::theme::Theme,
+    ) {
         // Panels are drawn last so they sit above every other layer
         // (prompts, popups, animations). The two slots are independent:
         // the dock paints into its carved column (`dock_area`); a
@@ -1766,7 +1412,7 @@ impl Editor {
                     &triggers,
                     &secondary_label,
                     self.workspace_trust_scroll,
-                    &theme_clone,
+                    theme_clone,
                     draw_trust,
                 ),
             )
@@ -1774,6 +1420,510 @@ impl Editor {
             None
         };
         self.active_chrome_mut().workspace_trust_dialog = trust_layout;
+    }
+
+    /// Split `main_content_area` into the editor content area and the
+    /// file-explorer sidebar rect, updating the cached explorer rect for hit
+    /// testing. Returns `(editor_content_area, explorer_rect)`, where
+    /// `explorer_rect` is `None` when the explorer is hidden (the whole region
+    /// is the editor's). The split is kept while a sync is in progress, to
+    /// avoid a one-frame flicker. This decides layout only — painting the
+    /// sidebar is [`render_file_explorer`], which draws into the returned rect.
+    fn split_file_explorer_area(
+        &mut self,
+        main_content_area: ratatui::layout::Rect,
+    ) -> (ratatui::layout::Rect, Option<ratatui::layout::Rect>) {
+        let file_explorer_should_show = self.file_explorer_visible()
+            && (self.file_explorer().is_some()
+                || self.active_window().file_explorer_sync_in_progress);
+
+        if !file_explorer_should_show {
+            // No file explorer: use entire main content area for editor
+            self.active_layout_mut().file_explorer_area = None;
+            return (main_content_area, None);
+        }
+
+        // Split horizontally based on side placement
+        tracing::trace!(
+            "render: file explorer layout active (present={}, sync_in_progress={}, side={:?})",
+            self.file_explorer().is_some(),
+            self.active_window().file_explorer_sync_in_progress,
+            self.active_window().file_explorer_side
+        );
+        let explorer_cols = self
+            .active_window()
+            .file_explorer_width
+            .to_cols(main_content_area.width);
+
+        let (explorer_area, editor_area) = match self.active_window().file_explorer_side {
+            FileExplorerSide::Left => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(explorer_cols), Constraint::Min(0)])
+                    .split(main_content_area);
+                (chunks[0], chunks[1])
+            }
+            FileExplorerSide::Right => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Min(0), Constraint::Length(explorer_cols)])
+                    .split(main_content_area);
+                (chunks[1], chunks[0])
+            }
+        };
+
+        self.active_layout_mut().file_explorer_area = Some(explorer_area);
+        (editor_area, Some(explorer_area))
+    }
+
+    /// Paint the file-explorer sidebar into `area`. Composable: it draws only
+    /// into the given rect and makes no layout decisions. A no-op when the
+    /// explorer isn't materialised (mid-sync the rect stays reserved but
+    /// blank).
+    fn render_file_explorer(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        // Get connection string before mutable borrow of file_explorer.
+        let remote_connection = self.connection_display_string();
+
+        // Render file explorer (only if we have it - during sync we just keep the area reserved).
+        // Uses direct `self.windows.get_mut(...)` (not `file_explorer_mut()`) so the body
+        // can keep reading other Editor fields (buffers, theme, keybindings, …) — Rust
+        // splits the borrow on `self.windows` from the borrows on those other fields.
+        let active_id = self.active_window;
+        // Read window-state inputs before taking the &mut borrow on the
+        // window for the explorer/buffer access below.
+        // The explorer reads as focused only when it actually owns the
+        // keyboard — not when a focused orchestrator dock has stolen it
+        // out from under the (still-FileExplorer) window context. Without
+        // this guard the explorer keeps its accent border while the dock
+        // is driving, making it ambiguous which panel is focused.
+        let is_focused = self.active_window().key_context == KeyContext::FileExplorer
+            && !self.dock.as_ref().is_some_and(|d| d.focused);
+        let key_context_clone = self.active_window().key_context.clone();
+        let close_button_hovered = matches!(
+            &self.active_window().mouse_state.hover_target,
+            Some(HoverTarget::FileExplorerCloseButton)
+        );
+        let slot_resolver = self.file_explorer_slot_resolver();
+        // Theme-key runs the explorer records as it paints; applied to the
+        // chrome cell map after the window borrow is released.
+        let mut fe_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+        // Web renders the sidebar natively from `file_explorer_view`; skip
+        // its cell drawing (layout/viewport still applied).
+        let fe_draw = !self.suppress_chrome_cells;
+        // Take one &mut on the active window; the explorer + buffers
+        // come from disjoint sub-fields so they can coexist.
+        let __win = self
+            .windows
+            .get_mut(&active_id)
+            .expect("active window must exist");
+        let __buffers_ref: &crate::app::window::WindowBuffers = &__win.buffers;
+        if let Some(explorer) = __win.file_explorer.as_mut() {
+            // Build set of files with unsaved changes
+            let mut files_with_unsaved_changes = std::collections::HashSet::new();
+            for (buffer_id, state) in __buffers_ref {
+                if state.buffer.is_modified() {
+                    if let Some(metadata) = __win.buffer_metadata.get(buffer_id) {
+                        if let Some(file_path) = metadata.file_path() {
+                            files_with_unsaved_changes.insert(file_path.clone());
+                        }
+                    }
+                }
+            }
+
+            let keybindings = self.keybindings.read().unwrap();
+            let empty: Vec<std::path::PathBuf> = Vec::new();
+            let cut_paths = __win
+                .file_explorer_clipboard
+                .as_ref()
+                .filter(|cb| cb.is_cut)
+                .map(|cb| cb.paths.as_slice())
+                .unwrap_or(empty.as_slice());
+            let deco = ExplorerDecorations {
+                slot_resolver,
+                decorations: &__win.file_explorer_decoration_cache,
+                slot_overrides: &__win.file_explorer_slot_override_cache,
+            };
+            FileExplorerRenderer::render(
+                explorer,
+                frame,
+                area,
+                deco,
+                is_focused,
+                &files_with_unsaved_changes,
+                &keybindings,
+                key_context_clone,
+                &*self.theme.read().unwrap(),
+                close_button_hovered,
+                remote_connection.as_deref(),
+                cut_paths,
+                &self.config.file_explorer,
+                &mut crate::app::types::CellThemeRecorder::new(&mut fe_runs),
+                fe_draw,
+            );
+        }
+        // Note: if file_explorer is None but sync_in_progress is true,
+        // we just leave the area blank (or could render a placeholder)
+        self.active_chrome_mut().apply_theme_runs(&fe_runs);
+    }
+
+    /// Render the status bar into `area`, unless it's toggled off or a
+    /// suggestions / file-browser popup is occupying the bottom row. The
+    /// status-bar-only inputs (LSP segment, messages, chord state, update
+    /// banner, …) are computed here; `display_name`, `theme`, and
+    /// `keybindings` are shared with other chrome and passed in.
+    #[allow(clippy::too_many_arguments)]
+    fn render_status_bar_row(
+        &mut self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        display_name: &str,
+        theme: &crate::view::theme::Theme,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        has_suggestions: bool,
+        has_file_browser: bool,
+    ) {
+        let status_message = self.active_window().status_message.clone();
+        let plugin_status_message = self.active_window().plugin_status_message.clone();
+        // Compute a simple buffer-aware LSP indicator.
+        // Compose the LSP status-bar segment for the active buffer. This
+        // runs every render — the editor has no precomputed LSP-status
+        // string cached anywhere else, so there is a single source of
+        // truth for what the user sees.
+        //
+        // Priority order (first non-empty wins):
+        //
+        //   1. Active `$/progress` work for this language — e.g.
+        //      "LSP (cpp): indexing (42%)". Conveys the transient
+        //      startup/indexing phase.
+        //   2. A running server — "LSP". Short because detail belongs
+        //      in LSP-specific UI, not the compact status bar pill.
+        //   3. Configured `auto_start=true` servers that haven't started
+        //      (error / crashed / pending) — "LSP off".
+        //   4. Configured `enabled && !auto_start` servers that the user
+        //      has to opt into — "LSP: off (N)".
+        //   5. Nothing.
+        //
+        // Rules 3 and 4 address heuristic eval H-1: without them, a
+        // configured-but-dormant server is indistinguishable from "no
+        // LSP at all."
+        let current_language = self
+            .buffers()
+            .get(&self.active_buffer())
+            .map(|s| s.language.clone())
+            .unwrap_or_default();
+        let buffer_lsp_disabled_reason = self
+            .active_window()
+            .buffer_metadata
+            .get(&self.active_buffer())
+            .filter(|m| !m.lsp_enabled)
+            .and_then(|m| m.lsp_disabled_reason.as_deref());
+        let (lsp_status, lsp_indicator_state) = compose_lsp_status(
+            &current_language,
+            buffer_lsp_disabled_reason,
+            &self.active_window().lsp_progress,
+            &self.active_window().lsp_server_statuses,
+            &self.config.lsp,
+            &self.active_window().user_dismissed_lsp_languages,
+            self.config.lsp_enabled,
+        );
+        let chord_state_cloned = self.active_window().chord_state.clone(); // Clone the chord state
+
+        // Get update availability info
+        let update_available = self.latest_version().map(|v| v.to_string());
+
+        // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
+        if self.active_window().status_bar_visible && !has_suggestions && !has_file_browser {
+            // Get warning level for colored indicator (respects config setting)
+            // LSP warning level is scoped to the current buffer's language
+            let (warning_level, general_warning_count) =
+                if self.config.warnings.show_status_indicator {
+                    let lsp_level = {
+                        use crate::services::async_bridge::LspServerStatus;
+                        let mut level = WarningLevel::None;
+                        for ((lang, _), status) in &self.active_window().lsp_server_statuses {
+                            if lang == &current_language {
+                                match status {
+                                    LspServerStatus::Error => {
+                                        level = WarningLevel::Error;
+                                        break;
+                                    }
+                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
+                                        if level != WarningLevel::Error {
+                                            level = WarningLevel::Warning;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        level
+                    };
+                    (
+                        lsp_level,
+                        self.active_window().warning_domains.general.count,
+                    )
+                } else {
+                    (WarningLevel::None, 0)
+                };
+
+            // Which clickable status-bar segment (if any) the mouse is over —
+            // drives hover styling generically (one variant for the whole bar).
+            let status_bar_hovered = match &self.active_window().mouse_state.hover_target {
+                Some(HoverTarget::StatusBarClickable(id)) => Some(*id),
+                _ => None,
+            };
+
+            let remote_connection = self.connection_display_string();
+            // Active window's last failed-reconnect error (drives a core
+            // FailedAttach indicator for a dormant remote workspace).
+            let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
+
+            // Get session name for display (only in session mode)
+            let session_name = self.session_name().map(|s| s.to_string());
+
+            let active_split = self.effective_active_split();
+            let active_buf = self.active_buffer();
+            let default_cursors = crate::model::cursor::Cursors::new();
+            let is_read_only = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.read_only)
+                .unwrap_or(false);
+            let is_synthetic_placeholder = self
+                .active_window()
+                .buffer_metadata
+                .get(&active_buf)
+                .map(|m| m.synthetic_placeholder)
+                .unwrap_or(false);
+            // Compute plugin-provided status-bar values before taking the
+            // mutable window borrow below.
+            let dynamic_status_bar_elements = self.get_status_bar_element_values(active_buf);
+            // Active session's trust level for the always-present `{trust}`
+            // indicator — read here (Copy) before the mutable window borrow.
+            let workspace_trust_level = self.authority().workspace_trust.level();
+            // Single window borrow, split into buffers + cursors so the
+            // status-bar context can hold both.
+            let __active_id = self.active_window;
+            // Theme-key runs the status bar records as it paints; applied to
+            // the chrome's cell map after the window borrow is released.
+            let mut status_bar_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            // Web renders the status bar natively from `status_view`; skip painting
+            // it (the semantic segments + indicator rects are still captured).
+            let sb_draw = !self.suppress_chrome_cells;
+            let __win = self
+                .windows
+                .get_mut(&__active_id)
+                .expect("active window must exist");
+            let status_bar_layout = __win
+                .buffers
+                .with_buffer_and_view_states(active_buf, |state, vs_map| {
+                    let cursors = vs_map
+                        .get(&active_split)
+                        .map(|v| &v.cursors)
+                        .unwrap_or(&default_cursors);
+                    let mut status_ctx = crate::view::ui::status_bar::StatusBarContext {
+                        state,
+                        cursors,
+                        status_message: &status_message,
+                        plugin_status_message: &plugin_status_message,
+                        lsp_status: &lsp_status,
+                        lsp_indicator_state,
+                        theme,
+                        display_name,
+                        keybindings,
+                        chord_state: &chord_state_cloned,
+                        update_available: update_available.as_deref(),
+                        warning_level,
+                        general_warning_count,
+                        hovered: status_bar_hovered,
+                        remote_connection: remote_connection.as_deref(),
+                        session_name: session_name.as_deref(),
+                        read_only: is_read_only,
+                        remote_state_override: self.remote_indicator_override.as_ref(),
+                        remote_reconnect_error: remote_reconnect_error.as_deref(),
+                        is_synthetic_placeholder,
+                        // Filled in by `render_status` from the user's
+                        // status_bar config; the value here is just a
+                        // safe default for the rare path that builds the
+                        // ctx but doesn't run `render_status`.
+                        remote_indicator_on_bar: false,
+                        dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
+                        workspace_trust_level,
+                    };
+                    let mut sb_rec =
+                        crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);
+                    StatusBarRenderer::render_status_bar(
+                        frame,
+                        area,
+                        &mut status_ctx,
+                        &self.config.editor.status_bar,
+                        Some(&mut sb_rec),
+                        sb_draw,
+                    )
+                })
+                .expect("active buffer must be present");
+            self.active_chrome_mut().apply_theme_runs(&status_bar_runs);
+
+            // Store status bar layout for click detection
+            let status_bar = &mut self.active_chrome_mut().status_bar;
+            status_bar.area = Some((area.y, area.x, area.width));
+            status_bar.clickable = status_bar_layout.clickable;
+            status_bar.plugin_token_areas = status_bar_layout.plugin_token_areas;
+            status_bar.segments = status_bar_layout.segments;
+        }
+    }
+
+    /// Render the modal overlays that dim the chrome behind them: settings,
+    /// calibration wizard, keybinding editor, and event-debug dialog. Each is
+    /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects
+    /// them natively. Rendered before the menu bar so open menus overlay them.
+    fn render_modal_overlays(&mut self, frame: &mut Frame, chrome_area: ratatui::layout::Rect) {
+        // Render settings modal (before menu bar so menus can overlay)
+        // Check visibility first to avoid borrow conflict with dimming
+        // The web renders Settings natively from `settings_view`; paint cells
+        // only for the TUI.
+        let draw_settings = !self.suppress_chrome_cells;
+        let settings_visible = draw_settings
+            && self
+                .settings_state
+                .as_ref()
+                .map(|s| s.visible)
+                .unwrap_or(false);
+        if settings_visible {
+            // Dim the editor content behind the settings modal. Use the
+            // chrome area (right of a left dock) so the modal sits beside
+            // the persistent dock instead of being overlapped by it.
+            crate::view::dimming::apply_dimming(frame, chrome_area);
+        }
+        if let Some(ref mut settings_state) = self.settings_state {
+            if !draw_settings {
+                // keyboard-driven native render; skip cells (and the focus-state
+                // update tied to the cell layout pass).
+            } else if settings_state.visible {
+                settings_state.update_focus_states();
+                let settings_layout = crate::view::settings::render_settings(
+                    frame,
+                    chrome_area,
+                    settings_state,
+                    &*self.theme.read().unwrap(),
+                );
+                self.active_chrome_mut().settings_layout = Some(settings_layout);
+            }
+        }
+
+        // Render calibration wizard if active. (Deprecated; the web has no native
+        // projection for it, so suppress its cells there rather than bleed.)
+        if !self.suppress_chrome_cells {
+            if let Some(ref wizard) = self.calibration_wizard {
+                // Dim the editor content behind the wizard modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::calibration_wizard::render_calibration_wizard(
+                    frame,
+                    chrome_area,
+                    wizard,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+
+        // Event-debug: the web renders it natively from `aux_modals_view`; paint
+        // cells only for the TUI.
+        let draw_aux = !self.suppress_chrome_cells;
+
+        // Keybinding editor: web renders it natively from `keybinding_editor_view`;
+        // paint cells only for the TUI.
+        if draw_aux {
+            if let Some(ref mut kb_editor) = self.keybinding_editor {
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::keybinding_editor::render_keybinding_editor(
+                    frame,
+                    chrome_area,
+                    kb_editor,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+
+        // Render event debug dialog if active
+        if draw_aux {
+            if let Some(ref debug) = self.active_window().event_debug {
+                // Dim the editor content behind the dialog modal
+                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::event_debug::render_event_debug(
+                    frame,
+                    chrome_area,
+                    debug,
+                    &*self.theme.read().unwrap(),
+                );
+            }
+        }
+    }
+
+    /// Render the menu bar into `menu_bar_area`, or clear the cached layout
+    /// when the bar is hidden. Drawn late in `render` so its dropdowns sit
+    /// above all other content.
+    fn render_menu_bar(&mut self, frame: &mut Frame, menu_bar_area: ratatui::layout::Rect) {
+        if self.active_window().menu_bar_visible {
+            // Pre-expand DynamicSubmenu items once per registry; without this
+            // MenuRenderer::render rescans + reparses every theme JSON file
+            // on every frame.
+            self.expanded_menus_cache.update(
+                &self.theme_registry,
+                &self.menus,
+                &self.menu_state.themes_dir,
+            );
+            let hover_target = self.active_window().mouse_state.hover_target.clone();
+            let menu_bar_mnemonics = self.config.editor.menu_bar_mnemonics;
+            let draw_chrome = !self.suppress_chrome_cells;
+            // The single content source shared with the web `menu_view()`
+            // projection (uses the cache populated just above).
+            let all_menus = self.all_menus_expanded();
+            let keybindings = self.keybindings.read().unwrap();
+            let mut menu_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
+            let new_menu_layout = crate::view::ui::MenuRenderer::render(
+                frame,
+                menu_bar_area,
+                &all_menus,
+                &self.menu_state,
+                &keybindings,
+                &*self.theme.read().unwrap(),
+                hover_target.as_ref(),
+                menu_bar_mnemonics,
+                Some(&mut crate::app::types::CellThemeRecorder::new(
+                    &mut menu_runs,
+                )),
+                draw_chrome,
+            );
+            drop(keybindings);
+            self.active_chrome_mut().menu_layout = Some(new_menu_layout);
+            self.active_chrome_mut().apply_theme_runs(&menu_runs);
+        } else {
+            self.active_chrome_mut().menu_layout = None;
+        }
+    }
+
+    /// Render the tab, file-explorer, and new-tab context menus. TUI-only
+    /// cell drawing; the web projects these natively from `context_menu_view`.
+    fn render_context_menus(&mut self, frame: &mut Frame) {
+        if !self.suppress_chrome_cells {
+            // Render tab context menu if open
+            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
+            if let Some(menu) = tab_ctx_menu {
+                self.render_tab_context_menu(frame, &menu);
+            }
+
+            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
+            if let Some(menu) = fe_ctx_menu {
+                self.render_file_explorer_context_menu(frame, &menu);
+            }
+
+            // Render the "+" new-tab popup menu if open
+            let new_tab_menu = self.active_window().new_tab_menu.clone();
+            if let Some(menu) = new_tab_menu {
+                self.render_new_tab_menu(frame, &menu);
+            }
+        }
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.
@@ -2282,6 +2432,28 @@ impl Editor {
         // than panic; the next plugin refresh re-emits the spec
         // without the dead embed.
         let preview_draw_tab_bar = !self.suppress_chrome_cells;
+        // Same immutable render settings as the live editor, but with
+        // scrollbars and tildes suppressed — they're noisy in a small
+        // preview rect where the active session's chrome is authoritative.
+        // Built before the `&mut self.windows` borrow (it only borrows
+        // `self.config`).
+        let preview_cfg = crate::view::ui::EditorRenderConfig {
+            show_vertical_scrollbar: false,
+            show_horizontal_scrollbar: false,
+            show_tilde: false,
+            ..crate::view::ui::EditorRenderConfig::new(
+                &self.config.editor,
+                self.background_fade,
+                self.software_cursor_only,
+            )
+        };
+        // Group the appearance inputs for the preview pass. `theme` is the
+        // caller-supplied borrow; built before the `&mut self.windows` borrow.
+        let preview_style = crate::view::ui::RenderStyle {
+            theme,
+            ansi_background: self.ansi_background.as_ref(),
+            cfg: preview_cfg,
+        };
         let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
             return;
         };
@@ -2319,7 +2491,7 @@ impl Editor {
             .buffers
             .with_all_mut(|preview_buffers, mgr, view_states| {
                 let result = crate::view::ui::SplitRenderer::render_content(
-                    frame,
+                    frame.buffer_mut(),
                     inner,
                     &*mgr,
                     preview_buffers,
@@ -2328,14 +2500,8 @@ impl Editor {
                     __preview_event_logs,
                     __preview_composite_buffers,
                     __preview_composite_view_states,
-                    theme,
-                    self.ansi_background.as_ref(),
-                    self.background_fade,
+                    preview_style,
                     lsp_waiting,
-                    self.config.editor.large_file_threshold_bytes,
-                    self.config.editor.line_wrap,
-                    self.config.editor.estimated_line_length,
-                    self.config.editor.highlight_context_bytes,
                     Some(view_states),
                     __preview_grouped_subtrees,
                     true, // hide_cursor — the active session owns the hardware caret
@@ -2343,22 +2509,9 @@ impl Editor {
                     None,
                     None,
                     false, // not maximized
-                    self.config.editor.relative_line_numbers,
                     preview_tab_bar_visible,
-                    self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
-                    self.software_cursor_only,
-                    // Scrollbars are noisy in a small preview rect; the
-                    // active session's chrome is the source of truth.
-                    false,
-                    false,
                     false, // terminal_mode — scrollbars are off in the preview anyway
-                    self.config.editor.diagnostics_inline_text,
-                    false, // hide tilde markers in the preview
-                    self.config.editor.highlight_current_column,
-                    self.config.editor.indentation_guide,
-                    &self.config.editor.indentation_guide_glyph,
-                    self.config.editor.hide_current_line_on_selection,
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,
@@ -3366,27 +3519,24 @@ impl Editor {
             {
                 self.render_session_preview_into_rect(frame, inner, &theme);
             } else if inner.height > 0 && inner.width > 0 {
-                // Snapshot scalar config values up front so the
-                // mutable-borrow split below has minimal scope.
-                // AnsiBackground isn't Clone, so it's taken as a
-                // borrow; Rust permits disjoint-field splitting
-                // between `&self.ansi_background` and the `&mut`
-                // accesses below because they touch distinct fields.
-                let bg_fade = self.background_fade;
-                let estimated_line_length = self.config.editor.estimated_line_length;
-                let highlight_context_bytes = self.config.editor.highlight_context_bytes;
-                let relative_line_numbers = self.config.editor.relative_line_numbers;
-                let use_terminal_bg = self.config.editor.use_terminal_bg;
+                // Snapshot the per-split scalars and group the appearance
+                // inputs into one `RenderStyle`, all before the `&mut
+                // self.windows` borrow below — they touch only
+                // `self.config`/`self.theme`/`self.ansi_background`, which Rust
+                // splits from `self.windows` as distinct fields.
                 let session_mode = self.session_mode || !self.software_cursor_only;
-                let software_cursor_only = self.software_cursor_only;
-                let diagnostics_inline_text = self.config.editor.diagnostics_inline_text;
                 let show_tilde = false; // preview hides tilde markers
                 let highlight_current_column = self.config.editor.highlight_current_column;
-                let indentation_guide = self.config.editor.indentation_guide;
-                let indentation_guide_glyph = self.config.editor.indentation_guide_glyph.clone();
                 let screen_width = frame.area().width;
-
-                let ansi_ref = self.ansi_background.as_ref();
+                let style = crate::view::ui::RenderStyle {
+                    theme: &theme,
+                    ansi_background: self.ansi_background.as_ref(),
+                    cfg: crate::view::ui::EditorRenderConfig::new(
+                        &self.config.editor,
+                        self.background_fade,
+                        self.software_cursor_only,
+                    ),
+                };
                 let __win = self
                     .windows
                     .get_mut(&self.active_window)
@@ -3427,35 +3577,25 @@ impl Editor {
                     let folds_ref = &mut buf_state.folds;
                     let event_log = event_logs.get_mut(&buffer_id);
                     let _ = crate::view::ui::SplitRenderer::render_phantom_leaf(
-                        frame,
+                        frame.buffer_mut(),
                         state,
                         &cursors,
                         viewport_ref,
                         folds_ref,
                         event_log,
                         inner,
-                        &theme,
-                        ansi_ref,
-                        bg_fade,
+                        style,
                         view_mode,
                         compose_width,
                         compose_column_guides,
                         view_transform,
-                        estimated_line_length,
-                        highlight_context_bytes,
                         buffer_id,
-                        relative_line_numbers,
-                        use_terminal_bg,
                         session_mode,
-                        software_cursor_only,
                         &rulers,
                         show_line_numbers,
                         highlight_current_line,
-                        diagnostics_inline_text,
                         show_tilde,
                         highlight_current_column,
-                        indentation_guide,
-                        &indentation_guide_glyph,
                         cell_theme_map,
                         screen_width,
                     );
@@ -4278,7 +4418,7 @@ impl Editor {
             return;
         }
 
-        let dock_sw = self.active_chrome().last_frame_width;
+        let dock_sw = self.active_chrome().last_frame.width;
         let max_rows = inner.height as usize;
         for (i, entry) in entries.iter().take(max_rows).enumerate() {
             let recorder = is_dock.then(|| {
@@ -4454,7 +4594,7 @@ impl Editor {
         // borders).
         let panel_bg = theme.popup_bg;
         let panel_bg_style = ratatui::style::Style::default().bg(panel_bg);
-        let overlay_sw = self.active_chrome().last_frame_width;
+        let overlay_sw = self.active_chrome().last_frame.width;
         for o in &overlays {
             let row_y = inner.y.saturating_add(o.buffer_row as u16);
             if row_y >= inner.y.saturating_add(inner.height) {

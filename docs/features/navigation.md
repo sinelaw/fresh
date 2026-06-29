@@ -3,6 +3,8 @@
 *   **Go to Definition:** Use the command palette (`Ctrl+P >`) and search for "Go to Definition" to jump to the definition of a symbol under the cursor (requires LSP).
 *   **Position History:** Navigate back and forward through your edit locations using `Alt+Left` and `Alt+Right`.
 *   **Open File Jump:** The Open File prompt and Quick Open (`Ctrl+O`) support `path:line[:col]` syntax to jump directly to a location after opening (e.g. `src/main.rs:42:10`).
+*   **Hidden files:** The Open File prompt hides dotfiles by default. Start your filter with `.` to reveal them (e.g. `.env` surfaces `.envrc`).
+*   **New tab:** The tab bar's **+** button opens a popup to create a New Terminal or New File.
 
 ## Large Files
 

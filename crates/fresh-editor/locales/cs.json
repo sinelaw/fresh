@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Použití nastavení selhalo: %{error}",
   "settings.failed_to_open": "Otevření nastavení selhalo: %{error}",
   "settings.failed_to_save": "Uložení nastavení selhalo: %{error}",
+  "settings.save_failed_title": "Nepodařilo se uložit nastavení",
+  "settings.save_failed_unchanged": "Váš konfigurační soubor zůstal beze změny, takže jej můžete opravit.",
+  "settings.save_failed_open_hint": "Stiskněte Esc pro otevření konfiguračního souboru a jeho opravu.",
   "settings.field.editor.auto_close": "Automatické uzavírání",
   "settings.field.editor.whitespace_show": "Zobrazit bílé znaky",
   "settings.field.editor.whitespace_spaces_inner": "Vnitřní mezery",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Zobrazit nabídku jen pro čtení",
   "read_only.menu.title": "Vyrovnávací paměť jen pro čtení",
   "read_only.menu.enable_editing": "Povolit úpravy",
-  "read_only.menu.cancel": "Zrušit"
+  "read_only.menu.cancel": "Zrušit",
+  "cmd.save_macro_to_init": "Makro: Uložit do init.ts",
+  "cmd.save_macro_to_init_desc": "Uložit zaznamenané makro do init.ts jako upravitelný blok defineMacro()",
+  "cmd.promote_macro": "Makro: Povýšit na příkaz",
+  "cmd.promote_macro_desc": "Převést zaznamenané makro na upravitelný příkaz init.ts, který lze rozšířit libovolným kódem",
+  "action.prompt_save_macro_to_init": "Uložit makro do init.ts (vyžádá si registr)",
+  "action.prompt_promote_macro": "Povýšit makro na příkaz init.ts (vyžádá si registr)",
+  "macro.init_write_failed": "Nepodařilo se zapsat init.ts: %{error}",
+  "macro.promoted_to_init": "Makro '%{key}' povýšeno na upravitelný příkaz v init.ts (znovu načteno)",
+  "macro.saved_to_init": "Makro '%{key}' uloženo do init.ts (znovu načteno)"
 }

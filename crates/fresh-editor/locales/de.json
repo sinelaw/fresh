@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Einstellungen konnten nicht angewendet werden: %{error}",
   "settings.failed_to_open": "Einstellungen konnten nicht geöffnet werden: %{error}",
   "settings.failed_to_save": "Einstellungen konnten nicht gespeichert werden: %{error}",
+  "settings.save_failed_title": "Einstellungen konnten nicht gespeichert werden",
+  "settings.save_failed_unchanged": "Ihre Konfigurationsdatei wurde nicht verändert, damit Sie sie korrigieren können.",
+  "settings.save_failed_open_hint": "Drücken Sie Esc, um Ihre Konfigurationsdatei zu öffnen und zu korrigieren.",
   "settings.field.editor.auto_close": "Automatisches Schließen",
   "settings.field.editor.whitespace_show": "Leerzeichen anzeigen",
   "settings.field.editor.whitespace_spaces_inner": "Innere Leerzeichen",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Schreibschutz-Menü anzeigen",
   "read_only.menu.title": "Schreibgeschützter Puffer",
   "read_only.menu.enable_editing": "Bearbeitung aktivieren",
-  "read_only.menu.cancel": "Abbrechen"
+  "read_only.menu.cancel": "Abbrechen",
+  "cmd.save_macro_to_init": "Makro: In init.ts speichern",
+  "cmd.save_macro_to_init_desc": "Ein aufgezeichnetes Makro als bearbeitbaren defineMacro()-Block in init.ts ablegen",
+  "cmd.promote_macro": "Makro: Zu Befehl hochstufen",
+  "cmd.promote_macro_desc": "Ein aufgezeichnetes Makro in einen bearbeitbaren init.ts-Befehl umwandeln, den du mit beliebigem Code erweitern kannst",
+  "action.prompt_save_macro_to_init": "Makro in init.ts speichern (fragt nach Register)",
+  "action.prompt_promote_macro": "Makro zu init.ts-Befehl hochstufen (fragt nach Register)",
+  "macro.init_write_failed": "init.ts konnte nicht geschrieben werden: %{error}",
+  "macro.promoted_to_init": "Makro '%{key}' zu einem bearbeitbaren Befehl in init.ts hochgestuft (neu geladen)",
+  "macro.saved_to_init": "Makro '%{key}' in init.ts gespeichert (neu geladen)"
 }

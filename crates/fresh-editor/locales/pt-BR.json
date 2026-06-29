@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Falha ao aplicar configurações: %{error}",
   "settings.failed_to_open": "Falha ao abrir configurações: %{error}",
   "settings.failed_to_save": "Falha ao salvar configurações: %{error}",
+  "settings.save_failed_title": "Não foi possível salvar as configurações",
+  "settings.save_failed_unchanged": "Seu arquivo de configuração não foi alterado para que você possa corrigi-lo.",
+  "settings.save_failed_open_hint": "Pressione Esc para abrir seu arquivo de configuração e corrigi-lo.",
   "settings.field.editor.auto_close": "Fechamento automático",
   "settings.field.editor.whitespace_show": "Mostrar espaços em branco",
   "settings.field.editor.whitespace_spaces_inner": "Espaços internos",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Mostrar menu somente leitura",
   "read_only.menu.title": "Buffer somente leitura",
   "read_only.menu.enable_editing": "Ativar edição",
-  "read_only.menu.cancel": "Cancelar"
+  "read_only.menu.cancel": "Cancelar",
+  "cmd.save_macro_to_init": "Macro: Salvar no init.ts",
+  "cmd.save_macro_to_init_desc": "Persistir uma macro gravada no init.ts como um bloco defineMacro() editável",
+  "cmd.promote_macro": "Macro: Promover a comando",
+  "cmd.promote_macro_desc": "Transformar uma macro gravada em um comando do init.ts editável que você pode estender com código arbitrário",
+  "action.prompt_save_macro_to_init": "Salvar macro no init.ts (solicita o registrador)",
+  "action.prompt_promote_macro": "Promover macro a comando do init.ts (solicita o registrador)",
+  "macro.init_write_failed": "Falha ao gravar o init.ts: %{error}",
+  "macro.promoted_to_init": "Macro '%{key}' promovida a um comando editável no init.ts (recarregado)",
+  "macro.saved_to_init": "Macro '%{key}' salva no init.ts (recarregado)"
 }

@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Не вдалося застосувати налаштування: %{error}",
   "settings.failed_to_open": "Не вдалося відкрити налаштування: %{error}",
   "settings.failed_to_save": "Не вдалося зберегти налаштування: %{error}",
+  "settings.save_failed_title": "Не вдалося зберегти налаштування",
+  "settings.save_failed_unchanged": "Ваш файл конфігурації залишився без змін, тож ви можете його виправити.",
+  "settings.save_failed_open_hint": "Натисніть Esc, щоб відкрити файл конфігурації та виправити його.",
   "settings.field.editor.auto_close": "Автозакриття",
   "settings.field.editor.whitespace_show": "Показати пробіли",
   "settings.field.editor.whitespace_spaces_inner": "Внутрішні пробіли",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Показати меню «лише читання»",
   "read_only.menu.title": "Буфер лише для читання",
   "read_only.menu.enable_editing": "Увімкнути редагування",
-  "read_only.menu.cancel": "Скасувати"
+  "read_only.menu.cancel": "Скасувати",
+  "cmd.save_macro_to_init": "Макрос: Зберегти в init.ts",
+  "cmd.save_macro_to_init_desc": "Зберегти записаний макрос у init.ts як редагований блок defineMacro()",
+  "cmd.promote_macro": "Макрос: Підвищити до команди",
+  "cmd.promote_macro_desc": "Перетворити записаний макрос на редаговану команду init.ts, яку можна розширити довільним кодом",
+  "action.prompt_save_macro_to_init": "Зберегти макрос у init.ts (запитує регістр)",
+  "action.prompt_promote_macro": "Підвищити макрос до команди init.ts (запитує регістр)",
+  "macro.init_write_failed": "Не вдалося записати init.ts: %{error}",
+  "macro.promoted_to_init": "Макрос '%{key}' підвищено до редагованої команди в init.ts (перезавантажено)",
+  "macro.saved_to_init": "Макрос '%{key}' збережено в init.ts (перезавантажено)"
 }

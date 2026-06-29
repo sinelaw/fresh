@@ -173,6 +173,16 @@ impl Editor {
                 PopupConfirmResult::Done
             }
 
+            Some(PopupResolver::SettingsSaveError { layer }) => {
+                // Acknowledging the save-failed popup opens the offending
+                // config file so the user can fix the syntax error.
+                self.hide_popup();
+                if let Err(e) = self.open_config_file(layer) {
+                    tracing::warn!("Failed to open config file after save error: {}", e);
+                }
+                PopupConfirmResult::Done
+            }
+
             Some(PopupResolver::None) | None => {
                 self.hide_popup();
                 PopupConfirmResult::Done
@@ -385,6 +395,15 @@ impl Editor {
                 // The trust prompt is a forced choice: there is no "undecided"
                 // outcome, so Escape does nothing. The user must pick Trust /
                 // Restricted / Blocked (each records a concrete decision).
+            }
+
+            Some(PopupResolver::SettingsSaveError { layer }) => {
+                // Acknowledging the save-failed popup opens the offending
+                // config file so the user can fix the syntax error.
+                self.hide_popup();
+                if let Err(e) = self.open_config_file(layer) {
+                    tracing::warn!("Failed to open config file after save error: {}", e);
+                }
             }
 
             Some(PopupResolver::None) | None => {

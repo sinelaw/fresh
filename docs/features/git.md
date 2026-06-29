@@ -7,6 +7,7 @@ Fresh has built-in tooling for reviewing diffs, navigating git history, and jump
 *   **Review Diff** — unified buffer of working-tree hunks, with stage / unstage / discard on the cursor row.
 *   **Review: Commit Range / PR Branch** — same buffer against an arbitrary range or a branch's commits.
 *   **Git Log** — magit-style log with a live-preview diff panel on the right.
+*   **Git Blame** — magit-style blame for the current file.
 *   **Diff Chunk Navigation** — jump between hunks from git *or* saved diff files with the same commands.
 
 ## Review Diff
@@ -27,7 +28,15 @@ Inside a review:
 
 ## Git Log
 
-**Git Log** opens a live-preview commit history. Moving through the log updates the right panel with the diff for the selected commit — no need to open each one to see what it touched. Commit messages wrap, columns align, and the toolbar is clickable.
+**Git Log** opens a live-preview commit history. Moving through the log updates the right panel with the diff for the selected commit — no need to open each one to see what it touched. Commit messages wrap, columns align, and the toolbar is clickable. **Git Log (Current File)** scopes the history to the active buffer's file.
+
+## Git Blame
+
+**Git Blame** opens a magit-style blame for the current file. It lands on the line you were on when you ran it (multi-byte text included). **Git Blame: Go Back** re-blames at the parent commit of the current line so you can walk a line's history; **Git Blame: Close** dismisses the panel.
+
+## Live Diff
+
+**Live Diff** marks changed lines in the gutter as you edit, comparing the buffer against a reference. Toggle it with **Live Diff: Toggle**, and choose the reference with **Live Diff: vs HEAD**, **vs Disk**, or **vs Branch…**. When a changed line closely matches its original, the change is shown inline with word-level highlighting rather than as a separate removal and addition.
 
 ## Diff Chunk Navigation
 

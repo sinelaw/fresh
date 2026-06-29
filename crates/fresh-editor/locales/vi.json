@@ -1345,6 +1345,9 @@
   "settings.failed_to_apply": "Áp dụng cài đặt thất bại: %{error}",
   "settings.failed_to_open": "Mở cài đặt thất bại: %{error}",
   "settings.failed_to_save": "Lưu cài đặt thất bại: %{error}",
+  "settings.save_failed_title": "Không thể lưu cài đặt",
+  "settings.save_failed_unchanged": "Tệp cấu hình của bạn không bị thay đổi nên bạn có thể sửa nó.",
+  "settings.save_failed_open_hint": "Nhấn Esc để mở tệp cấu hình của bạn và sửa nó.",
   "settings.field.editor.auto_close": "Tự động đóng",
   "settings.field.editor.whitespace_show": "Hiển thị khoảng trắng",
   "settings.field.editor.whitespace_spaces_inner": "Khoảng trắng bên trong",
@@ -1563,5 +1566,14 @@
   "action.show_read_only_menu": "Hiện menu chỉ đọc",
   "read_only.menu.title": "Bộ đệm chỉ đọc",
   "read_only.menu.enable_editing": "Bật chỉnh sửa",
-  "read_only.menu.cancel": "Hủy"
+  "read_only.menu.cancel": "Hủy",
+  "cmd.save_macro_to_init": "Macro: Lưu vào init.ts",
+  "cmd.save_macro_to_init_desc": "Lưu macro đã ghi vào init.ts dưới dạng khối defineMacro() có thể chỉnh sửa",
+  "cmd.promote_macro": "Macro: Nâng thành lệnh",
+  "cmd.promote_macro_desc": "Chuyển macro đã ghi thành một lệnh init.ts có thể chỉnh sửa và mở rộng bằng mã tùy ý",
+  "action.prompt_save_macro_to_init": "Lưu macro vào init.ts (hỏi thanh ghi)",
+  "action.prompt_promote_macro": "Nâng macro thành lệnh init.ts (hỏi thanh ghi)",
+  "macro.init_write_failed": "Không thể ghi init.ts: %{error}",
+  "macro.promoted_to_init": "Đã nâng macro '%{key}' thành lệnh có thể chỉnh sửa trong init.ts (đã tải lại)",
+  "macro.saved_to_init": "Đã lưu macro '%{key}' vào init.ts (đã tải lại)"
 }

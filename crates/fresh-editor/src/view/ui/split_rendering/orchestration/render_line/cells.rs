@@ -311,10 +311,15 @@ impl CellPass<'_, '_, '_> {
             self.display_cell_text(ch, is_cursor, is_tab_start, &mut indicator_buf)
         };
 
-        // Apply subdued indicator colors from theme. Cursor / selection styling
-        // keeps precedence so guides do not obscure caret and selection state.
+        // Apply subdued indicator colors from theme. Cursor styling keeps
+        // precedence (so guides do not obscure the caret), but selection does
+        // not: a guide keeps its subdued foreground even inside a selection,
+        // layered over the selection background carried by `resolved.style`.
+        // This stops the guide glyph from lighting up to full-contrast text
+        // (which read as a literal glyph) when the leading whitespace is
+        // selected. Whitespace indicators still defer to selection styling.
         let mut style = resolved.style;
-        if is_indentation_guide && !is_cursor && !is_selected {
+        if is_indentation_guide && !is_cursor {
             style = style.fg(self.input.theme.indentation_guide_fg);
         } else if is_whitespace_indicator && !is_cursor && !is_selected {
             style = style.fg(self.input.theme.whitespace_indicator_fg);

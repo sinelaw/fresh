@@ -28,12 +28,12 @@ use super::scrollbar::{
     compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
     render_scrollbar, scrollbar_line_counts,
 };
+use super::EditorRenderConfig;
 use crate::app::types::ViewLineMapping;
 use crate::app::BufferMetadata;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
-use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::folding::FoldManager;
 use crate::view::split::SplitManager;
@@ -41,7 +41,7 @@ use crate::view::ui::tabs::TabsRenderer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::widgets::Widget;
 use render_buffer::compute_buffer_layout;
 // Re-exported one level up (split_rendering::SplitRenderer) so the
 // `render_phantom_leaf` façade can forward into the per-leaf
@@ -75,7 +75,7 @@ type VisibleBuffer = (LeafId, LeafId, BufferId, Rect, RenderKind);
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub(crate) fn render_content(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     split_manager: &SplitManager,
     buffers: &mut HashMap<BufferId, EditorState>,
@@ -89,14 +89,11 @@ pub(crate) fn render_content(
         (LeafId, BufferId),
         crate::view::composite_view::CompositeViewState,
     >,
-    theme: &crate::view::theme::Theme,
-    ansi_background: Option<&AnsiBackground>,
-    background_fade: f32,
+    // Appearance/policy group (theme + ANSI backdrop + editor render config),
+    // identical for every split. Unpacked into locals at the top of the body
+    // and threaded as-is into render_buffer_in_split.
+    style: crate::view::ui::RenderStyle<'_>,
     lsp_waiting: bool,
-    large_file_threshold_bytes: u64,
-    _line_wrap: bool,
-    estimated_line_length: usize,
-    highlight_context_bytes: usize,
     mut split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
     hide_cursor: bool,
@@ -104,24 +101,13 @@ pub(crate) fn render_content(
     hovered_close_split: Option<LeafId>,
     hovered_maximize_split: Option<LeafId>,
     is_maximized: bool,
-    relative_line_numbers: bool,
     tab_bar_visible: bool,
-    use_terminal_bg: bool,
     session_mode: bool,
-    software_cursor_only: bool,
-    show_vertical_scrollbar: bool,
-    show_horizontal_scrollbar: bool,
     // Whether the window is in terminal mode. When set, the active split's
     // terminal buffer is showing its live PTY grid (not the read-only
     // scrollback view), so its vertical scrollbar is suppressed and the grid
     // reclaims that column. Exiting terminal mode brings the scrollbar back.
     terminal_mode: bool,
-    diagnostics_inline_text: bool,
-    show_tilde: bool,
-    highlight_current_column: bool,
-    indentation_guide: IndentationGuideMode,
-    indentation_guide_glyph: &str,
-    hide_current_line_on_selection: bool,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -144,6 +130,23 @@ pub(crate) fn render_content(
     )>, // hit areas for separators inside active Grouped subtrees
 ) {
     let _span = tracing::trace_span!("render_content").entered();
+
+    // Unpack the style group. `theme` is forwarded to the sub-painters; the
+    // whole `style` (incl. `ansi_background` + full `cfg`) is threaded as-is
+    // into render_buffer_in_split. Only the `cfg` flags this layer reads itself
+    // (per-split flag math, scrollbars, composite) are bound below; the rest
+    // ride along inside `style.cfg`.
+    let crate::view::ui::RenderStyle { theme, cfg, .. } = style;
+    let EditorRenderConfig {
+        large_file_threshold_bytes,
+        use_terminal_bg,
+        show_vertical_scrollbar,
+        show_horizontal_scrollbar,
+        show_tilde,
+        highlight_current_column,
+        hide_current_line_on_selection,
+        ..
+    } = cfg;
 
     let base_visible = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
@@ -275,7 +278,7 @@ pub(crate) fn render_content(
         // Only render tabs and split control buttons when tab bar is visible
         if split_tab_bar_visible {
             render_split_tab_bar(
-                frame,
+                buf,
                 &layout,
                 split_id,
                 buffer_id,
@@ -319,7 +322,7 @@ pub(crate) fn render_content(
             .get(&buffer_id)
             .is_some_and(|m| m.synthetic_placeholder);
         if is_synthetic_placeholder {
-            render_placeholder_hint(frame, layout.content_rect, theme);
+            render_placeholder_hint(buf, layout.content_rect, theme);
             view_line_mappings.insert(split_id, Vec::new());
             continue;
         }
@@ -331,7 +334,7 @@ pub(crate) fn render_content(
             .is_some_and(|s| s.is_composite_buffer)
         {
             render_composite_split(
-                frame,
+                buf,
                 &layout,
                 split_id,
                 buffer_id,
@@ -447,7 +450,7 @@ pub(crate) fn render_content(
 
             let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
             let split_view_mappings = render_buffer_in_split(
-                frame,
+                buf,
                 state,
                 &split_cursors,
                 &mut viewport,
@@ -455,30 +458,20 @@ pub(crate) fn render_content(
                 event_log_opt,
                 layout.content_rect,
                 is_active,
-                theme,
-                ansi_background,
-                background_fade,
+                style,
                 lsp_waiting,
                 view_prefs.view_mode,
                 view_prefs.compose_width,
                 view_prefs.compose_column_guides,
                 view_prefs.view_transform,
-                estimated_line_length,
-                highlight_context_bytes,
                 buffer_id,
                 hide_cursor,
-                relative_line_numbers,
-                use_terminal_bg,
                 session_mode,
-                software_cursor_only,
                 effective_rulers,
                 view_prefs.show_line_numbers,
                 effective_highlight_current_line,
-                diagnostics_inline_text,
                 split_show_tilde,
                 highlight_current_column && state.show_cursors,
-                indentation_guide,
-                indentation_guide_glyph,
                 cell_theme_map,
                 screen_width,
                 pending_hardware_cursor,
@@ -500,7 +493,7 @@ pub(crate) fn render_content(
             // Render vertical scrollbar for this split and get thumb position
             let (thumb_start, thumb_end) = if panel_show_vscroll {
                 render_scrollbar(
-                    frame,
+                    buf,
                     state,
                     &viewport,
                     layout.scrollbar_rect,
@@ -531,7 +524,7 @@ pub(crate) fn render_content(
             // Render horizontal scrollbar for this split
             let (hthumb_start, hthumb_end) = if show_horizontal_scrollbar {
                 render_horizontal_scrollbar(
-                    frame,
+                    buf,
                     &viewport,
                     layout.horizontal_scrollbar_rect,
                     is_active,
@@ -584,13 +577,13 @@ pub(crate) fn render_content(
     // active Grouped subtrees dispatched at render time.
     let separators = split_manager.get_separators(area);
     for (direction, x, y, length) in separators {
-        render_separator(frame, direction, x, y, length, theme);
+        render_separator(buf, direction, x, y, length, theme);
     }
     // Walk the visible splits again to render internal separators of any
     // active buffer groups (their Split nodes live in the side-map, not the
     // main split tree, so `split_manager` doesn't know about them).
     let grouped_separator_areas = render_grouped_separators(
-        frame,
+        buf,
         &base_visible,
         split_view_states.as_deref(),
         grouped_subtrees,
@@ -692,7 +685,7 @@ fn expand_visible_buffers(
 /// recording the resulting tab layout and button hit areas for mouse handling.
 #[allow(clippy::too_many_arguments)]
 fn render_split_tab_bar(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     layout: &SplitLayout,
     split_id: LeafId,
     buffer_id: BufferId,
@@ -742,7 +735,7 @@ fn render_split_tab_bar(
     let tab_layout = {
         let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
         TabsRenderer::render_for_split(
-            frame,
+            buf,
             layout.tabs_rect,
             split_buffers,
             buffers,
@@ -784,7 +777,7 @@ fn render_split_tab_bar(
         };
         let close_button =
             Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-        frame.render_widget(close_button, Rect::new(btn_x, tab_row, 1, 1));
+        close_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
         close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
         btn_x = btn_x.saturating_sub(2); // 1 space before the next button
     }
@@ -799,7 +792,7 @@ fn render_split_tab_bar(
         let icon = if is_maximized { "⧉" } else { "□" };
         let max_button =
             Paragraph::new(icon).style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-        frame.render_widget(max_button, Rect::new(btn_x, tab_row, 1, 1));
+        max_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
         maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
     }
 }
@@ -808,7 +801,7 @@ fn render_split_tab_bar(
 /// scrollbar, and record the content/scrollbar areas for mouse handling.
 #[allow(clippy::too_many_arguments)]
 fn render_composite_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     layout: &SplitLayout,
     split_id: LeafId,
     buffer_id: BufferId,
@@ -883,7 +876,7 @@ fn render_composite_split(
     }
 
     render_composite_buffer(
-        frame,
+        buf,
         layout.content_rect,
         composite,
         buffers,
@@ -898,7 +891,7 @@ fn render_composite_split(
     let content_height = layout.content_rect.height.saturating_sub(1) as usize; // -1 for header
     let (thumb_start, thumb_end) = if show_vertical_scrollbar && !is_non_scrollable {
         render_composite_scrollbar(
-            frame,
+            buf,
             layout.scrollbar_rect,
             total_rows,
             view_state.scroll_row,
@@ -937,7 +930,7 @@ fn render_composite_split(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn render_grouped_separators(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     base_visible: &[(LeafId, BufferId, Rect)],
     split_view_states: Option<&HashMap<LeafId, crate::view::split::SplitViewState>>,
     grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
@@ -974,7 +967,7 @@ fn render_grouped_separators(
             for (id, direction, x, y, length) in
                 layout.get_separators_with_ids(main_layout.content_rect)
             {
-                render_separator(frame, direction, x, y, length, theme);
+                render_separator(buf, direction, x, y, length, theme);
                 grouped_separator_areas.push((id, direction, x, y, length));
             }
         }
@@ -1184,7 +1177,11 @@ pub(crate) fn build_base_tokens_for_hook(
 /// user closes the last buffer with both `file_explorer.auto_open_on_last_buffer_close`
 /// and `editor.auto_create_empty_buffer_on_last_buffer_close` set to false.
 /// Tells the user how to escape the blank-workspace state.
-fn render_placeholder_hint(frame: &mut Frame, area: Rect, theme: &crate::view::theme::Theme) {
+fn render_placeholder_hint(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    theme: &crate::view::theme::Theme,
+) {
     const HINT: &str =
         "Ctrl+P  command palette   ·   Ctrl+O  open file   ·   Ctrl+E  file explorer";
     let needed_width = HINT.chars().count() as u16;
@@ -1195,5 +1192,5 @@ fn render_placeholder_hint(frame: &mut Frame, area: Rect, theme: &crate::view::t
     let y = area.y + area.height / 2;
     let hint_area = Rect::new(x, y, needed_width, 1);
     let style = Style::default().fg(theme.syntax_comment);
-    frame.render_widget(Paragraph::new(HINT).style(style), hint_area);
+    Paragraph::new(HINT).style(style).render(hint_area, buf);
 }

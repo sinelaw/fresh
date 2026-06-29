@@ -4,14 +4,28 @@ Fresh includes a built-in terminal emulator.
 
 ## Opening a Terminal
 
-*   **Command Palette:** Press `Ctrl+P` and search for "Open Terminal"
-*   **Multiple Terminals:** You can open multiple terminal tabs and switch between them like regular file buffers
+All from the command palette (`Ctrl+P`):
+
+*   **Open Terminal** — a terminal in the current split.
+*   **Open Terminal to the Right** — a terminal in a new vertical split beside the active pane.
+*   **Open Terminal Below** — a terminal in a new horizontal split below the active pane.
+*   **Open Terminal in Utility Dock** (`Alt`+backtick) — a terminal in the shared bottom dock, creating the dock if needed.
+
+You can open multiple terminal tabs and switch between them like regular file buffers. The tab bar's **+** button also offers New Terminal / New File.
+
+## Send to Terminal
+
+**Send Selection to Terminal** runs the selected text — or the current line if there's no selection — in the most recently used terminal, and switches focus to it.
+
+## Clickable Paths
+
+`Ctrl+Click` (or `Ctrl`-hover, which underlines the target) opens file paths from terminal output, including scrollback. Paths resolve as absolute (with `~` expansion), then relative to the terminal's working directory, then relative to Fresh's working directory. The shell's working directory is tracked via OSC 7, so relative paths resolve correctly after `cd` — and resolution works over SSH.
 
 ## Terminal Modes
 
 The terminal has two modes, indicated in the status bar:
 
-1.  **Terminal Mode** (status bar shows "Terminal"): Your keyboard input goes directly to the shell.
+1.  **Terminal Mode** (status bar shows "Terminal"): Your keyboard input goes directly to the shell. The scrollbar is hidden and the grid uses the full split width.
 
 2.  **Scrollback Mode** (status bar shows "Terminal (read only)"): The terminal output becomes a read-only buffer that you can scroll through, search, and copy text from.
 

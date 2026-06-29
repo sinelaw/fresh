@@ -34,7 +34,6 @@ use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
 use crate::view::split::SplitManager;
 use ratatui::layout::Rect;
-use ratatui::Frame;
 use std::collections::HashMap;
 
 /// Maximum line width before forced wrapping is applied, even when line wrapping is disabled.
@@ -43,6 +42,80 @@ use std::collections::HashMap;
 /// each bounded to this width. 10,000 columns is far wider than any monitor while keeping
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
 const MAX_SAFE_LINE_WIDTH: usize = 10_000;
+
+/// Immutable editor render settings for one frame.
+///
+/// Bundles the static `config.editor.*` flags (plus a couple of stable
+/// `Editor` fields) that `render_content` and its callees only ever read.
+/// Deliberately holds *only* settings — no buffers, view-states, theme,
+/// geometry, output sinks, or per-frame computed flags (hover, cursor,
+/// mode) — so it can be built once and shared without entangling borrows.
+#[derive(Debug, Clone, Copy)]
+pub struct EditorRenderConfig<'a> {
+    pub large_file_threshold_bytes: u64,
+    pub line_wrap: bool,
+    pub estimated_line_length: usize,
+    pub highlight_context_bytes: usize,
+    pub relative_line_numbers: bool,
+    pub use_terminal_bg: bool,
+    pub show_vertical_scrollbar: bool,
+    pub show_horizontal_scrollbar: bool,
+    pub diagnostics_inline_text: bool,
+    pub show_tilde: bool,
+    pub highlight_current_column: bool,
+    pub indentation_guide: IndentationGuideMode,
+    pub indentation_guide_glyph: &'a str,
+    pub hide_current_line_on_selection: bool,
+    pub background_fade: f32,
+    pub software_cursor_only: bool,
+}
+
+impl<'a> EditorRenderConfig<'a> {
+    /// Build from the static editor config plus the two stable `Editor`
+    /// flags that don't live under `config.editor`. Borrows only
+    /// `config.editor`, so it composes with a disjoint `&mut windows`
+    /// borrow at the call site.
+    pub fn new(
+        editor: &'a crate::config::EditorConfig,
+        background_fade: f32,
+        software_cursor_only: bool,
+    ) -> Self {
+        Self {
+            large_file_threshold_bytes: editor.large_file_threshold_bytes,
+            line_wrap: editor.line_wrap,
+            estimated_line_length: editor.estimated_line_length,
+            highlight_context_bytes: editor.highlight_context_bytes,
+            relative_line_numbers: editor.relative_line_numbers,
+            use_terminal_bg: editor.use_terminal_bg,
+            show_vertical_scrollbar: editor.show_vertical_scrollbar,
+            show_horizontal_scrollbar: editor.show_horizontal_scrollbar,
+            diagnostics_inline_text: editor.diagnostics_inline_text,
+            show_tilde: editor.show_tilde,
+            highlight_current_column: editor.highlight_current_column,
+            indentation_guide: editor.indentation_guide,
+            indentation_guide_glyph: &editor.indentation_guide_glyph,
+            hide_current_line_on_selection: editor.hide_current_line_on_selection,
+            background_fade,
+            software_cursor_only,
+        }
+    }
+}
+
+/// "How to render" — the appearance/policy inputs that are identical for
+/// every split in a frame: the theme, the ANSI backdrop, and the editor
+/// render config. Built once at the top of the render pass and threaded by
+/// reference through the whole painter chain (`render_content` →
+/// `render_buffer_in_split` → …), so each layer forwards one `RenderStyle`
+/// instead of re-listing ~16 style parameters. Distinct from per-split state
+/// and the draw target, which vary or are mutated.
+//
+// No `Debug` derive — `AnsiBackground` isn't `Debug`.
+#[derive(Clone, Copy)]
+pub struct RenderStyle<'a> {
+    pub theme: &'a crate::view::theme::Theme,
+    pub ansi_background: Option<&'a AnsiBackground>,
+    pub cfg: EditorRenderConfig<'a>,
+}
 
 /// Public façade for split-pane rendering.
 ///
@@ -55,7 +128,7 @@ impl SplitRenderer {
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::type_complexity)]
     pub fn render_content(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         area: Rect,
         split_manager: &SplitManager,
         buffers: &mut HashMap<BufferId, EditorState>,
@@ -67,14 +140,8 @@ impl SplitRenderer {
             (LeafId, BufferId),
             crate::view::composite_view::CompositeViewState,
         >,
-        theme: &crate::view::theme::Theme,
-        ansi_background: Option<&AnsiBackground>,
-        background_fade: f32,
+        style: RenderStyle<'_>,
         lsp_waiting: bool,
-        large_file_threshold_bytes: u64,
-        line_wrap: bool,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
         split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
         grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
         hide_cursor: bool,
@@ -82,20 +149,9 @@ impl SplitRenderer {
         hovered_close_split: Option<LeafId>,
         hovered_maximize_split: Option<LeafId>,
         is_maximized: bool,
-        relative_line_numbers: bool,
         tab_bar_visible: bool,
-        use_terminal_bg: bool,
         session_mode: bool,
-        software_cursor_only: bool,
-        show_vertical_scrollbar: bool,
-        show_horizontal_scrollbar: bool,
         terminal_mode: bool,
-        diagnostics_inline_text: bool,
-        show_tilde: bool,
-        highlight_current_column: bool,
-        indentation_guide: IndentationGuideMode,
-        indentation_guide_glyph: &str,
-        hide_current_line_on_selection: bool,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
         pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -118,7 +174,7 @@ impl SplitRenderer {
         )>,
     ) {
         orchestration::render_content(
-            frame,
+            buf,
             area,
             split_manager,
             buffers,
@@ -127,14 +183,8 @@ impl SplitRenderer {
             event_logs,
             composite_buffers,
             composite_view_states,
-            theme,
-            ansi_background,
-            background_fade,
+            style,
             lsp_waiting,
-            large_file_threshold_bytes,
-            line_wrap,
-            estimated_line_length,
-            highlight_context_bytes,
             split_view_states,
             grouped_subtrees,
             hide_cursor,
@@ -142,20 +192,9 @@ impl SplitRenderer {
             hovered_close_split,
             hovered_maximize_split,
             is_maximized,
-            relative_line_numbers,
             tab_bar_visible,
-            use_terminal_bg,
             session_mode,
-            software_cursor_only,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
             terminal_mode,
-            diagnostics_inline_text,
-            show_tilde,
-            highlight_current_column,
-            indentation_guide,
-            indentation_guide_glyph,
-            hide_current_line_on_selection,
             cell_theme_map,
             screen_width,
             pending_hardware_cursor,
@@ -215,35 +254,25 @@ impl SplitRenderer {
     /// testing — overlay callers may discard them.
     #[allow(clippy::too_many_arguments)]
     pub fn render_phantom_leaf(
-        frame: &mut Frame,
+        buf: &mut ratatui::buffer::Buffer,
         state: &mut EditorState,
         cursors: &crate::model::cursor::Cursors,
         viewport: &mut crate::view::viewport::Viewport,
         folds: &mut crate::view::folding::FoldManager,
         event_log: Option<&mut EventLog>,
         area: Rect,
-        theme: &crate::view::theme::Theme,
-        ansi_background: Option<&AnsiBackground>,
-        background_fade: f32,
+        style: RenderStyle<'_>,
         view_mode: crate::state::ViewMode,
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
         view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
         buffer_id: BufferId,
-        relative_line_numbers: bool,
-        use_terminal_bg: bool,
         session_mode: bool,
-        software_cursor_only: bool,
         rulers: &[usize],
         show_line_numbers: bool,
         highlight_current_line: bool,
-        diagnostics_inline_text: bool,
         show_tilde: bool,
         highlight_current_column: bool,
-        indentation_guide: IndentationGuideMode,
-        indentation_guide_glyph: &str,
         cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
         screen_width: u16,
     ) -> Vec<crate::app::types::ViewLineMapping> {
@@ -257,7 +286,7 @@ impl SplitRenderer {
         //   terminal's hardware cursor away from the prompt input.
         let mut sink: Option<(u16, u16)> = None;
         orchestration::render_buffer_in_split(
-            frame,
+            buf,
             state,
             cursors,
             viewport,
@@ -265,30 +294,20 @@ impl SplitRenderer {
             event_log,
             area,
             /* is_active */ false,
-            theme,
-            ansi_background,
-            background_fade,
+            style,
             /* lsp_waiting */ false,
             view_mode,
             compose_width,
             compose_column_guides,
             view_transform,
-            estimated_line_length,
-            highlight_context_bytes,
             buffer_id,
             /* hide_cursor */ true,
-            relative_line_numbers,
-            use_terminal_bg,
             session_mode,
-            software_cursor_only,
             rulers,
             show_line_numbers,
             highlight_current_line,
-            diagnostics_inline_text,
             show_tilde,
             highlight_current_column,
-            indentation_guide,
-            indentation_guide_glyph,
             cell_theme_map,
             screen_width,
             &mut sink,
@@ -527,6 +546,101 @@ mod tests {
         )
     }
 
+    /// Render `content` with the viewport scrolled so the buffer byte
+    /// `top_byte` is the first visible row. Used to exercise indentation-guide
+    /// rendering when a block-opening line has scrolled above the viewport.
+    fn render_output_scrolled_with_indentation_guide(
+        content: &str,
+        top_byte: usize,
+    ) -> LineRenderOutput {
+        let mut state = EditorState::new(20, 6, 1024, test_fs());
+        state.buffer = Buffer::from_str(content, 1024, test_fs());
+        let mut cursors = crate::model::cursor::Cursors::new();
+        cursors.primary_mut().position = 0;
+        let mut viewport = Viewport::new(20, 10);
+        viewport.top_byte = top_byte;
+        state.margins.left_config.enabled = false;
+
+        let render_area = Rect::new(0, 0, 20, 10);
+        let visible_count = viewport.visible_line_count();
+        let gutter_width = state.margins.left_total_width();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let empty_folds = FoldManager::new();
+
+        let view_data = build_view_data(
+            &mut state,
+            &viewport,
+            None,
+            content.len().max(1),
+            visible_count,
+            false,
+            render_area.width as usize,
+            gutter_width,
+            &ViewMode::Source,
+            &empty_folds,
+            &theme,
+        );
+        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
+
+        let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
+        state.margins.update_width_for_buffer(estimated_lines, true);
+        let gutter_width = state.margins.left_total_width();
+
+        let selection = selection_context(&state, &cursors);
+        let _ = state
+            .buffer
+            .populate_line_cache(viewport.top_byte, visible_count);
+        let viewport_start = viewport.top_byte;
+        let viewport_end = calculate_viewport_end(
+            &mut state,
+            viewport_start,
+            content.len().max(1),
+            visible_count,
+        );
+        let decorations = decoration_context(
+            &mut state,
+            viewport_start,
+            viewport_end,
+            selection.primary_cursor_position,
+            &empty_folds,
+            &theme,
+            100_000,
+            &ViewMode::Source,
+            false,
+            &[],
+        );
+
+        let glyph = crate::config::default_indentation_guide_glyph();
+        let mut dummy_theme_map = Vec::new();
+        render_view_lines(LineRenderInput {
+            state: &state,
+            theme: &theme,
+            view_lines: &view_data.lines,
+            view_anchor,
+            render_area,
+            gutter_width,
+            selection: &selection,
+            decorations: &decorations,
+            visible_line_count: visible_count,
+            lsp_waiting: false,
+            is_active: true,
+            line_wrap: viewport.line_wrap_enabled,
+            estimated_lines,
+            left_column: viewport.left_column,
+            relative_line_numbers: false,
+            session_mode: false,
+            software_cursor_only: false,
+            show_line_numbers: true,
+            byte_offset_mode: false,
+            show_tilde: true,
+            highlight_current_line: true,
+            indentation_guide: IndentationGuideMode::All,
+            indentation_guide_glyph: &glyph,
+            cell_theme_map: &mut dummy_theme_map,
+            screen_width: 0,
+        })
+    }
+
     fn rendered_line_text(output: &LineRenderOutput, line_idx: usize) -> String {
         output.lines[line_idx]
             .spans
@@ -645,16 +759,137 @@ mod tests {
 
     #[test]
     fn indentation_guide_all_mode_draws_through_blank_lines() {
-        // A whitespace-only line inside a block continues the enclosing block's
-        // guides rather than leaving a one-row gap (the blank line here has
-        // four trailing spaces, so its column-0 guide cell is present).
-        let (output, _, _, _) =
-            render_output_for_with_indentation_guide("fn main()\n    a\n    \n    b\n", 0, 0);
+        // A whitespace-only line inside a nested block continues *every*
+        // enclosing block's guides straight through it, rather than leaving a
+        // one-row gap. With the block openers (`fn f() {` at col 0, `if x {` at
+        // col 4) on screen, the blank row must still draw both the col-0 and
+        // col-4 guides (it has eight trailing spaces, so those guide cells
+        // exist), and the staircase resumes unchanged on the row below.
+        let blank = " ".repeat(8);
+        let content =
+            format!("fn f() {{\n    if x {{\n        a;\n{blank}\n        b;\n    }}\n}}\n");
+        let output = render_output_scrolled_with_indentation_guide(&content, 0);
 
-        assert_eq!(rendered_line_text(&output, 0), "fn main()");
-        assert_eq!(rendered_line_text(&output, 1), "▏   a");
-        assert_eq!(rendered_line_text(&output, 2), "▏");
-        assert_eq!(rendered_line_text(&output, 3), "▏   b");
+        assert_eq!(rendered_line_text(&output, 0), "fn f() {");
+        assert_eq!(rendered_line_text(&output, 1), "▏   if x {");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   a;");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏");
+        assert_eq!(rendered_line_text(&output, 4), "▏   ▏   b;");
+        assert_eq!(rendered_line_text(&output, 5), "▏   }");
+        assert_eq!(rendered_line_text(&output, 6), "}");
+    }
+
+    #[test]
+    fn indentation_guide_empty_line_does_not_collapse_staircase() {
+        // A *completely empty* line (a bare `\n`) inside a nested block must not
+        // reset the indent staircase: the code row below it keeps its full set of
+        // guides. (Before `slice_indent` treated `\n` as a terminator, a bare
+        // "\n" read as indent-0 content, popping the whole stack — so `b;` lost
+        // its col-4 guide and rendered "▏   b;".) The empty row's own rendering is
+        // covered by the draw-through test below.
+        let content = "fn f() {\n    if x {\n        a;\n\n        b;\n    }\n}\n";
+        let output = render_output_scrolled_with_indentation_guide(content, 0);
+
+        assert_eq!(rendered_line_text(&output, 0), "fn f() {");
+        assert_eq!(rendered_line_text(&output, 1), "▏   if x {");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   a;");
+        // row 3 is the empty line — owned by the draw-through test.
+        assert_eq!(rendered_line_text(&output, 4), "▏   ▏   b;");
+        assert_eq!(rendered_line_text(&output, 5), "▏   }");
+    }
+
+    #[test]
+    fn indentation_guide_survives_scroll_past_block_opener() {
+        // A block whose opening lines (`mod m {` at col 0, `fn f() {` at col 4)
+        // have scrolled above the viewport must still draw their guides on the
+        // interior rows below. Previously the all-mode scanner derived its
+        // staircase only from the visible rows, so the off-screen openers'
+        // levels were missing — the col-4 guide vanished on the deeper interior
+        // rows and reappeared only when scrolling the opener back into view.
+        let content = concat!(
+            "mod m {\n",             // col 0  (scrolled off-screen)
+            "    fn f() {\n",        // col 4  (scrolled off-screen)
+            "        let arr = [\n", // col 8  <- first visible row
+            "            a,\n",      // col 12
+            "            b,\n",      // col 12
+            "        ];\n",          // col 8
+            "        let c = 1;\n",  // col 8
+            "    }\n",
+            "}\n",
+        );
+        let top_byte = content.find("        let arr = [").unwrap();
+        let output = render_output_scrolled_with_indentation_guide(content, top_byte);
+
+        // First visible row keeps both ancestor guides (col 0 and col 4) even
+        // though both owning lines are off-screen.
+        assert_eq!(rendered_line_text(&output, 0), "▏   ▏   let arr = [");
+        // Interior rows show the full staircase, including the col-4 guide that
+        // the scroll regression used to drop.
+        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   ▏   a,");
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   ▏   b,");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏   ];");
+    }
+
+    #[test]
+    fn indentation_guide_draws_through_blank_line_when_opener_scrolled_off() {
+        // Combines the two cases that interact here: a whitespace-only line in
+        // the middle of a block (guides must be drawn straight through it) while
+        // the block's openers (`mod m {` at col 0, `fn f() {` at col 4) have
+        // scrolled above the viewport. The primer must skip the blank line as it
+        // walks up to reconstruct the staircase, and the drawn-through guides
+        // must use that primed staircase — otherwise the col-4 guide drops on the
+        // blank row exactly as it did on the textual interior rows.
+        // 12 spaces: a whitespace-only line wide enough to carry guide cells at
+        // columns 0/4/8 (the renderer only replaces existing leading-space cells).
+        let blank = " ".repeat(12);
+        let content = format!(
+            "mod m {{\n    fn f() {{\n        let arr = [\n            alpha_value,\n{blank}\n            beta_value,\n        ];\n        let after = compute();\n    }}\n}}\n"
+        );
+        let top_byte = content.find("        let arr = [").unwrap();
+        let output = render_output_scrolled_with_indentation_guide(&content, top_byte);
+
+        assert_eq!(rendered_line_text(&output, 0), "▏   ▏   let arr = [");
+        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   ▏   alpha_value,");
+        // The whitespace-only row continues the enclosing block's guides — the
+        // col-4 guide (owned by the off-screen `fn f() {`) must be drawn through.
+        assert_eq!(rendered_line_text(&output, 2), "▏   ▏   ▏");
+        assert_eq!(rendered_line_text(&output, 3), "▏   ▏   ▏   beta_value,");
+    }
+
+    #[test]
+    fn indentation_guide_draws_through_completely_empty_lines() {
+        // A bare `\n` line has no cells for the per-cell pass to restyle, so its
+        // guides are synthesised. At root depth the empty line carries the single
+        // col-0 guide; nested, it carries every ancestor guide of the surrounding
+        // body — keeping the vertical guides continuous through the gap.
+        let root = "int main() {\n\n    greet();\n    \n    return 0;\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(root, 0);
+        assert_eq!(rendered_line_text(&out, 0), "int main() {");
+        assert_eq!(rendered_line_text(&out, 1), "▏"); // empty line, drawn through
+        assert_eq!(rendered_line_text(&out, 2), "▏   greet();");
+        assert_eq!(rendered_line_text(&out, 3), "▏"); // whitespace-only line
+        assert_eq!(rendered_line_text(&out, 4), "▏   return 0;");
+        assert_eq!(rendered_line_text(&out, 5), "}");
+
+        let nested = "fn f() {\n    if x {\n        a;\n\n        b;\n    }\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(nested, 0);
+        assert_eq!(rendered_line_text(&out, 2), "▏   ▏   a;");
+        // The empty interior line carries both the col-0 and col-4 guides.
+        assert_eq!(rendered_line_text(&out, 3), "▏   ▏");
+        assert_eq!(rendered_line_text(&out, 4), "▏   ▏   b;");
+    }
+
+    #[test]
+    fn indentation_guide_empty_line_after_opener_flows_into_body() {
+        // The empty line sits directly under the opener, before any body row —
+        // so the staircase alone (just the opener's level) would under-draw. The
+        // look-ahead to the next content row pulls the body's guide onto the
+        // empty line, so the guide is continuous from the opener down.
+        let content = "if outer {\n\n    inner();\n}\n";
+        let out = render_output_scrolled_with_indentation_guide(content, 0);
+        assert_eq!(rendered_line_text(&out, 0), "if outer {");
+        assert_eq!(rendered_line_text(&out, 1), "▏"); // flows into the body below
+        assert_eq!(rendered_line_text(&out, 2), "▏   inner();");
     }
 
     #[test]
@@ -942,6 +1177,48 @@ mod tests {
         assert!(lines
             .iter()
             .any(|l| l.contains("header") && l.contains("...")));
+    }
+
+    #[test]
+    fn fold_indicator_lands_on_header_not_blank_line_after_it() {
+        // A blank line immediately after a foldable header must not steal the
+        // fold marker. The indent-based detector consumes `ViewLine::text`,
+        // which keeps the trailing `\n`; before `slice_indent` treated `\n` as a
+        // terminator, a bare "\n" read as indent-0 *content*, so `int main() {`
+        // looked unfoldable (its next "non-blank" line was the blank one) and the
+        // blank line itself looked like the indent-0 header of the body below.
+        let content = "int main() {\n\n    body();\n    \n    more();\n}\n";
+        let mut state = EditorState::new(40, 10, 1024, test_fs());
+        state.buffer = Buffer::from_str(content, 1024, test_fs());
+        let viewport = Viewport::new(40, 10);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let folds = FoldManager::new();
+        let view_data = build_view_data(
+            &mut state,
+            &viewport,
+            None,
+            content.len().max(1),
+            viewport.visible_line_count(),
+            false,
+            40,
+            0,
+            &ViewMode::Source,
+            &folds,
+            &theme,
+        );
+
+        let indicators = fold_indicators_for_viewport(&state, &folds, &view_data.lines);
+
+        let header_byte = 0; // `int main() {`
+        let blank_byte = content.find("\n\n").unwrap() + 1; // the empty line
+        assert!(
+            indicators.contains_key(&header_byte),
+            "fold marker should be on the function header"
+        );
+        assert!(
+            !indicators.contains_key(&blank_byte),
+            "fold marker must not be on the blank line"
+        );
     }
 
     #[test]

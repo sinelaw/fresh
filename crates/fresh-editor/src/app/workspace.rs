@@ -657,14 +657,17 @@ impl crate::app::window::Window {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
                 terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
                 // The terminal was live when the workspace was saved and the
-                // user never explicitly exited it, so focusing it should
-                // bring back a live terminal rather than the read-only
-                // scrollback view. Seed the resume set so `set_active_buffer`
-                // re-enters terminal mode when the tab is focused (the
-                // editing-disabled completion in `Editor::set_active_buffer`
-                // finishes the read-only → live transition). An explicit
-                // Ctrl+Space exit later removes it from the set as usual.
-                self.terminal_mode_resume.insert(buffer_id);
+                // user never explicitly exited it, so focusing it should bring
+                // back a live terminal rather than the read-only scrollback
+                // view. Mark it Live so `set_active_buffer` re-enters terminal
+                // mode when the tab is focused (the editing-disabled completion
+                // in `Editor::set_active_buffer` finishes the read-only → live
+                // transition). An explicit Ctrl+Space exit later flips it back
+                // to Scrollback as usual.
+                self.set_terminal_interaction_mode(
+                    buffer_id,
+                    crate::app::window::TerminalInteractionMode::Live,
+                );
             }
         }
         terminal_buffer_map
@@ -1721,7 +1724,7 @@ impl crate::app::window::Window {
         let terminals_to_sync: Vec<_> = self
             .terminal_buffers
             .values()
-            .copied()
+            .map(|tb| tb.terminal_id)
             .filter_map(|terminal_id| {
                 self.terminal_backing_files
                     .get(&terminal_id)
@@ -2170,7 +2173,7 @@ impl crate::app::window::Window {
         let mut terminals = Vec::new();
         let mut terminal_indices: HashMap<TerminalId, usize> = HashMap::new();
         let mut seen = HashSet::new();
-        for terminal_id in self.terminal_buffers.values().copied() {
+        for terminal_id in self.terminal_buffers.values().map(|tb| tb.terminal_id) {
             if seen.insert(terminal_id) {
                 let command = self.terminal_commands.get(&terminal_id).cloned();
                 // Ephemeral terminals (plugin tool UIs, agent shells) are
@@ -2234,11 +2237,19 @@ impl crate::app::window::Window {
             .splits()
             .expect("window must have a populated split layout");
 
+        // Serialization helpers only need the buffer→PTY-id association, not
+        // the interaction mode, so project the terminal-buffer map down to it.
+        let terminal_id_map: HashMap<BufferId, TerminalId> = self
+            .terminal_buffers
+            .iter()
+            .map(|(b, tb)| (*b, tb.terminal_id))
+            .collect();
+
         let split_layout = serialize_split_node(
             mgr.root(),
             &self.buffer_metadata,
             &self.root,
-            &self.terminal_buffers,
+            &terminal_id_map,
             &terminal_indices,
             mgr.labels(),
         );
@@ -2259,7 +2270,7 @@ impl crate::app::window::Window {
                 &self.buffer_metadata,
                 &self.root,
                 active_buffer,
-                &self.terminal_buffers,
+                &terminal_id_map,
                 &terminal_indices,
             );
             split_states.insert(leaf_id.0 .0, serialized);

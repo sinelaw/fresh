@@ -30,8 +30,8 @@ use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::Widget;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 /// Output of the pure layout computation phase of buffer rendering.
 ///
@@ -414,7 +414,7 @@ pub(crate) fn compute_buffer_layout(
 /// Draw a buffer into a frame using pre-computed layout output.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_buffer_in_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     state: &EditorState,
     cursors: &Cursors,
     layout_output: BufferLayoutOutput,
@@ -437,7 +437,7 @@ pub(crate) fn draw_buffer_in_split(
     let starting_line_num = 0; // used only for background offset
 
     render_compose_margins(
-        frame,
+        buf,
         area,
         &layout_output.compose_layout,
         &layout_output.view_mode,
@@ -461,11 +461,13 @@ pub(crate) fn draw_buffer_in_split(
         );
     }
 
-    frame.render_widget(Clear, render_area);
+    Clear.render(render_area, buf);
     let editor_block = Block::default()
         .borders(Borders::NONE)
         .style(Style::default().bg(effective_editor_bg));
-    frame.render_widget(Paragraph::new(lines).block(editor_block), render_area);
+    Paragraph::new(lines)
+        .block(editor_block)
+        .render(render_area, buf);
 
     let cursor = resolve_cursor_fallback(
         layout_output.render_output.cursor,
@@ -492,7 +494,7 @@ pub(crate) fn draw_buffer_in_split(
     if !rulers.is_empty() {
         let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
         render_ruler_bg(
-            frame,
+            buf,
             &ruler_cols,
             theme.ruler_bg,
             render_area,
@@ -510,7 +512,7 @@ pub(crate) fn draw_buffer_in_split(
             // so skip highlighting if it falls inside the gutter.
             if (cx as usize) >= gutter_width {
                 render_cursor_column_bg(
-                    frame,
+                    buf,
                     render_area,
                     cx,
                     theme.current_line_bg,
@@ -526,7 +528,7 @@ pub(crate) fn draw_buffer_in_split(
             .fg(theme.line_number_fg)
             .add_modifier(Modifier::DIM);
         render_column_guides(
-            frame,
+            buf,
             &guides,
             guide_style,
             render_area,
@@ -547,7 +549,6 @@ pub(crate) fn draw_buffer_in_split(
         // When software_cursor_only the backend has no hardware cursor, so
         // ensure the cell at the cursor position always has REVERSED style.
         if software_cursor_only {
-            let buf = frame.buffer_mut();
             let area = buf.area;
             if screen_x < area.x + area.width && screen_y < area.y + area.height {
                 let cell = &mut buf[(screen_x, screen_y)];
@@ -573,7 +574,7 @@ pub(crate) fn draw_buffer_in_split(
 /// Returns the view line mappings for mouse click handling.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_buffer_in_split(
-    frame: &mut Frame,
+    buf: &mut ratatui::buffer::Buffer,
     state: &mut EditorState,
     cursors: &Cursors,
     viewport: &mut Viewport,
@@ -581,34 +582,44 @@ pub(crate) fn render_buffer_in_split(
     event_log: Option<&mut EventLog>,
     area: Rect,
     is_active: bool,
-    theme: &Theme,
-    ansi_background: Option<&AnsiBackground>,
-    background_fade: f32,
+    style: crate::view::ui::RenderStyle<'_>,
     lsp_waiting: bool,
     view_mode: ViewMode,
     compose_width: Option<u16>,
     compose_column_guides: Option<Vec<u16>>,
     view_transform: Option<ViewTransformPayload>,
-    estimated_line_length: usize,
-    highlight_context_bytes: usize,
     _buffer_id: BufferId,
     hide_cursor: bool,
-    relative_line_numbers: bool,
-    use_terminal_bg: bool,
     session_mode: bool,
-    software_cursor_only: bool,
     rulers: &[usize],
     show_line_numbers: bool,
     highlight_current_line: bool,
-    diagnostics_inline_text: bool,
     show_tilde: bool,
     highlight_current_column: bool,
-    indentation_guide: IndentationGuideMode,
-    indentation_guide_glyph: &str,
     cell_theme_map: &mut Vec<CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
 ) -> Vec<ViewLineMapping> {
+    // The style group provides theme + the appearance flags; unpack into the
+    // locals the body already uses by name. The cfg fields this painter
+    // doesn't read are ignored.
+    let crate::view::ui::RenderStyle {
+        theme,
+        ansi_background,
+        cfg,
+    } = style;
+    let crate::view::ui::EditorRenderConfig {
+        background_fade,
+        estimated_line_length,
+        highlight_context_bytes,
+        relative_line_numbers,
+        use_terminal_bg,
+        software_cursor_only,
+        diagnostics_inline_text,
+        indentation_guide,
+        indentation_guide_glyph,
+        ..
+    } = cfg;
     let layout_output = compute_buffer_layout(
         state,
         cursors,
@@ -639,7 +650,7 @@ pub(crate) fn render_buffer_in_split(
     let view_line_mappings = layout_output.view_line_mappings.clone();
 
     draw_buffer_in_split(
-        frame,
+        buf,
         state,
         cursors,
         layout_output,

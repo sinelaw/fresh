@@ -20,13 +20,17 @@ Add column rulers at any position via "Add Ruler" from the command palette. Usef
 
 ## Indentation Guides
 
-Show vertical indentation guides with the `editor.indentation_guide` setting. The default is `"none"`, so existing editor rendering is unchanged unless guides are enabled. Use `"all"` to draw every indentation level in leading whitespace, or `"active"` to draw only the innermost guide for the cursor's current indentation block.
+Enable vertical indentation guides in the Settings UI. The default is off; choose to draw every indentation level, or only the innermost guide for the cursor's current block. The glyph (default `▏`) is also configurable there.
 
-Guides are visual-only: they replace rendered leading whitespace cells without changing buffer text, cursor positions, byte mappings, or mouse behavior. Customize the rendered glyph with `editor.indentation_guide_glyph`; the default is the left-aligned vertical guide `▏`. Use a single display-cell character. Leading/trailing whitespace is ignored, and a blank value resets to the default. Themes can customize the guide color with `indentation_guide_fg`; when omitted, it inherits `whitespace_indicator_fg`.
+Guides are visual-only: they replace rendered leading whitespace cells without changing buffer text, cursor positions, byte mappings, or mouse behavior. Themes can set the guide color with the `indentation_guide_fg` key; when omitted, it inherits the whitespace-indicator color.
 
 ## Current-Line Highlight
 
-The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. A matching **Toggle Current Column Highlight** / `highlight_current_column` setting highlights the cursor's column too — useful for visually aligning code with rulers.
+The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. A matching **Toggle Current Column Highlight** highlights the cursor's column too — useful for visually aligning code with rulers. The Settings UI also has an option to drop the line highlight while text is selected.
+
+## Occurrence Highlighting
+
+Every occurrence of the word under the cursor is highlighted in the viewport. Enabled by default; toggle with **Toggle Occurrence Highlight** from the command palette or in the Settings UI.
 
 ## Post-EOF Background
 
@@ -59,6 +63,8 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
+**Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else.
+
 ## Multiple Cursors
 
 Edit multiple locations simultaneously:
@@ -90,6 +96,14 @@ Edit multiple locations simultaneously:
 |----------|--------|
 | `Alt+Shift+↑/↓` | Block select up/down |
 | `Alt+Shift+←/→` | Block select left/right |
+
+### Mark Mode
+
+Drop a selection anchor and extend the selection as you move, without holding `Shift`:
+
+- **Set Mark** — set the anchor at the cursor; subsequent movement (including bracket jumps and Home) extends the selection.
+- **Cancel Mark** — drop the anchor but keep the cursor (soft exit).
+- **Clear Mark** — clear the anchor and selection (hard exit).
 
 ## Basic Editing
 
@@ -154,7 +168,16 @@ Record and replay sequences of keystrokes:
 | `F5` | Stop macro recording |
 | `F4` | Play last recorded macro |
 
-Use the command palette (`Ctrl+P`) to access **Record Macro**, **Play Macro**, **Play Last Macro**, and **List Macros** commands.
+Use the command palette (`Ctrl+P`) to access **Record Macro**, **Play Macro**, **Play Last Macro**, and **List Macros** commands. Macros are recorded into registers `0`–`9`.
+
+### Saving and Promoting Macros
+
+A recorded macro lives only in its register until you persist it:
+
+- **Macro: Save to init.ts** writes the macro to your [`init.ts`](../configuration/init.md) as an editable `editor.defineMacro("0", [...])` block. Saved macros are seeded back into their registers at startup.
+- **Macro: Promote to command** turns the macro into a `registerCommand` handler in `init.ts`, seeded with the recorded steps — a starting point you can extend with loops, conditionals, or any plugin API.
+
+Both write a sentinel-delimited block and reload `init.ts` immediately.
 
 To bind a custom key to play a macro, follow the example below to add a `keybindings` section to your local `config.json`. 
 
@@ -240,3 +263,9 @@ See [LSP Integration](./lsp.md) for richer completions when a language server is
 ## Vim Mode
 
 A Vim emulation plugin is available, providing modal editing with normal, insert, and visual modes. To enable it, open the command palette (`Ctrl+P`) and search for "vi mode".
+
+`:set` commands work inside vi mode for common options, e.g. `:set number` / `:set nonumber` and `:set wrap`. The plugin also has settings (in the `vi_mode` plugin config):
+
+- `autoStart` (default `false`) — enable vi mode on startup.
+- `arrowKeys` (default `true`) — allow arrow keys for navigation.
+- `searchWordUnderCursor` (default `true`) — `*` / `#` search for the word under the cursor.

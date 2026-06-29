@@ -78,6 +78,46 @@ pub struct TerminalLinkHover {
     pub cols: std::ops::Range<usize>,
 }
 
+/// A terminal buffer's remembered interaction mode, restored whenever it
+/// regains focus (see `Window::sync_terminal_mode_flags`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalInteractionMode {
+    /// Keystrokes forwarded to the PTY; the buffer mirrors the live screen.
+    Live,
+    /// Read-only scrollback. Entered via Ctrl+Space, scroll-up, or process exit.
+    Scrollback,
+}
+
+/// Per-terminal-buffer editor state, keyed by `BufferId` in
+/// [`Window::terminal_buffers`]. PTY I/O lives in the `TerminalManager`; the
+/// byte-stream backing files stay keyed by `TerminalId`.
+#[derive(Debug, Clone)]
+pub struct TerminalBuffer {
+    /// The PTY session feeding this buffer, scoped to this window.
+    pub terminal_id: crate::services::terminal::TerminalId,
+    pub mode: TerminalInteractionMode,
+}
+
+impl TerminalBuffer {
+    /// A freshly opened/attached terminal buffer, which starts live.
+    pub fn new_live(terminal_id: crate::services::terminal::TerminalId) -> Self {
+        Self {
+            terminal_id,
+            mode: TerminalInteractionMode::Live,
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(self.mode, TerminalInteractionMode::Live)
+    }
+
+    /// Route writes through [`Window::set_terminal_interaction_mode`] to keep
+    /// the mode single-sited.
+    pub fn set_mode(&mut self, mode: TerminalInteractionMode) {
+        self.mode = mode;
+    }
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -300,8 +340,10 @@ pub struct Window {
     /// PTY threads — no orphan agents survive a `closeWindow`.
     pub terminal_manager: crate::services::terminal::TerminalManager,
 
-    /// Maps a terminal-buffer id to its PTY id, scoped to this window.
-    pub terminal_buffers: HashMap<BufferId, crate::services::terminal::TerminalId>,
+    /// Per-terminal-buffer editor state, keyed by buffer id and scoped to
+    /// this window: the PTY id feeding the buffer plus its remembered
+    /// live/scrollback interaction mode. See [`TerminalBuffer`].
+    pub terminal_buffers: HashMap<BufferId, TerminalBuffer>,
 
     /// Backing files for terminal buffers (the rendered visible-screen
     /// + scrollback content the buffer actually displays).
@@ -420,11 +462,6 @@ pub struct Window {
     /// the active terminal buffer). Per-window because each window
     /// has its own terminal set + active buffer.
     pub terminal_mode: bool,
-
-    /// Set of terminal buffer ids that should auto-resume terminal
-    /// mode when switched back to. Per-window because terminal
-    /// buffers are per-window (Step 0d).
-    pub terminal_mode_resume: std::collections::HashSet<BufferId>,
 
     /// Path-link currently highlighted under a Ctrl+hover over the live
     /// terminal grid. `Some` means the renderer underlines the given grid row
@@ -1831,7 +1868,6 @@ impl Window {
             preview: None,
             terminal_mode: false,
             terminal_link_hover: None,
-            terminal_mode_resume: std::collections::HashSet::new(),
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
             same_buffer_scroll_sync: false,
@@ -2222,9 +2258,20 @@ impl Window {
 
     // ---- Terminal-buffer query helpers ----
 
+    /// The [`TerminalBuffer`] record for a buffer, or `None` if it isn't a
+    /// terminal buffer in this window. The single lookup the helpers below
+    /// build on.
+    pub fn terminal_buffer(&self, buffer_id: BufferId) -> Option<&TerminalBuffer> {
+        self.terminal_buffers.get(&buffer_id)
+    }
+
+    pub fn terminal_buffer_mut(&mut self, buffer_id: BufferId) -> Option<&mut TerminalBuffer> {
+        self.terminal_buffers.get_mut(&buffer_id)
+    }
+
     /// Check if a buffer is a terminal buffer (in this window).
     pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
-        self.terminal_buffers.contains_key(&buffer_id)
+        self.terminal_buffer(buffer_id).is_some()
     }
 
     /// Get the terminal ID for a buffer (if it's a terminal buffer in
@@ -2233,7 +2280,20 @@ impl Window {
         &self,
         buffer_id: BufferId,
     ) -> Option<crate::services::terminal::TerminalId> {
-        self.terminal_buffers.get(&buffer_id).copied()
+        self.terminal_buffer(buffer_id).map(|tb| tb.terminal_id)
+    }
+
+    /// The only writer of a terminal's remembered mode — the real
+    /// live↔scrollback edges (open/resume, Ctrl+Space, scroll-up, exit) all
+    /// route here. No-op if `buffer_id` isn't a terminal buffer in this window.
+    pub fn set_terminal_interaction_mode(
+        &mut self,
+        buffer_id: BufferId,
+        mode: TerminalInteractionMode,
+    ) {
+        if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
+            tb.set_mode(mode);
+        }
     }
 
     /// Clear the visual search overlays for the active buffer,
@@ -2852,30 +2912,11 @@ impl Window {
             return;
         }
 
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
         let ns = self.search_namespace.clone();
 
-        let regex_pattern = if use_regex {
-            if whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query.to_string()
-            }
-        } else {
-            let escaped = regex::escape(query);
-            if whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        let regex = regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!case_sensitive)
-            .build();
-        let regex = match regex {
+        // Share the one search-regex builder so highlight anchoring (`^`/`$`
+        // line-matching) stays consistent with the actual search results.
+        let regex = match self.build_search_regex(query) {
             Ok(r) => r,
             Err(_) => {
                 self.clear_search_highlights();
@@ -2954,30 +2995,11 @@ impl Window {
             _ => return,
         };
 
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let use_regex = self.search_use_regex;
         let ns = self.search_namespace.clone();
 
-        let regex_pattern = if use_regex {
-            if whole_word {
-                format!(r"\b{}\b", query)
-            } else {
-                query
-            }
-        } else {
-            let escaped = regex::escape(&query);
-            if whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        let regex = match regex::RegexBuilder::new(&regex_pattern)
-            .case_insensitive(!case_sensitive)
-            .build()
-        {
+        // Share the one search-regex builder so re-highlighting after an edit
+        // keeps `^`/`$` line-anchoring consistent with the search results.
+        let regex = match self.build_search_regex(&query) {
             Ok(r) => r,
             Err(_) => return,
         };

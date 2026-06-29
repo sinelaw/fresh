@@ -124,14 +124,43 @@ pub(crate) struct ChromeLayout {
     pub settings_layout: Option<crate::view::settings::SettingsLayout>,
     /// Workspace-trust dialog click layout (radios + OK/Quit) for hit testing.
     pub workspace_trust_dialog: Option<crate::view::workspace_trust_dialog::TrustDialogLayout>,
+    /// Status-bar hit-test layout (area, clickable segments, plugin token
+    /// areas, semantic segment model). See [`StatusBarChrome`].
+    pub status_bar: StatusBarChrome,
+    /// Search options layout for checkbox hit testing
+    pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
+    /// Menu bar layout for hit testing
+    pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
+    /// Dimensions of the last rendered frame. See [`FrameDimensions`].
+    pub last_frame: FrameDimensions,
+    /// Per-cell theme key provenance recorded during rendering.
+    /// Flat vec indexed as `row * width + col` where `width = last_frame.width`.
+    pub cell_theme_map: Vec<CellThemeInfo>,
+}
+
+/// Width and height of the most recently rendered frame. Used to size the
+/// cell-theme map and to clamp / replay layout against the latest frame
+/// extent (macro replay, dock/overlay sizing). Grouped so the pair travels
+/// together rather than as loose `last_frame_*` members of [`ChromeLayout`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FrameDimensions {
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Status-bar hit-test layout captured each frame by `render_status_bar`.
+/// Grouped so the four related fields travel together rather than as loose
+/// `status_bar_*` members of [`ChromeLayout`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StatusBarChrome {
     /// Status bar area (row, x, width)
-    pub status_bar_area: Option<(u16, u16, u16)>,
+    pub area: Option<(u16, u16, u16)>,
     /// Every clickable built-in status-bar segment drawn last frame, as
     /// `(id, row, start_col, end_col)`. One generic list (mirroring
     /// `StatusBarLayout::clickable`) walked by both the hover hit-test and
     /// `handle_click_status_bar` — no per-indicator field. See
     /// `StatusBarClickable`.
-    pub status_bar_clickable: Vec<(
+    pub clickable: Vec<(
         crate::view::ui::status_bar::StatusBarClickable,
         u16,
         u16,
@@ -144,47 +173,39 @@ pub(crate) struct ChromeLayout {
     /// plugin can react (typically by re-opening a deferred prompt).
     /// See `docs/internal/trust-env-devcontainer-ux-plan.md` for the
     /// design context.
-    pub status_bar_plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
+    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
     /// Semantic status-bar model (rendered elements + text + positions), captured
     /// by the renderer so `status_view` derives the web status bar directly
     /// instead of scraping the drawn cells.
-    pub status_bar_segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
-    /// Search options layout for checkbox hit testing
-    pub search_options_layout: Option<crate::view::ui::status_bar::SearchOptionsLayout>,
-    /// Menu bar layout for hit testing
-    pub menu_layout: Option<crate::view::ui::menu::MenuLayout>,
-    /// Last frame dimensions — used by recompute_layout for macro replay
-    pub last_frame_width: u16,
-    pub last_frame_height: u16,
-    /// Per-cell theme key provenance recorded during rendering.
-    /// Flat vec indexed as `row * width + col` where `width = last_frame_width`.
-    pub cell_theme_map: Vec<CellThemeInfo>,
+    pub segments: Vec<crate::view::ui::status_bar::StatusSegmentInfo>,
 }
 
-impl ChromeLayout {
+impl StatusBarChrome {
     /// Screen area `(row, start_col, end_col)` of a given clickable status-bar
     /// segment from the last frame, if it was drawn. Used to anchor popups to
     /// their indicator (e.g. the LSP / remote / read-only menus).
-    pub fn status_bar_clickable_area(
+    pub fn clickable_area(
         &self,
         id: crate::view::ui::status_bar::StatusBarClickable,
     ) -> Option<(u16, u16, u16)> {
-        self.status_bar_clickable
+        self.clickable
             .iter()
             .find(|(cid, _, _, _)| *cid == id)
             .map(|(_, row, start, end)| (*row, *start, *end))
     }
+}
 
+impl ChromeLayout {
     /// Reset the cell theme map for a new frame
     pub fn reset_cell_theme_map(&mut self) {
-        let total = self.last_frame_width as usize * self.last_frame_height as usize;
+        let total = self.last_frame.width as usize * self.last_frame.height as usize;
         self.cell_theme_map.clear();
         self.cell_theme_map.resize(total, CellThemeInfo::default());
     }
 
     /// Look up the theme info for a screen position
     pub fn cell_theme_at(&self, col: u16, row: u16) -> Option<&CellThemeInfo> {
-        let idx = row as usize * self.last_frame_width as usize + col as usize;
+        let idx = row as usize * self.last_frame.width as usize + col as usize;
         self.cell_theme_map.get(idx)
     }
 
@@ -192,7 +213,7 @@ impl ChromeLayout {
     /// per-cell map. The runs carry screen coordinates; cells outside the
     /// frame are skipped.
     pub fn apply_theme_runs(&mut self, runs: &[super::theme::ThemeRun]) {
-        let width = self.last_frame_width;
+        let width = self.last_frame.width;
         super::theme::apply_theme_runs(&mut self.cell_theme_map, width, runs);
     }
 }

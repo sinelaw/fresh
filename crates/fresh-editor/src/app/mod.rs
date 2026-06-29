@@ -42,6 +42,7 @@ mod lsp_event_notify;
 mod lsp_requests;
 mod lsp_status;
 mod macro_actions;
+mod macro_codegen;
 mod macros;
 mod menu_actions;
 mod menu_context;
@@ -208,7 +209,8 @@ use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
 use crate::view::ui::{
-    FileExplorerRenderer, SplitRenderer, StatusBarRenderer, SuggestionsRenderer,
+    ExplorerDecorations, FileExplorerRenderer, SplitRenderer, StatusBarRenderer,
+    SuggestionsRenderer,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
@@ -966,8 +968,9 @@ pub struct Editor {
     /// When false, UI keybindings (split nav, palette, etc.) are processed first.
     // `keyboard_capture` moved onto `Window`.
 
-    // `terminal_mode_resume` moved onto `Window` — terminal buffers
-    // are per-window (Step 0d), so the auto-resume set follows.
+    // A terminal buffer's remembered live/scrollback interaction mode is
+    // part of its per-window `Window::terminal_buffers` record
+    // (`TerminalBuffer::mode`).
     /// Timestamp of the previous mouse click (for multi-click detection)
     // `previous_click_time`, `previous_click_position`, `click_count` moved onto `Window`.
 
