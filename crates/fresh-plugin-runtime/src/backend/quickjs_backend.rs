@@ -1480,7 +1480,7 @@ impl JsEditorApi {
         };
         let res = self.services.translate(&plugin_name, &key, &args_map);
 
-        tracing::info!(
+        tracing::debug!(
             "Translating: key={}, plugin={}, args={:?} => res='{}'",
             key,
             plugin_name,
