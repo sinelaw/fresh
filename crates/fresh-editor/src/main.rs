@@ -4491,9 +4491,43 @@ where
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
+                // DIAGNOSTIC (ssh-workspace-nav-lag): split the render into its
+                // three sub-steps so we can tell whether the ~440ms/frame lag
+                // is stdout/link write latency (the two synchronized-update
+                // escapes are tiny pure writes + flush — if THEY are slow, the
+                // terminal output pipe is the bottleneck) or the draw itself
+                // (compute + the diff write of changed cells to stdout).
+                let t_begin = Instant::now();
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
-                terminal.draw(|frame| editor.render(frame))?;
+                let begin_us = t_begin.elapsed().as_micros();
+
+                // Split the draw further: `compute_us` is the editor.render
+                // closure (pure buffer fill, no I/O); the remainder of
+                // `draw_us` is ratatui diffing + writing changed cells to
+                // stdout and flushing. compute≈0 but draw large ⇒ the cell
+                // write/flush (i.e. the terminal pipe) is the cost.
+                let mut compute_us: u128 = 0;
+                let t_draw = Instant::now();
+                terminal.draw(|frame| {
+                    let c = Instant::now();
+                    editor.render(frame);
+                    compute_us = c.elapsed().as_micros();
+                })?;
+                let draw_us = t_draw.elapsed().as_micros();
+
+                let t_end = Instant::now();
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
+                let end_us = t_end.elapsed().as_micros();
+
+                tracing::trace!(
+                    target: "render_timing",
+                    begin_sync_us = begin_us,
+                    draw_us,
+                    compute_us,
+                    flush_us = draw_us.saturating_sub(compute_us),
+                    end_sync_us = end_us,
+                    "terminal_draw sub-steps"
+                );
             }
             tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
