@@ -589,6 +589,10 @@ async function showCommitInDetail(commit: GitCommit, cwd: string): Promise<void>
   // wrap on (long minified lines unreadable in the 40% panel).
   editor.setBufferShowCursors(bufferId, true);
   editor.setLineWrap(bufferId, null, true);
+  // The detail panel is a file-backed buffer (a `git show` dump), so it
+  // escapes the virtual-buffer default that keeps guides out of the commit
+  // list. Disable them explicitly: a diff isn't an editable indented document.
+  editor.setIndentationGuide(bufferId, false);
   // Land at the top of the diff every time we (re-)visit a commit.
   editor.setBufferCursor(bufferId, 0);
 }

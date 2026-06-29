@@ -2990,6 +2990,12 @@ interface EditorAPI {
 	*/
 	setLineNumbers(bufferId: number, enabled: boolean): boolean;
 	/**
+	* Enable or disable indentation guides for a buffer, overriding the global
+	* `editor.indentation_guide` setting. Tool views that render non-editable
+	* content (e.g. the Git Log commit-detail diff) disable them.
+	*/
+	setIndentationGuide(bufferId: number, enabled: boolean): boolean;
+	/**
 	* Set the view mode for a buffer ("source" or "compose")
 	*/
 	setViewMode(bufferId: number, mode: string): boolean;

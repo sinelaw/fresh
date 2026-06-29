@@ -2463,6 +2463,12 @@ pub enum PluginCommand {
     /// Enable/disable line numbers for a buffer
     SetLineNumbers { buffer_id: BufferId, enabled: bool },
 
+    /// Enable/disable indentation guides for a buffer, overriding the global
+    /// `editor.indentation_guide` default. Used by tool views (e.g. the Git Log
+    /// commit-detail diff) that show non-editable content where the guides are
+    /// noise.
+    SetIndentationGuide { buffer_id: BufferId, enabled: bool },
+
     /// Set the view mode for a buffer ("source" or "compose")
     SetViewMode { buffer_id: BufferId, mode: String },
 

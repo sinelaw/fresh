@@ -197,6 +197,15 @@ pub struct EditorState {
     /// wheel is ignored and no scrollbar is drawn.
     pub scrollable: bool,
 
+    /// Explicit per-buffer override for indentation-guide visibility.
+    /// `None` = follow the default (the global `editor.indentation_guide`,
+    /// except virtual buffers which default off — guides are a source-code aid,
+    /// like the column rulers). `Some(false)` = force off; `Some(true)` = force
+    /// on using the global mode. Set via the `setIndentationGuide` plugin API so
+    /// a file-backed tool view that the virtual-buffer default can't catch — the
+    /// Git Log commit-detail diff is the motivating case — can opt out.
+    pub indentation_guide_override: Option<bool>,
+
     /// Per-buffer user settings (tab size, indentation style, etc.)
     /// These settings are preserved across file reloads (auto-revert)
     pub buffer_settings: BufferSettings,
@@ -295,6 +304,7 @@ impl EditorState {
             cursor_visibility_locked: false,
             editing_disabled: false,
             scrollable: true,
+            indentation_guide_override: None,
             buffer_settings: BufferSettings::default(),
             reference_highlighter: ReferenceHighlighter::new(),
             is_composite_buffer: false,

@@ -567,6 +567,9 @@ impl Editor {
             PluginCommand::SetLineNumbers { buffer_id, enabled } => {
                 self.handle_set_line_numbers(buffer_id, enabled);
             }
+            PluginCommand::SetIndentationGuide { buffer_id, enabled } => {
+                self.handle_set_indentation_guide(buffer_id, enabled);
+            }
             PluginCommand::SetViewMode { buffer_id, mode } => {
                 self.handle_set_view_mode(buffer_id, &mode);
             }

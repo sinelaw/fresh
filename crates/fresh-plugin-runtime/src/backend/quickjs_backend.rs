@@ -4914,6 +4914,18 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Enable or disable indentation guides for a buffer, overriding the global
+    /// `editor.indentation_guide` setting. Tool views that render non-editable
+    /// content (e.g. the Git Log commit-detail diff) disable them.
+    pub fn set_indentation_guide(&self, buffer_id: u32, enabled: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetIndentationGuide {
+                buffer_id: BufferId(buffer_id as usize),
+                enabled,
+            })
+            .is_ok()
+    }
+
     /// Set the view mode for a buffer ("source" or "compose")
     pub fn set_view_mode(&self, buffer_id: u32, mode: String) -> bool {
         self.command_sender

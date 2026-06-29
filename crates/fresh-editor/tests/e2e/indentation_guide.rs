@@ -134,3 +134,30 @@ fn indentation_guide_all_mode_continues_through_blank_line_in_editor_flow() {
         "indentation guide should resume on the line after the blank\n{screen}"
     );
 }
+
+#[test]
+fn indentation_guide_renders_independently_of_line_numbers() {
+    // Indentation guides and the line-number gutter are independent preferences:
+    // turning line numbers off must NOT take the guides with it. A user can want
+    // a chrome-free gutter and still rely on the guides to read code structure.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides_no_line_numbers.rs");
+    std::fs::write(&file_path, "fn main() {\n    let child = 1;\n}\n").unwrap();
+
+    for line_numbers in [true, false] {
+        let mut config = Config::default();
+        config.editor.indentation_guide = IndentationGuideMode::All;
+        config.editor.line_numbers = line_numbers;
+
+        let mut harness =
+            EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+        harness.open_file(&file_path).unwrap();
+        harness.render().unwrap();
+
+        let screen = harness.screen_to_string();
+        assert!(
+            screen.contains("▏   let child = 1;"),
+            "indentation guide should render with line_numbers={line_numbers}\n{screen}"
+        );
+    }
+}

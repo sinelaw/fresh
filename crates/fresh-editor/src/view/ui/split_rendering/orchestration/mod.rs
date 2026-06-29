@@ -441,6 +441,23 @@ pub(crate) fn render_content(
                 &view_prefs.rulers
             };
 
+            // Indentation guides are a source-code editing aid, like the column
+            // rulers above. Resolve the effective mode per buffer: an explicit
+            // plugin override (`setIndentationGuide`) wins; otherwise virtual
+            // buffers (grep results, *Diagnostics*, the Git Log commit list, …)
+            // default off because they aren't code, while ordinary file buffers
+            // follow the global setting. A file-backed tool view the virtual
+            // default can't catch — the Git Log commit-detail diff — opts out via
+            // the override. This is independent of the line-number gutter, so an
+            // ordinary buffer keeps its guides with line numbers turned off.
+            let mut style = style;
+            style.cfg.indentation_guide = match state.indentation_guide_override {
+                Some(true) => style.cfg.indentation_guide,
+                Some(false) => IndentationGuideMode::None,
+                None if is_virtual_buffer => IndentationGuideMode::None,
+                None => style.cfg.indentation_guide,
+            };
+
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states
                 .as_deref_mut()

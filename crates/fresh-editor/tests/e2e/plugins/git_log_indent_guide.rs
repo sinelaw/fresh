@@ -1,0 +1,63 @@
+//! Regression test: indentation guides must not leak into the Git Log view.
+//!
+//! The Git Log command opens a magit-style buffer group — a commit list beside
+//! a commit-detail diff — rendered as inner group-leaf panels with no
+//! code-editing chrome. With `editor.indentation_guide = "all"` the global
+//! setting used to apply to those panels too, painting a stray `▏` into column
+//! 0 of the commit list and over the four-space-indented commit-message lines
+//! in the diff. Indentation guides are a source-code editing aid; they don't
+//! belong in a tool view. This opens the log with guides enabled and asserts no
+//! guide glyph renders — independent of line numbers (a separate preference).
+
+use crate::common::git_test_helper::GitTestRepo;
+use crate::common::harness::EditorTestHarness;
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, IndentationGuideMode};
+
+// TODO: git command output differs on Windows; the other git_log tests skip it.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn git_log_view_does_not_render_indentation_guides() {
+    let repo = GitTestRepo::new();
+    // An indented source file: `git show`'s commit message is itself indented
+    // four spaces, so the commit-detail panel carries column-0 guide bait
+    // regardless of the diff body.
+    repo.create_file("indented.rs", "fn main() {\n    let x = 1;\n}\n");
+    repo.git_add(&["indented.rs"]);
+    repo.git_commit("Add indented file");
+    repo.setup_git_log_plugin();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, repo.path.clone()).unwrap();
+
+    // Anchor on a real file tab, then open the full-repo Git Log.
+    harness.open_file(&repo.path.join("indented.rs")).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Git Log").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Both panels have painted once the toolbar hint ("switch pane") and the
+    // commit-detail diff (the selected commit's `Author:` line) are on screen.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("switch pane") && s.contains("Author:")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('▏'),
+        "Git Log panels must not render indentation guides (`▏`).\nScreen:\n{screen}"
+    );
+}
