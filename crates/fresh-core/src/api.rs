@@ -2644,6 +2644,13 @@ pub enum PluginCommand {
         /// a deletion virtual line.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         text_overlays: Vec<VirtualLineTextOverlay>,
+        /// Buffer version `position` was computed against (from the
+        /// `lines_changed` epoch). When set, the editor remaps `position`
+        /// forward to the current buffer state before anchoring, repairing the
+        /// stale offset a fire-and-forget hook handler echoes back. `None`
+        /// anchors at `position` verbatim (legacy callers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Clear all virtual texts in a namespace
@@ -2665,6 +2672,14 @@ pub enum PluginCommand {
         namespace: String,
         start: usize,
         end: usize,
+        /// Buffer version `start`/`end` were computed against (from the
+        /// `lines_changed` epoch). When set, the editor remaps the range
+        /// forward to the current buffer state before clearing, so a stale
+        /// range from a fire-and-forget hook handler clears the row's current
+        /// anchors rather than a drifted byte window. `None` clears
+        /// `[start, end)` verbatim (legacy callers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Add a conceal range that hides or replaces a byte range during rendering.

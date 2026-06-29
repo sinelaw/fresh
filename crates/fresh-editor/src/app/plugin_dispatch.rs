@@ -449,6 +449,7 @@ impl Editor {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+                epoch,
             } => {
                 self.handle_add_virtual_line(
                     buffer_id,
@@ -462,6 +463,7 @@ impl Editor {
                     gutter_glyph,
                     gutter_color,
                     text_overlays,
+                    epoch,
                 );
             }
             PluginCommand::ClearVirtualTextNamespace {
@@ -475,8 +477,9 @@ impl Editor {
                 namespace,
                 start,
                 end,
+                epoch,
             } => {
-                self.handle_clear_virtual_lines_in_range(buffer_id, namespace, start, end);
+                self.handle_clear_virtual_lines_in_range(buffer_id, namespace, start, end, epoch);
             }
 
             // ==================== Conceal Commands ====================

@@ -2705,7 +2705,7 @@ interface EditorAPI {
 	* `[start, end)`. The per-line analogue of `clearConcealsInRange`, so a
 	* plugin can rebuild one line's virtual lines without nuking the namespace.
 	*/
-	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number): boolean;
+	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number, epoch: number | null): boolean;
 	/**
 	* Add a virtual line (full line above/below a position)
 	* 
@@ -3600,6 +3600,9 @@ interface HookEventMap {
 			byte_end: number;
 			content: string;
 		}[];
+		/** Buffer version these byte ranges were captured at. Pass back to
+		* coordinate-mapping APIs to repair stale offsets from this batch. */
+		epoch: number;
 	};
 	view_transform_request: {
 		buffer_id: number;

@@ -386,6 +386,7 @@ impl Editor {
         gutter_glyph: Option<String>,
         gutter_color_spec: Option<fresh_core::api::OverlayColorSpec>,
         text_overlays: Vec<fresh_core::api::VirtualLineTextOverlay>,
+        epoch: Option<u64>,
     ) {
         use crate::view::theme::named_color_from_str;
         use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
@@ -434,6 +435,15 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            // Repair a stale anchor: the plugin computed `position` against the
+            // `lines_changed` epoch, but later edits may have shifted it. Map it
+            // forward; if the epoch is too old to map, skip — convergence
+            // (cursor_moved → refreshLines) re-fires with fresh coordinates.
+            let position = match state.map_plugin_coord(position, epoch) {
+                Some(p) => p,
+                None => return,
+            };
+
             let placement = if above {
                 VirtualTextPosition::LineAbove
             } else {
@@ -485,6 +495,7 @@ impl Editor {
         namespace: String,
         start: usize,
         end: usize,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -493,6 +504,17 @@ impl Editor {
             .buffer_state_mut(buffer_id)
         {
             use crate::view::virtual_text::VirtualTextNamespace;
+            // Repair a stale range: the plugin computed `[start, end)` against
+            // the `lines_changed` epoch. Map both ends forward so the clear hits
+            // the row's current anchors; if the epoch is too old, skip and let
+            // convergence redo it.
+            let (start, end) = match (
+                state.map_plugin_coord(start, epoch),
+                state.map_plugin_coord(end, epoch),
+            ) {
+                (Some(s), Some(e)) => (s, e),
+                _ => return,
+            };
             let ns = VirtualTextNamespace::from_string(namespace);
             state
                 .virtual_texts

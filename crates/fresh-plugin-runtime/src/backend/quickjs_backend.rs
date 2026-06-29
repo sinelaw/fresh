@@ -4126,6 +4126,7 @@ impl JsEditorApi {
         namespace: String,
         start: u32,
         end: u32,
+        epoch: Option<f64>,
     ) -> bool {
         self.command_sender
             .send(PluginCommand::ClearVirtualLinesInRange {
@@ -4133,6 +4134,7 @@ impl JsEditorApi {
                 namespace,
                 start: start as usize,
                 end: end as usize,
+                epoch: epoch.map(|v| v as u64),
             })
             .is_ok()
     }
@@ -4188,6 +4190,11 @@ impl JsEditorApi {
             .ok()
             .filter(|s| !s.is_empty());
         let gutter_color = parse_color_spec("gutterColor", &options);
+        // Optional epoch: the buffer version `position` was computed against
+        // (from the `lines_changed` event). Lets the editor remap a stale anchor
+        // forward before placing the line. Read from `options` to keep the JS
+        // signature stable.
+        let epoch = options.get::<_, f64>("epoch").ok().map(|v| v as u64);
 
         // Deserialize the array via the same serde-over-rquickjs path the
         // rest of the runtime uses (cf. `set_setting`), so the plugin-facing
@@ -4226,6 +4233,7 @@ impl JsEditorApi {
                 gutter_glyph,
                 gutter_color,
                 text_overlays,
+                epoch,
             })
             .is_ok())
     }

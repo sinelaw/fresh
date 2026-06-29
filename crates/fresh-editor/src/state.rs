@@ -435,6 +435,22 @@ impl EditorState {
         state
     }
 
+    /// Remap a byte coordinate that a plugin computed against an older buffer
+    /// version forward to the current buffer state.
+    ///
+    /// `epoch` is the `buffer.version()` the coordinate was captured at (the
+    /// `epoch` carried by the `lines_changed` hook). `None` means the caller
+    /// has no epoch to remap against, so the coordinate is taken as-is.
+    /// `Some(_)` returning `None` means the epoch is too old to map (evicted or
+    /// barriered) — the caller should skip the operation and let convergence
+    /// (`cursor_moved → refreshLines`) redo it with fresh coordinates.
+    pub fn map_plugin_coord(&self, coord: usize, epoch: Option<u64>) -> Option<usize> {
+        match epoch {
+            None => Some(coord),
+            Some(v) => self.coord_map.map(coord, v),
+        }
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
     fn apply_insert(
         &mut self,
@@ -1769,6 +1785,88 @@ mod tests {
 
         assert_eq!(state.buffer.to_string().unwrap(), "hello");
         assert_eq!(cursors.primary().position, 5);
+    }
+
+    #[test]
+    fn coord_map_remaps_through_real_edits() {
+        // Verifies the marker-adjustment chokepoint actually feeds the
+        // coordinate ring: after real apply_insert / apply_delete, a coordinate
+        // captured at an older version maps forward to its current location.
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        let cursor_id = cursors.primary_id();
+
+        // Seed: "line0\nTARGET\n" — TARGET begins at byte 6.
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "line0\nTARGET\n".to_string(),
+                cursor_id,
+            },
+        );
+        let v0 = state.buffer.version();
+        let target_at_v0 = 6usize;
+
+        // No edits since v0: identity, and a None epoch is always verbatim.
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0, Some(v0)),
+            Some(target_at_v0)
+        );
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0, None),
+            Some(target_at_v0)
+        );
+
+        // Insert two lines above the target — it must shift right by 4 bytes.
+        let above = "X\nY\n";
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: above.to_string(),
+                cursor_id,
+            },
+        );
+        let v1 = state.buffer.version();
+        assert!(v1 > v0);
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0, Some(v0)),
+            Some(target_at_v0 + above.len()),
+            "a coord captured at v0 must map forward past the later insert"
+        );
+        // From the current version there is nothing newer to replay.
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0 + above.len(), Some(v1)),
+            Some(target_at_v0 + above.len()),
+        );
+
+        // Delete those lines again — the target shifts back left.
+        state.apply(
+            &mut cursors,
+            &Event::Delete {
+                range: 0..above.len(),
+                deleted_text: above.to_string(),
+                cursor_id,
+            },
+        );
+        let v2 = state.buffer.version();
+        assert!(v2 > v1);
+        // Insert + delete net to zero above the target: a v0 coord is unchanged.
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0, Some(v0)),
+            Some(target_at_v0)
+        );
+        // From v1, only the delete applies.
+        assert_eq!(
+            state.map_plugin_coord(target_at_v0 + above.len(), Some(v1)),
+            Some(target_at_v0),
+        );
     }
 
     #[test]
