@@ -1563,48 +1563,50 @@ impl Editor {
         } else if fe_draw {
             // The tree isn't materialised yet but the column is reserved
             // (initial build or expand-to-path sync in progress). Paint a
-            // placeholder panel — border, title, and an "Initializing…" line — so the
-            // explorer *visibly* appears the instant it's toggled on, even when
-            // the build is slow (e.g. a remote SSH workspace). Previously this
-            // was left blank, so a remote toggle looked like it did nothing.
+            // placeholder panel — a bordered box with the "Initializing…" line —
+            // so the explorer *visibly* appears the instant it's toggled on, even
+            // when the build is slow (e.g. a remote SSH workspace). Previously
+            // this was left blank, so a remote toggle looked like it did nothing.
+            //
+            // The placeholder deliberately does *not* render the real panel's
+            // "File Explorer" title: that title is the tree-is-ready signal many
+            // tests (and the menu's checkmark) key on, so it must appear only
+            // once the materialised tree is on screen. While loading we title the
+            // box with the remote host (when remote) or leave it untitled.
             use ratatui::layout::Alignment;
             use ratatui::style::{Modifier, Style};
             use ratatui::widgets::{Block, Borders, Paragraph};
 
             let theme = self.theme.read().unwrap();
-            let title = match remote_connection.as_deref() {
-                Some(host) => {
-                    let hostname = host
-                        .split('@')
-                        .next_back()
-                        .unwrap_or(host)
-                        .split(':')
-                        .next()
-                        .unwrap_or(host);
-                    format!(" [{}] ", hostname)
-                }
-                None => " File Explorer ".to_string(),
+            let border_style = if is_focused {
+                Style::default().fg(theme.cursor)
+            } else {
+                Style::default().fg(theme.split_separator_fg)
             };
-            let (title_style, border_style) = if is_focused {
-                (
+            let mut block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .style(Style::default().bg(theme.editor_bg));
+            if let Some(host) = remote_connection.as_deref() {
+                let hostname = host
+                    .split('@')
+                    .next_back()
+                    .unwrap_or(host)
+                    .split(':')
+                    .next()
+                    .unwrap_or(host);
+                let title_style = if is_focused {
                     Style::default()
                         .fg(theme.editor_bg)
                         .bg(theme.editor_fg)
-                        .add_modifier(Modifier::BOLD),
-                    Style::default().fg(theme.cursor),
-                )
-            } else {
-                (
-                    Style::default().fg(theme.line_number_fg),
-                    Style::default().fg(theme.split_separator_fg),
-                )
-            };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_style(title_style)
-                .border_style(border_style)
-                .style(Style::default().bg(theme.editor_bg));
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.line_number_fg)
+                };
+                block = block
+                    .title(format!(" [{}] ", hostname))
+                    .title_style(title_style);
+            }
             let placeholder = Paragraph::new(rust_i18n::t!("explorer.initializing").to_string())
                 .style(Style::default().fg(theme.line_number_fg))
                 .alignment(Alignment::Center)

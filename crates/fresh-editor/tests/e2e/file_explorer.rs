@@ -4108,24 +4108,29 @@ fn test_file_explorer_shows_placeholder_during_slow_build() {
 
     let mut harness = EditorTestHarness::with_slow_fs(120, 40, slow).unwrap();
 
-    // Sanity: the explorer starts hidden.
+    // The explorer panel draws a bordered box whose top-left corner sits at
+    // column 0; nothing else paints a `┌` at the start of a line, so it's a
+    // reliable, locale-independent "the sidebar is on screen" signal.
+    let panel_drawn =
+        |h: &EditorTestHarness| h.screen_to_string().lines().any(|l| l.starts_with('┌'));
+
+    // Sanity: the explorer starts hidden (no sidebar panel).
     harness.render().unwrap();
-    assert!(
-        !harness.screen_to_string().contains("File Explorer"),
-        "file explorer should start hidden"
-    );
+    assert!(!panel_drawn(&harness), "file explorer should start hidden");
 
     // Toggle the explorer on (Ctrl+B). The async build is still running when
-    // `send_key`'s bounded drain returns, so `file_explorer` is still `None`.
+    // `send_key`'s bounded drain returns, so `file_explorer` is still `None` —
+    // yet the sidebar (a placeholder panel) must already be on screen rather
+    // than a blank gap.
     harness
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
-    let screen = harness.screen_to_string();
     assert!(
-        screen.contains("File Explorer"),
+        panel_drawn(&harness),
         "explorer panel (placeholder) must be visible while the slow build is \
-         in progress, not a blank gap; screen:\n{screen}"
+         in progress, not a blank gap; screen:\n{}",
+        harness.screen_to_string()
     );
 }

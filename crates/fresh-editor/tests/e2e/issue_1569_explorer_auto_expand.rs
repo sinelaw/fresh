@@ -51,13 +51,9 @@ fn test_file_explorer_auto_expands_to_current_file_on_first_open() {
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Wait for the tree itself to populate, not merely the panel chrome:
-    // the panel now paints a "File Explorer" placeholder the instant it's
-    // toggled on (while the async build runs), so keying off the title alone
-    // would race ahead of the build. `README.md` is a root child that appears
-    // once the listing lands, independent of the auto-expand under test.
+    // Wait for the file explorer panel itself to render.
     harness
-        .wait_until(|h| h.screen_to_string().contains("README.md"))
+        .wait_until(|h| h.screen_to_string().contains("File Explorer"))
         .unwrap();
 
     // Grab only the explorer pane's text by reading the rows inside its
