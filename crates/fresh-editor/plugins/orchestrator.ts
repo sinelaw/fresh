@@ -3262,6 +3262,43 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   })();
 }
 
+// A click on a dock row is a deliberate "open this session" gesture, so
+// it both switches the active window *and* hands keyboard focus to the
+// editor — exactly like pressing Enter (`dock_activate`). This differs
+// from arrow-nav, which only live-switches and keeps focus on the dock
+// so you can keep arrowing. The switch is done synchronously here (the
+// 30 ms debounce in `scheduleDockSwitch` exists only to absorb held
+// arrow keys; a click has no such stream) and the pending debounce token
+// is bumped so any in-flight arrow switch can't clobber this one.
+function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  dockSwitchToken++;
+  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  if (typeof id !== "number") return;
+  const sess = orchestratorSessions.get(id);
+  // A discovered (on-disk) worktree has no live window — attach a fresh
+  // session and dive in (attachToWorktree hands focus to the editor).
+  if (sess?.discovered) {
+    void attachToWorktree({
+      root: sess.root,
+      projectPath: sess.projectPath ?? sess.root,
+      label: sess.label,
+      branch: sess.branch,
+      discoveredId: sess.id,
+      dive: true,
+    });
+    return;
+  }
+  if (id > 0 && id !== editor.activeWindow()) {
+    if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
+    else editor.setActiveWindow(id);
+  }
+  // Hand keyboard focus to the activated window (mirror `dock_activate`).
+  dockBlurred = true;
+  editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  editor.setEditorMode(null);
+}
+
 // Toggle command (bind to a key of choice; reachable as
 // "Orchestrator: Toggle Dock" in the command palette). Simple
 // 2-state: visible → hide, hidden → show + focus. (A blurred-but-
@@ -7044,15 +7081,19 @@ editor.on("widget_event", (e) => {
         clearDialogError();
         if (dockMode) {
           // The editor to the dock's right is the preview: arrowing the
-          // list (or clicking a row) switches the active window live
-          // (debounced), wiping down when moving down and up when moving
-          // up. A discovered (on-disk) worktree has no window to switch
-          // to, so `scheduleDockSwitch` opens it as the active session
-          // instead — both click and arrow land there the same way.
+          // list switches the active window live (debounced), wiping down
+          // when moving down and up when moving up, and keeps focus on the
+          // dock so you can keep arrowing. A *click* is a deliberate "open
+          // this" gesture, so it also hands keyboard focus to the activated
+          // window (dive in) like Enter — otherwise keys keep going to the
+          // dock while the editor shows the switched session. A discovered
+          // (on-disk) worktree has no window to switch to, so both paths
+          // attach a fresh session to it instead.
           openPanel.update(buildDockSpec());
           openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
-          scheduleDockSwitch(fromEdge);
+          if (payload.via === "click") diveDockSelectionFromClick(fromEdge);
+          else scheduleDockSwitch(fromEdge);
           return;
         }
         // Update preview pane.
