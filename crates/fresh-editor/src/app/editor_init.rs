@@ -846,16 +846,32 @@ impl Editor {
         // factory picks the persisted active id/root, attaches the
         // seed buffer + LSP to it directly, and the constructor
         // sees a well-formed windows map.
+        // Orchestrator persistence lives under the local `data_dir`, so it
+        // must be read through the local filesystem — never the authority's
+        // (which is the *remote* SSH backend on an SSH launch). Routing these
+        // local-disk reads over SSH is both wrong (it queries the remote
+        // host's copy of a local-machine question) and catastrophically slow
+        // (one network round-trip per workspace file). The window content
+        // below still flows through the authority filesystem; only this
+        // editor-wide registry read is pinned local.
+        let orchestrator_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        tracing::debug!(
+            data_dir = %dir_context.data_dir.display(),
+            "editor_init: reading persisted windows env"
+        );
         let persisted_env = crate::app::orchestrator_persistence::read_persisted_windows_env(
-            filesystem.as_ref(),
+            orchestrator_filesystem.as_ref(),
             &dir_context.data_dir,
             &working_dir,
         );
+        tracing::debug!("editor_init: reading persisted plugin state");
         let plugin_global_state = crate::app::orchestrator_persistence::read_persisted_plugin_state(
-            filesystem.as_ref(),
+            orchestrator_filesystem.as_ref(),
             &dir_context.data_dir,
             &working_dir,
         );
+        tracing::debug!("editor_init: persistence reads complete");
 
         // Reopen the session the user last used *in this project*, if
         // any — never a session from another project. Cross-project
@@ -1056,12 +1072,10 @@ impl Editor {
         // `impl Window` can mint ids without an `Editor` reference.
         let buffer_id_alloc = crate::app::window_resources::BufferIdAllocator::new(2);
 
-        // The local-host filesystem handle. Hoisted here (rather than
-        // constructed inline in the `Editor` literal below) so the
-        // base window's `WindowResources` and the editor share the same
-        // `Arc` from the start.
-        let local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
-            Arc::new(crate::model::filesystem::StdFileSystem);
+        // The local-host filesystem handle, shared with the base window's
+        // `WindowResources` and the editor. Same `Arc` the orchestrator
+        // persistence read above used — local state has one local backend.
+        let local_filesystem = Arc::clone(&orchestrator_filesystem);
 
         // Hot-exit recovery service, shared (Arc<Mutex>) into every
         // `Window` via `WindowResources` so per-window restore/auto-save

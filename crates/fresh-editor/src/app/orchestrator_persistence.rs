@@ -214,10 +214,15 @@ fn discover_sessions(
 ) -> Vec<PersistedWindow> {
     type SessionState = HashMap<String, HashMap<String, serde_json::Value>>;
     let dir = workspaces_dir(data_dir);
+    tracing::debug!(dir = %dir.display(), "discover_sessions: read_dir");
     let entries = match filesystem.read_dir(&dir) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
+    tracing::debug!(
+        count = entries.len(),
+        "discover_sessions: read_dir returned"
+    );
     let mut found: Vec<(
         PathBuf,
         String,
@@ -231,6 +236,7 @@ fn discover_sessions(
         if !entry.name.ends_with(".json") {
             continue;
         }
+        tracing::debug!(path = %p.display(), "discover_sessions: read_file");
         let Ok(bytes) = filesystem.read_file(p) else {
             continue;
         };

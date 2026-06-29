@@ -161,7 +161,9 @@ impl SshConnection {
         cmd.kill_on_drop(true);
         cmd.hide_window();
 
+        tracing::debug!(target = %params.ssh_target(), "ssh connect: spawning ssh child");
         let mut child = cmd.spawn()?;
+        tracing::debug!("ssh connect: ssh child spawned");
 
         // Get handles
         let mut stdin = child
@@ -180,6 +182,7 @@ impl SshConnection {
         // error isn't the actionable reason; the carrier's own stderr is. Fall
         // through to the same EOF path so we surface "ssh: …" rather than a bare
         // `SpawnFailed`, regardless of which side loses the race.
+        tracing::debug!(agent_len, "ssh connect: sending agent bootstrap to stdin");
         if stdin.write_all(AGENT_SOURCE.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
             return Err(ssh_eof_error(&mut child, &params, stderr).await);
         }
@@ -190,6 +193,7 @@ impl SshConnection {
         // Wait for ready message from agent
         // No timeout needed - all failure modes (auth failure, network issues, etc.)
         // result in SSH exiting and us getting EOF. User can Ctrl+C if needed.
+        tracing::debug!("ssh connect: awaiting agent ready line (blocks on handshake/auth)");
         let mut ready_line = String::new();
         match reader.read_line(&mut ready_line).await {
             Ok(0) => {
@@ -198,6 +202,7 @@ impl SshConnection {
             Ok(_) => {}
             Err(e) => return Err(SshError::AgentStartFailed(format!("read error: {}", e))),
         }
+        tracing::debug!("ssh connect: agent ready line received");
 
         // Connected. Drain ssh's stderr for the life of the connection so the
         // occasional later diagnostic (host-key warnings, etc.) is discarded
@@ -235,6 +240,8 @@ impl SshConnection {
                 got: version,
             });
         }
+
+        tracing::debug!(version, "ssh connect: agent ready, protocol version ok");
 
         // Create channel (takes ownership of stdin for writing)
         let channel = std::sync::Arc::new(AgentChannel::new(reader, stdin));

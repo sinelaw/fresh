@@ -1428,12 +1428,19 @@ fn connect_remote(
     }
 
     // Establish SSH connection (this is async, so we block on it)
+    tracing::debug!(
+        user = %remote.user,
+        host = %remote.host,
+        port = ?remote.port,
+        "connect_remote: dialing SSH connection"
+    );
     let connection = rt
         .block_on(remote::SshConnection::connect(connection_params))
         .context(format!(
             "Failed to connect to remote host {}@{}",
             remote.user, remote.host
         ))?;
+    tracing::debug!("connect_remote: SSH connection established");
 
     let connection_string = connection.connection_string();
     let channel = connection.channel();
@@ -1441,6 +1448,7 @@ fn connect_remote(
 
     tracing::info!("Connected to remote host: {}", connection_string);
 
+    tracing::debug!("connect_remote: building remote filesystem + spawners");
     let filesystem = std::sync::Arc::new(remote::RemoteFileSystem::new(
         channel.clone(),
         connection_string,
@@ -1462,10 +1470,12 @@ fn connect_remote(
 
     // Spawn background reconnect task on the runtime.
     // We need a runtime context for tokio::spawn inside spawn_reconnect_task.
+    tracing::debug!("connect_remote: spawning background reconnect task");
     let reconnect_handle = {
         let _guard = rt.enter();
         remote::spawn_reconnect_task(channel, reconnect_params.clone())
     };
+    tracing::debug!("connect_remote: remote authority assembled");
 
     // SSH authority: leave the display label empty so the status bar
     // falls back to `filesystem.remote_connection_info()`, which knows
