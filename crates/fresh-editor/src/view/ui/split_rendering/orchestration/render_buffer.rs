@@ -309,10 +309,18 @@ pub(crate) fn compute_buffer_layout(
         visible_count,
     );
 
+    // DIAGNOSTIC (ssh-workspace-nav-lag): time each compute_buffer_layout
+    // sub-step. A flat ~387ms/frame stall lives between here and marker
+    // creation, with no remote_block (so it's not an agent FS call). Split it
+    // into populate_line_cache (chunk loads) vs decoration_context (syntax
+    // highlight + decorations) so the next log names the culprit. DEBUG, not
+    // TRACE, so it clears the EnvFilter floor.
+    let _dt0 = std::time::Instant::now();
     // Populate line cache to ensure chunks are loaded for rendering.
     let _ = state
         .buffer
         .populate_line_cache(viewport.top_byte, adjusted_visible_count);
+    let populate_us = _dt0.elapsed().as_micros();
 
     let viewport_start = viewport.top_byte;
     let viewport_end = calculate_viewport_end(
@@ -322,6 +330,7 @@ pub(crate) fn compute_buffer_layout(
         adjusted_visible_count,
     );
 
+    let _dt1 = std::time::Instant::now();
     let decorations = decoration_context(
         state,
         viewport_start,
@@ -333,6 +342,14 @@ pub(crate) fn compute_buffer_layout(
         &view_mode,
         diagnostics_inline_text,
         &view_data.lines,
+    );
+    let decoration_us = _dt1.elapsed().as_micros();
+    tracing::debug!(
+        target: "render_timing",
+        populate_us,
+        decoration_us,
+        viewport_bytes = viewport_end.saturating_sub(viewport_start),
+        "compute_buffer_layout sub-steps"
     );
 
     let calculated_offset = viewport.top_view_line_offset;

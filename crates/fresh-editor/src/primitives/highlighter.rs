@@ -139,6 +139,14 @@ impl Highlighter {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
+        // DIAGNOSTIC (ssh-workspace-nav-lag): the overlay timer shows
+        // highlight_viewport eats ~388ms/frame, yet the cache-miss re-parse
+        // trace never fires — so the cost is on the HIT path below. Log the
+        // cache geometry and time the filter/collect to confirm whether a
+        // pathological cached-span count (a prior huge parse) is being
+        // re-filtered every frame.
+        let _hl_entry = std::time::Instant::now();
+        let cached_total = self.cache.as_ref().map(|c| c.spans.len()).unwrap_or(0);
         // Check if cache is valid for this range
         if let Some(cache) = &self.cache {
             if cache.range.start <= viewport_start
@@ -146,7 +154,7 @@ impl Highlighter {
                 && self.last_buffer_len == buffer.len()
             {
                 // Cache hit! Filter spans to the requested range and resolve colors from theme
-                return cache
+                let out: Vec<HighlightSpan> = cache
                     .spans
                     .iter()
                     .filter(|span| {
@@ -159,6 +167,16 @@ impl Highlighter {
                         category: Some(span.category),
                     })
                     .collect();
+                tracing::debug!(
+                    target: "render_timing",
+                    cache = "hit",
+                    cached_spans = cached_total,
+                    returned = out.len(),
+                    cache_bytes = cache.range.end.saturating_sub(cache.range.start),
+                    hit_us = _hl_entry.elapsed().as_micros(),
+                    "highlight_viewport cache hit (filter/collect)"
+                );
+                return out;
             }
         }
 
@@ -179,8 +197,18 @@ impl Highlighter {
             return Vec::new();
         }
 
+        // DIAGNOSTIC (ssh-workspace-nav-lag): a cache MISS here re-extracts the
+        // whole parse range and re-parses. Over SSH `slice_bytes` can pull
+        // unresident chunks from the remote FS (slow); the tree-sitter parse is
+        // pure CPU (fast, same as local). Time them separately so the next
+        // repro shows whether the per-frame stall is the remote read or the
+        // parse. The miss itself is suspicious: cursor moves call
+        // `invalidate_all` (state.rs), forcing a full re-highlight every frame.
+        let _hl0 = std::time::Instant::now();
         // Extract source bytes from buffer
         let source = buffer.slice_bytes(parse_range.clone());
+        let slice_us = _hl0.elapsed().as_micros();
+        let _hl1 = std::time::Instant::now();
 
         // Highlight the source - store categories for theme-independent caching.
         //
@@ -240,6 +268,17 @@ impl Highlighter {
                 tracing::error!("Failed to highlight: {}", e);
             }
         }
+
+        let parse_us = _hl1.elapsed().as_micros();
+        tracing::debug!(
+            target: "render_timing",
+            cache = "miss",
+            parse_bytes = parse_range.len(),
+            slice_us,
+            parse_us,
+            spans = cached_spans.len(),
+            "highlight_viewport re-parse (slice=remote read?, parse=CPU)"
+        );
 
         // Update cache
         self.cache = Some(HighlightCache {
