@@ -106,6 +106,24 @@ const TABLE_BORDER_NS = "md-tb";
 // same pass by the conceal and border code.
 let currentRowWidths: Map<number, number[]> = new Map();
 
+// Width memo: each table carries a marker whose payload is its accumulated
+// per-column max content widths — NUMBERS ONLY, no positions. The marker's byte
+// range is editor-owned and auto-shifts; it is used only to associate a later
+// `lines_changed` batch with the same table (a race-tolerant overlap query),
+// never for rendering — rows/borders are still positioned from the live event.
+//
+// Why a memo at all: the plugin only ever sees the rows in the current batch
+// (off-screen rows aren't readable synchronously), so column widths computed
+// from a single partial batch (e.g. a mouse-wheel scroll that misses the widest
+// row) come out narrower than a batch that includes it — and the two render at
+// different widths side by side. Accumulating GROW-ONLY across batches makes
+// the widths converge upward and stay consistent as a table scrolls into view.
+// Widths are numbers, so the memo is immune to the marker/event desync that the
+// per-line border model removed. The marker is reset on edits that touch the
+// table (see after_insert/after_delete) so a narrowed cell isn't stuck wide.
+const TABLE_WIDTH_NS_PREFIX = "tw"; // marker id prefix
+let nextTableWidthId = 1;
+
 // Allocated column widths for the table row starting at `byte`, for the current
 // render pass. Undefined if it isn't a width-resolved table row this pass.
 function widthsForRow(byte: number): number[] | undefined {
@@ -577,8 +595,13 @@ function disableMarkdownCompose(bufferId: number): void {
   if (isComposing(bufferId)) {
     editor.setViewState(bufferId, "last-cursor-line", null);
     // Clear all table border virtual lines (one shared namespace) so the frame
-    // can't linger as orphaned virtual lines after compose is toggled off.
+    // can't linger as orphaned virtual lines after compose is toggled off, and
+    // drop the per-table width memos.
     editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
+    const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
+    for (const m of memos) {
+      if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
+    }
 
     // Tell Rust side this buffer is back in source mode
     editor.setViewMode(bufferId, "source");
@@ -1519,19 +1542,30 @@ function groupTableRows(lines: LineInfoLike[]): LineInfoLike[][] {
 }
 
 /** Populate `currentRowWidths` for this render: one allocated-width array per
- * table row in the batch, uniform within each consecutive group. Computed from
- * the live batch content only — no stored block, no cross-frame position state.
+ * table row in the batch, uniform within each table.
  *
- * Trade-off vs. the old accumulate-and-grow block: column widths reflect the
- * rows *currently in the batch*, so a wider row that is off-screen during a
- * partial mouse-wheel scroll doesn't widen the visible columns until it (and,
- * via the cursor-move refresh, the rest of the table) are measured together.
- * Within any one render every visible row of a table shares one width array, so
- * borders and cell conceals always line up. */
-function computeRowWidths(lines: LineInfoLike[]): void {
+ * Column widths are accumulated GROW-ONLY in the table's width memo (a
+ * widths-only marker, see TABLE_WIDTH_NS_PREFIX) so a partial batch that misses
+ * the table's widest row doesn't lay its rows out narrower than a batch that
+ * includes it. The marker's coordinates are only ever used to find the same
+ * table's memo across batches (overlap query) and to extend its span as more of
+ * a tall table scrolls into view; rows and borders are still positioned from the
+ * live event, so an offset memo marker can at worst contribute stale *numbers*
+ * (recovered on the next batch), never a misplaced border.
+ *
+ * Returns true if any table's accumulated widths grew this batch — the caller
+ * then forces one `refreshLines` so already-visible rows (which were laid out at
+ * the old, narrower width before the wider row scrolled in) re-render at the new
+ * width. The follow-up pass finds the memo unchanged, so it does not loop. */
+function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
   currentRowWidths = new Map();
+  let grew = false;
   for (const group of groupTableRows(lines)) {
-    const maxW: number[] = [];
+    const gStart = group[0].byte_start;
+    const gEnd = group[group.length - 1].byte_end;
+
+    // This batch's per-column max content width.
+    const batchMaxW: number[] = [];
     for (const line of group) {
       const isSep = isSepRowContent(line.content);
       const cells = tableCells(line.content);
@@ -1540,12 +1574,44 @@ function computeRowWidths(lines: LineInfoLike[]): void {
         // display width (not concealed) so columns fit revealed emphasis markers
         // and wide/CJK/emoji cells.
         const w = isSep || /^[-:\s]+$/.test(cells[c]) ? 0 : displayWidth(cells[c]);
-        maxW[c] = Math.max(maxW[c] ?? 0, w);
+        batchMaxW[c] = Math.max(batchMaxW[c] ?? 0, w);
       }
     }
-    const widths = allocatedFor(maxW);
+
+    // Find this table's width memo (overlap query; write-through means two
+    // groups of one table in the same batch share it). Consolidate duplicates.
+    const near = (editor.queryMarkers(bufferId, gStart - 1, gEnd + 1) as Array<{
+      id: string; start: number; end: number; payload: unknown;
+    }>) || [];
+    const memo = near.filter((m) => m.id.startsWith(TABLE_WIDTH_NS_PREFIX));
+    const existing = memo.length ? memo[0] : undefined;
+    for (let k = 1; k < memo.length; k++) editor.deleteMarker(bufferId, memo[k].id);
+
+    // Accumulate (grow-only).
+    const acc: number[] = [];
+    if (existing) {
+      const p = (existing.payload || {}) as { maxW?: number[] };
+      for (const w of p.maxW ?? []) acc.push(w);
+    }
+    const prevLen = acc.length;
+    for (let c = 0; c < batchMaxW.length; c++) {
+      const before = acc[c] ?? 0;
+      acc[c] = Math.max(before, batchMaxW[c]);
+      if (acc[c] > before || c >= prevLen) grew = true;
+    }
+
+    // Upsert. Extend the marker's span to cover every row seen so far, so the
+    // next batch (further down a tall table) still overlaps and finds this memo
+    // instead of starting a second one.
+    const id = existing ? existing.id : `${TABLE_WIDTH_NS_PREFIX}${nextTableWidthId++}`;
+    const start = existing ? Math.min(existing.start, gStart) : gStart;
+    const end = existing ? Math.max(existing.end, gEnd) : gEnd;
+    editor.createMarker(bufferId, id, start, end, { maxW: acc });
+
+    const widths = allocatedFor(acc);
     for (const line of group) currentRowWidths.set(line.byte_start, widths);
   }
+  return grew;
 }
 
 
@@ -1594,8 +1660,10 @@ editor.on("lines_changed", (data) => {
   // shared across splits.
   const cursors = isComposing(data.buffer_id) ? [editor.getCursorPosition()] : [];
 
-  // Column widths for every table row in this batch (uniform per group).
-  computeRowWidths(data.lines);
+  // Column widths for every table row in this batch (uniform per table, via the
+  // grow-only memo). If a wider row scrolled into view and grew a table's
+  // columns, force a refresh so already-visible rows re-render at the new width.
+  const tableWidthsGrew = computeRowWidths(data.buffer_id, data.lines);
 
   // Line-number → line, for local first/last-row classification of borders.
   const byLineNum = new Map<number, LineInfoLike>();
@@ -1630,13 +1698,33 @@ editor.on("lines_changed", (data) => {
       emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
   }
+
+  if (tableWidthsGrew) {
+    editor.refreshLines(data.buffer_id);
+  }
 });
-// after_insert / after_delete: no table-specific work. An edit invalidates
-// `seen_byte_ranges` for the affected lines, so `lines_changed` re-fires for
-// them on the next render and the per-line pass clears+rebuilds each affected
-// row's conceals AND its border frame. Border virtual lines for unaffected rows
-// auto-shift with the edit, so they need no redraw. (There is no longer a table
-// marker to invalidate.)
+// after_insert / after_delete: conceals and borders need no work — an edit
+// invalidates `seen_byte_ranges`, so `lines_changed` re-fires for the affected
+// lines and the per-line pass clears+rebuilds them; unaffected rows' borders
+// auto-shift. We only reset the *width memo* of a table the edit touched, so a
+// cell that just got narrower (or a row removed) isn't stuck at the old wide
+// column. The memo re-accumulates from scratch on the following render.
+function resetEditedTableWidths(bufferId: number, affStart: number, affEnd: number): void {
+  const near = (editor.queryMarkers(bufferId, affStart, affEnd) as Array<{
+    id: string; start: number; end: number; payload: unknown;
+  }>) || [];
+  for (const m of near) {
+    if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
+  }
+}
+editor.on("after_insert", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
+});
+editor.on("after_delete", (data) => {
+  if (!isComposingInAnySplit(data.buffer_id)) return;
+  resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
+});
 editor.on("cursor_moved", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
 

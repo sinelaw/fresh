@@ -468,11 +468,10 @@ Tail paragraph.
 /// Deterministic because it needs no async lag — just a partial batch. Asserts
 /// every visible table frame line shares one right edge.
 ///
-/// CURRENTLY FAILING (`#[ignore]`d so it doesn't red the PR): it reproduces the
-/// open partial-batch column-width wobble. Un-ignore it together with the fix
-/// (grow-only width accumulation, or editor-side frame rendering).
+/// Fixed by the grow-only column-width memo (a widths-only marker that
+/// accumulates across batches) plus the grow-refresh that re-renders
+/// already-visible rows when a wider row scrolls in.
 #[cfg(feature = "plugins")]
-#[ignore = "reproduces the open partial-scroll column-width wobble; un-ignore with the fix"]
 #[test]
 fn test_table_columns_uniform_width_under_partial_scroll() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
