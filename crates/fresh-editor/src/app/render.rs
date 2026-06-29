@@ -1568,13 +1568,12 @@ impl Editor {
             // when the build is slow (e.g. a remote SSH workspace). Previously
             // this was left blank, so a remote toggle looked like it did nothing.
             //
-            // The placeholder deliberately does *not* render the real panel's
-            // "File Explorer" title: that title is the tree-is-ready signal many
-            // tests (and the menu's checkmark) key on, so it must appear only
-            // once the materialised tree is on screen. While loading we title the
-            // box with the remote host (when remote) or leave it untitled.
+            // The placeholder is deliberately *untitled*: the real panel's title
+            // (" File Explorer " locally, " [host] " remotely) is the tree-is-ready
+            // signal that tests, the View-menu checkmark, and focus routing key
+            // on, so it must appear only once the materialised tree is on screen.
             use ratatui::layout::Alignment;
-            use ratatui::style::{Modifier, Style};
+            use ratatui::style::Style;
             use ratatui::widgets::{Block, Borders, Paragraph};
 
             let theme = self.theme.read().unwrap();
@@ -1583,30 +1582,10 @@ impl Editor {
             } else {
                 Style::default().fg(theme.split_separator_fg)
             };
-            let mut block = Block::default()
+            let block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style)
                 .style(Style::default().bg(theme.editor_bg));
-            if let Some(host) = remote_connection.as_deref() {
-                let hostname = host
-                    .split('@')
-                    .next_back()
-                    .unwrap_or(host)
-                    .split(':')
-                    .next()
-                    .unwrap_or(host);
-                let title_style = if is_focused {
-                    Style::default()
-                        .fg(theme.editor_bg)
-                        .bg(theme.editor_fg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.line_number_fg)
-                };
-                block = block
-                    .title(format!(" [{}] ", hostname))
-                    .title_style(title_style);
-            }
             let placeholder = Paragraph::new(rust_i18n::t!("explorer.initializing").to_string())
                 .style(Style::default().fg(theme.line_number_fg))
                 .alignment(Alignment::Center)
