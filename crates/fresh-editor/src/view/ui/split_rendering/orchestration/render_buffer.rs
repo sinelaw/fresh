@@ -311,10 +311,13 @@ pub(crate) fn compute_buffer_layout(
 
     // DIAGNOSTIC (ssh-workspace-nav-lag): time each compute_buffer_layout
     // sub-step. A flat ~387ms/frame stall lives between here and marker
-    // creation, with no remote_block (so it's not an agent FS call). Split it
-    // into populate_line_cache (chunk loads) vs decoration_context (syntax
-    // highlight + decorations) so the next log names the culprit. DEBUG, not
-    // TRACE, so it clears the EnvFilter floor.
+    // creation. Earlier this showed "no remote_block", but that was the old
+    // 30ms gate hiding it: a giant single line read as many sub-30ms chunks
+    // sums to ~387ms while no single round-trip crosses 30ms. The gate is now
+    // removed (every round-trip logs `remote_block`) and `RemoteFileSystem`
+    // logs `remote_fs` per read (method/offset/bytes), so the next run shows
+    // whether populate_line_cache (chunk loads) or decoration_context (syntax
+    // highlight) is firing per-frame remote reads. DEBUG clears the EnvFilter floor.
     let _dt0 = std::time::Instant::now();
     // Populate line cache to ensure chunks are loaded for rendering.
     let _ = state

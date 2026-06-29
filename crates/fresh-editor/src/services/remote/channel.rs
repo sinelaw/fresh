@@ -15,30 +15,21 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-/// DIAGNOSTIC (ssh-workspace-nav-lag): emit a `remote_block` WARN when a
-/// synchronous agent round-trip blocks its calling thread for longer than
-/// this. 30ms is below a single keystroke's frame budget but well above a
-/// local round-trip, so on a laggy SSH link any per-keystroke blocking call
-/// crosses it and is logged once per keystroke.
-const REMOTE_BLOCK_WARN_THRESHOLD_MS: u128 = 30;
-
-/// DIAGNOSTIC (ssh-workspace-nav-lag): log a blocking agent round-trip that
-/// exceeded the warn threshold, naming the method, the elapsed time, and the
-/// thread it blocked. The thread name pinpoints whether the stall is on the
-/// UI/main thread (felt as input lag) or a background poller (harmless).
-/// Filter with `RUST_LOG=remote_block=warn` or grep the warnings log for
-/// `remote_block`.
+/// DIAGNOSTIC (ssh-workspace-nav-lag): log *every* synchronous agent
+/// round-trip — method, elapsed (µs), and the thread it blocked — with no
+/// duration threshold. A per-frame remote read can be individually fast yet
+/// fire repeatedly, so counting all of them (e.g. one `read`/`count_lf` per
+/// render frame on the UI thread) is what pins the lag. The thread name
+/// distinguishes a UI/main-thread stall (felt as input lag) from a background
+/// poller. Grep the log for `remote_block`.
 fn log_blocking_roundtrip(method: &str, started: std::time::Instant) {
-    let elapsed_ms = started.elapsed().as_millis();
-    if elapsed_ms > REMOTE_BLOCK_WARN_THRESHOLD_MS {
-        tracing::warn!(
-            target: "remote_block",
-            method,
-            elapsed_ms,
-            thread = std::thread::current().name().unwrap_or("unnamed"),
-            "blocking agent round-trip"
-        );
-    }
+    tracing::debug!(
+        target: "remote_block",
+        method,
+        elapsed_us = started.elapsed().as_micros(),
+        thread = std::thread::current().name().unwrap_or("unnamed"),
+        "blocking agent round-trip"
+    );
 }
 
 /// Default capacity for the per-request streaming data channel.

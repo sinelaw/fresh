@@ -14,7 +14,7 @@ use crate::services::remote::protocol::{
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 /// Remote filesystem that communicates with the Python agent
 pub struct RemoteFileSystem {
@@ -150,8 +150,31 @@ impl RemoteFileSystem {
     }
 }
 
+/// DIAGNOSTIC (ssh-workspace-nav-lag): record a remote FS read so per-frame
+/// over-the-wire access during render is visible with its byte size and the
+/// thread it ran on. `bytes` is the payload size (range length / file size),
+/// 0 for metadata. Correlate timestamps with the `render_timing` decoration
+/// window; grep the log for `remote_fs`.
+#[inline]
+fn rt_fs_log(method: &str, path: &Path, offset: Option<u64>, bytes: usize, t0: Instant) {
+    // `offset` lets us tell a stuck re-read (same offset+bytes every frame =
+    // missing resident cache) from a moving range (expected). `-1` = N/A.
+    tracing::debug!(
+        target: "render_timing",
+        op = "remote_fs",
+        method,
+        offset = offset.map(|o| o as i64).unwrap_or(-1),
+        bytes,
+        elapsed_us = t0.elapsed().as_micros(),
+        thread = std::thread::current().name().unwrap_or("unnamed"),
+        path = %path.display(),
+        "remote FS read (per-frame remote I/O if inside the render window)"
+    );
+}
+
 impl FileSystem for RemoteFileSystem {
     fn read_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        let _t0 = Instant::now();
         let path_str = path.to_string_lossy();
         let (data_chunks, _result) = self
             .channel
@@ -168,10 +191,12 @@ impl FileSystem for RemoteFileSystem {
             }
         }
 
+        rt_fs_log("read_file", path, None, content.len(), _t0);
         Ok(content)
     }
 
     fn read_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        let _t0 = Instant::now();
         let path_str = path.to_string_lossy();
         let (data_chunks, result) = self
             .channel
@@ -211,17 +236,19 @@ impl FileSystem for RemoteFileSystem {
             ));
         }
 
+        rt_fs_log("read_range", path, Some(offset), content.len(), _t0);
         Ok(content)
     }
 
     fn count_line_feeds_in_range(&self, path: &Path, offset: u64, len: usize) -> io::Result<usize> {
+        let _t0 = Instant::now();
         let path_str = path.to_string_lossy();
         let result = self
             .channel
             .request_blocking("count_lf", count_lf_params(&path_str, offset, len))
             .map_err(Self::to_io_error)?;
 
-        result
+        let count = result
             .get("count")
             .and_then(|v| v.as_u64())
             .map(|c| c as usize)
@@ -230,7 +257,9 @@ impl FileSystem for RemoteFileSystem {
                     io::ErrorKind::InvalidData,
                     "missing count in count_lf response",
                 )
-            })
+            })?;
+        rt_fs_log("count_line_feeds_in_range", path, Some(offset), len, _t0);
+        Ok(count)
     }
 
     fn write_file(&self, path: &Path, data: &[u8]) -> io::Result<()> {
@@ -344,6 +373,7 @@ impl FileSystem for RemoteFileSystem {
     }
 
     fn metadata(&self, path: &Path) -> io::Result<FileMetadata> {
+        let _t0 = Instant::now();
         let path_str = path.to_string_lossy();
         let result = self
             .channel
@@ -357,6 +387,7 @@ impl FileSystem for RemoteFileSystem {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
+        rt_fs_log("metadata", path, None, 0, _t0);
         Ok(Self::convert_metadata(&rm, &name))
     }
 
