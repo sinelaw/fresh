@@ -742,3 +742,135 @@ fn test_table_bottom_border_below_wrapped_last_row() {
         );
     }
 }
+
+
+
+/// Regression test: rapidly deleting lines *strictly above* a wide table in
+/// compose mode must not transiently corrupt the table.
+///
+/// The table's bytes never change — only its position shifts — so its conceals,
+/// soft-breaks, and borders should ride the edits via their auto-shifting
+/// markers and stay correct. But `markdown_compose` re-processes the table rows
+/// on every re-fire, tearing down and rebuilding their decorations, and the
+/// rebuild commands carry **raw byte coordinates** (`addConceal` /
+/// `clearConceals` / soft-break ranges) computed against the `lines_changed`
+/// epoch. When deletes advance the buffer faster than the plugin drains, those
+/// commands apply at stale byte ranges: conceals land off-by-N, so the source
+/// `|` cell separators and `**` emphasis markers leak through and the wide rows
+/// wrap at the wrong columns — the cells scatter (matches the reported repro).
+///
+/// This drives that lag deterministically: each delete renders (firing
+/// `lines_changed`) without draining, so the plugin's coordinate commands queue
+/// up and then apply against a buffer that has moved on. The invariant: a
+/// correctly-rendered compose table contains no raw ASCII `|` (every cell
+/// separator is concealed to `│`), so a leaked `|` in any frame is corruption.
+///
+/// Ignored pending the fix (the conceal / soft-break paths need the same
+/// epoch-remap the border path got, or the table rows should not be rebuilt for
+/// edits that don't touch them). Run with --ignored.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore = "reproduces an unfixed bug: rapid delete-above transiently corrupts a \
+            wide compose table (stale coordinate-based conceal/soft-break \
+            commands leak raw | and scatter cells). Run with --ignored."]
+fn test_wide_table_not_corrupted_by_rapid_delete_above() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::model::event::Event;
+
+    let md = "\
+# Doc
+
+## Feature Overview
+
+| Category | Features |
+|----------|----------|
+| **File Management** | open/save/new/close, file explorer, tabs, auto-revert, git file finder |
+| **Editing** | undo/redo, multi-cursor, block selection, smart indent, comments, clipboard |
+| **Search & Replace** | incremental search, find in selection, query replace, git grep |
+| **Navigation** | go to line/bracket, word movement, position history, bookmarks |
+
+## Installation
+";
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("wide.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+    // Sanity: a correctly-rendered compose table has no raw '|'.
+    assert!(
+        !harness.screen_to_string().contains('|'),
+        "compose table should conceal all raw '|' before editing.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // A block of blank lines at the very top (converged).
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key_repeat(KeyCode::Enter, KeyModifiers::NONE, 12)
+        .unwrap();
+    harness.wait_for_async_quiescence(8).unwrap();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    // Rapid forward-delete of the top newline: delete + render (fires
+    // lines_changed) WITHOUT draining, so the plugin's coordinate commands lag.
+    let raw_pipe_lines = |s: &str| s.lines().filter(|l| l.contains('|')).count();
+    let mut worst = 0usize;
+    let mut worst_frame = String::new();
+    let mut record = |h: &EditorTestHarness, worst: &mut usize, wf: &mut String| {
+        let s = h.screen_to_string();
+        let c = raw_pipe_lines(&s);
+        if c > *worst {
+            *worst = c;
+            *wf = s;
+        }
+    };
+    for _ in 0..12 {
+        harness
+            .apply_event(Event::Delete {
+                range: 0..1,
+                deleted_text: "\n".to_string(),
+                cursor_id,
+            })
+            .unwrap();
+        harness.render().unwrap();
+        record(&harness, &mut worst, &mut worst_frame);
+    }
+    // Drain the lagged commands, watching every intermediate frame.
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+        record(&harness, &mut worst, &mut worst_frame);
+    }
+
+    assert_eq!(
+        worst, 0,
+        "rapid delete-above transiently corrupted the table: a frame leaked {} \
+         raw '|' line(s) (conceals applied at stale byte ranges).\nWorst frame:\n{}",
+        worst, worst_frame
+    );
+}
