@@ -32,3 +32,7 @@ trash = "5.2.5"
 # rquickjs-sys has no pre-generated bindings for FreeBSD
 [target.'cfg(target_os = "freebsd")'.dependencies]
 rquickjs = { workspace = true, features = ["bindgen"] }
+
+# rquickjs-sys has no pre-generated bindings for NetBSD
+[target.'cfg(target_os = "netbsd")'.dependencies]
+rquickjs = { workspace = true, features = ["bindgen"] }
