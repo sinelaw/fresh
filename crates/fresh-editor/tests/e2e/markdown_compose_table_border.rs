@@ -649,8 +649,6 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
     );
 }
 
-
-
 /// Regression test: when a table's LAST row wraps onto multiple visual lines,
 /// the `└─┴─┘` bottom border must render *below the whole wrapped row*, not
 /// after its first visual line.
@@ -742,8 +740,6 @@ fn test_table_bottom_border_below_wrapped_last_row() {
         );
     }
 }
-
-
 
 /// Regression test: rapidly deleting lines *strictly above* a wide table in
 /// compose mode must not transiently corrupt the table.
