@@ -284,9 +284,7 @@ pub(super) fn calculate_viewport_end(
     // visible cells while keeping the scanned span proportional to the screen,
     // not the line. `0` width (only seen in degenerate callers) disables the
     // clamp so we keep the previous full-line behavior.
-    let visible_byte_budget = left_column
-        .saturating_add(viewport_width)
-        .saturating_mul(4);
+    let visible_byte_budget = left_column.saturating_add(viewport_width).saturating_mul(4);
 
     let mut iter_temp = state
         .buffer
