@@ -166,7 +166,9 @@ pub struct EditorState {
     pub margins: MarginManager,
 
     /// Cached line number for primary cursor (0-indexed)
-    /// Maintained incrementally to avoid O(n) scanning on every render
+    /// Maintained incrementally to avoid O(n) scanning on every render.
+    /// Every path that moves the primary cursor must refresh this, or the status
+    /// bar shows stale coordinates (see `set_buffer_cursor_in_splits`).
     pub primary_cursor_line_number: LineNumber,
 
     /// Current mode (for modal editing, if implemented)

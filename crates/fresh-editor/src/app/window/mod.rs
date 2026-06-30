@@ -1991,6 +1991,9 @@ impl Window {
     // alongside other Window sub-fields.
 
     /// Read-only handle to editor configuration.
+    ///
+    /// Per-window snapshot (an `Arc<Config>` clone in `WindowResources`); after
+    /// `Editor::config_mut` it stays stale until `Editor::sync_windows_config` runs.
     pub fn config(&self) -> &crate::config::Config {
         &self.resources.config
     }
