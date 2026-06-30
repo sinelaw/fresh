@@ -532,6 +532,7 @@ impl Editor {
         start: usize,
         end: usize,
         replacement: Option<String>,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -539,6 +540,16 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            // Repair a stale range: the plugin computed `[start, end)` against the
+            // hook epoch; map it forward so the conceal lands on the row's current
+            // bytes. Skip if the epoch is too old to map (convergence redoes it).
+            let (start, end) = match (
+                state.map_plugin_coord(start, epoch),
+                state.map_plugin_coord(end, epoch),
+            ) {
+                (Some(s), Some(e)) => (s, e),
+                _ => return,
+            };
             state
                 .conceals
                 .add(&mut state.marker_list, namespace, start..end, replacement);
@@ -573,6 +584,7 @@ impl Editor {
         buffer_id: BufferId,
         start: usize,
         end: usize,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -580,6 +592,13 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            let (start, end) = match (
+                state.map_plugin_coord(start, epoch),
+                state.map_plugin_coord(end, epoch),
+            ) {
+                (Some(s), Some(e)) => (s, e),
+                _ => return,
+            };
             state
                 .conceals
                 .remove_in_range(&(start..end), &mut state.marker_list);
@@ -595,6 +614,7 @@ impl Editor {
         namespace: OverlayNamespace,
         start: usize,
         end: usize,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -602,6 +622,13 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            let (start, end) = match (
+                state.map_plugin_coord(start, epoch),
+                state.map_plugin_coord(end, epoch),
+            ) {
+                (Some(s), Some(e)) => (s, e),
+                _ => return,
+            };
             state.conceals.remove_in_range_for_namespace(
                 &namespace,
                 &(start..end),
@@ -671,6 +698,7 @@ impl Editor {
         namespace: OverlayNamespace,
         position: usize,
         indent: u16,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -678,6 +706,11 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            // Repair a stale wrap point against the hook epoch.
+            let position = match state.map_plugin_coord(position, epoch) {
+                Some(p) => p,
+                None => return,
+            };
             state
                 .soft_breaks
                 .add(&mut state.marker_list, namespace, position, indent);
@@ -712,6 +745,7 @@ impl Editor {
         buffer_id: BufferId,
         start: usize,
         end: usize,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -719,6 +753,13 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
+            let (start, end) = match (
+                state.map_plugin_coord(start, epoch),
+                state.map_plugin_coord(end, epoch),
+            ) {
+                (Some(s), Some(e)) => (s, e),
+                _ => return,
+            };
             state
                 .soft_breaks
                 .remove_in_range(start, end, &mut state.marker_list);

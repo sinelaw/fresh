@@ -489,8 +489,9 @@ impl Editor {
                 start,
                 end,
                 replacement,
+                epoch,
             } => {
-                self.handle_add_conceal(buffer_id, namespace, start, end, replacement);
+                self.handle_add_conceal(buffer_id, namespace, start, end, replacement, epoch);
             }
             PluginCommand::ClearConcealNamespace {
                 buffer_id,
@@ -502,16 +503,20 @@ impl Editor {
                 buffer_id,
                 start,
                 end,
+                epoch,
             } => {
-                self.handle_clear_conceals_in_range(buffer_id, start, end);
+                self.handle_clear_conceals_in_range(buffer_id, start, end, epoch);
             }
             PluginCommand::ClearConcealsInRangeForNamespace {
                 buffer_id,
                 namespace,
                 start,
                 end,
+                epoch,
             } => {
-                self.handle_clear_conceals_in_range_for_namespace(buffer_id, namespace, start, end);
+                self.handle_clear_conceals_in_range_for_namespace(
+                    buffer_id, namespace, start, end, epoch,
+                );
             }
 
             PluginCommand::AddFold {
@@ -535,8 +540,9 @@ impl Editor {
                 namespace,
                 position,
                 indent,
+                epoch,
             } => {
-                self.handle_add_soft_break(buffer_id, namespace, position, indent);
+                self.handle_add_soft_break(buffer_id, namespace, position, indent, epoch);
             }
             PluginCommand::ClearSoftBreakNamespace {
                 buffer_id,
@@ -548,8 +554,9 @@ impl Editor {
                 buffer_id,
                 start,
                 end,
+                epoch,
             } => {
-                self.handle_clear_soft_breaks_in_range(buffer_id, start, end);
+                self.handle_clear_soft_breaks_in_range(buffer_id, start, end, epoch);
             }
 
             // ==================== Menu Commands ====================

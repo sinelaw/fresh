@@ -761,14 +761,12 @@ fn test_table_bottom_border_below_wrapped_last_row() {
 /// correctly-rendered compose table contains no raw ASCII `|` (every cell
 /// separator is concealed to `│`), so a leaked `|` in any frame is corruption.
 ///
-/// Ignored pending the fix (the conceal / soft-break paths need the same
-/// epoch-remap the border path got, or the table rows should not be rebuilt for
-/// edits that don't touch them). Run with --ignored.
+/// Fixed by auto-stamping the active hook's epoch onto every coordinate-bearing
+/// command (conceals, soft-breaks, virtual lines) in the plugin runtime, so the
+/// editor remaps stale coordinates forward on apply (see `CoordMap` /
+/// `current_hook_epoch`).
 #[cfg(feature = "plugins")]
 #[test]
-#[ignore = "reproduces an unfixed bug: rapid delete-above transiently corrupts a \
-            wide compose table (stale coordinate-based conceal/soft-break \
-            commands leak raw | and scatter cells). Run with --ignored."]
 fn test_wide_table_not_corrupted_by_rapid_delete_above() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::{KeyCode, KeyModifiers};

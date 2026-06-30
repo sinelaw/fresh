@@ -2705,7 +2705,7 @@ interface EditorAPI {
 	* `[start, end)`. The per-line analogue of `clearConcealsInRange`, so a
 	* plugin can rebuild one line's virtual lines without nuking the namespace.
 	*/
-	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number, epoch: number | null): boolean;
+	clearVirtualLinesInRange(bufferId: number, namespace: string, start: number, end: number): boolean;
 	/**
 	* Add a virtual line (full line above/below a position)
 	* 

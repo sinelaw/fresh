@@ -2693,6 +2693,15 @@ pub enum PluginCommand {
         end: usize,
         /// Optional replacement text to show instead. None = hide completely.
         replacement: Option<String>,
+        /// Buffer version `start`/`end` were computed against — the epoch of the
+        /// hook the emitting handler ran in, auto-stamped by the plugin runtime
+        /// (see `current_hook_epoch`). The editor remaps the range forward to the
+        /// current buffer before concealing, so a stale range from a lagged
+        /// fire-and-forget hook lands on the row's current bytes instead of
+        /// leaking the concealed markup. `None` = no hook epoch in scope; apply
+        /// verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Clear all conceal ranges in a namespace
@@ -2707,6 +2716,10 @@ pub enum PluginCommand {
         buffer_id: BufferId,
         start: usize,
         end: usize,
+        /// Hook epoch the range was computed against (auto-stamped); the editor
+        /// remaps it forward before clearing. `None` = verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Remove conceal ranges overlapping a byte range, restricted to a single
@@ -2718,6 +2731,10 @@ pub enum PluginCommand {
         namespace: OverlayNamespace,
         start: usize,
         end: usize,
+        /// Hook epoch the range was computed against (auto-stamped); the editor
+        /// remaps it forward before clearing. `None` = verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Add a collapsed fold range. Hides the byte range
@@ -2763,6 +2780,11 @@ pub enum PluginCommand {
         position: usize,
         /// Number of hanging indent spaces after the break
         indent: u16,
+        /// Hook epoch `position` was computed against (auto-stamped); the editor
+        /// remaps it forward before injecting the break, so a stale wrap point
+        /// from a lagged hook lands at the row's current bytes. `None` = verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Clear all soft breaks in a namespace
@@ -2776,6 +2798,10 @@ pub enum PluginCommand {
         buffer_id: BufferId,
         start: usize,
         end: usize,
+        /// Hook epoch the range was computed against (auto-stamped); the editor
+        /// remaps it forward before clearing. `None` = verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Refresh lines for a buffer (clear seen_lines cache to re-trigger lines_changed hook)

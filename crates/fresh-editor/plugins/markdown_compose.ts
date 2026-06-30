@@ -224,11 +224,9 @@ const tableBorderOptions = { fg: "editor.fg", bg: "editor.bg" };
  * at this row's `byte_end`) is excluded by the half-open range, and re-emitted
  * by its own line. Called for *every* line in a batch — table or not — so a row
  * that stops being a table row loses its frame. */
-function clearRowBorders(
-  bufferId: number, byteStart: number, byteEnd: number, epoch?: number,
-): void {
+function clearRowBorders(bufferId: number, byteStart: number, byteEnd: number): void {
   editor.clearVirtualLinesInRange(
-    bufferId, TABLE_BORDER_NS, byteStart, Math.max(byteEnd, byteStart + 1), epoch ?? null,
+    bufferId, TABLE_BORDER_NS, byteStart, Math.max(byteEnd, byteStart + 1),
   );
 }
 
@@ -246,14 +244,13 @@ function emitRowBorders(
   isSep: boolean,
   prevIsSep: boolean,
   isLast: boolean,
-  epoch?: number,
 ): void {
   if (widths.length === 0) return;
 
-  // Carry the lines_changed epoch so the editor remaps this stale anchor
-  // forward before placing the line (see CoordMap). Spread onto the shared
-  // options so the base styling is preserved.
-  const opts = epoch === undefined ? tableBorderOptions : { ...tableBorderOptions, epoch };
+  // The editor auto-stamps the lines_changed epoch onto each addVirtualLine and
+  // remaps the anchor forward before placing it (see CoordMap) — the plugin
+  // passes no epoch.
+  const opts = tableBorderOptions;
 
   if (isFirst) {
     // Top border above the first row. ┌─┬─┐
@@ -1684,7 +1681,7 @@ editor.on("lines_changed", (data) => {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
     // off by the async lag).
-    clearRowBorders(data.buffer_id, line.byte_start, line.byte_end, data.epoch);
+    clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
 
     processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
     processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
@@ -1703,7 +1700,7 @@ editor.on("lines_changed", (data) => {
       const isLast = next !== undefined && !isTableRowContent(next.content);
       const isSep = isSepRowContent(line.content);
       const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
-      emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast, data.epoch);
+      emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
   }
 
