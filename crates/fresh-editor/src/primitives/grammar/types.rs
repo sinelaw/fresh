@@ -255,6 +255,10 @@ pub const C3_GRAMMAR: &str = include_str!("../../grammars/c3.sublime-syntax");
 /// doesn't include one)
 pub const ASM_GRAMMAR: &str = include_str!("../../grammars/asm.sublime-syntax");
 
+/// Embedded Slang grammar (the HLSL-derived shading language; syntect doesn't
+/// include one). See https://shader-slang.com/.
+pub const SLANG_GRAMMAR: &str = include_str!("../../grammars/slang.sublime-syntax");
+
 /// Registry of all available TextMate grammars.
 ///
 /// This struct holds the compiled syntax set and provides lookup methods.
@@ -727,6 +731,7 @@ impl GrammarRegistry {
             (VHDL_GRAMMAR, "VHDL"),
             (C3_GRAMMAR, "C3"),
             (ASM_GRAMMAR, "Assembly"),
+            (SLANG_GRAMMAR, "Slang"),
         ];
 
         for (grammar_str, name) in additional_grammars {

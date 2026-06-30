@@ -1,0 +1,252 @@
+%YAML 1.2
+---
+# Slang syntax highlighting for Fresh editor.
+#
+# Slang is a shading language (a superset of HLSL) used widely in real-time
+# graphics. It adds generics, interfaces, modules, and automatic
+# differentiation on top of HLSL. See https://shader-slang.com/.
+#
+# Highlighting is deliberately syntect/TextMate based (no tree-sitter grammar)
+# per the project's grammar guidelines.
+name: Slang
+file_extensions:
+  - slang
+scope: source.slang
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+  vector_dim: '[1-4]'
+  matrix_dim: '[1-4]x[1-4]'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: attributes
+    - include: semantics
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtin-functions
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    # Block comments (nesting not standard in HLSL/Slang, keep it simple)
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.slang
+      push:
+        - meta_scope: comment.block.slang
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.slang
+          pop: true
+    # Line comments
+    - match: '//.*$'
+      scope: comment.line.double-slash.slang
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.slang
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.slang
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.slang
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|warning|line|version|extension)\b'
+      scope: keyword.control.directive.slang
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.slang
+      push:
+        - meta_scope: string.quoted.double.slang
+        - match: '"'
+          scope: punctuation.definition.string.end.slang
+          pop: true
+        - include: string-escapes
+
+  string-escapes:
+    - match: '\\[abfnrtv0\\''"?]'
+      scope: constant.character.escape.slang
+    - match: '\\x[0-9a-fA-F]+'
+      scope: constant.character.escape.hex.slang
+    - match: '\\u[0-9a-fA-F]{4}'
+      scope: constant.character.escape.unicode.slang
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.slang
+      push:
+        - meta_scope: string.quoted.single.slang
+        - match: "'"
+          scope: punctuation.definition.string.end.slang
+          pop: true
+        - include: string-escapes
+
+  numbers:
+    # Hexadecimal float
+    - match: '\b0[xX][0-9a-fA-F_]+(\.[0-9a-fA-F_]+)?[pP][+-]?[0-9_]+[fFhH]?\b'
+      scope: constant.numeric.float.hex.slang
+    # Hexadecimal integer (with optional u/l/ul suffixes)
+    - match: '\b0[xX][0-9a-fA-F_]+([uU]|[lL]|[uU][lL]|[lL][uU])?\b'
+      scope: constant.numeric.hex.slang
+    # Float with fraction and optional exponent and h/f suffix
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fFhHlL]?\b'
+      scope: constant.numeric.float.slang
+    # Float starting with a dot
+    - match: '\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?[fFhHlL]?\b'
+      scope: constant.numeric.float.slang
+    # Integer with exponent (counts as float)
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+[fFhHlL]?\b'
+      scope: constant.numeric.float.slang
+    # Integer literal that carries an f/h suffix (e.g. 1.0f written as 1f)
+    - match: '\b[0-9][0-9_]*[fFhH]\b'
+      scope: constant.numeric.float.slang
+    # Integer (with optional u/l/ul suffixes)
+    - match: '\b[0-9][0-9_]*([uU]|[lL]|[uU][lL]|[lL][uU])?\b'
+      scope: constant.numeric.integer.slang
+
+  attributes:
+    # C++/Vulkan style double-bracket attributes, e.g. [[vk::binding(0, 0)]]
+    - match: '\[\['
+      scope: punctuation.section.brackets.begin.slang
+      push:
+        - meta_scope: storage.modifier.attribute.slang
+        - match: '\]\]'
+          scope: punctuation.section.brackets.end.slang
+          pop: true
+        - include: numbers
+        - include: strings
+    # Single-bracket attributes, e.g. [shader("compute")], [numthreads(8,8,1)],
+    # [Differentiable]. Only treat a bracket group as an attribute when it
+    # starts with a capital or lowercase identifier immediately after `[`, to
+    # avoid swallowing array subscripts like `data[i]`.
+    - match: '\[(?=\s*{{identifier}}\s*[\]\(])'
+      scope: punctuation.section.brackets.begin.slang
+      push:
+        - meta_scope: storage.modifier.attribute.slang
+        - match: '\]'
+          scope: punctuation.section.brackets.end.slang
+          pop: true
+        - include: numbers
+        - include: strings
+
+  semantics:
+    # HLSL/Slang semantics and register/packoffset bindings after a colon,
+    # e.g. `: SV_Position`, `: TEXCOORD0`, `: register(t0)`.
+    - match: '(:)\s*(register|packoffset)\b'
+      captures:
+        1: punctuation.separator.slang
+        2: keyword.other.binding.slang
+    - match: '(:)\s*(SV_[A-Za-z0-9_]+)'
+      captures:
+        1: punctuation.separator.slang
+        2: support.constant.semantic.slang
+    - match: '(:)\s*([A-Z][A-Z0-9_]*[0-9]+)\b'
+      captures:
+        1: punctuation.separator.slang
+        2: support.constant.semantic.slang
+
+  keywords:
+    # Control flow
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|discard|defer)\b'
+      scope: keyword.control.slang
+    # Error / optional handling
+    - match: '\b(try|catch|throws|throw)\b'
+      scope: keyword.control.exception.slang
+    # Declarations
+    - match: '\b(struct|class|interface|enum|namespace|typedef|extension|associatedtype|__init|__subscript|property|func|let|var|typealias)\b'
+      scope: keyword.declaration.slang
+    # Module system
+    - match: '\b(import|module|using|export|__exported|implementing|include)\b'
+      scope: keyword.other.module.slang
+    # Storage modifiers / qualifiers
+    - match: '\b(const|static|uniform|groupshared|shared|precise|volatile|extern|inline|in|out|inout|ref|__generic|where|public|private|internal|nointerpolation|linear|centroid|noperspective|sample|globallycoherent|snorm|unorm|row_major|column_major|no_diff|dynamic_uniform)\b'
+      scope: storage.modifier.slang
+    # Differentiation keywords
+    - match: '\b(__fwd_diff|__bwd_diff|fwd_diff|bwd_diff|no_diff|bwd_differentiable|forward_differentiable)\b'
+      scope: keyword.other.differentiable.slang
+    # Buffer declaration keywords
+    - match: '\b(cbuffer|tbuffer)\b'
+      scope: keyword.declaration.slang
+    # Operators that are keywords
+    - match: '\b(sizeof|alignof|new|is|as)\b'
+      scope: keyword.operator.word.slang
+
+  types:
+    # Texture / sampler / buffer object types
+    - match: '\b(RW)?(Texture(1D|2D|3D|Cube)(Array)?(MS)?(Array)?)\b'
+      scope: storage.type.texture.slang
+    - match: '\b(SamplerState|SamplerComparisonState)\b'
+      scope: storage.type.sampler.slang
+    - match: '\b(RW|Append|Consume)?(StructuredBuffer|ByteAddressBuffer|Buffer)\b'
+      scope: storage.type.buffer.slang
+    - match: '\b(ConstantBuffer|TextureBuffer|ParameterBlock|Ptr|Array|Atomic|Tensor|RaytracingAccelerationStructure|RayQuery)\b'
+      scope: storage.type.buffer.slang
+    # Matrix types: floatNxM, halfNxM, etc.
+    - match: '\b(float|half|double|int|uint|bool|min16float|min10float|min16int|min12int|min16uint|float16_t|float32_t|float64_t){{matrix_dim}}\b'
+      scope: storage.type.matrix.slang
+    # Vector types: floatN, halfN, etc.
+    - match: '\b(float|half|double|int|uint|bool|min16float|min10float|min16int|min12int|min16uint|float16_t|float32_t|float64_t){{vector_dim}}\b'
+      scope: storage.type.vector.slang
+    # Scalar / primitive types
+    - match: '\b(void|bool|int|uint|dword|half|float|double|min16float|min10float|min16int|min12int|min16uint|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t|float16_t|float32_t|float64_t|vector|matrix|string|DifferentialPair|IFloat|IArithmetic|IDifferentiable|IComparable|This)\b'
+      scope: storage.type.slang
+    # User-defined types (Capitalized identifiers)
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.slang
+
+  constants:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.slang
+    - match: '\b(null|nullptr)\b'
+      scope: constant.language.null.slang
+    - match: '\bthis\b'
+      scope: variable.language.this.slang
+    # ALL_CAPS identifiers are conventionally constants / macros
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: constant.other.slang
+
+  builtin-functions:
+    - match: '\b(abs|acos|all|any|asin|atan|atan2|ceil|clamp|cos|cosh|cross|ddx|ddx_coarse|ddx_fine|ddy|ddy_coarse|ddy_fine|degrees|determinant|distance|dot|exp|exp2|faceforward|firstbithigh|firstbitlow|floor|fma|fmod|frac|frexp|fwidth|isfinite|isinf|isnan|ldexp|length|lerp|log|log2|log10|mad|max|min|modf|mul|normalize|pow|radians|rcp|reflect|refract|round|rsqrt|saturate|sign|sin|sincos|sinh|smoothstep|sqrt|step|tan|tanh|transpose|trunc|countbits|reversebits)\b'
+      scope: support.function.builtin.slang
+    # Atomic / wave / barrier intrinsics
+    - match: '\b(InterlockedAdd|InterlockedAnd|InterlockedCompareExchange|InterlockedCompareStore|InterlockedExchange|InterlockedMax|InterlockedMin|InterlockedOr|InterlockedXor|GroupMemoryBarrier|GroupMemoryBarrierWithGroupSync|DeviceMemoryBarrier|AllMemoryBarrier|AllMemoryBarrierWithGroupSync)\b'
+      scope: support.function.builtin.slang
+    - match: '\b(WaveActiveSum|WaveActiveMax|WaveActiveMin|WaveActiveProduct|WaveActiveBitAnd|WaveActiveBitOr|WaveActiveBitXor|WaveActiveAllTrue|WaveActiveAnyTrue|WaveActiveBallot|WaveGetLaneCount|WaveGetLaneIndex|WaveIsFirstLane|WaveReadLaneAt|WaveReadLaneFirst|WavePrefixSum|WavePrefixProduct|QuadReadAcrossX|QuadReadAcrossY|QuadReadAcrossDiagonal|QuadReadLaneAt)\b'
+      scope: support.function.builtin.slang
+
+  functions:
+    # Function / method call: an identifier directly followed by `(`
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.slang
+
+  operators:
+    - match: '(\+\+|--)'
+      scope: keyword.operator.arithmetic.slang
+    - match: '(\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=)'
+      scope: keyword.operator.assignment.slang
+    - match: '(==|!=|<=|>=)'
+      scope: keyword.operator.comparison.slang
+    - match: '(&&|\|\||!)'
+      scope: keyword.operator.logical.slang
+    - match: '(<<|>>|&|\||\^|~)'
+      scope: keyword.operator.bitwise.slang
+    - match: '(\+|-|\*|/|%)'
+      scope: keyword.operator.arithmetic.slang
+    - match: '(->|\?|::|=|<|>)'
+      scope: keyword.operator.slang
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.slang
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.slang

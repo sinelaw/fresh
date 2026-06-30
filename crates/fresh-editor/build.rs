@@ -371,6 +371,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/vhdl.sublime-syntax", "VHDL"),
         ("src/grammars/c3.sublime-syntax", "C3"),
         ("src/grammars/asm.sublime-syntax", "Assembly"),
+        ("src/grammars/slang.sublime-syntax", "Slang"),
     ];
 
     let mut loaded = 0;

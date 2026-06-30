@@ -145,6 +145,7 @@ test_highlighting_works!(test_highlight_odin, "hello.odin", 2);
 test_highlighting_works!(test_highlight_gdscript, "hello.gd", 2);
 test_highlighting_works!(test_highlight_typst, "hello.typ", 2);
 test_highlighting_works!(test_highlight_gitconfig, "hello.gitconfig", 2);
+test_highlighting_works!(test_highlight_slang, "hello.slang", 2);
 
 // --- Alternate filenames/extensions that should work ---
 test_highlighting_works!(test_highlight_bash_ext, "hello.bash", 2);
