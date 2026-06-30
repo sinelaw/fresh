@@ -877,3 +877,135 @@ fn test_wide_table_not_corrupted_by_rapid_delete_above() {
         worst, worst_frame
     );
 }
+
+/// Shared setup: write `md` to a temp file, open it in compose mode, return the
+/// harness with the table frame rendered and stable.
+#[cfg(feature = "plugins")]
+fn compose_harness(md: &str, width: u16, height: u16) -> EditorTestHarness {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let temp_dir = Box::leak(Box::new(tempfile::TempDir::new().unwrap()));
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("doc.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        width,
+        height,
+        Default::default(),
+        project_root,
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+    harness
+}
+
+/// Regression: a markdown file whose **first line (byte 0)** is a table row must
+/// still render a framed, concealed table. The width-memo query padded
+/// `gStart - 1` to -1, underflowing the `u32` JS binding and throwing out of the
+/// `lines_changed` handler every render, so the table got no widths/conceals/
+/// borders and rendered raw `|` pipes.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_table_at_buffer_start_renders() {
+    let md = "| Name | Role |\n|------|------|\n| Ann  | Dev  |\n| Bob  | Ops  |\n\nTail.\n";
+    let harness = compose_harness(md, 60, 20);
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('┌'),
+        "a table starting at byte 0 should still draw a top border.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains('|'),
+        "a table starting at byte 0 leaked raw '|' (the gStart-1 underflow threw \
+         out of the handler).\nScreen:\n{}",
+        screen
+    );
+}
+
+/// Regression: a table whose **last row is the final line of the buffer** must
+/// still get its `└─┴─┘` bottom border. `isLast` required a following line in
+/// the batch, so at end-of-buffer it was never set and the frame stayed open.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_table_at_buffer_end_has_bottom_border() {
+    // No trailing line after the table — the last row is the last line.
+    let md = "# Doc\n\n| Name | Role |\n|------|------|\n| Ann  | Dev  |\n| Bob  | Ops  |";
+    let harness = compose_harness(md, 60, 20);
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('└'),
+        "a table ending at the last line of the buffer should still draw its \
+         `└─┴─┘` bottom border.\nScreen:\n{}",
+        screen
+    );
+}
+
+/// Regression: the forward bulk-edit path (multi-cursor / paste / query-replace
+/// / LSP code actions, via `apply_events_as_bulk_edit`) must record its edits
+/// into the `coord_map` ring, not just adjust markers inline. Otherwise it bumps
+/// the buffer version with no ring delta, and a plugin coordinate stamped at the
+/// pre-edit epoch is under-shifted (stale) by `map_plugin_coord` — the exact
+/// corruption the ring exists to prevent, for the most common multi-byte edits.
+#[test]
+fn bulk_edit_records_into_coord_map_ring() {
+    use fresh::model::event::Event;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    // Seed content so there's a coordinate sitting past a later edit.
+    harness
+        .apply_event(Event::Insert {
+            position: 0,
+            text: "abcdefghij".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    let v0 = harness.editor().active_state().buffer.version();
+    let coord_at_v0 = 5usize;
+
+    // A bulk edit through the forward path: insert 4 bytes at byte 0.
+    harness.editor_mut().apply_events_as_bulk_edit(
+        vec![Event::Insert {
+            position: 0,
+            text: "XXXX".to_string(),
+            cursor_id,
+        }],
+        "paste".to_string(),
+    );
+    let v1 = harness.editor().active_state().buffer.version();
+    assert!(v1 > v0, "a bulk edit must bump the buffer version");
+
+    // A coordinate captured at v0 must map forward past the 4-byte insert.
+    assert_eq!(
+        harness
+            .editor()
+            .active_state()
+            .map_plugin_coord(coord_at_v0, Some(v0)),
+        Some(coord_at_v0 + 4),
+        "the forward bulk-edit path must feed the coord_map ring so a stale \
+         plugin coordinate is remapped, not left under-shifted"
+    );
+}

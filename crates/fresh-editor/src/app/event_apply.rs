@@ -358,29 +358,16 @@ impl Editor {
             lengths
         };
 
-        // Adjust markers and margins using the merged edit lengths.
-        // Using merged edits (net delta for same-position replacements) avoids
-        // the marker-at-boundary problem where sequential delete+insert at the
-        // same position pushes markers incorrectly.
-        for &(pos, del_len, ins_len) in &edit_lengths {
-            if del_len > 0 && ins_len > 0 {
-                // Replacement: adjust by net delta only
-                if ins_len > del_len {
-                    state.marker_list.adjust_for_insert(pos, ins_len - del_len);
-                    state.margins.adjust_for_insert(pos, ins_len - del_len);
-                } else if del_len > ins_len {
-                    state.marker_list.adjust_for_delete(pos, del_len - ins_len);
-                    state.margins.adjust_for_delete(pos, del_len - ins_len);
-                }
-                // Equal: net delta 0, no adjustment needed
-            } else if del_len > 0 {
-                state.marker_list.adjust_for_delete(pos, del_len);
-                state.margins.adjust_for_delete(pos, del_len);
-            } else if ins_len > 0 {
-                state.marker_list.adjust_for_insert(pos, ins_len);
-                state.margins.adjust_for_insert(pos, ins_len);
-            }
-        }
+        // Adjust markers and margins using the merged edit lengths, AND record
+        // them into the coordinate-map ring. Routing through the same method the
+        // undo/redo bulk path uses (`replay_bulk_marker_adjustments`) keeps this
+        // forward path's ring coverage equal to its marker coverage — without it
+        // a paste / multi-cursor / query-replace / code-action bumped the buffer
+        // version with no ring delta, so `map_plugin_coord` under-shifted stale
+        // plugin coordinates (the exact corruption coord_map exists to prevent).
+        // Merged edits give the net delta for same-position replacements, which
+        // also avoids the marker-at-boundary problem.
+        state.replay_bulk_marker_adjustments(&edit_lengths);
 
         // Snapshot buffer state after edits (for redo)
         let new_snapshot = state.buffer.snapshot_buffer_state();

@@ -169,10 +169,24 @@ impl CoordMap {
 /// exactly at an insertion point moves forward with the inserted text, matching
 /// how the marker tree shifts a right-gravity marker. A coordinate strictly
 /// inside a deleted range collapses to the deletion start.
+///
+/// A same-position replacement (both lengths non-zero) is reduced to its **net**
+/// delta first, exactly as `replay_bulk_marker_adjustments` collapses a merged
+/// delete+insert tuple before calling `marker_list.adjust_*`. Without this a
+/// coordinate strictly inside the replaced span would be mapped to a different
+/// byte than its own auto-shifting marker, breaking the "exact same shift math"
+/// guarantee for stale coordinates landing inside a bulk replacement.
 fn apply_delta(coord: usize, pos: usize, removed: usize, inserted: usize) -> usize {
+    let (removed, inserted) = if removed > 0 && inserted > 0 {
+        if inserted >= removed {
+            (0, inserted - removed)
+        } else {
+            (removed - inserted, 0)
+        }
+    } else {
+        (removed, inserted)
+    };
     let mut c = coord;
-    // Deletion of [pos, pos+removed) first (matches the order a replace is
-    // recorded — removed then inserted at the same anchor).
     if removed > 0 {
         let end = pos + removed;
         if c >= end {
@@ -181,7 +195,6 @@ fn apply_delta(coord: usize, pos: usize, removed: usize, inserted: usize) -> usi
             c = pos;
         }
     }
-    // Insertion of `inserted` bytes at `pos`.
     if inserted > 0 && c >= pos {
         c += inserted;
     }
@@ -288,5 +301,34 @@ mod tests {
         m.record_insert(3, 0, 5);
         assert_eq!(m.map(10, 1), None, "straddles the barrier: refresh");
         assert_eq!(m.map(10, 2), Some(15), "after the barrier: mappable again");
+    }
+
+    #[test]
+    fn replacement_shifts_by_net_delta() {
+        // A bulk replacement tuple replaces [10, 16) (6 bytes) with 2 bytes
+        // (net -4). Coordinates are shifted by the NET delta, matching the
+        // marker tree's adjust_for_delete(pos, net), including one strictly
+        // inside the replaced span.
+        let mut m = CoordMap::default();
+        m.record_replace(1, 10, 6, 2);
+        assert_eq!(m.map(20, 0), Some(16), "past the span: 20 - (6-2)");
+        assert_eq!(m.map(9, 0), Some(9), "before the span: unchanged");
+        // Inside [10,16): collapses through the net deletion, not to pos+inserted.
+        assert_eq!(
+            m.map(13, 0),
+            Some(10),
+            "inside the span: clamps to net-delete start"
+        );
+
+        // Net-positive replacement: replace 2 bytes with 6 (net +4).
+        let mut g = CoordMap::default();
+        g.record_replace(1, 10, 2, 6);
+        assert_eq!(g.map(20, 0), Some(24), "past the span: 20 + (6-2)");
+        assert_eq!(
+            g.map(11, 0),
+            Some(15),
+            "inside the span: net insert shifts by +4"
+        );
+        assert_eq!(g.map(9, 0), Some(9), "before the span: unchanged");
     }
 }

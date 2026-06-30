@@ -1585,7 +1585,10 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 
     // Find this table's width memo (overlap query; write-through means two
     // groups of one table in the same batch share it). Consolidate duplicates.
-    const near = (editor.queryMarkers(bufferId, gStart - 1, gEnd + 1) as Array<{
+    // Clamp the low end at 0: `queryMarkers`'s binding takes a u32, so a table
+    // at byte 0 (`gStart - 1 === -1`) would throw an underflow out of the whole
+    // handler and leave the file rendering raw `|`.
+    const near = (editor.queryMarkers(bufferId, Math.max(0, gStart - 1), gEnd + 1) as Array<{
       id: string; start: number; end: number; payload: unknown;
     }>) || [];
     const memo = near.filter((m) => m.id.startsWith(TABLE_WIDTH_NS_PREFIX));
@@ -1674,6 +1677,11 @@ editor.on("lines_changed", (data) => {
   const byLineNum = new Map<number, LineInfoLike>();
   for (const line of data.lines) byLineNum.set(line.line_number, line);
 
+  // Buffer end byte, so a table whose last row is the final line of the buffer
+  // (no following line in the batch, ever) still closes its frame. Without this
+  // `isLast` can never be true at end-of-buffer and the bottom border is missing.
+  const bufEnd = editor.getBufferLength(data.buffer_id);
+
   // Per line: clear+rebuild conceals, soft-breaks, and the table border frame —
   // all anchored to this one line. No whole-table rebuild, no stored row model;
   // borders for lines not in this batch keep riding their auto-shift markers.
@@ -1697,7 +1705,12 @@ editor.on("lines_changed", (data) => {
       // mid-table, so a tall table scrolled past its top/bottom never draws a
       // spurious frame edge — it redraws when that neighbour re-enters a batch.
       const isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
-      const isLast = next !== undefined && !isTableRowContent(next.content);
+      // Last if the next line is present and not a table row, OR this row is the
+      // final line of the buffer (no next line exists at all — distinct from a
+      // next line merely off-screen, which we treat as mid-table).
+      const isLast =
+        (next !== undefined && !isTableRowContent(next.content)) ||
+        (next === undefined && line.byte_end >= bufEnd);
       const isSep = isSepRowContent(line.content);
       const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
       emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);

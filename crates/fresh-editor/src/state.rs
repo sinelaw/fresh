@@ -451,6 +451,23 @@ impl EditorState {
         }
     }
 
+    /// Remap both ends of a `[start, end)` range via [`Self::map_plugin_coord`].
+    /// Returns `None` if either end is unmappable (epoch evicted/barriered) so a
+    /// coordinate-bearing handler can `?`/early-return as one unit instead of
+    /// re-implementing the two-coord match. Every range-taking plugin command
+    /// goes through this, so the stale-coordinate repair can't be forgotten.
+    pub fn map_plugin_range(
+        &self,
+        start: usize,
+        end: usize,
+        epoch: Option<u64>,
+    ) -> Option<(usize, usize)> {
+        Some((
+            self.map_plugin_coord(start, epoch)?,
+            self.map_plugin_coord(end, epoch)?,
+        ))
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
     fn apply_insert(
         &mut self,
@@ -981,7 +998,7 @@ impl EditorState {
     /// at the same position) are collapsed to their net delta to avoid the
     /// marker-at-boundary problem where a sequential delete+insert pushes
     /// markers incorrectly.
-    fn replay_bulk_marker_adjustments(&mut self, edits: &[(usize, usize, usize)]) {
+    pub(crate) fn replay_bulk_marker_adjustments(&mut self, edits: &[(usize, usize, usize)]) {
         let version = self.buffer.version();
         for &(pos, del_len, ins_len) in edits {
             // Feed the coordinate ring the same tuples, in the same

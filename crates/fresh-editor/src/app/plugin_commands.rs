@@ -508,12 +508,9 @@ impl Editor {
             // the `lines_changed` epoch. Map both ends forward so the clear hits
             // the row's current anchors; if the epoch is too old, skip and let
             // convergence redo it.
-            let (start, end) = match (
-                state.map_plugin_coord(start, epoch),
-                state.map_plugin_coord(end, epoch),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return,
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
             };
             let ns = VirtualTextNamespace::from_string(namespace);
             state
@@ -543,12 +540,9 @@ impl Editor {
             // Repair a stale range: the plugin computed `[start, end)` against the
             // hook epoch; map it forward so the conceal lands on the row's current
             // bytes. Skip if the epoch is too old to map (convergence redoes it).
-            let (start, end) = match (
-                state.map_plugin_coord(start, epoch),
-                state.map_plugin_coord(end, epoch),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return,
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
             };
             state
                 .conceals
@@ -592,12 +586,9 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let (start, end) = match (
-                state.map_plugin_coord(start, epoch),
-                state.map_plugin_coord(end, epoch),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return,
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
             };
             state
                 .conceals
@@ -622,12 +613,9 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let (start, end) = match (
-                state.map_plugin_coord(start, epoch),
-                state.map_plugin_coord(end, epoch),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return,
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
             };
             state.conceals.remove_in_range_for_namespace(
                 &namespace,
@@ -753,12 +741,9 @@ impl Editor {
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let (start, end) = match (
-                state.map_plugin_coord(start, epoch),
-                state.map_plugin_coord(end, epoch),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                _ => return,
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
             };
             state
                 .soft_breaks

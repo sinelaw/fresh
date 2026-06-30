@@ -790,13 +790,17 @@ pub struct JsEditorApi {
     services: Arc<dyn fresh_core::services::PluginServiceBridge>,
     #[qjs(skip_trace)]
     plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
-    /// Buffer version of the hook currently being dispatched (the `lines_changed`
-    /// epoch), or `None` when no epoch-bearing hook is on the stack. Set by
-    /// `emit_to` around handler invocation and read by the coordinate-bearing
-    /// command senders (conceals, soft-breaks, virtual lines) so they stamp the
-    /// epoch automatically — the plugin never threads it by hand and can't forget.
+    /// `(buffer_id, version)` of the hook currently being dispatched: the buffer
+    /// the `lines_changed` epoch belongs to, and that buffer's version. `None`
+    /// when no epoch-bearing hook is on the stack. Set by `emit_to` around
+    /// handler invocation and read by the coordinate-bearing command senders
+    /// (conceals, soft-breaks, virtual lines) via [`Self::hook_epoch_for`], which
+    /// returns the epoch only for commands targeting that same buffer — versions
+    /// are per-buffer, so stamping buffer A's version on a command for buffer B
+    /// would remap against unrelated deltas. The plugin never threads the epoch
+    /// by hand and can't forget it.
     #[qjs(skip_trace)]
-    current_hook_epoch: Rc<std::cell::Cell<Option<u64>>>,
+    current_hook_epoch: Rc<std::cell::Cell<Option<(u32, u64)>>>,
     #[qjs(skip_trace)]
     async_resource_owners: AsyncResourceOwners,
     /// Tracks command name → owning plugin name (first-writer-wins collision detection)
@@ -1016,6 +1020,18 @@ impl JsEditorApi {
                 field_name: field_name.to_string(),
                 field_schema,
             });
+    }
+
+    /// The active hook's epoch (buffer version) to stamp onto a coordinate
+    /// command targeting `buffer_id` — but only if it's the same buffer the hook
+    /// fired for, since versions are per-buffer. Returns `None` otherwise (the
+    /// command is applied verbatim). Auto-stamping here is what lets the plugin
+    /// emit coordinate commands without threading the epoch by hand.
+    fn hook_epoch_for(&self, buffer_id: u32) -> Option<u64> {
+        self.current_hook_epoch
+            .get()
+            .filter(|(b, _)| *b == buffer_id)
+            .map(|(_, epoch)| epoch)
     }
 
     /// Look up the current value of one of this plugin's settings
@@ -3571,7 +3587,7 @@ impl JsEditorApi {
                 start: start as usize,
                 end: end as usize,
                 replacement,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -3593,7 +3609,7 @@ impl JsEditorApi {
                 buffer_id: BufferId(buffer_id as usize),
                 start: start as usize,
                 end: end as usize,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -3634,7 +3650,7 @@ impl JsEditorApi {
                 namespace: OverlayNamespace::from_string(namespace),
                 start: start as usize,
                 end: end as usize,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -3744,7 +3760,7 @@ impl JsEditorApi {
                 namespace: OverlayNamespace::from_string(namespace),
                 position: position as usize,
                 indent: indent as u16,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -3766,7 +3782,7 @@ impl JsEditorApi {
                 buffer_id: BufferId(buffer_id as usize),
                 start: start as usize,
                 end: end as usize,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -4145,7 +4161,7 @@ impl JsEditorApi {
                 namespace,
                 start: start as usize,
                 end: end as usize,
-                epoch: self.current_hook_epoch.get(),
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -4204,7 +4220,7 @@ impl JsEditorApi {
         // The buffer version `position` was computed against: the epoch of the
         // hook this handler is running in, auto-stamped by the runtime. Lets the
         // editor remap a stale anchor forward before placing the line.
-        let epoch = self.current_hook_epoch.get();
+        let epoch = self.hook_epoch_for(buffer_id);
 
         // Deserialize the array via the same serde-over-rquickjs path the
         // rest of the runtime uses (cf. `set_setting`), so the plugin-facing
@@ -5132,6 +5148,16 @@ impl JsEditorApi {
                 for (key, m) in map.iter() {
                     // overlap test: not (m.end <= qs || m.start >= qe), with
                     // inclusive end so a zero-length query at a boundary hits.
+                    //
+                    // The inclusive end is intentional and load-bearing: a tall
+                    // table's next scroll batch starts exactly one byte (the
+                    // newline) after the previous batch's width-memo end, so its
+                    // `[gStart-1, gEnd+1]` query's start equals the memo's end —
+                    // the inclusive boundary is what lets the batch find and grow
+                    // the shared memo instead of starting a second one (see
+                    // markdown_compose `computeRowWidths`). Two *different* tables
+                    // are always separated by a blank line (a ≥2-byte gap), so
+                    // they never collide on this boundary.
                     if m.end < qs || m.start > qe {
                         continue;
                     }
@@ -6921,9 +6947,10 @@ pub struct QuickJsBackend {
     pub services: Arc<dyn fresh_core::services::PluginServiceBridge>,
     /// Per-plugin tracking of created state (namespaces, IDs) for cleanup on unload
     pub(crate) plugin_tracked_state: Rc<RefCell<HashMap<String, PluginTrackedState>>>,
-    /// Epoch of the hook currently being dispatched (see `JsEditorApi`). Shared
-    /// with every `JsEditorApi` handle so command senders can stamp it.
-    current_hook_epoch: Rc<std::cell::Cell<Option<u64>>>,
+    /// `(buffer_id, version)` of the hook currently being dispatched (see
+    /// `JsEditorApi`). Shared with every `JsEditorApi` handle so command senders
+    /// can stamp it.
+    current_hook_epoch: Rc<std::cell::Cell<Option<(u32, u64)>>>,
     /// Shared map of request_id → plugin_name for async resource creations.
     /// Used by PluginThreadHandle to track buffer/terminal IDs when responses arrive.
     async_resource_owners: AsyncResourceOwners,
@@ -7850,15 +7877,20 @@ impl QuickJsBackend {
         self.services
             .set_js_execution_state(format!("hook '{}'", event_name));
 
-        // Stamp the hook's epoch (carried by `lines_changed` etc.) so every
-        // coordinate-bearing command the handlers emit is auto-tagged with the
-        // buffer version it was computed against — the editor remaps stale
-        // coordinates on apply. Saved/restored to nest correctly if a handler
-        // emits another event. Events without an `epoch` field clear it (None),
-        // which is correct: their commands carry no stale coordinate.
+        // Stamp the hook's `(buffer_id, epoch)` (carried by `lines_changed` etc.)
+        // so every coordinate-bearing command the handlers emit *for that buffer*
+        // is auto-tagged with the buffer version it was computed against — the
+        // editor remaps stale coordinates on apply. Saved/restored to nest
+        // correctly if a handler emits another event. Both fields must be
+        // present; an event without an `epoch` (or `buffer_id`) clears it to
+        // `None`, which is correct: its commands carry no stale coordinate.
         let prev_epoch = self.current_hook_epoch.get();
-        self.current_hook_epoch
-            .set(event_data.get("epoch").and_then(|v| v.as_u64()));
+        let hook_epoch = event_data
+            .get("epoch")
+            .and_then(|v| v.as_u64())
+            .zip(event_data.get("buffer_id").and_then(|v| v.as_u64()))
+            .map(|(epoch, buffer_id)| (buffer_id as u32, epoch));
+        self.current_hook_epoch.set(hook_epoch);
 
         let handlers = self
             .event_handlers

@@ -152,22 +152,37 @@ impl Editor {
         let Some(markers) = snapshot.plugin_markers.get_mut(&buffer_id) else {
             return;
         };
+        // Reduce a same-position replacement (both lengths non-zero, as the bulk
+        // path passes for type-over-selection / paste-over / query-replace / LSP
+        // code actions) to its NET delta, mirroring `marker_list` and
+        // `coord_map::record_replace`. The old code applied only the deletion
+        // clamp and dropped `inserted`, so every plugin marker past such an edit
+        // landed off by `inserted` bytes (the wrong direction when ins > del).
+        let (eff_removed, eff_inserted) = if removed > 0 && inserted > 0 {
+            if inserted >= removed {
+                (0, inserted - removed)
+            } else {
+                (removed - inserted, 0)
+            }
+        } else {
+            (removed, inserted)
+        };
         for m in markers.values_mut() {
-            if removed == 0 {
+            if eff_removed == 0 {
                 if m.start >= pos {
-                    m.start += inserted;
+                    m.start += eff_inserted;
                 }
                 if m.end > pos {
-                    m.end += inserted;
+                    m.end += eff_inserted;
                 }
             } else {
                 let d0 = pos;
-                let d1 = pos + removed;
+                let d1 = pos + eff_removed;
                 let clamp = |x: usize| {
                     if x <= d0 {
                         x
                     } else if x >= d1 {
-                        x - removed
+                        x - eff_removed
                     } else {
                         d0
                     }
