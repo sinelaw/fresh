@@ -553,3 +553,98 @@ fn test_table_columns_uniform_width_under_partial_scroll() {
         );
     }
 }
+
+/// Deterministic guard for the edit-storm convergence fix (`event_apply.rs`).
+///
+/// A structure-changing edit — a newline inserted or deleted — must clear the
+/// buffer's `seen_byte_ranges` so that *every* visible line re-fires
+/// `lines_changed` on the next render, the same whole-viewport convergence an
+/// inter-line cursor move already triggers.
+///
+/// Why it matters: an Insert/Delete storm emits **no** `MoveCursor` events, so
+/// before this fix nothing cleared `seen_byte_ranges` during the storm. Only
+/// the edited line was invalidated; every other row merely shifted and stayed
+/// "seen", so it never re-fired. A per-line decoration plugin
+/// (`markdown_compose`'s table borders / conceals) then left stale decorations
+/// on the un-re-fired rows — scattered across the buffer versions they were
+/// last emitted at — and they persisted until the user happened to make an
+/// explicit cursor move. The async corruption itself can't be reproduced in the
+/// synchronous test harness (it needs the plugin thread to lag behind a real
+/// edit storm), so this asserts the editor-side mechanism that fixes it.
+///
+/// An intra-line edit (no line-count change) must stay on the cheap path: only
+/// ranges containing the edit point drop; far ranges survive (shifted).
+#[test]
+fn structure_changing_edit_clears_seen_byte_ranges() {
+    use fresh::model::event::Event;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let buf = harness.editor().active_buffer();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    // Seed three "already processed" ranges, well clear of byte 0.
+    let seed = |h: &mut EditorTestHarness| {
+        let seen = h
+            .editor_mut()
+            .active_window_mut()
+            .seen_byte_ranges
+            .entry(buf)
+            .or_default();
+        seen.clear();
+        seen.insert((0, 1));
+        seen.insert((50, 60));
+        seen.insert((100, 110));
+    };
+    let seen_is_empty = |h: &EditorTestHarness| {
+        h.editor()
+            .active_window()
+            .seen_byte_ranges
+            .get(&buf)
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+    };
+
+    // Intra-line edit (no newline): cheap path — far ranges survive.
+    seed(&mut harness);
+    harness
+        .apply_event(Event::Insert {
+            position: 0,
+            text: "x".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    assert!(
+        !seen_is_empty(&harness),
+        "an intra-line edit must NOT wipe all seen ranges (cheap path preserved)"
+    );
+
+    // Structure-changing insert (newline): full clear so every line re-fires.
+    // Buffer is now "x"; inserting "\n" at 0 yields "\nx".
+    seed(&mut harness);
+    harness
+        .apply_event(Event::Insert {
+            position: 0,
+            text: "\n".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    assert!(
+        seen_is_empty(&harness),
+        "a newline insert must clear all seen ranges so every visible line re-fires"
+    );
+
+    // Structure-changing delete (newline): converges the same way.
+    // Buffer is "\nx"; deleting [0,1) removes the leading newline.
+    seed(&mut harness);
+    harness
+        .apply_event(Event::Delete {
+            range: 0..1,
+            deleted_text: "\n".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    assert!(
+        seen_is_empty(&harness),
+        "a newline delete must also clear all seen ranges"
+    );
+}

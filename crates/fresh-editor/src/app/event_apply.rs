@@ -766,7 +766,25 @@ impl Editor {
         // Only refresh on inter-line movement: intra-line moves (e.g.
         // Left/Right within a row) don't change which row is auto-exposed,
         // and the plugin's async refreshLines() handles span-level changes.
-        if cursor_changed_lines {
+        //
+        // A structure-changing edit (a newline inserted or deleted) needs the
+        // same full refresh, for a subtler reason: it renumbers every row below
+        // it, but the per-edit `seen_byte_ranges` invalidation only drops the
+        // single line containing the edit point — every other row merely shifts
+        // and stays "seen", so it never re-fires `lines_changed`. A per-line
+        // decoration plugin (markdown_compose's table borders / conceals) then
+        // leaves the prior frame's decorations in place, scattered across the
+        // buffer versions they were last emitted at. During an Insert/Delete
+        // storm (which emits no MoveCursor events at all) nothing ever forces a
+        // complete re-fire, so the stale decorations pile up and persist until
+        // the user happens to make an explicit cursor move. Clearing seen here
+        // gives every such edit one consistent, whole-viewport re-fire — the
+        // same convergence an inter-line cursor move already gets. Intra-line
+        // edits (no line-count change) stay on the cheap path: the edited
+        // line's own invalidation re-fires it, which is sufficient.
+        let edit_changed_line_count = matches!(event, Event::Insert { .. } | Event::Delete { .. })
+            && line_info.line_delta != 0;
+        if cursor_changed_lines || edit_changed_line_count {
             self.handle_refresh_lines(buffer_id);
         }
     }
