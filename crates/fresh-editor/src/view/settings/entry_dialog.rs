@@ -1258,7 +1258,13 @@ impl EntryDialogState {
     pub fn stop_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
-                SettingControl::Number(state) => state.cancel_editing(),
+                // Enter/Tab/Esc all *accept* the field in this dialog (see the
+                // input handler), exactly like a Text field keeps its typed
+                // value. A number's typed digits live in a separate edit buffer
+                // that only flushes into `value` on confirm; cancelling here
+                // dropped them, so every tab-size / page-width edit reverted to
+                // the old value on commit. Confirm so the typed value sticks.
+                SettingControl::Number(state) => state.confirm_editing(),
                 SettingControl::Text(state) => state.editing = false,
                 // Cancelling on a pending list row (the trailing
                 // [+] add-new slot) discards whatever the user typed
