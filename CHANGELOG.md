@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **Build**: `cargo install` / `cargo build` no longer emits spurious `failed to parse serde attribute` warnings from ts-rs for `#[serde(transparent)]` and `#[serde(serialize_with = …)]` attributes it intentionally ignores (#2519).
 * **Settings UI**: committing a text field with `Tab` now persists the typed value on Save, matching `Enter`. Previously the row showed as modified but Save wrote an empty value (#2515).
 
 ## 0.4.2
