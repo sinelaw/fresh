@@ -276,7 +276,24 @@ impl GuideColumnScanner {
                 let cut = self.stack.partition_point(|&w| w < level);
                 fill_guide_columns(&self.stack[..cut], level, tab_size, out);
             }
-            // Continuation / injected row: no guides, staircase untouched.
+            // Soft-wrap continuation row: it carries no indent of its own, but
+            // its wrap-indent padding aligns under the parent line's leading
+            // whitespace. Replay the parent content row's guides through that
+            // padding so the staircase runs unbroken across the wrap. The padding
+            // width is the row's leading run of byte-less cells (empty when
+            // `wrap_indent` is off, which correctly yields no guides). Computed
+            // against the open ancestors without mutating the staircase — a
+            // continuation opens no block.
+            None if matches!(line.line_start, LineStart::AfterBreak) => {
+                let pad_width = line
+                    .char_source_bytes
+                    .iter()
+                    .take_while(|b| b.is_none())
+                    .count();
+                let cut = self.stack.partition_point(|&w| w < pad_width);
+                fill_guide_columns(&self.stack[..cut], pad_width, tab_size, out);
+            }
+            // Injected / source-less row: no guides, staircase untouched.
             None => out.clear(),
         }
     }

@@ -333,21 +333,31 @@ impl CellPass<'_, '_, '_> {
     }
 
     /// Whether the current leading-whitespace cell should render as an
-    /// indentation guide. Guides are visual-only replacements for existing
-    /// source whitespace cells, so they preserve byte mappings and do not draw
-    /// through code or synthetic/injected content.
+    /// indentation guide. Guides are visual-only replacements for leading
+    /// whitespace cells, so they preserve byte mappings and do not draw through
+    /// code or injected content. On a normal row that whitespace is real source
+    /// text; on a soft-wrap continuation row it is the synthetic wrap-indent
+    /// padding (which maps to no source byte), so guides keep running through the
+    /// padding and the staircase stays unbroken across the wrap.
     fn is_indentation_guide_cell(&self, ch: char, byte_pos: Option<usize>) -> bool {
-        if matches!(self.input.indentation_guide, IndentationGuideMode::None)
-            || ch != ' '
-            || byte_pos.is_none()
-        {
+        if matches!(self.input.indentation_guide, IndentationGuideMode::None) || ch != ' ' {
             return false;
         }
 
+        // Plugin-injected continuation rows never carry guides.
         if matches!(
             self.input.view_line.line_start,
-            LineStart::AfterBreak | LineStart::AfterInjectedNewline
+            LineStart::AfterInjectedNewline
         ) {
+            return false;
+        }
+
+        // A soft-wrap continuation's leading cells are byte-less wrap-indent
+        // padding; every other row's are real source whitespace. Requiring the
+        // matching byte-mapping for each case keeps guides off injected/virtual
+        // content on normal rows and off the real wrapped text on continuations.
+        let is_wrap_continuation = matches!(self.input.view_line.line_start, LineStart::AfterBreak);
+        if byte_pos.is_none() != is_wrap_continuation {
             return false;
         }
 

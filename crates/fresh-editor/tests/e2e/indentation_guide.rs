@@ -161,3 +161,97 @@ fn indentation_guide_renders_independently_of_line_numbers() {
         );
     }
 }
+
+#[test]
+fn indentation_guide_all_mode_continues_through_wrapped_line() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides_wrap.rs");
+    // A doubly-nested line long enough to soft-wrap at the narrow viewport. Its
+    // wrapped continuation rows align under the original indent (`wrap_indent`)
+    // and must keep the guides of the two enclosing blocks rather than leaving a
+    // gap in the vertical lines.
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    if flag {\n        let s = \"aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk\";\n    }\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    // line_wrap / wrap_indent are on by default; pin them so the test is
+    // explicit about the configuration it exercises.
+    config.editor.line_wrap = true;
+    config.editor.wrap_indent = true;
+
+    // A narrow viewport forces the long `let` line to wrap onto continuation rows.
+    let mut harness =
+        EditorTestHarness::create(40, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // First visual row of the `let` line: guides at the two enclosing levels
+    // (columns 0 and 4) — "┊   ┊   let s = ...".
+    let let_row = lines
+        .iter()
+        .position(|line| line.contains("┊   ┊   let s ="))
+        .unwrap_or_else(|| panic!("expected a guided 'let' row\n{screen}"));
+
+    // The wrapped continuation row sits directly below and must carry the same
+    // two guides; the only `┊` glyphs on it are guides (the wrapped text has none).
+    let cont_row = lines[let_row + 1];
+    assert!(
+        cont_row.contains("┊   ┊"),
+        "indent guides should continue through the wrapped continuation row\ncont row: {cont_row:?}\n{screen}"
+    );
+}
+
+#[test]
+fn indentation_guide_active_mode_continues_through_wrapped_line() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides_wrap_active.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    if flag {\n        let s = \"aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk\";\n    }\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::Active;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    config.editor.line_wrap = true;
+    config.editor.wrap_indent = true;
+
+    let mut harness =
+        EditorTestHarness::create(40, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    // Move the cursor onto the wrapped `let` line so its enclosing `if` block
+    // becomes the single active guide.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // The `let` line carries the single active guide of the enclosing block.
+    let let_row = lines
+        .iter()
+        .position(|line| line.contains("┊") && line.contains("let s ="))
+        .unwrap_or_else(|| panic!("expected an active-guided 'let' row\n{screen}"));
+    let guide_col = lines[let_row]
+        .find('┊')
+        .expect("expected the active guide glyph on the 'let' row");
+
+    // Its wrapped continuation row must carry the same active guide at the same
+    // column instead of leaving a gap.
+    let cont_row = lines[let_row + 1];
+    assert_eq!(
+        cont_row.find('┊'),
+        Some(guide_col),
+        "active indent guide should continue through the wrapped continuation row\ncont row: {cont_row:?}\n{screen}"
+    );
+}
