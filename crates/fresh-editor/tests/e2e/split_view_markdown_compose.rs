@@ -148,6 +148,138 @@ fn switch_to_next_split(harness: &mut EditorTestHarness) {
     harness.render().unwrap();
 }
 
+/// Run a command-palette command by typing a query and accepting the first hit.
+#[cfg(feature = "plugins")]
+fn run_palette_command(harness: &mut EditorTestHarness, query: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text(query).unwrap();
+    harness.wait_for_screen_contains(query).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+}
+
+/// Regression: disabling compose/preview mode in one split must put THAT split
+/// back into source mode (raw markdown), even when another split on the same
+/// buffer is still in compose mode.
+///
+/// Compose decorations — table cell conceals (`|` → `│`, padding), soft breaks,
+/// and the `┌─┬─┐` border virtual lines — live on the *buffer*, not the split,
+/// and `markdown_compose` re-emits them on every `lines_changed` as long as
+/// `isComposingInAnySplit` is true. `view_mode`, however, is *per split*
+/// (`handle_set_view_mode` writes only the active split's buffer state). So when
+/// one split is toggled back to source while a sibling split keeps composing,
+/// the still-composing split re-adds the buffer-global decorations and the
+/// source split renders them too: it shows the boxed/concealed table instead of
+/// the raw `| Name | Role | City |` source.
+///
+/// Reproduced interactively in tmux: the source split keeps its line-number
+/// gutter (proving it *is* in source mode) yet still draws the framed table.
+///
+/// The invariant asserted here, on rendered output only: with one split in
+/// compose and one in source, the screen must contain BOTH the compose frame
+/// (`┌`, from the composing split) AND at least one raw ASCII `|` (from the
+/// source split's table). A compose table conceals every `|` to `│`, so a screen
+/// with zero ASCII `|` means the source split is wrongly rendering the table as
+/// composed — the bug.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_disable_compose_in_one_split_restores_source_in_that_split() {
+    init_tracing_from_env();
+
+    // Small table near the top so both splits show it from the first line.
+    let md = "\
+# Title
+
+Some text before the table.
+
+| Name | Role | City |
+| --- | --- | --- |
+| Alice | Engineer | London |
+| Bob | Designer | Paris |
+| Carol | Manager | Berlin |
+
+Text after the table.
+";
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("table.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    // Wide terminal so a 50/50 vertical split leaves each pane wide enough to
+    // show the whole table row.
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        40,
+        Default::default(),
+        project_root,
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("table.md");
+
+    // 1. Enable compose on the single view. The table renders framed and every
+    //    raw '|' is concealed.
+    run_palette_command(&mut harness, "Toggle Compose");
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains('|'),
+        "compose mode should conceal every raw '|' before splitting.\nScreen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // 2. Split vertically. The new (right) split becomes active and defaults to
+    //    SOURCE mode (`SplitViewState::with_buffer`); the left split keeps
+    //    composing.
+    run_palette_command(&mut harness, "Split Vertical");
+    harness.wait_for_async_quiescence(6).unwrap();
+
+    // 3. Toggle compose ON then OFF in the active (right) split: the right split
+    //    starts in source, so the first toggle composes it (both splits now
+    //    compose) and the second runs the disable path — clearing the buffer's
+    //    compose decorations — while the left split is still composing and
+    //    immediately re-adds them.
+    run_palette_command(&mut harness, "Toggle Compose"); // right -> compose
+    harness.wait_for_async_quiescence(6).unwrap();
+    run_palette_command(&mut harness, "Toggle Compose"); // right -> source
+    harness.wait_for_async_quiescence(10).unwrap();
+
+    // -- The regression check -------------------------------------------------
+    let screen = harness.screen_to_string();
+
+    // The left split is still composing, so its frame must be present.
+    assert!(
+        screen.contains('┌'),
+        "the still-composing split should keep its table frame.\nScreen:\n{}",
+        screen,
+    );
+
+    // The right split is in source mode (it owns the active line-number gutter),
+    // so the raw markdown table — with ASCII '|' separators — must be visible.
+    // If the whole screen has no ASCII '|', the source split is wrongly drawing
+    // the composed (concealed) table: the bug.
+    assert!(
+        screen.contains('|'),
+        "disabling compose in one split left no raw '|' on screen: the source-mode \
+         split is still rendering the composed/concealed table because the sibling \
+         split is composing and the buffer-global decorations leak across splits.\n\
+         Screen:\n{}",
+        screen,
+    );
+}
+
 /// Test that compose mode only affects the active split, not both panels.
 ///
 /// Setup: vertical split of same markdown file

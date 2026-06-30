@@ -20,6 +20,14 @@ use crate::view::ui::view_pipeline::{ViewLine, ViewLineIterator};
 use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 
+/// markdown_compose's conceal namespace (`md-syntax`): the cell-separator /
+/// emphasis-marker conceals that turn raw `|`/`**` into the composed table. Only
+/// valid in a Compose-mode split; suppressed in Source mode (see the conceal
+/// pass below). Mirrors the `md-emphasis` overlay gate in `overlays.rs`.
+fn md_syntax_namespace() -> fresh_core::overlay::OverlayNamespace {
+    fresh_core::overlay::OverlayNamespace::from_string("md-syntax".to_string())
+}
+
 /// Processed view data containing display lines from the view pipeline.
 pub(super) struct ViewData {
     /// Display lines with all token information preserved.
@@ -95,15 +103,15 @@ pub(super) fn build_view_data(
         }
     }
 
-    // Apply conceal ranges — filter or replace tokens that fall
-    // within concealed byte ranges.  This used to be gated on
-    // `is_compose` so markdown source mode would always show raw
-    // syntax, but the gate was redundant: every plugin that adds
-    // source-mode conceals already self-checks the buffer's view
-    // mode (see e.g. `markdown_compose.ts`'s `isComposing`).  Other
-    // plugins (flash) legitimately want overlay-style cell
-    // substitution in source mode and were broken by the gate —
-    // their `addConceal` calls landed in state but never rendered.
+    // Apply conceal ranges — filter or replace tokens that fall within
+    // concealed byte ranges. A blanket `is_compose` gate used to live here but
+    // was removed because other plugins (flash) legitimately conceal in source
+    // mode. Conceals are buffer-global, though, so markdown_compose's compose
+    // cell conceals (`md-syntax`) would otherwise render in a Source-mode split
+    // whenever a *sibling* split composes the same buffer (the plugin emits
+    // them whenever `isComposingInAnySplit`). So suppress only that compose-only
+    // namespace in Source mode — mirroring the `md-emphasis` overlay gate in
+    // `overlays.rs` — while every other namespace (flash, etc.) still renders.
     if !state.conceals.is_empty() {
         let viewport_end = tokens
             .iter()
@@ -111,10 +119,13 @@ pub(super) fn build_view_data(
             .next_back()
             .unwrap_or(viewport.top_byte)
             + 1;
-        let conceal_ranges =
-            state
-                .conceals
-                .query_viewport(viewport.top_byte, viewport_end, &state.marker_list);
+        let exclude_ns = (!is_compose).then(md_syntax_namespace);
+        let conceal_ranges = state.conceals.query_viewport_excluding(
+            viewport.top_byte,
+            viewport_end,
+            &state.marker_list,
+            exclude_ns.as_ref(),
+        );
         if !conceal_ranges.is_empty() {
             tokens = apply_conceal_ranges(tokens, &conceal_ranges);
         }
@@ -341,7 +352,8 @@ pub(super) fn build_view_data(
     } else {
         None
     };
-    let lines = inject_virtual_lines(source_lines, state, theme, virtual_line_wrap_width);
+    let lines =
+        inject_virtual_lines(source_lines, state, theme, virtual_line_wrap_width, is_compose);
     let placeholder_style = fold_placeholder_style(theme);
     let lines = apply_folding(
         lines,

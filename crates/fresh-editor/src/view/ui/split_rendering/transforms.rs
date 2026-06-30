@@ -13,7 +13,7 @@ use crate::primitives::{ansi, display_width, visual_layout};
 use crate::state::EditorState;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
-use crate::view::virtual_text::VirtualTextPosition;
+use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
 use fresh_core::api::{ViewTokenStyle, ViewTokenWire, ViewTokenWireKind};
 use std::collections::{HashMap, HashSet};
 
@@ -891,6 +891,7 @@ pub(super) fn inject_virtual_lines(
     state: &EditorState,
     theme: &Theme,
     wrap_width: Option<usize>,
+    is_compose: bool,
 ) -> Vec<ViewLine> {
     // Get viewport byte range from source lines.
     // Use the last line that has source bytes (not a trailing empty line
@@ -906,10 +907,22 @@ pub(super) fn inject_virtual_lines(
         .map(|b| b + 1)
         .unwrap_or(viewport_start);
 
-    let virtual_lines =
+    let mut virtual_lines =
         state
             .virtual_texts
             .query_lines_in_range(&state.marker_list, viewport_start, viewport_end);
+
+    // markdown_compose's table-border virtual lines (`md-tb`) frame the composed
+    // table and belong only to a Compose-mode split. Virtual lines live on the
+    // buffer, so in a Source-mode split sharing a buffer with a composing sibling
+    // they would otherwise draw a frame around the raw source. Drop that
+    // compose-only namespace here — mirroring the `md-syntax` conceal gate in
+    // `view_data.rs` and the `md-emphasis` overlay gate in `overlays.rs`. Every
+    // other virtual-line namespace (git blame, diff, …) renders in both modes.
+    if !is_compose {
+        let md_border_ns = VirtualTextNamespace::from_string("md-tb".to_string());
+        virtual_lines.retain(|(_, vt)| vt.namespace.as_ref() != Some(&md_border_ns));
+    }
 
     if virtual_lines.is_empty() {
         return source_lines;

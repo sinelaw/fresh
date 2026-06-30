@@ -253,9 +253,29 @@ impl ConcealManager {
         end: usize,
         marker_list: &MarkerList,
     ) -> Vec<(Range<usize>, Option<&str>)> {
+        self.query_viewport_excluding(start, end, marker_list, None)
+    }
+
+    /// Like [`query_viewport`](Self::query_viewport), but skips ranges whose
+    /// namespace equals `exclude_ns`.
+    ///
+    /// Conceals live on the *buffer*, so they are visible to every split that
+    /// shows it. A compose-only conceal namespace (markdown_compose's
+    /// `md-syntax`) must therefore be suppressed when rendering a Source-mode
+    /// split even though a sibling split composes the same buffer — the split's
+    /// view mode is the only place that scoping can happen. Pass `None` to
+    /// include everything (the Compose-mode path and all other callers).
+    pub fn query_viewport_excluding(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        exclude_ns: Option<&OverlayNamespace>,
+    ) -> Vec<(Range<usize>, Option<&str>)> {
         let mut results: Vec<(Range<usize>, Option<&str>)> = self
             .ranges
             .iter()
+            .filter(|r| exclude_ns != Some(&r.namespace))
             .filter_map(|r| {
                 let range = r.range(marker_list);
                 if range.start < end && start < range.end {
