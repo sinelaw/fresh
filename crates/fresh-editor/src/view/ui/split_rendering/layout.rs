@@ -251,21 +251,66 @@ pub(super) fn calculate_compose_layout(
     }
 }
 
+/// A line whose content reaches this many bytes is treated as "over-long": it
+/// already fills (far past) the visible row, and with horizontal scrolling
+/// (line-wrap off) it occupies a single screen row. `LineIterator` also splits
+/// such lines into chunks of `MAX_LINE_BYTES` (100 KB) and yields each chunk as
+/// a separate "line", so without a guard `calculate_viewport_end` would walk
+/// chunk-by-chunk hundreds of KB into the line. Kept in step with that limit.
+const OVERLONG_LINE_BYTES: usize = 100_000;
+
 /// Compute the byte offset just past the last visible line of the viewport.
+///
+/// The returned `viewport_start..viewport_end` span is what the decoration pass
+/// (syntax highlight, reference highlight, bracket/rainbow overlay) scans every
+/// frame. For an over-long line — e.g. a minified SVG/JSON on a single line —
+/// the line can be hundreds of KB while only `viewport_width` columns are
+/// actually on screen, so each line's contribution is clamped to the visible
+/// horizontal window (`left_column + viewport_width`, with slack for multibyte
+/// content) and the walk stops at the first over-long line. Without this every
+/// cursor move re-scans the whole line, which is the per-keystroke lag in
+/// issue #2529.
 pub(super) fn calculate_viewport_end(
     state: &mut EditorState,
     viewport_start: usize,
     estimated_line_length: usize,
     visible_count: usize,
+    left_column: usize,
+    viewport_width: usize,
 ) -> usize {
+    // Upper bound, in bytes, on how far past a line's start the visible window
+    // can reach. One displayed column maps to at most ~4 source bytes (a 4-byte
+    // UTF-8 scalar), so `(left_column + viewport_width) * 4` safely covers the
+    // visible cells while keeping the scanned span proportional to the screen,
+    // not the line. `0` width (only seen in degenerate callers) disables the
+    // clamp so we keep the previous full-line behavior.
+    let visible_byte_budget = left_column
+        .saturating_add(viewport_width)
+        .saturating_mul(4);
+
     let mut iter_temp = state
         .buffer
         .line_iterator(viewport_start, estimated_line_length);
     let mut viewport_end = viewport_start;
     for _ in 0..visible_count {
-        if let Some((line_start, line_content)) = iter_temp.next_line() {
-            viewport_end = line_start + line_content.len();
-        } else {
+        let Some((line_start, line_content)) = iter_temp.next_line() else {
+            break;
+        };
+        let line_len = line_content.len();
+        let line_end = line_start + line_len;
+
+        if visible_byte_budget == 0 {
+            viewport_end = line_end;
+            continue;
+        }
+
+        let clamped_end = line_end.min(line_start.saturating_add(visible_byte_budget));
+        viewport_end = clamped_end;
+
+        // An over-long line fills its single (unwrapped) screen row and may be
+        // yielded as multiple 100 KB chunks; the clamp above already covers the
+        // visible window, so stop rather than walking the rest of the line.
+        if line_len >= OVERLONG_LINE_BYTES {
             break;
         }
     }

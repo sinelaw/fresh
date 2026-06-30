@@ -331,6 +331,8 @@ pub(crate) fn compute_buffer_layout(
         viewport_start,
         estimated_line_length,
         adjusted_visible_count,
+        viewport.left_column,
+        render_area.width as usize,
     );
 
     let _dt1 = std::time::Instant::now();

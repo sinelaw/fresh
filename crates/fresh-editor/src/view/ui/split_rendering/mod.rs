@@ -495,6 +495,8 @@ mod tests {
             viewport_start,
             content.len().max(1),
             visible_count,
+            viewport.left_column,
+            render_area.width as usize,
         );
         let decorations = decoration_context(
             &mut state,
@@ -596,6 +598,8 @@ mod tests {
             viewport_start,
             content.len().max(1),
             visible_count,
+            viewport.left_column,
+            render_area.width as usize,
         );
         let decorations = decoration_context(
             &mut state,
@@ -649,6 +653,87 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    #[test]
+    fn viewport_end_is_bounded_for_overlong_single_line() {
+        // The decoration pass (syntax highlight, reference highlight, bracket /
+        // rainbow overlay) scans `viewport_start..viewport_end` on every frame.
+        // A minified asset (SVG/JSON/etc.) can be a single line of hundreds of
+        // KB while only ~`width` columns are on screen, so the scanned span
+        // must stay proportional to the screen, not the line length — otherwise
+        // every cursor move re-scans the whole line (issue #2529, per-keystroke
+        // lag).
+        let huge = "a".repeat(200_000);
+        let mut state = EditorState::new(80, 40, 1024, test_fs());
+        state.buffer = Buffer::from_str(&huge, 1024, test_fs());
+
+        let viewport_start = 0;
+        let visible_count = 40;
+        let left_column = 0;
+        let viewport_width = 80;
+        let _ = state
+            .buffer
+            .populate_line_cache(viewport_start, visible_count);
+        let est_line_len = state.buffer.estimated_line_length().max(1);
+
+        let viewport_end = calculate_viewport_end(
+            &mut state,
+            viewport_start,
+            est_line_len,
+            visible_count,
+            left_column,
+            viewport_width,
+        );
+
+        let span = viewport_end - viewport_start;
+        assert!(
+            span < 10_000,
+            "decoration viewport should be bounded to the visible window, \
+             got {span} bytes for an {viewport_width}-column screen"
+        );
+    }
+
+    #[test]
+    fn viewport_end_covers_horizontal_scroll_window() {
+        // When a long line is scrolled right, the clamp must still reach far
+        // enough to cover the visible window (`left_column + width` columns) so
+        // on-screen content keeps its highlighting; it just must not overshoot
+        // to the line's true end.
+        let huge = "a".repeat(200_000);
+        let mut state = EditorState::new(80, 40, 1024, test_fs());
+        state.buffer = Buffer::from_str(&huge, 1024, test_fs());
+
+        let viewport_start = 0;
+        let visible_count = 40;
+        let left_column = 5_000;
+        let viewport_width = 80;
+        let _ = state
+            .buffer
+            .populate_line_cache(viewport_start, visible_count);
+        let est_line_len = state.buffer.estimated_line_length().max(1);
+
+        let viewport_end = calculate_viewport_end(
+            &mut state,
+            viewport_start,
+            est_line_len,
+            visible_count,
+            left_column,
+            viewport_width,
+        );
+
+        // Must cover the visible window (these are 1-byte ASCII columns)...
+        assert!(
+            viewport_end >= left_column + viewport_width,
+            "viewport_end {viewport_end} must cover the scrolled-in window \
+             ending at column {}",
+            left_column + viewport_width
+        );
+        // ...but must not span the whole 200_000-byte line.
+        assert!(
+            viewport_end < 100_000,
+            "viewport_end {viewport_end} should stay bounded, not reach line end"
+        );
     }
 
     #[test]
@@ -3061,6 +3146,8 @@ mod tests {
             viewport_start,
             content.len().max(1),
             visible_count,
+            viewport.left_column,
+            render_area.width as usize,
         );
         let decorations = decoration_context(
             &mut state,
