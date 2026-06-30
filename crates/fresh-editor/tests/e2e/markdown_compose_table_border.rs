@@ -648,3 +648,97 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
         "a newline delete must also clear all seen ranges"
     );
 }
+
+
+
+/// Regression test: when a table's LAST row wraps onto multiple visual lines,
+/// the `└─┴─┘` bottom border must render *below the whole wrapped row*, not
+/// after its first visual line.
+///
+/// The border is emitted as a virtual line *below* the last row's anchor byte.
+/// On a soft-wrapped host line the renderer places that "below" line after the
+/// first visual row of the wrap instead of after the last, so the row's
+/// continuation spills out underneath the already-closed frame:
+///
+/// ```text
+///   │ Productivity │ command palette, ... git │   (first visual row)
+///   └──────────────┴──────────────────────────┘   (bottom border — too early)
+///   │              │ log, diagnostics panel   │   (continuation, OUTSIDE the frame)
+/// ```
+///
+/// A well-formed frame ends with the bottom border: no table content line may
+/// appear after it.
+#[cfg(feature = "plugins")]
+#[test]
+#[ignore = "reproduces an unfixed bug: the bottom border renders after the \
+            first visual row of a wrapped last row, so the continuation spills \
+            below the closed frame. Run with --ignored."]
+fn test_table_bottom_border_below_wrapped_last_row() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // The last data row's Features cell is long enough to wrap at this width.
+    let md = "\
+# Doc
+
+## Feature Overview
+
+| Category | Features |
+|----------|----------|
+| **Editing** | undo/redo, multi-cursor |
+| **Productivity** | command palette, menu bar, keyboard macros, git log, diagnostics panel, and more |
+
+## Installation
+";
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("wide.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    // Narrow viewport so the last row's Features cell wraps.
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(70, 40, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    let bottom_idx = lines
+        .iter()
+        .rposition(|l| l.contains('└'))
+        .unwrap_or_else(|| panic!("no bottom border (└) on screen.\nScreen:\n{}", screen));
+
+    // No table content row (a `│` cell line) may appear after the bottom border:
+    // the frame must fully enclose the wrapped last row.
+    for (i, line) in lines.iter().enumerate().skip(bottom_idx + 1) {
+        assert!(
+            !line.contains('│'),
+            "table content spilled below the bottom border at row {} ({:?}): the \
+             `└─┘` border was placed before the last row finished wrapping.\nScreen:\n{}",
+            i,
+            line,
+            screen,
+        );
+    }
+}
