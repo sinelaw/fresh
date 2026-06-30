@@ -194,6 +194,28 @@ impl Editor {
         }
     }
 
+    /// If the interactive wave animation is running, decide whether this raw
+    /// terminal event should dismiss it. Any key press or mouse activity ends
+    /// the show; that event is then *consumed* (it only stops the animation,
+    /// it doesn't also act on the editor).
+    ///
+    /// Returns `true` when the event was consumed — the caller must skip
+    /// normal input handling for it and re-render. This lives on `Editor` so
+    /// every event loop (the local terminal loop in `main.rs` and the daemon
+    /// server loop) shares one dismissal path rather than duplicating it.
+    pub fn maybe_dismiss_wave_animation(&mut self, event: &crossterm::event::Event) -> bool {
+        use crossterm::event::{Event, KeyEventKind};
+        if !self.wave_animation_active() {
+            return false;
+        }
+        let dismiss = matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press)
+            || matches!(event, Event::Mouse(_));
+        if dismiss {
+            self.cancel_wave_animation();
+        }
+        dismiss
+    }
+
     /// The configured screensaver idle threshold, or `None` when the
     /// screensaver is disabled (turned off, or a zero-minute timeout).
     pub fn screensaver_idle_timeout(&self) -> Option<std::time::Duration> {

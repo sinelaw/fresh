@@ -1188,6 +1188,15 @@ impl EditorServer {
             return Ok(false);
         };
 
+        // The interactive wave animation runs until the user does anything:
+        // the first key press or mouse activity dismisses it and is consumed
+        // (it only stops the show, it doesn't also act on the editor). This
+        // mirrors the local terminal loop in `main.rs` so the animation is
+        // dismissable in daemon mode too.
+        if editor.maybe_dismiss_wave_animation(&event) {
+            return Ok(true);
+        }
+
         match event {
             Event::Key(key_event) => {
                 if key_event.kind == KeyEventKind::Press {
@@ -1315,5 +1324,122 @@ impl ConnectedClient {
             .and_then(|v| v.as_deref())
             .map(|v| v == "truecolor" || v == "24bit")
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod wave_dismiss_tests {
+    //! Regression tests for issue #2530: the interactive wave animation must be
+    //! dismissable in daemon (server) mode. The bug was that the server's input
+    //! path (`handle_event`) forwarded the abort key straight to the editor and
+    //! never cancelled the animation, so the wave could only be stopped by
+    //! killing the process. These tests drive the real `handle_event` and assert
+    //! the first key / mouse event consumes the input and stops the wave —
+    //! matching the local terminal loop in `main.rs`.
+
+    use super::{EditorServer, EditorServerConfig};
+    use crate::config::Config;
+    use crate::config_io::DirectoryContext;
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn unique_session_name(prefix: &str) -> String {
+        format!(
+            "{}-{}-{}",
+            prefix,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )
+    }
+
+    /// Build a server with an initialized editor, ready to receive input.
+    fn server_with_editor(prefix: &str) -> EditorServer {
+        let temp_dir = std::env::temp_dir().join(unique_session_name(prefix));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config = EditorServerConfig {
+            working_dir: temp_dir.clone(),
+            session_name: Some(unique_session_name(prefix)),
+            idle_timeout: Some(Duration::from_secs(30)),
+            editor_config: Config::default(),
+            dir_context: DirectoryContext::for_testing(&temp_dir),
+            plugins_enabled: false,
+            init_enabled: false,
+            startup_authority: None,
+            workspace_trust: Arc::new(
+                crate::services::workspace_trust::WorkspaceTrust::permissive(),
+            ),
+            env_provider: Arc::new(crate::services::env_provider::EnvProvider::inactive()),
+            session_keepalive: None,
+        };
+        let mut server = EditorServer::new(config).expect("EditorServer::new");
+        server.initialize_editor().expect("initialize_editor");
+        server
+    }
+
+    /// A key press while the wave is running stops it and is consumed — it does
+    /// not also get typed into the buffer.
+    #[test]
+    fn key_press_dismisses_wave_in_daemon_mode() {
+        let mut server = server_with_editor("wave-key");
+
+        let editor = server.editor_mut().expect("editor present");
+        editor.trigger_wave_animation();
+        assert!(
+            editor.wave_animation_active(),
+            "precondition: the wave should be running after triggering it"
+        );
+
+        let consumed = server
+            .handle_event(Event::Key(KeyEvent::new(
+                KeyCode::Char('a'),
+                KeyModifiers::empty(),
+            )))
+            .expect("handle_event");
+
+        let editor = server.editor().expect("editor present");
+        assert!(consumed, "the dismiss key should request a re-render");
+        assert!(
+            !editor.wave_animation_active(),
+            "the wave must be dismissable by a key press in daemon mode (issue #2530)"
+        );
+        assert_eq!(
+            editor.active_state().buffer.len(),
+            0,
+            "the dismiss key must be consumed, not inserted into the buffer"
+        );
+    }
+
+    /// Mouse activity dismisses the wave too, mirroring the local loop.
+    #[test]
+    fn mouse_event_dismisses_wave_in_daemon_mode() {
+        let mut server = server_with_editor("wave-mouse");
+
+        let editor = server.editor_mut().expect("editor present");
+        editor.trigger_wave_animation();
+        assert!(editor.wave_animation_active(), "precondition: wave running");
+
+        let consumed = server
+            .handle_event(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row: 1,
+                modifiers: KeyModifiers::empty(),
+            }))
+            .expect("handle_event");
+
+        assert!(consumed, "the dismiss event should request a re-render");
+        assert!(
+            !server
+                .editor()
+                .expect("editor present")
+                .wave_animation_active(),
+            "the wave must be dismissable by mouse activity in daemon mode (issue #2530)"
+        );
     }
 }
