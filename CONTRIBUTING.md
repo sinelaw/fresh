@@ -95,3 +95,17 @@ LTO, `codegen-units = 1`). Two extra knobs are available for producing a
 9. **Narrow recovery paths**: When you add a fallback or retry, trigger it on the *specific* error it was designed for, not on `Err(_)` or catch-all branches. Broad recovery silently hides correctness bugs.
 
 10. **Locale keys go in every locale**: i18n `t!()` keys - update *all* files under `crates/fresh-editor/locales/` with real translations. Don't commit English placeholders.
+
+11. **Re-read through the owner, not a stale snapshot**: After changing state others cache (config, layout, cursor-derived values), it's usually safest to refresh it through the path that owns it before reading the effect. If a test can't see the change on screen, treat it as suspect.
+
+12. **When a bug recurs, consider centralizing**: A class that keeps coming back (stale cache, off-screen cursor, missing gate) often belongs in one shared primitive rather than another per-site patch — and gates/ordering are usually best enforced at a single fork.
+
+13. **Watch the other variants**: A fix for the local path often needs the remote one too — likewise daemon vs direct, the trimmed/`gui` feature sets vs default, and other platforms. Prefer branching on the real distinction over assuming the common case.
+
+14. **Cleanup usually means teardown**: Cancel/abort/drop paths generally need to actually stop the work (kill the child, release the resource), not just discard a late value.
+
+15. **Lean toward unrepresentable over asserted**: Where practical, prefer types that rule out invalid states (non-`Clone`, per-owner ownership, enums) over runtime guards, and avoid exposing half-initialized state.
+
+16. **Be wary of fixes you can't reproduce**: Without a reproducer it's easy to fix the wrong thing — and a reproducer that passes vacuously (an already-satisfied wait, a timeout) proves little.
+
+17. **Avoid raw byte-offset string slicing**: Prefer the shared char-boundary/width helpers over `s[..n]` — ad-hoc truncation has been a recurring source of multibyte panics.
