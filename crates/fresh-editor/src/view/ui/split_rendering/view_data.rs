@@ -352,8 +352,13 @@ pub(super) fn build_view_data(
     } else {
         None
     };
-    let lines =
-        inject_virtual_lines(source_lines, state, theme, virtual_line_wrap_width, is_compose);
+    let lines = inject_virtual_lines(
+        source_lines,
+        state,
+        theme,
+        virtual_line_wrap_width,
+        is_compose,
+    );
     let placeholder_style = fold_placeholder_style(theme);
     let lines = apply_folding(
         lines,

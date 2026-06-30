@@ -217,13 +217,9 @@ Text after the table.
 
     // Wide terminal so a 50/50 vertical split leaves each pane wide enough to
     // show the whole table row.
-    let mut harness = EditorTestHarness::with_config_and_working_dir(
-        160,
-        40,
-        Default::default(),
-        project_root,
-    )
-    .unwrap();
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(160, 40, Default::default(), project_root)
+            .unwrap();
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("table.md");
