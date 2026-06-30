@@ -106,13 +106,6 @@ pub(crate) fn decoration_context(
         .saturating_add(viewport_size)
         .min(state.buffer.len());
 
-    // DIAGNOSTIC (ssh-workspace-nav-lag): decoration_us is the ~400ms/frame
-    // stall, but highlight_viewport is a cache hit (its re-parse trace never
-    // fires). Time the overlay updates that follow — these create markers, and
-    // the stall sits right before the first marker. Reference highlighting
-    // scans the buffer for occurrences of the symbol under the cursor; on a
-    // remote buffer that scan can read unresident bytes over SSH.
-    let _d_hl = std::time::Instant::now();
     let highlight_spans = state.highlighter.highlight_viewport(
         &state.buffer,
         highlight_start,
@@ -120,11 +113,9 @@ pub(crate) fn decoration_context(
         theme,
         highlight_context_bytes,
     );
-    let highlight_us = _d_hl.elapsed().as_micros();
 
     // Update reference highlight overlays (debounced; creates overlays that
     // auto-adjust).
-    let _d_ref = std::time::Instant::now();
     state.reference_highlight_overlay.update(
         &state.buffer,
         &mut state.overlays,
@@ -136,7 +127,6 @@ pub(crate) fn decoration_context(
         highlight_context_bytes,
         theme.semantic_highlight_bg,
     );
-    let reference_us = _d_ref.elapsed().as_micros();
 
     // Brackets inside comments and strings are prose/data, not structural
     // punctuation, so they must be excluded from bracket matching and rainbow
@@ -157,7 +147,6 @@ pub(crate) fn decoration_context(
     bracket_skip_ranges.sort_by_key(|range| range.start);
 
     // Update bracket highlight overlays.
-    let _d_br = std::time::Instant::now();
     state.bracket_highlight_overlay.update(
         &state.buffer,
         &mut state.overlays,
@@ -167,14 +156,6 @@ pub(crate) fn decoration_context(
         viewport_start,
         viewport_end,
         &bracket_skip_ranges,
-    );
-    let bracket_us = _d_br.elapsed().as_micros();
-    tracing::debug!(
-        target: "render_timing",
-        highlight_us,
-        reference_us,
-        bracket_us,
-        "decoration_context overlay sub-steps"
     );
 
     // Semantic tokens are stored as overlays so their ranges track edits.

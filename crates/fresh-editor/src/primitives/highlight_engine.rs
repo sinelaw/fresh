@@ -610,30 +610,6 @@ impl TextMateEngine {
                 .as_ref()
                 .is_some_and(|c| c.range.end >= parse_end);
 
-        // DIAGNOSTIC (ssh-workspace-nav-lag): one line per highlight call naming
-        // the cache decision and *why* it missed. If `hit=false` every frame on
-        // an unchanging viewport the engine re-parses each render; the fields say
-        // which guard failed — `last_len != buf_len` (buffer len changed),
-        // `dirty>=0` (something marked it dirty), or `cache_end < parse_end` (the
-        // cache never committed forward, e.g. a giant line with no newline to
-        // commit at). All inputs are local, so this should read identically over
-        // SSH and locally — a divergence would itself be the smoking gun.
-        tracing::debug!(
-            target: "render_timing",
-            op = "hl_cache",
-            hit = exact_cache_hit,
-            covers = cache_covers_viewport,
-            buf_len,
-            last_len = self.last_buffer_len,
-            dirty = dirty.map(|d| d as i64).unwrap_or(-1),
-            cache_start = self.cache.as_ref().map(|c| c.range.start as i64).unwrap_or(-1),
-            cache_end = self.cache.as_ref().map(|c| c.range.end as i64).unwrap_or(-1),
-            has_tail = self.cache.as_ref().is_some_and(|c| c.tail_state.is_some()),
-            desired_parse_start,
-            parse_end,
-            "highlight cache decision"
-        );
-
         // Cache hit.
         if exact_cache_hit {
             self.stats.cache_hits += 1;

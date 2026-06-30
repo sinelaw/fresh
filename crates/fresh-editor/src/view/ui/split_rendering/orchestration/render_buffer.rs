@@ -309,21 +309,10 @@ pub(crate) fn compute_buffer_layout(
         visible_count,
     );
 
-    // DIAGNOSTIC (ssh-workspace-nav-lag): time each compute_buffer_layout
-    // sub-step. A flat ~387ms/frame stall lives between here and marker
-    // creation. Earlier this showed "no remote_block", but that was the old
-    // 30ms gate hiding it: a giant single line read as many sub-30ms chunks
-    // sums to ~387ms while no single round-trip crosses 30ms. The gate is now
-    // removed (every round-trip logs `remote_block`) and `RemoteFileSystem`
-    // logs `remote_fs` per read (method/offset/bytes), so the next run shows
-    // whether populate_line_cache (chunk loads) or decoration_context (syntax
-    // highlight) is firing per-frame remote reads. DEBUG clears the EnvFilter floor.
-    let _dt0 = std::time::Instant::now();
     // Populate line cache to ensure chunks are loaded for rendering.
     let _ = state
         .buffer
         .populate_line_cache(viewport.top_byte, adjusted_visible_count);
-    let populate_us = _dt0.elapsed().as_micros();
 
     let viewport_start = viewport.top_byte;
     let viewport_end = calculate_viewport_end(
@@ -335,7 +324,6 @@ pub(crate) fn compute_buffer_layout(
         render_area.width as usize,
     );
 
-    let _dt1 = std::time::Instant::now();
     let decorations = decoration_context(
         state,
         viewport_start,
@@ -347,14 +335,6 @@ pub(crate) fn compute_buffer_layout(
         &view_mode,
         diagnostics_inline_text,
         &view_data.lines,
-    );
-    let decoration_us = _dt1.elapsed().as_micros();
-    tracing::debug!(
-        target: "render_timing",
-        populate_us,
-        decoration_us,
-        viewport_bytes = viewport_end.saturating_sub(viewport_start),
-        "compute_buffer_layout sub-steps"
     );
 
     let calculated_offset = viewport.top_view_line_offset;

@@ -4402,20 +4402,11 @@ where
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
         {
             let _span = tracing::info_span!("editor_tick").entered();
-            // DIAGNOSTIC (ssh-workspace-nav-lag): time editor_tick so a slow
-            // tick (e.g. a synchronous remote op in the polls / plugin-command
-            // processing) shows up as an `input_lag` WARN even if it never
-            // goes through the agent channel's blocking helpers.
-            let tick_start = std::time::Instant::now();
             if fresh::app::editor_tick(editor, || {
                 terminal.clear()?;
                 Ok(())
             })? {
                 needs_render = true;
-            }
-            let tick_ms = tick_start.elapsed().as_millis();
-            if tick_ms > 40 {
-                tracing::warn!(target: "input_lag", phase = "editor_tick", elapsed_ms = tick_ms);
             }
         }
 
@@ -4491,43 +4482,9 @@ where
             {
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
-                // DIAGNOSTIC (ssh-workspace-nav-lag): split the render into its
-                // three sub-steps so we can tell whether the ~440ms/frame lag
-                // is stdout/link write latency (the two synchronized-update
-                // escapes are tiny pure writes + flush — if THEY are slow, the
-                // terminal output pipe is the bottleneck) or the draw itself
-                // (compute + the diff write of changed cells to stdout).
-                let t_begin = Instant::now();
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
-                let begin_us = t_begin.elapsed().as_micros();
-
-                // Split the draw further: `compute_us` is the editor.render
-                // closure (pure buffer fill, no I/O); the remainder of
-                // `draw_us` is ratatui diffing + writing changed cells to
-                // stdout and flushing. compute≈0 but draw large ⇒ the cell
-                // write/flush (i.e. the terminal pipe) is the cost.
-                let mut compute_us: u128 = 0;
-                let t_draw = Instant::now();
-                terminal.draw(|frame| {
-                    let c = Instant::now();
-                    editor.render(frame);
-                    compute_us = c.elapsed().as_micros();
-                })?;
-                let draw_us = t_draw.elapsed().as_micros();
-
-                let t_end = Instant::now();
+                terminal.draw(|frame| editor.render(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
-                let end_us = t_end.elapsed().as_micros();
-
-                tracing::trace!(
-                    target: "render_timing",
-                    begin_sync_us = begin_us,
-                    draw_us,
-                    compute_us,
-                    flush_us = draw_us.saturating_sub(compute_us),
-                    end_sync_us = end_us,
-                    "terminal_draw sub-steps"
-                );
             }
             tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
             last_render = Instant::now();
@@ -4619,23 +4576,7 @@ where
             ),
             _ => None,
         };
-        // DIAGNOSTIC (ssh-workspace-nav-lag): time raw input dispatch so a
-        // slow keystroke (cursor move firing a synchronous remote/plugin op)
-        // shows up as an `input_lag` WARN with the key that triggered it.
-        // `event` is moved into the dispatch, so capture a descriptor first.
-        let ev_dbg = format!("{event:?}");
-        let input_start = std::time::Instant::now();
-        let input_needs_render = editor.handle_input_event(event)?;
-        let input_ms = input_start.elapsed().as_millis();
-        if input_ms > 40 {
-            tracing::warn!(
-                target: "input_lag",
-                phase = "handle_input_event",
-                elapsed_ms = input_ms,
-                event = ev_dbg,
-            );
-        }
-        if input_needs_render {
+        if editor.handle_input_event(event)? {
             needs_render = true;
         }
     }
