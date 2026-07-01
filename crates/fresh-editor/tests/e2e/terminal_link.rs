@@ -48,15 +48,15 @@ fn open_terminal_with_output(
     let (terminal_id, buffer_id, _leaf) = harness
         .editor_mut()
         .active_window_mut()
-        .create_plugin_terminal(
-            None,  // cwd: default to window root (working_dir)
-            None,  // direction: attach as a tab in the active split
-            None,  // ratio
-            true,  // focus
-            false, // persistent
-            Some(vec!["sleep".into(), "30".into()]),
-            None, // title
-        )
+        .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+            cwd: None,       // default to window root (working_dir)
+            direction: None, // attach as a tab in the active split
+            ratio: None,
+            focus: true,
+            persistent: false,
+            command: Some(vec!["sleep".into(), "30".into()]),
+            title: None,
+        })
         .expect("spawn sleep terminal");
     harness.editor_mut().enter_terminal_mode();
     // Feed program output directly into the grid (no PTY/prompt race).

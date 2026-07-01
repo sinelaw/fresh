@@ -21,7 +21,7 @@ use crate::common::scenario::failure::ScenarioFailure;
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::Observable;
 use crate::common::scenario::render_snapshot::{RenderSnapshot, RenderSnapshotExpect};
-use fresh::test_api::{Action, EditorTestApi};
+use fresh::test_api::{Action, EditorTestApi, VirtualLineSpec};
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LayoutScenario {
@@ -575,15 +575,15 @@ pub fn check_layout_scenario(s: LayoutScenario) -> Result<(), ScenarioFailure> {
                 });
             }
         };
-        harness.api_mut().seed_virtual_line(
-            spec.byte_offset,
-            &spec.text,
-            spec.fg,
-            spec.bg,
+        harness.api_mut().seed_virtual_line(VirtualLineSpec {
+            byte_offset: spec.byte_offset,
+            text: &spec.text,
+            fg: spec.fg,
+            bg: spec.bg,
             placement,
-            &spec.namespace,
-            spec.priority,
-        );
+            namespace: &spec.namespace,
+            priority: spec.priority,
+        });
     }
 
     // Declarative margin-annotation seeding. Mirrors

@@ -61,26 +61,43 @@ pub struct TrustDialogLayout {
     pub max_scroll: u16,
 }
 
-/// Render the workspace-trust prompt centered in `area`, with `selected`
-/// (0=Trust, 1=Restricted, 2=Block) marked. `triggers` is a comma-separated
-/// list of the marker files/dirs that caused the prompt (shown as a "Detected:"
-/// line; pass "" to omit). `secondary_label` is the right-hand button text
-/// (e.g. "Quit (Ctrl+Q)" at startup, "Cancel (Esc)" from the palette). Returns
-/// the click layout.
+/// Inputs to [`render_workspace_trust_dialog`] other than the frame.
+pub struct TrustDialogParams<'a> {
+    pub area: Rect,
+    /// Selected button: 0=Trust, 1=Restricted, 2=Block.
+    pub selected: usize,
+    pub path: &'a str,
+    /// Comma-separated marker files/dirs that caused the prompt (shown as a
+    /// "Detected:" line; pass `""` to omit).
+    pub triggers: &'a str,
+    /// Right-hand button text (e.g. "Quit (Ctrl+Q)" at startup, "Cancel (Esc)"
+    /// from the palette).
+    pub secondary_label: &'a str,
+    pub scroll: u16,
+    pub theme: &'a Theme,
+    /// When false, compute + return the click layout (rects) but paint no cells
+    /// — the frontend renders this modal natively from `trust_dialog_view`. The
+    /// TUI always passes `true`.
+    pub draw: bool,
+}
+
+/// Render the workspace-trust prompt centered in `params.area`, with
+/// `params.selected` (0=Trust, 1=Restricted, 2=Block) marked. Returns the
+/// click layout.
 pub fn render_workspace_trust_dialog(
     frame: &mut Frame,
-    area: Rect,
-    selected: usize,
-    path: &str,
-    triggers: &str,
-    secondary_label: &str,
-    scroll: u16,
-    theme: &Theme,
-    // When false, compute + return the click layout (rects) but paint no cells —
-    // the frontend renders this modal natively from `trust_dialog_view`. The TUI
-    // always passes `true`.
-    draw: bool,
+    params: TrustDialogParams,
 ) -> TrustDialogLayout {
+    let TrustDialogParams {
+        area,
+        selected,
+        path,
+        triggers,
+        secondary_label,
+        scroll,
+        theme,
+        draw,
+    } = params;
     let width = DIALOG_WIDTH.min(area.width.saturating_sub(4));
     let inner_w = width.saturating_sub(2);
     let bg = theme.popup_bg;

@@ -136,6 +136,19 @@ impl Caret {
 
 /// The single observation surface for semantic theorem tests.
 ///
+/// A virtual line to seed via [`EditorTestApi::seed_virtual_line`]:
+/// `text` with optional fg/bg colors (each `Option<(r,g,b)>`), placement
+/// (`"above"` or `"below"`), namespace, and priority.
+pub struct VirtualLineSpec<'a> {
+    pub byte_offset: usize,
+    pub text: &'a str,
+    pub fg: Option<(u8, u8, u8)>,
+    pub bg: Option<(u8, u8, u8)>,
+    pub placement: &'a str,
+    pub namespace: &'a str,
+    pub priority: i32,
+}
+
 /// Implemented by `crate::app::Editor`. Tests obtain a
 /// `&mut dyn EditorTestApi` from the test harness and never see the
 /// underlying `Editor` type directly.
@@ -353,16 +366,7 @@ pub trait EditorTestApi {
     /// Inject a virtual line at the marker for `byte_offset` with
     /// `text`, fg/bg colors (each as `Option<(r,g,b)>`), placement
     /// (`"above"` or `"below"`), namespace, and priority.
-    fn seed_virtual_line(
-        &mut self,
-        byte_offset: usize,
-        text: &str,
-        fg: Option<(u8, u8, u8)>,
-        bg: Option<(u8, u8, u8)>,
-        placement: &str,
-        namespace: &str,
-        priority: i32,
-    );
+    fn seed_virtual_line(&mut self, spec: VirtualLineSpec);
 
     /// Total count of virtual texts on the active state.
     fn virtual_text_count(&self) -> usize;
@@ -802,16 +806,16 @@ impl EditorTestApi for crate::app::Editor {
         self.get_status_message().cloned()
     }
 
-    fn seed_virtual_line(
-        &mut self,
-        byte_offset: usize,
-        text: &str,
-        fg: Option<(u8, u8, u8)>,
-        bg: Option<(u8, u8, u8)>,
-        placement: &str,
-        namespace: &str,
-        priority: i32,
-    ) {
+    fn seed_virtual_line(&mut self, spec: VirtualLineSpec) {
+        let VirtualLineSpec {
+            byte_offset,
+            text,
+            fg,
+            bg,
+            placement,
+            namespace,
+            priority,
+        } = spec;
         use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
         use ratatui::style::{Color, Style};
         let pos = match placement {

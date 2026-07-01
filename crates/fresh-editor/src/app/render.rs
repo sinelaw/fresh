@@ -1407,14 +1407,16 @@ impl Editor {
             Some(
                 crate::view::workspace_trust_dialog::render_workspace_trust_dialog(
                     frame,
-                    size,
-                    selected,
-                    &path,
-                    &triggers,
-                    &secondary_label,
-                    self.workspace_trust_scroll,
-                    theme_clone,
-                    draw_trust,
+                    crate::view::workspace_trust_dialog::TrustDialogParams {
+                        area: size,
+                        selected,
+                        path: &path,
+                        triggers: &triggers,
+                        secondary_label: &secondary_label,
+                        scroll: self.workspace_trust_scroll,
+                        theme: theme_clone,
+                        draw: draw_trust,
+                    },
                 ),
             )
         } else {

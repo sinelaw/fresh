@@ -78,6 +78,7 @@ mod split_actions;
 mod stdin_stream;
 mod tab_drag;
 mod terminal;
+pub use terminal::PluginTerminalSpec;
 mod terminal_input;
 mod terminal_link;
 mod terminal_mouse;

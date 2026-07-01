@@ -47,15 +47,15 @@ fn session_config() -> Config {
 fn spawn_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) {
     let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     let (terminal_id, _buffer_id, _leaf) = window
-        .create_plugin_terminal(
-            None,
-            None, // no split direction — seed/attach in the active split
-            None,
-            true,  // focus — the agent terminal is the seed
-            false, // ephemeral — exactly the Orchestrator agent case
-            Some(argv.clone()),
-            None,
-        )
+        .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+            cwd: None,
+            direction: None, // no split direction — seed/attach in the active split
+            ratio: None,
+            focus: true,       // the agent terminal is the seed
+            persistent: false, // ephemeral — exactly the Orchestrator agent case
+            command: Some(argv.clone()),
+            title: None,
+        })
         .expect("agent terminal should spawn");
     // create_window_with_terminal records this marker; mirror it here so the
     // ephemeral terminal is recognised as a restorable session terminal.
@@ -73,7 +73,15 @@ fn spawn_resumable_agent_terminal(
     let launch: Vec<String> = launch.iter().map(|s| s.to_string()).collect();
     let resume: Vec<String> = resume.iter().map(|s| s.to_string()).collect();
     let (terminal_id, _buffer_id, _leaf) = window
-        .create_plugin_terminal(None, None, None, true, false, Some(launch.clone()), None)
+        .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+            cwd: None,
+            direction: None,
+            ratio: None,
+            focus: true,
+            persistent: false,
+            command: Some(launch.clone()),
+            title: None,
+        })
         .expect("agent terminal should spawn");
     window.terminal_commands.insert(terminal_id, launch);
     window.terminal_resume_commands.insert(terminal_id, resume);
