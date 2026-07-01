@@ -27,6 +27,7 @@ mod file_open_input;
 mod file_open_orchestrators;
 mod file_open_queue;
 mod file_operations;
+mod git_index;
 mod help;
 mod help_actions;
 mod hover;

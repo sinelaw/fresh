@@ -159,16 +159,19 @@ async function refreshGitExplorerDecorations() {
     const cwd = editor.getCwd();
     const rootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], cwd);
 
-    let allDecorations: Array<{ path: string; symbol: string; color: string; priority: number }> = [];
-    let allRepoRoots: string[] = [];
+    type Decoration = { path: string; symbol: string; color: string; priority: number };
+    // Keep each repo's decorations grouped with the root they came from, so
+    // slots are built per-repo without re-deriving membership by path prefix
+    // (a bare startsWith(root) mis-groups sibling repos that share a prefix,
+    // e.g. project-a vs project-a-extra).
+    const repoGroups: Array<{ root: string; decorations: Decoration[] }> = [];
 
     if (rootResult.exit_code === 0 && rootResult.stdout.trim()) {
       // cwd is inside a git repo — single-repo mode
       const repoRoot = rootResult.stdout.trim();
-      allRepoRoots = [repoRoot];
       const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
       if (statusResult.exit_code === 0) {
-        allDecorations = parseStatusOutput(statusResult.stdout, repoRoot);
+        repoGroups.push({ root: repoRoot, decorations: parseStatusOutput(statusResult.stdout, repoRoot) });
       }
     } else {
       // cwd is not a git repo — discover sub-repos (monorepo/multi-repo)
@@ -178,14 +181,14 @@ async function refreshGitExplorerDecorations() {
         if (subRootResult.exit_code !== 0) continue;
         const repoRoot = subRootResult.stdout.trim();
         if (!repoRoot) continue;
-        allRepoRoots.push(repoRoot);
         const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
         if (statusResult.exit_code === 0) {
-          allDecorations = allDecorations.concat(parseStatusOutput(statusResult.stdout, repoRoot));
+          repoGroups.push({ root: repoRoot, decorations: parseStatusOutput(statusResult.stdout, repoRoot) });
         }
       }
     }
 
+    const allDecorations = repoGroups.flatMap(g => g.decorations);
     if (allDecorations.length === 0) {
       editor.clearFileExplorerDecorations(NAMESPACE);
       editor.clearFileExplorerSlots(NAMESPACE);
@@ -194,11 +197,7 @@ async function refreshGitExplorerDecorations() {
 
       const cfg = (editor.getPluginConfig() ?? {}) as { colorNames?: boolean };
       if (cfg.colorNames) {
-        let allSlots: Array<{ path: string; nameColor: string; priority: number }> = [];
-        for (const repoRoot of allRepoRoots) {
-          const repoDecorations = allDecorations.filter(d => d.path.startsWith(repoRoot));
-          allSlots = allSlots.concat(buildNameColorSlots(repoDecorations, repoRoot));
-        }
+        const allSlots = repoGroups.flatMap(g => buildNameColorSlots(g.decorations, g.root));
         editor.setFileExplorerSlots(NAMESPACE, allSlots);
       } else {
         editor.clearFileExplorerSlots(NAMESPACE);

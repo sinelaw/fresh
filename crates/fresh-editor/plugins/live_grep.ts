@@ -1,4 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
+import { gitCwdCandidate } from "./lib/git_repo.ts";
 
 /**
  * Live Grep Plugin
@@ -506,6 +507,25 @@ registerProvider({
   },
 });
 
+/** The cwd git-grep should run in: the caller's `preferred` cwd when it is
+ *  itself inside a repo, else the active buffer's dir (monorepo: the workspace
+ *  root isn't a repo but the open file is). Returns null when neither is a
+ *  repo. Used by both `isAvailable` and `search` so they can't disagree. */
+async function gitGrepCwd(preferred: string): Promise<string | null> {
+  const inRepo = await editor.spawnProcess(
+    "git", ["rev-parse", "--is-inside-work-tree"], preferred
+  );
+  if (inRepo.exit_code === 0) return preferred;
+  const cand = gitCwdCandidate(editor);
+  if (cand !== preferred) {
+    const r = await editor.spawnProcess(
+      "git", ["rev-parse", "--is-inside-work-tree"], cand
+    );
+    if (r.exit_code === 0) return cand;
+  }
+  return null;
+}
+
 registerProvider({
   name: "git-grep",
   // Top priority. git grep is the default *when available* — i.e.
@@ -515,36 +535,21 @@ registerProvider({
   priority: 0,
   isAvailable: async () => {
     try {
-      // git grep needs both `git` on PATH and to be inside a repo.
-      const cwd = editor.getCwd();
-      const ver = await editor.spawnProcess("git", ["--version"], cwd);
+      // git grep needs both `git` on PATH and a repo to run in. Resolve
+      // the repo cwd the *same way* search() does, so the two can never
+      // disagree (availability said yes but search runs in a non-repo).
+      const ver = await editor.spawnProcess("git", ["--version"], editor.getCwd());
       if (ver.exit_code !== 0) return false;
-      const inRepo = await editor.spawnProcess(
-        "git",
-        ["rev-parse", "--is-inside-work-tree"],
-        cwd
-      );
-      if (inRepo.exit_code === 0) return true;
-      // cwd may not be a repo (monorepo root); check active buffer's dir
-      const bufferId = editor.getActiveBufferId();
-      if (bufferId) {
-        const bufPath = editor.getBufferPath(bufferId);
-        if (bufPath) {
-          const bufDir = editor.pathDirname(bufPath);
-          if (bufDir) {
-            const bufInRepo = await editor.spawnProcess(
-              "git", ["rev-parse", "--is-inside-work-tree"], bufDir
-            );
-            return bufInRepo.exit_code === 0;
-          }
-        }
-      }
-      return false;
+      return (await gitGrepCwd(editor.getCwd())) !== null;
     } catch {
       return false;
     }
   },
   search: async (query, { cwd, maxResults, includeIgnored, wholeWord, regex }) => {
+    // Run in the same repo cwd isAvailable() confirmed. Null means the
+    // context is no longer a repo — return empty rather than throwing.
+    const gitCwd = await gitGrepCwd(cwd);
+    if (!gitCwd) return [] as GrepMatch[];
     const args = ["grep", "-n", "--column", "-I"];
     // Default git-grep is basic regex; use extended when regex is on, or
     // fixed-strings when it's off so the query is matched literally.
@@ -557,7 +562,7 @@ registerProvider({
       args.push("--untracked", "--no-exclude-standard");
     }
     args.push("-e", query);
-    const r = await editor.spawnProcess("git", args, cwd);
+    const r = await editor.spawnProcess("git", args, gitCwd);
     // git grep exits 1 when no matches — treat as empty, not error.
     if (r.exit_code === 0 || r.exit_code === 1) {
       return parseGrepOutput(r.stdout, maxResults, (msg) => editor.debug(msg)) as GrepMatch[];

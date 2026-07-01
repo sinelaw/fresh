@@ -694,6 +694,13 @@ pub struct Window {
     /// path in `dir_mod_times`.
     pub git_index_resolved: bool,
 
+    /// The explicit set of `.git/index` paths this window watches for
+    /// changes (one per repo; several in a monorepo). Stored directly
+    /// rather than re-derived from `dir_mod_times` by name so that
+    /// submodule/worktree gitdirs (`.git/modules/<x>/index`) are not
+    /// dropped by a `.git/index` suffix match.
+    pub watched_git_indexes: Vec<PathBuf>,
+
     /// Receiver for background file change poll results for this window.
     /// `Some` while a metadata poll is in flight.
     #[allow(clippy::type_complexity)]
@@ -714,6 +721,14 @@ pub struct Window {
             Vec<(PathBuf, std::time::SystemTime)>,
         )>,
     >,
+
+    /// Receiver for the one-shot background git-index resolution (discovering
+    /// every repo's `.git/index` to watch, including monorepo sub-repos).
+    /// `Some` while that resolution thread is in flight. Each entry pairs an
+    /// index path with its mtime at resolution time.
+    #[allow(clippy::type_complexity)]
+    pub pending_git_index_rx:
+        Option<std::sync::mpsc::Receiver<Vec<(PathBuf, Option<std::time::SystemTime>)>>>,
 
     /// Terminals in this window that should not persist to the
     /// workspace file. Plugin-created terminals default to ephemeral;
@@ -1928,6 +1943,8 @@ impl Window {
             last_auto_revert_poll: now,
             last_file_tree_poll: now,
             git_index_resolved: false,
+            watched_git_indexes: Vec::new(),
+            pending_git_index_rx: None,
             pending_file_poll_rx: None,
             pending_dir_poll_rx: None,
             ephemeral_terminals: std::collections::HashSet::new(),

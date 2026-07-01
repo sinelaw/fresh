@@ -20,8 +20,8 @@
  * found (git repo internals are managed by git itself). Skips hidden
  * directories and `node_modules`.
  *
- * NOTE: a parallel BFS lives on the Rust side in `file_operations.rs`
- * (`resolve_git_indexes`). Keep the two in sync.
+ * NOTE: a parallel BFS lives on the Rust side in `app/git_index.rs`
+ * (`resolve_git_indexes_blocking`). Keep the two in sync.
  */
 export function discoverSubRepos(
   editor: EditorAPI,

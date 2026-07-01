@@ -672,6 +672,10 @@ impl Editor {
             }
         }
 
+        // Fold in any completed background git-index resolution (see
+        // `git_index.rs`), seeding the explicit `.git/index` watch set.
+        self.collect_git_index_resolution();
+
         // Check poll interval
         let poll_interval =
             std::time::Duration::from_millis(self.config.editor.file_tree_poll_interval_ms);
@@ -695,20 +699,9 @@ impl Editor {
             return any_refreshed;
         }
 
-        // Resolve all git index paths once (first poll only). This uses
-        // the ProcessSpawner which may block briefly on the first call,
-        // but only happens once per session. In a monorepo every sub-repo
-        // gets its own watched index so decorations refresh for all of them.
-        if !self.active_window_mut().git_index_resolved {
-            self.active_window_mut().git_index_resolved = true;
-            for path in self.resolve_git_indexes() {
-                if let Ok(meta) = self.authority().filesystem.metadata(&path) {
-                    if let Some(mtime) = meta.modified {
-                        self.active_window_mut().dir_mod_times.insert(path, mtime);
-                    }
-                }
-            }
-        }
+        // Kick off the one-shot git-index discovery on a background thread
+        // (see `git_index.rs`) so the first poll never blocks on `git`.
+        self.spawn_git_index_resolution();
 
         // Get file explorer reference
         let Some(explorer) = self.file_explorer() else {
@@ -723,15 +716,10 @@ impl Editor {
             .map(|node| (node.id, node.entry.path.clone()))
             .collect();
 
-        // Collect all watched git index paths for the background metadata check.
+        // The watch set is stored explicitly (populated once above), not
+        // re-derived from `dir_mod_times` by pattern-matching `.git/index`.
         // In a monorepo there may be several; in a single-repo just one.
-        let git_index_paths: Vec<PathBuf> = self
-            .active_window()
-            .dir_mod_times
-            .keys()
-            .filter(|p| p.ends_with(".git/index") || p.ends_with(".git\\index"))
-            .cloned()
-            .collect();
+        let git_index_paths: Vec<PathBuf> = self.active_window().watched_git_indexes.clone();
 
         if expanded_dirs.is_empty() && git_index_paths.is_empty() {
             return any_refreshed;
@@ -927,96 +915,6 @@ impl Editor {
             }
         }
         changed
-    }
-
-    /// Resolve the paths to every `.git/index` reachable from the working
-    /// directory. In a normal repo this returns a single entry; in a
-    /// monorepo (working dir is not itself a git repo) it BFS-scans
-    /// subdirectories up to 3 levels deep and returns one entry per
-    /// discovered sub-repo so that *all* indexes are watched.
-    ///
-    /// Uses the `ProcessSpawner` so it works transparently on both local
-    /// and remote (SSH) filesystems.
-    ///
-    /// NOTE: a parallel BFS lives on the TypeScript side in
-    /// `lib/git_history.ts` (`discoverSubRepos`). Keep the two in sync.
-    fn resolve_git_indexes(&self) -> Vec<PathBuf> {
-        let spawner = &self.authority().process_spawner;
-        let cwd = self.working_dir().to_string_lossy().to_string();
-
-        let Some(rt) = self.tokio_runtime.as_ref() else {
-            return Vec::new();
-        };
-
-        let result = rt.block_on(spawner.spawn(
-            "git".to_string(),
-            vec!["rev-parse".to_string(), "--git-dir".to_string()],
-            Some(cwd.clone()),
-        ));
-
-        if let Ok(ref output) = result {
-            if output.exit_code == 0 {
-                let git_dir = output.stdout.trim();
-                let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-                    PathBuf::from(git_dir)
-                } else {
-                    self.working_dir().join(git_dir)
-                };
-                return vec![git_dir_path.join("index")];
-            }
-        }
-
-        // Working dir is not a git repo — recursively scan subdirectories
-        // (up to 3 levels) to find all sub-repos' .git/index (monorepo).
-        let working_dir = self.working_dir().to_path_buf();
-        let fs = self.authority().filesystem.clone();
-
-        use std::collections::VecDeque;
-        let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
-        queue.push_back((working_dir, 0));
-        const MAX_DEPTH: u32 = 3;
-        let mut indexes = Vec::new();
-
-        while let Some((dir, depth)) = queue.pop_front() {
-            let entries = match fs.read_dir(&dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            for entry in entries {
-                if !entry.is_dir() {
-                    continue;
-                }
-                if entry.name.starts_with('.') || entry.name == "node_modules" {
-                    continue;
-                }
-
-                let dot_git = entry.path.join(".git");
-                if fs.exists(&dot_git) {
-                    let sub_cwd = entry.path.to_string_lossy().to_string();
-                    let sub_result = rt.block_on(spawner.spawn(
-                        "git".to_string(),
-                        vec!["rev-parse".to_string(), "--git-dir".to_string()],
-                        Some(sub_cwd.clone()),
-                    ));
-                    if let Ok(ref output) = sub_result {
-                        if output.exit_code == 0 {
-                            let git_dir = output.stdout.trim();
-                            let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-                                PathBuf::from(git_dir)
-                            } else {
-                                entry.path.join(git_dir)
-                            };
-                            indexes.push(git_dir_path.join("index"));
-                        }
-                    }
-                } else if depth < MAX_DEPTH {
-                    queue.push_back((entry.path.clone(), depth + 1));
-                }
-            }
-        }
-
-        indexes
     }
 
     /// Notify LSP server about a newly opened file
