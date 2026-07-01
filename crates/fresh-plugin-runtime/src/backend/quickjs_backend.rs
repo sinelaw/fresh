@@ -5944,6 +5944,11 @@ impl JsEditorApi {
 
     /// Mount a declarative widget panel as a centered floating
     /// overlay (not bound to any virtual buffer).
+    // The argument list is the JS-facing binding: rquickjs maps each
+    // parameter positionally to a `mountFloatingWidget(...)` call argument,
+    // so it can't be collapsed into a params struct without changing the
+    // plugin API.
+    #[allow(clippy::too_many_arguments)]
     #[qjs(rename = "mountFloatingWidget")]
     pub fn mount_floating_widget<'js>(
         &self,
@@ -6372,6 +6377,11 @@ impl JsEditorApi {
         js_name = "beginSearch",
         ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number }): SearchHandle"
     )]
+    // The argument list is the JS-facing binding (see the `ts_raw`
+    // signature above): rquickjs maps each parameter positionally to the
+    // `beginSearch(...)` call, so it can't be collapsed into a params
+    // struct without changing the plugin API.
+    #[allow(clippy::too_many_arguments)]
     #[qjs(rename = "_beginSearch")]
     pub fn begin_search(
         &self,
