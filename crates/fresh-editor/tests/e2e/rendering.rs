@@ -606,11 +606,18 @@ fn test_current_line_highlight_spans_full_width() {
     let file_path = temp_dir.path().join("highlight_test.txt");
     std::fs::write(&file_path, "abc\ndef\nghi\n").unwrap();
 
-    // Default config has highlight_current_line = true and dark theme
-    let config = Config {
+    // Default config has highlight_current_line = true and dark theme.
+    // Disable frame-buffer animations: this test inspects a single settled
+    // frame, but the harness only force-disables animations when *no* config is
+    // passed (see EditorTestHarness). Because we pass one for the dark theme,
+    // the default `animations: true` would otherwise leak in, and a mid-slide
+    // open frame could show a not-yet-settled current-line background — an
+    // intermittent failure of the assertions below.
+    let mut config = Config {
         theme: "dark".into(),
         ..Default::default()
     };
+    config.editor.animations = false;
     let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
