@@ -1472,14 +1472,6 @@ impl Editor {
             .unwrap_or_else(|| "[No Name]".to_string())
     }
 
-    /// Apply an event to the active buffer with all cross-cutting concerns.
-    /// This is the centralized method that automatically handles:
-    /// - Event application to buffer
-    /// - Plugin hooks (after-insert, after-delete, etc.)
-    /// - LSP notifications
-    /// - Any other cross-cutting concerns
-    ///
-
     /// Get the event log for the active buffer
     pub fn active_event_log(&self) -> &EventLog {
         self.active_window()

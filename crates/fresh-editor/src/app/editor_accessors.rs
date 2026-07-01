@@ -1284,7 +1284,7 @@ impl Editor {
         true
     }
 
-    /// Get the warning domain registry
+    // Get the warning domain registry.
     // Warning-domain accessors live on `impl Window`:
     //  - `clear_warnings` — call as `self.active_window_mut().clear_warnings()`.
     //  - Read access via `active_window().warning_domains` directly

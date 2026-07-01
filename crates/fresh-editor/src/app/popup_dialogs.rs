@@ -38,18 +38,17 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     let mut cur = String::new();
     let mut cur_w = 0usize;
 
-    let push_word =
-        |word: &str, lines: &mut Vec<String>, cur: &mut String, cur_w: &mut usize| {
-            for c in word.chars() {
-                let w = ch_width(c);
-                if *cur_w + w > width && !cur.is_empty() {
-                    lines.push(std::mem::take(cur));
-                    *cur_w = 0;
-                }
-                cur.push(c);
-                *cur_w += w;
+    let push_word = |word: &str, lines: &mut Vec<String>, cur: &mut String, cur_w: &mut usize| {
+        for c in word.chars() {
+            let w = ch_width(c);
+            if *cur_w + w > width && !cur.is_empty() {
+                lines.push(std::mem::take(cur));
+                *cur_w = 0;
             }
-        };
+            cur.push(c);
+            *cur_w += w;
+        }
+    };
 
     for word in text.split(' ') {
         let word_w: usize = word.chars().map(ch_width).sum();

@@ -943,7 +943,7 @@ impl Editor {
         );
     }
 
-    /// Clear the file explorer search (or multi-selection, pending cut, or transfer focus)
+    // Clear the file explorer search (or multi-selection, pending cut, or transfer focus).
     // `file_explorer_search_clear` lives on `impl Window` — call it via
     // `self.active_window_mut().file_explorer_search_clear()`.
 

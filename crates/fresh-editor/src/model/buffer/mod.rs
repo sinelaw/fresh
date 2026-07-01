@@ -107,8 +107,6 @@ impl Default for BufferConfig {
     }
 }
 
-/// Line ending format used in the file
-
 /// Represents a line number (simplified for new implementation)
 /// Legacy enum kept for backwards compatibility - always Absolute now
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

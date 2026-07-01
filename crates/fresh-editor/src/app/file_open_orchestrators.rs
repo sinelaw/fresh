@@ -252,15 +252,15 @@ impl Editor {
         self.relayout();
     }
 
-    /// If the active split leaf carries `SplitRole::UtilityDock`,
-    /// move the active leaf back to the user's last regular editor
-    /// leaf. Called from the file-open path so that opening a file
-    /// while a utility panel holds focus doesn't turn the dock into
-    /// a tab strip for ordinary files.
-    ///
-    /// Routing falls back to the first non-dock leaf in tree order
-    /// when the user has only ever interacted with the dock — a
-    /// rare boot-state path.
+    // If the active split leaf carries `SplitRole::UtilityDock`,
+    // move the active leaf back to the user's last regular editor
+    // leaf. Called from the file-open path so that opening a file
+    // while a utility panel holds focus doesn't turn the dock into
+    // a tab strip for ordinary files.
+    //
+    // Routing falls back to the first non-dock leaf in tree order
+    // when the user has only ever interacted with the dock — a
+    // rare boot-state path.
     // `redirect_active_split_away_from_dock_if_needed` lives on
     // `impl Window` — call it via
     // `self.active_window_mut().redirect_active_split_away_from_dock_if_needed()`.
@@ -623,10 +623,10 @@ impl Editor {
         Ok(buffer_id)
     }
 
-    /// Restore global file state (cursor and scroll position) for a newly opened file
-    ///
-    /// This looks up the file's saved state from the global file states store
-    /// and applies it to both the EditorState (cursor) and SplitViewState (viewport).
+    // Restore global file state (cursor and scroll position) for a newly opened file.
+    //
+    // This looks up the file's saved state from the global file states store
+    // and applies it to both the EditorState (cursor) and SplitViewState (viewport).
     // `restore_global_file_state` and `save_file_state_on_close` live
     // on `impl Window` — call them via
     // `self.active_window_mut().restore_global_file_state(...)` and

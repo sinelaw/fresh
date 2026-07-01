@@ -275,23 +275,22 @@ impl Editor {
         self.stdin_stream.is_active()
     }
 
-    /// Create a new virtual buffer (not backed by a file)
-    ///
-    /// # Arguments
-    /// * `name` - Display name (e.g., "*Diagnostics*")
-    /// * `mode` - Buffer mode for keybindings (e.g., "diagnostics-list")
-    /// * `read_only` - Whether the buffer should be read-only
-    ///
-    /// # Returns
-    /// The BufferId of the created virtual buffer
-    ///
-    /// Like [`Self::create_virtual_buffer`] but does **not** add the
-    /// new buffer to any split's tab list. Use this when the caller
-    /// is going to seed a freshly-created split (e.g. the Utility
-    /// Dock leaf) with the new buffer directly — without it, the
-    /// buffer would briefly appear as a phantom tab in whatever the
-    /// previously-active split was, requiring a separate cleanup
-    /// pass to remove it.
+    // Create a new virtual buffer (not backed by a file).
+    //
+    // Arguments:
+    // * `name` - Display name (e.g., "*Diagnostics*")
+    // * `mode` - Buffer mode for keybindings (e.g., "diagnostics-list")
+    // * `read_only` - Whether the buffer should be read-only
+    //
+    // Returns the BufferId of the created virtual buffer.
+    //
+    // Like [`Self::create_virtual_buffer`] but does **not** add the
+    // new buffer to any split's tab list. Use this when the caller
+    // is going to seed a freshly-created split (e.g. the Utility
+    // Dock leaf) with the new buffer directly — without it, the
+    // buffer would briefly appear as a phantom tab in whatever the
+    // previously-active split was, requiring a separate cleanup
+    // pass to remove it.
     // `create_virtual_buffer_detached` and `create_virtual_buffer` live
     // on `impl Window` — call them via
     // `self.active_window_mut().create_virtual_buffer*(...)`.

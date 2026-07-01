@@ -43,6 +43,12 @@ impl Editor {
         self.apply_event_to_active_buffer(event);
     }
 
+    /// Apply an event to the active buffer with all cross-cutting concerns.
+    /// This is the centralized method that automatically handles:
+    /// - Event application to buffer
+    /// - Plugin hooks (after-insert, after-delete, etc.)
+    /// - LSP notifications
+    /// - Any other cross-cutting concerns
     pub fn apply_event_to_active_buffer(&mut self, event: &Event) {
         // Handle View events at Editor level - View events go to SplitViewState, not EditorState
         // This properly separates Buffer state from View state
