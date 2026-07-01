@@ -352,7 +352,7 @@ impl Editor {
                 out_pieces.focus_key,
                 out_pieces.tabbable,
             )
-            .is_err()
+            .is_none()
         {
             tracing::warn!("rerender_widget_panel({}) lost panel mid-call", panel_key);
             return;

@@ -1717,11 +1717,7 @@ impl PieceTree {
                     };
                     let doc_line = lines_before + lines_in_partial;
                     // Column estimate: offset_in_piece modulo average bytes per line
-                    let avg_bytes_per_line = if lf_count > 0 {
-                        piece_bytes / lf_count
-                    } else {
-                        80
-                    };
+                    let avg_bytes_per_line = piece_bytes.checked_div(lf_count).unwrap_or(80);
                     let column = if avg_bytes_per_line > 0 {
                         offset_in_piece % avg_bytes_per_line
                     } else {

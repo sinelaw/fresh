@@ -63,13 +63,9 @@ impl LineScan {
     /// Progress percent (0..=100), or 100 when there is nothing to scan.
     pub(crate) fn progress_percent(&self) -> usize {
         match &self.active {
-            Some(a) => {
-                if a.total_bytes == 0 {
-                    100
-                } else {
-                    (a.scanned_bytes * 100) / a.total_bytes
-                }
-            }
+            Some(a) => (a.scanned_bytes * 100)
+                .checked_div(a.total_bytes)
+                .unwrap_or(100),
             None => 100,
         }
     }

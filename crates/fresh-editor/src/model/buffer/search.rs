@@ -66,11 +66,9 @@ impl ChunkedSearchState {
 
     /// Progress as a percentage (0–100).
     pub fn progress_percent(&self) -> usize {
-        if self.total_bytes > 0 {
-            (self.scanned_bytes * 100) / self.total_bytes
-        } else {
-            100
-        }
+        (self.scanned_bytes * 100)
+            .checked_div(self.total_bytes)
+            .unwrap_or(100)
     }
 }
 

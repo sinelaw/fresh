@@ -459,6 +459,14 @@ fn tab_styles(
     (base_style, close_style)
 }
 
+/// Output of [`build_tab_spans`]: `(spans, ranges, rendered_targets)`. See the
+/// function's own docs for the per-field meaning.
+type TabSpanLayout = (
+    Vec<(Span<'static>, usize)>,
+    Vec<(usize, usize, usize)>,
+    Vec<TabTarget>,
+);
+
 /// Build the styled `(name, close-button)` spans for every resolvable tab.
 ///
 /// Returns `(spans, ranges, rendered_targets)` where `spans` holds two entries
@@ -479,11 +487,7 @@ fn build_tab_spans(
     preview_buffer: Option<BufferId>,
     is_active_split: bool,
     theme: &crate::view::theme::Theme,
-) -> (
-    Vec<(Span<'static>, usize)>,
-    Vec<(usize, usize, usize)>,
-    Vec<TabTarget>,
-) {
+) -> TabSpanLayout {
     let mut all_tab_spans: Vec<(Span<'static>, usize)> = Vec::new();
     let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new();
     let mut rendered_targets: Vec<TabTarget> = Vec::new();

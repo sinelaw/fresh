@@ -359,17 +359,13 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
-    ) -> Result<BufferId, ()> {
-        match self.panels.get_mut(panel_key) {
-            Some(state) => {
-                state.hits = hits;
-                state.instance_states = instance_states;
-                state.focus_key = focus_key;
-                state.tabbable = tabbable;
-                Ok(state.buffer_id)
-            }
-            None => Err(()),
-        }
+    ) -> Option<BufferId> {
+        let state = self.panels.get_mut(panel_key)?;
+        state.hits = hits;
+        state.instance_states = instance_states;
+        state.focus_key = focus_key;
+        state.tabbable = tabbable;
+        Some(state.buffer_id)
     }
 
     /// Borrow the current spec + return the buffer id. Companion to

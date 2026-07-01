@@ -17,6 +17,18 @@ use fresh_core::WindowId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Seed state for a freshly-built window layout: the base buffer plus the
+/// editor/metadata/event-log/split scaffolding returned by
+/// [`Editor::build_fresh_layout_if_needed`].
+type FreshLayoutSeed = (
+    fresh_core::BufferId,
+    crate::state::EditorState,
+    crate::app::types::BufferMetadata,
+    crate::model::event::EventLog,
+    SplitManager,
+    HashMap<crate::model::event::LeafId, SplitViewState>,
+);
+
 impl crate::app::Editor {
     /// Snapshot the editor-global resources every new `Window` needs.
     /// All fields are cheap clones (`Arc` increments or `Clone`-by-value
@@ -697,17 +709,7 @@ impl crate::app::Editor {
     /// Factored out of `set_active_window` so other call sites that
     /// need to populate an inert window shell can share the same
     /// seed-construction logic.
-    pub(crate) fn build_fresh_layout_if_needed(
-        &mut self,
-        id: WindowId,
-    ) -> Option<(
-        fresh_core::BufferId,
-        crate::state::EditorState,
-        crate::app::types::BufferMetadata,
-        crate::model::event::EventLog,
-        SplitManager,
-        HashMap<crate::model::event::LeafId, SplitViewState>,
-    )> {
+    pub(crate) fn build_fresh_layout_if_needed(&mut self, id: WindowId) -> Option<FreshLayoutSeed> {
         if !self
             .windows
             .get(&id)

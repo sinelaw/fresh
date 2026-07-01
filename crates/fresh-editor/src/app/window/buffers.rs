@@ -53,6 +53,10 @@ impl WindowBuffers {
         self.map.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, BufferId, EditorState> {
         self.map.iter()
     }
