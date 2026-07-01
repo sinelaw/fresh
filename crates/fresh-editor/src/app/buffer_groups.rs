@@ -691,15 +691,15 @@ impl super::Editor {
             //    still the prior id is safe.
             {
                 let buf_state = vs.ensure_buffer_state(new_buffer_id);
-                buf_state.apply_config_defaults(
-                    cfg.line_numbers,
-                    cfg.highlight_current_line,
+                buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: cfg.line_numbers,
+                    highlight_current_line: cfg.highlight_current_line,
                     line_wrap,
-                    cfg.wrap_indent,
+                    wrap_indent: cfg.wrap_indent,
                     wrap_column,
-                    cfg.rulers,
-                    cfg.scroll_offset,
-                );
+                    rulers: cfg.rulers,
+                    scroll_offset: cfg.scroll_offset,
+                });
                 // Match the panel-buffer presentation set in
                 // `build_group_layout` (no line numbers, no current-
                 // line highlight inside grouped panels).

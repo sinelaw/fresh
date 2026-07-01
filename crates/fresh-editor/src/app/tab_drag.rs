@@ -482,16 +482,17 @@ impl Editor {
                 let (width, height) = (self.terminal_width, self.terminal_height);
                 let mut new_view_state =
                     crate::view::split::SplitViewState::with_buffer(width, height, buffer_id);
-                new_view_state.apply_config_defaults(
-                    self.config.editor.line_numbers,
-                    self.config.editor.highlight_current_line,
-                    self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-                    self.config.editor.wrap_indent,
-                    self.active_window()
+                new_view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column: self
+                        .active_window()
                         .resolve_wrap_column_for_buffer(buffer_id),
-                    self.config.editor.rulers.clone(),
-                    self.config.editor.scroll_offset,
-                );
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                });
 
                 // Copy cursor position from source split's view state
                 if let Some(source_vs) = self

@@ -2823,15 +2823,15 @@ impl Window {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                cfg.line_numbers,
-                cfg.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: cfg.line_numbers,
+                highlight_current_line: cfg.highlight_current_line,
                 line_wrap,
-                cfg.wrap_indent,
+                wrap_indent: cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers,
-                cfg.scroll_offset,
-            );
+                rulers: cfg.rulers,
+                scroll_offset: cfg.scroll_offset,
+            });
         }
 
         self.set_active_buffer(buffer_id);

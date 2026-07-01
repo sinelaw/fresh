@@ -3220,18 +3220,19 @@ impl Editor {
                     self.terminal_height,
                     buffer_id,
                 );
-                view_state.apply_config_defaults(
-                    self.config.editor.line_numbers,
-                    self.config.editor.highlight_current_line,
-                    line_wrap.unwrap_or_else(|| {
+                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap: line_wrap.unwrap_or_else(|| {
                         self.active_window().resolve_line_wrap_for_buffer(buffer_id)
                     }),
-                    self.config.editor.wrap_indent,
-                    self.active_window()
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column: self
+                        .active_window()
                         .resolve_wrap_column_for_buffer(buffer_id),
-                    self.config.editor.rulers.clone(),
-                    self.config.editor.scroll_offset,
-                );
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                });
                 view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
                 self.windows
                     .get_mut(&self.active_window)

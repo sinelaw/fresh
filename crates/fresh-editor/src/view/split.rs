@@ -196,6 +196,20 @@ pub struct BufferViewState {
     pub folds: FoldManager,
 }
 
+/// Editor display settings applied to a fresh [`BufferViewState`] via
+/// [`BufferViewState::apply_config_defaults`]. Grouping the flags into one
+/// struct keeps the call under the argument-count limit and names each
+/// boolean at every call site.
+pub struct ViewConfigDefaults {
+    pub line_numbers: bool,
+    pub highlight_current_line: bool,
+    pub line_wrap: bool,
+    pub wrap_indent: bool,
+    pub wrap_column: Option<usize>,
+    pub rulers: Vec<usize>,
+    pub scroll_offset: usize,
+}
+
 impl BufferViewState {
     /// Resolve fold ranges and ensure the primary cursor is visible.
     ///
@@ -239,16 +253,16 @@ impl BufferViewState {
     /// `wrap_column`, and `rulers` from the given config values. Call this after
     /// creating a new `BufferViewState` (via `new()` or `ensure_buffer_state()`)
     /// to ensure the view respects the user's settings.
-    pub fn apply_config_defaults(
-        &mut self,
-        line_numbers: bool,
-        highlight_current_line: bool,
-        line_wrap: bool,
-        wrap_indent: bool,
-        wrap_column: Option<usize>,
-        rulers: Vec<usize>,
-        scroll_offset: usize,
-    ) {
+    pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
+        let ViewConfigDefaults {
+            line_numbers,
+            highlight_current_line,
+            line_wrap,
+            wrap_indent,
+            wrap_column,
+            rulers,
+            scroll_offset,
+        } = defaults;
         self.show_line_numbers = line_numbers;
         self.highlight_current_line = highlight_current_line;
         self.viewport.line_wrap_enabled = line_wrap;
@@ -2203,15 +2217,15 @@ mod tests {
             "default scroll_offset should be 3"
         );
 
-        view_state.apply_config_defaults(
-            true,   // line_numbers
-            true,   // highlight_current_line
-            false,  // line_wrap
-            false,  // wrap_indent
-            None,   // wrap_column
-            vec![], // rulers
-            7,      // scroll_offset
-        );
+        view_state.apply_config_defaults(ViewConfigDefaults {
+            line_numbers: true,
+            highlight_current_line: true,
+            line_wrap: false,
+            wrap_indent: false,
+            wrap_column: None,
+            rulers: vec![],
+            scroll_offset: 7,
+        });
         assert_eq!(
             view_state.viewport.scroll_offset, 7,
             "apply_config_defaults should set scroll_offset on the viewport"

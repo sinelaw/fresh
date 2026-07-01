@@ -927,15 +927,15 @@ impl Editor {
         let mut split_view_states = HashMap::new();
         let initial_split_id = split_manager.active_split();
         let mut initial_view_state = SplitViewState::with_buffer(width, height, buffer_id);
-        initial_view_state.apply_config_defaults(
-            config.editor.line_numbers,
-            config.editor.highlight_current_line,
-            config.editor.line_wrap,
-            config.editor.wrap_indent,
-            config.editor.wrap_column,
-            config.editor.rulers.clone(),
-            config.editor.scroll_offset,
-        );
+        initial_view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+            line_numbers: config.editor.line_numbers,
+            highlight_current_line: config.editor.highlight_current_line,
+            line_wrap: config.editor.line_wrap,
+            wrap_indent: config.editor.wrap_indent,
+            wrap_column: config.editor.wrap_column,
+            rulers: config.editor.rulers.clone(),
+            scroll_offset: config.editor.scroll_offset,
+        });
         split_view_states.insert(initial_split_id, initial_view_state);
 
         // Initialize filesystem manager for file explorer

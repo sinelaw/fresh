@@ -406,15 +406,15 @@ impl Editor {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
                 line_wrap,
-                self.config.editor.wrap_indent,
+                wrap_indent: self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
-                self.config.editor.scroll_offset,
-            );
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
         }
 
         self.set_active_buffer(buffer_id);
@@ -596,15 +596,15 @@ impl Editor {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
                 line_wrap,
-                self.config.editor.wrap_indent,
+                wrap_indent: self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
-                self.config.editor.scroll_offset,
-            );
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
         }
 
         self.set_active_buffer(buffer_id);
@@ -856,15 +856,15 @@ impl Editor {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
                 line_wrap,
-                self.config.editor.wrap_indent,
+                wrap_indent: self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
-                self.config.editor.scroll_offset,
-            );
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
         }
 
         Ok(buffer_id)
@@ -1209,15 +1209,15 @@ impl crate::app::window::Window {
             view_state.add_buffer(buffer_id);
             // Initialize per-buffer view state for the new buffer with config defaults
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                cfg.line_numbers,
-                cfg.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: cfg.line_numbers,
+                highlight_current_line: cfg.highlight_current_line,
                 line_wrap,
-                cfg.wrap_indent,
+                wrap_indent: cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers,
-                cfg.scroll_offset,
-            );
+                rulers: cfg.rulers,
+                scroll_offset: cfg.scroll_offset,
+            });
             // Auto-activate page view if configured for this language
             if let Some(page_width) = page_view {
                 buf_state.activate_page_view(page_width);

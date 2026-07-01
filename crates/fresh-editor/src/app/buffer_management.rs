@@ -582,15 +582,15 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
+            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
                 line_wrap,
-                self.config.editor.wrap_indent,
+                wrap_indent: self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
-                self.config.editor.scroll_offset,
-            );
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
         }
 
         self.active_window_mut().status_message = Some(t!("buffer.new").to_string());

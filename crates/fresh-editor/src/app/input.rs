@@ -3068,16 +3068,17 @@ impl Editor {
         );
         // Terminal-dedicated splits never show line numbers or current-line highlight.
         // (Mirrors the plugin-terminal split setup in `create_plugin_terminal`.)
-        view_state.apply_config_defaults(
-            false,
-            false,
-            self.active_window().resolve_line_wrap_for_buffer(buffer_id),
-            self.config.editor.wrap_indent,
-            self.active_window()
+        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+            line_numbers: false,
+            highlight_current_line: false,
+            line_wrap: self.active_window().resolve_line_wrap_for_buffer(buffer_id),
+            wrap_indent: self.config.editor.wrap_indent,
+            wrap_column: self
+                .active_window()
                 .resolve_wrap_column_for_buffer(buffer_id),
-            self.config.editor.rulers.clone(),
-            0,
-        );
+            rulers: self.config.editor.rulers.clone(),
+            scroll_offset: 0,
+        });
         // Terminals don't wrap — keep escape sequences intact.
         view_state.viewport.line_wrap_enabled = false;
 

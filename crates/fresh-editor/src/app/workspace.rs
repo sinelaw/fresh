@@ -1114,15 +1114,19 @@ impl crate::app::window::Window {
                             self.terminal_height,
                             second_buffer_id,
                         );
-                        view_state.apply_config_defaults(
-                            self.resources.config.editor.line_numbers,
-                            self.resources.config.editor.highlight_current_line,
-                            self.resolve_line_wrap_for_buffer(second_buffer_id),
-                            self.resources.config.editor.wrap_indent,
-                            self.resolve_wrap_column_for_buffer(second_buffer_id),
-                            self.resources.config.editor.rulers.clone(),
-                            self.resources.config.editor.scroll_offset,
-                        );
+                        view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                            line_numbers: self.resources.config.editor.line_numbers,
+                            highlight_current_line: self
+                                .resources
+                                .config
+                                .editor
+                                .highlight_current_line,
+                            line_wrap: self.resolve_line_wrap_for_buffer(second_buffer_id),
+                            wrap_indent: self.resources.config.editor.wrap_indent,
+                            wrap_column: self.resolve_wrap_column_for_buffer(second_buffer_id),
+                            rulers: self.resources.config.editor.rulers.clone(),
+                            scroll_offset: self.resources.config.editor.scroll_offset,
+                        });
                         self.buffers
                             .split_view_states_mut()
                             .expect("active window must have a populated split layout")

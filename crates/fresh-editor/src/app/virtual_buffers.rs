@@ -137,15 +137,15 @@ impl Editor {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                self.config.editor.line_numbers,
-                self.config.editor.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: self.config.editor.line_numbers,
+                highlight_current_line: self.config.editor.highlight_current_line,
                 line_wrap,
-                self.config.editor.wrap_indent,
+                wrap_indent: self.config.editor.wrap_indent,
                 wrap_column,
-                self.config.editor.rulers.clone(),
-                self.config.editor.scroll_offset,
-            );
+                rulers: self.config.editor.rulers.clone(),
+                scroll_offset: self.config.editor.scroll_offset,
+            });
         }
 
         self.set_active_buffer(buffer_id);
@@ -389,27 +389,27 @@ impl crate::app::window::Window {
         {
             view_state.add_buffer(buffer_id);
             let buf_state = view_state.ensure_buffer_state(buffer_id);
-            buf_state.apply_config_defaults(
-                cfg.line_numbers,
-                cfg.highlight_current_line,
+            buf_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: cfg.line_numbers,
+                highlight_current_line: cfg.highlight_current_line,
                 line_wrap,
-                cfg.wrap_indent,
+                wrap_indent: cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers.clone(),
-                cfg.scroll_offset,
-            );
+                rulers: cfg.rulers.clone(),
+                scroll_offset: cfg.scroll_offset,
+            });
         } else {
             let mut view_state =
                 SplitViewState::with_buffer(terminal_width, terminal_height, buffer_id);
-            view_state.apply_config_defaults(
-                cfg.line_numbers,
-                cfg.highlight_current_line,
+            view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                line_numbers: cfg.line_numbers,
+                highlight_current_line: cfg.highlight_current_line,
                 line_wrap,
-                cfg.wrap_indent,
+                wrap_indent: cfg.wrap_indent,
                 wrap_column,
-                cfg.rulers,
-                cfg.scroll_offset,
-            );
+                rulers: cfg.rulers,
+                scroll_offset: cfg.scroll_offset,
+            });
             self.split_view_states_mut()
                 .expect("active window must have a populated split layout")
                 .insert(active_split, view_state);
