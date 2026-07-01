@@ -1830,11 +1830,12 @@ impl LspState {
                 (contents, is_markdown, range)
             }
             Err(e) => {
-                // `contents` is present but the payload is still malformed.
-                // Hover is informational, so a broken response just means
-                // "no hover here" — log at debug rather than spamming ERROR
-                // for something the user can't act on.
-                tracing::debug!("Failed to parse hover response: {}", e);
+                // `contents` is present but the payload is still malformed —
+                // a genuine protocol violation, not the routine "nothing to
+                // show" that a missing `contents` represents. Surface it as a
+                // warning so the mismatch stays diagnosable, then fall back to
+                // no-hover so the editor keeps working.
+                tracing::warn!("Failed to parse hover response: {}", e);
                 (String::new(), false, None)
             }
         }
@@ -6363,8 +6364,9 @@ mod tests {
 
     #[test]
     fn hover_malformed_contents_is_no_hover() {
-        // `contents` present but not a valid HoverContents shape: still a
-        // graceful no-hover, logged at debug rather than ERROR.
+        // `contents` present but not a valid HoverContents shape: a graceful
+        // no-hover to the editor, logged at warn since it's a protocol
+        // violation.
         let (contents, is_markdown, range) = LspState::parse_hover_response(serde_json::json!({
             "contents": 42
         }));
