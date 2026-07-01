@@ -225,7 +225,17 @@ impl Window {
         // cursor. Plugins can still detect clicks via the mouse_click hook,
         // which fires in the click handlers before reaching here. Scrollable
         // panels still receive focus even with a hidden cursor.
-        if self.is_non_scrollable_buffer(buffer_id) {
+        //
+        // A non-scrollable *widget* panel (one that owns its own scroll
+        // window, e.g. Search & Replace) is still an interactive focus
+        // target — it needs keyboard focus for navigation — so it is
+        // exempt from this swallow.
+        let is_interactive_widget_panel = self
+            .buffers
+            .get(&buffer_id)
+            .map(|s| s.interactive_widget_panel)
+            .unwrap_or(false);
+        if self.is_non_scrollable_buffer(buffer_id) && !is_interactive_widget_panel {
             return FocusSplitOutcome::Handled;
         }
 

@@ -5652,6 +5652,7 @@ impl JsEditorApi {
                 line_wrap: opts.line_wrap,
                 before: opts.before.unwrap_or(false),
                 role: opts.role,
+                scrollable: opts.scrollable,
                 request_id: Some(id),
             });
         Ok(id)

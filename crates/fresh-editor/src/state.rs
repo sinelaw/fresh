@@ -208,6 +208,15 @@ pub struct EditorState {
     /// Git Log commit-detail diff is the motivating case — can opt out.
     pub indentation_guide_override: Option<bool>,
 
+    /// Whether this buffer hosts an interactive plugin widget panel (set
+    /// when a widget panel is mounted into it). Such a buffer can be
+    /// non-scrollable *and* still be a focus/click target — it owns its
+    /// own scroll window (List/Tree) yet needs keyboard focus for
+    /// navigation. Distinguishes it from a fixed, non-interactive
+    /// buffer-group toolbar, which is also non-scrollable but must not
+    /// take focus. Default false.
+    pub interactive_widget_panel: bool,
+
     /// Per-buffer user settings (tab size, indentation style, etc.)
     /// These settings are preserved across file reloads (auto-revert)
     pub buffer_settings: BufferSettings,
@@ -327,6 +336,7 @@ impl EditorState {
             editing_disabled: false,
             scrollable: true,
             indentation_guide_override: None,
+            interactive_widget_panel: false,
             buffer_settings: BufferSettings::default(),
             reference_highlighter: ReferenceHighlighter::new(),
             is_composite_buffer: false,

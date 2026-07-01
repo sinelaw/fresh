@@ -46,6 +46,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Quick-open `#` buffer switcher** now lists virtual buffers (#2373).
 * **Review Diff**: line-level visual stage/unstage/discard (`v` then `s`/`u`/`d`) works, and discard shows a localized message (#2317, #2420).
 * **Project search & replace**: plugin edits no longer leave phantom match highlights (#2414, reported by @mandolyte).
+* **Widget panels (Search & Replace and others)**: the match list highlight now follows programmatic and mouse selection — clicking a result selects it *and* opens it, and a panel that manages its own scrolling no longer shows a stray buffer scrollbar or lets a drag push its header off-screen (#2434).
 * **Keybindings**: switching keybinding maps no longer hides plugin bindings until restart (#2307); `Shift`+letter bindings match even when the terminal omits the `SHIFT` modifier (#1899, reported by @RandomGHUser).
 * **Git Blame** lands on the user's current source line, including files with multi-byte characters (#1957).
 * **Mark mode**: movement commands (bracket jump, Home) extend the selection instead of dropping it (#2489).

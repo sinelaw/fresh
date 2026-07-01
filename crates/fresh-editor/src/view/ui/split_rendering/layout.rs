@@ -122,7 +122,9 @@ pub(super) fn split_buffers_for_tabs(
 }
 
 /// Sync viewport width/height to `content_rect`, and ensure the primary
-/// cursor is visible.
+/// cursor is visible (unless `pin_to_top` keeps a self-managing panel
+/// anchored at the top).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_viewport_to_content(
     viewport: &mut Viewport,
     buffer: &mut Buffer,
@@ -131,6 +133,7 @@ pub(super) fn sync_viewport_to_content(
     hidden_ranges: &[(usize, usize)],
     compose_width: Option<u16>,
     show_line_numbers: bool,
+    pin_to_top: bool,
 ) {
     let size_changed =
         viewport.width != content_rect.width || viewport.height != content_rect.height;
@@ -147,6 +150,18 @@ pub(super) fn sync_viewport_to_content(
     // too small and the user can't reach the buffer's tail.
     viewport.compose_width = compose_width;
     viewport.show_line_numbers = show_line_numbers;
+
+    // A pinned (non-scrollable) panel owns its own content window (its
+    // List/Tree scrolls internally), so the buffer viewport must stay
+    // anchored at the top. `ensure_visible` would otherwise chase the
+    // hidden cursor and push the panel's header chrome off-screen
+    // (issue #2434 follow-up).
+    if pin_to_top {
+        viewport.top_byte = 0;
+        viewport.top_view_line_offset = 0;
+        viewport.left_column = 0;
+        return;
+    }
 
     let primary = *cursors.primary();
     viewport.ensure_visible(buffer, &primary, hidden_ranges);

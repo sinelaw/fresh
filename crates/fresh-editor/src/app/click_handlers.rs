@@ -256,7 +256,15 @@ impl Editor {
         // after the plugin hook has had a chance to observe it. Scrollable
         // group panels still accept the click (focus routes to them) even
         // when their cursor is hidden.
-        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+        //
+        // A widget-panel buffer can also be non-scrollable (it owns its own
+        // scroll window, e.g. Search & Replace), but it IS an interactive
+        // target — its click must still route focus to the split so
+        // keyboard nav works afterward. So only swallow non-scrollable
+        // buffers that don't host a widget panel.
+        if self.active_window().is_non_scrollable_buffer(buffer_id)
+            && self.widget_registry.panels_for_buffer(buffer_id).is_empty()
+        {
             return Ok(());
         }
 

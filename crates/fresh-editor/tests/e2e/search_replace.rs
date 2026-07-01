@@ -2220,3 +2220,124 @@ fn test_search_replace_next_match_navigation() {
         .wait_until(|h| h.screen_to_string().contains("Match 1/"))
         .unwrap();
 }
+
+/// Issue #2434 follow-up: clicking a match row moves the panel selection
+/// AND opens that match in the source split (matching the "click a result
+/// to jump to it" expectation). The panel opens from gamma.txt, which has
+/// no "hello", so a "hello world" line appearing in the top (source) pane
+/// proves the click opened alpha.txt there.
+#[test]
+fn test_search_replace_click_opens_match() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:1") && s.contains("beta.txt")
+        })
+        .unwrap();
+
+    // Sanity: the source pane (top rows) shows gamma.txt, not any match.
+    let before = harness.screen_to_string();
+    let top_before: String = before.lines().take(6).collect::<Vec<_>>().join("\n");
+    assert!(
+        !top_before.contains("hello world"),
+        "source pane should show gamma.txt before the click. Top:\n{}",
+        top_before
+    );
+
+    // Click the "alpha.txt:1" match row, inside its text (past the checkbox).
+    let row = before
+        .lines()
+        .position(|l| l.contains("alpha.txt:1"))
+        .expect("alpha.txt:1 match row must be visible") as u16;
+    harness.mouse_click(20, row).unwrap();
+
+    // The source pane now shows alpha.txt line 1 ("hello world").
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.lines().take(6).any(|l| l.contains("hello world"))
+        })
+        .unwrap();
+}
+
+/// Issue #2434: pressing the next-match key must move the *visible*
+/// selection in the panel, not just the editor cursor. Regression guard
+/// for the host `SetSelectedIndex` mutation ignoring the Tree instance
+/// state (it used to write a List state, so the highlight never moved).
+/// Asserts on the rendered background, not on model state.
+#[test]
+fn test_search_replace_nav_highlights_selection() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("gamma.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("hello").unwrap();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:1") && s.contains("beta.txt")
+        })
+        .unwrap();
+
+    // Screen rows of the match leaf rows (they render "…:<line> - hello…").
+    let screen = harness.screen_to_string();
+    let match_rows: Vec<u16> = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(" - hello"))
+        .map(|(i, _)| i as u16)
+        .collect();
+    assert!(
+        match_rows.len() >= 2,
+        "expected multiple match rows. Screen:\n{}",
+        screen
+    );
+
+    let bg_at = |h: &EditorTestHarness, row: u16| h.get_cell_style(20, row).and_then(|s| s.bg);
+    let before: Vec<_> = match_rows.iter().map(|&r| bg_at(&harness, r)).collect();
+
+    // Nav to the first match — its row must gain a selection background.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Match 1/"))
+        .unwrap();
+
+    let after: Vec<_> = match_rows.iter().map(|&r| bg_at(&harness, r)).collect();
+    assert!(
+        before != after,
+        "a match row's background must change to show the moved selection. \
+         rows={:?} before={:?} after={:?}",
+        match_rows,
+        before,
+        after
+    );
+}

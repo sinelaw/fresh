@@ -1544,6 +1544,14 @@ type CreateVirtualBufferInSplitOptions = {
 	* `docs/internal/tui-editor-layout-design.md` Section 2.
 	*/
 	role?: string;
+	/**
+	* Whether the buffer is user-scrollable (default: true). Set to
+	* `false` for self-managing widget panels (those whose List/Tree
+	* owns its own scroll window): it suppresses the buffer scrollbar
+	* and pins the viewport so a drag can't push the panel chrome
+	* off-screen and reveal empty space below.
+	*/
+	scrollable?: boolean;
 };
 type CreateVirtualBufferOptions = {
 	/**

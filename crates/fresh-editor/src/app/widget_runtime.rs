@@ -151,12 +151,35 @@ impl Editor {
                 }
             }
         }
+        // Tree row-body click: the host owns the Tree's selected index too,
+        // and a click only yields a `select` hit — so sync the selection
+        // (and repaint) before firing `select`, mirroring the List path.
+        // Without this a click leaves the highlight where it was. The
+        // per-row key/index travel in the payload; the tree's spec key is
+        // already `hit.widget_key`.
+        if hit.widget_kind == "tree" && hit.event_type == "select" {
+            if let Some(idx) = hit.payload.get("index").and_then(|v| v.as_i64()) {
+                if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    Self::set_widget_selected_index_state(panel, &hit.widget_key, idx as i32);
+                }
+                self.rerender_widget_panel(panel_key);
+            }
+        }
         if !handled_specially {
+            // Tag the event as mouse-originated so a plugin can tell a
+            // click apart from a keyboard move that emits the same
+            // event/payload (arrows fire `select` without this marker).
+            // Matches the floating-panel click path; e.g. Search &
+            // Replace opens a result on click but not on arrow-move.
+            let mut payload = hit.payload.clone();
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("via".to_string(), serde_json::json!("click"));
+            }
             self.fire_widget_event(
                 panel_key,
                 event_widget_key,
                 hit.event_type.to_string(),
-                hit.payload.clone(),
+                payload,
             );
         }
     }

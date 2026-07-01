@@ -1381,6 +1381,11 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
       showLineNumbers: false,
       showCursors: false,
       editingDisabled: true,
+      // The panel manages its own scrolling (the match Tree owns its
+      // scroll window), so the buffer must not be user-scrollable —
+      // otherwise a scrollbar appears and dragging it scrolls the
+      // search inputs off-screen, revealing empty space below (#2434).
+      scrollable: false,
     });
     panel.resultsBufferId = result.bufferId;
     panel.resultsSplitId = result.splitId ?? editor.getActiveSplitId();
@@ -1927,6 +1932,39 @@ function search_replace_prev_match(): void {
 }
 registerHandler("search_replace_prev_match", search_replace_prev_match);
 
+// Act on a tree row at flat index `idx`: open a match in the source
+// split, or toggle a file header's expansion. Shared by Enter/activate
+// on the tree and a mouse click on a row (issue #2434 follow-up: a
+// click on a result should jump to it, just like Enter).
+function activateTreeItem(idx: number): void {
+  if (!panel) return;
+  const flat = buildFlatItems();
+  const item = flat[idx];
+  if (!item) return;
+  if (item.type === "file") {
+    const k = `file:${item.fileIndex}`;
+    if (panel.expandedFileKeys.has(k)) {
+      panel.expandedFileKeys.delete(k);
+    } else {
+      panel.expandedFileKeys.add(k);
+    }
+    panel.widgetPanel?.setExpandedKeys("matchTree", [...panel.expandedFileKeys]);
+  } else {
+    // Opening a result is a "this is the search I wanted" signal —
+    // commit it to history immediately, regardless of how long the
+    // pattern has been stable. See §11 follow-up.
+    if (historyIndex < 0) historyPush(panel.searchPattern);
+    const group = panel.fileGroups[item.fileIndex];
+    const result = group.matches[item.matchIndex!];
+    editor.openFileInSplit(
+      panel.sourceSplitId,
+      result.match.file,
+      result.match.line,
+      result.match.column,
+    );
+  }
+}
+
 function search_replace_close(): void {
   if (!panel) return;
   // If the user actually ran a search to completion with this
@@ -2084,11 +2122,17 @@ editor.on("widget_event", (args) => {
   // `select` — fired when the user clicks a Tree row or the host
   // moves selection (Up/Down). The host already updated the
   // tree's selectedIndex in instance state; mirror it into the
-  // plugin model and skip re-emit.
+  // plugin model. A *mouse click* (payload `via: "click"`) should
+  // also act on the row — open the match / toggle the file — so
+  // clicking a result jumps to it in the editor, matching user
+  // expectation (issue #2434 follow-up). Keyboard arrow-moves carry
+  // no `via` marker and only move the highlight.
   if (args.event_type === "select") {
-    const idx = (args.payload as { index?: number } | undefined)?.index;
+    const payload = args.payload as { index?: number; via?: string } | undefined;
+    const idx = payload?.index;
     if (typeof idx === "number") {
       panel.matchIndex = idx;
+      if (payload?.via === "click") activateTreeItem(idx);
     }
     return;
   }
@@ -2121,34 +2165,7 @@ editor.on("widget_event", (args) => {
     if (args.widget_key === "matchTree") {
       const idx = (args.payload as { index?: number } | undefined)?.index;
       if (typeof idx !== "number") return;
-      const flat = buildFlatItems();
-      const item = flat[idx];
-      if (!item) return;
-      if (item.type === "file") {
-        const k = `file:${item.fileIndex}`;
-        if (panel.expandedFileKeys.has(k)) {
-          panel.expandedFileKeys.delete(k);
-        } else {
-          panel.expandedFileKeys.add(k);
-        }
-        panel.widgetPanel?.setExpandedKeys(
-          "matchTree",
-          [...panel.expandedFileKeys],
-        );
-      } else {
-        // Opening a result is a "this is the search I wanted" signal —
-        // commit it to history immediately, regardless of how long
-        // the pattern has been stable. See §11 follow-up.
-        if (historyIndex < 0) historyPush(panel.searchPattern);
-        const group = panel.fileGroups[item.fileIndex];
-        const result = group.matches[item.matchIndex!];
-        editor.openFileInSplit(
-          panel.sourceSplitId,
-          result.match.file,
-          result.match.line,
-          result.match.column,
-        );
-      }
+      activateTreeItem(idx);
       return;
     }
   }

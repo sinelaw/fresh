@@ -3137,6 +3137,10 @@ pub enum PluginCommand {
         /// one exists; otherwise it seeds a new dock leaf with the
         /// requested direction/ratio.
         role: Option<String>,
+        /// Whether the buffer is user-scrollable (None = default true).
+        /// `Some(false)` suppresses the scrollbar and pins the viewport
+        /// for self-managing widget panels.
+        scrollable: Option<bool>,
         /// Optional request ID for async response (if set, editor will send back buffer ID)
         request_id: Option<u64>,
     },
@@ -4633,6 +4637,14 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default)]
     #[ts(optional)]
     pub role: Option<String>,
+    /// Whether the buffer is user-scrollable (default: true). Set to
+    /// `false` for self-managing widget panels (those whose List/Tree
+    /// owns its own scroll window): it suppresses the buffer scrollbar
+    /// and pins the viewport so a drag can't push the panel chrome
+    /// off-screen and reveal empty space below.
+    #[serde(default)]
+    #[ts(optional)]
+    pub scrollable: Option<bool>,
 }
 
 /// Options for createVirtualBufferInExistingSplit

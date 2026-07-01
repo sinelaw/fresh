@@ -1189,6 +1189,7 @@ impl Editor {
                 line_wrap,
                 before,
                 role,
+                scrollable,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_in_split(
@@ -1205,6 +1206,7 @@ impl Editor {
                     line_wrap,
                     before,
                     role,
+                    scrollable,
                     request_id,
                 );
             }
@@ -1911,6 +1913,7 @@ impl Editor {
         show_cursors: bool,
         editing_disabled: bool,
         indentation_guide: Option<bool>,
+        scrollable: bool,
     ) {
         if let Some(state) = self
             .windows
@@ -1928,6 +1931,10 @@ impl Editor {
             if let Some(enabled) = indentation_guide {
                 state.indentation_guide_override = Some(enabled);
             }
+            // Self-managing widget panels pass `scrollable=false` so no
+            // buffer scrollbar is drawn and the viewport can't be dragged
+            // off the panel's own content (issue #2434 follow-up).
+            state.scrollable = scrollable;
         }
     }
 
@@ -1947,6 +1954,7 @@ impl Editor {
         show_line_numbers: bool,
         show_cursors: bool,
         editing_disabled: bool,
+        scrollable: bool,
         request_id: Option<u64>,
     ) {
         // Capture the source split *before* create_virtual_buffer tabs the
@@ -1961,6 +1969,7 @@ impl Editor {
             show_cursors,
             editing_disabled,
             None,
+            scrollable,
         );
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid.to_string(), buffer_id);
@@ -3017,6 +3026,7 @@ impl Editor {
             show_cursors,
             editing_disabled,
             indentation_guide,
+            true,
         );
         if !hidden_from_tabs {
             let active_split = self.split_manager().active_split();
@@ -3133,8 +3143,12 @@ impl Editor {
         line_wrap: Option<bool>,
         before: bool,
         role: Option<String>,
+        scrollable: Option<bool>,
         request_id: Option<u64>,
     ) {
+        // Buffers are user-scrollable unless the plugin opts out (widget
+        // panels that own their own scroll window).
+        let scrollable = scrollable.unwrap_or(true);
         // Resolve the role string. Unknown roles are silently dropped
         // (forward-compat for plugins targeting newer cores).
         let split_role: Option<crate::view::split::SplitRole> = match role.as_deref() {
@@ -3157,6 +3171,7 @@ impl Editor {
                 show_line_numbers,
                 show_cursors,
                 editing_disabled,
+                scrollable,
                 request_id,
             );
             // No dock yet — fall through to normal split creation,
@@ -3210,6 +3225,7 @@ impl Editor {
             show_cursors,
             editing_disabled,
             None,
+            scrollable,
         );
 
         if let Some(pid) = panel_id {
@@ -3362,6 +3378,7 @@ impl Editor {
             show_cursors,
             editing_disabled,
             None,
+            true,
         );
 
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
@@ -4426,6 +4443,17 @@ impl Editor {
             out.focus_key,
             out.tabbable,
         );
+        // Mark the buffer as hosting an interactive widget panel so the
+        // focus/click paths keep routing focus to it even when it opts out
+        // of buffer scrolling (a non-scrollable widget panel is still an
+        // interactive target, unlike a fixed buffer-group toolbar).
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.get_mut(&buffer_id))
+        {
+            state.interactive_widget_panel = true;
+        }
         let entries = out.entries;
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
             tracing::error!(
@@ -4494,6 +4522,62 @@ impl Editor {
                 );
             }
         }
+    }
+
+    /// Set the host-owned selected index for a `List` or `Tree`
+    /// instance in `panel`, dispatching on the *existing* instance
+    /// variant so a Tree keeps its scroll + expanded-keys set (and a
+    /// List keeps its item height / user-scroll flag). Shared by the
+    /// `SetSelectedIndex` mutation and the mouse-click select path so
+    /// both move Tree selections, not just List ones. Does not
+    /// re-render — callers decide when to repaint.
+    pub(super) fn set_widget_selected_index_state(
+        panel: &mut crate::widgets::WidgetPanelState,
+        widget_key: &str,
+        index: i32,
+    ) {
+        use crate::widgets::WidgetInstanceState;
+        let new_state = match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                scroll_offset,
+                expanded_keys,
+                ..
+            }) => WidgetInstanceState::Tree {
+                scroll_offset: *scroll_offset,
+                selected_index: index,
+                expanded_keys: expanded_keys.clone(),
+            },
+            other => {
+                let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
+                    Some(WidgetInstanceState::List {
+                        scroll_offset,
+                        selected_index,
+                        item_height,
+                        user_scrolled,
+                    }) => (
+                        *scroll_offset,
+                        *selected_index,
+                        *item_height,
+                        *user_scrolled,
+                    ),
+                    _ => (0, -1, 1, false),
+                };
+                // Re-pinning the *same* index (which `refreshOpenDialog`
+                // does on every repaint) must preserve a user scroll —
+                // otherwise a probe-poll refresh would snap the view back
+                // to the selection a beat after a mouse scroll. Only an
+                // actual selection change re-arms scroll-follows-selection.
+                WidgetInstanceState::List {
+                    scroll_offset: prev_scroll,
+                    selected_index: index,
+                    item_height: prev_item_height,
+                    user_scrolled: prev_user_scrolled && index == prev_index,
+                }
+            }
+        };
+        panel
+            .instance_states
+            .insert(widget_key.to_string(), new_state);
     }
 
     /// Apply a `WidgetMutation` in place, then re-render the panel.
@@ -4595,38 +4679,14 @@ impl Editor {
                 }
             }
             WidgetMutation::SetSelectedIndex { widget_key, index } => {
-                // List selected_index lives in instance state.
+                // Selected index lives in instance state for both List
+                // and Tree widgets — dispatch on the existing variant so
+                // a plugin-driven selection move on a Tree (e.g. Search &
+                // Replace "next match") actually updates the Tree instead
+                // of clobbering it with a List state (which drops the
+                // expanded-keys set and never moves the highlight).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) =
-                        match panel.instance_states.get(&widget_key) {
-                            Some(crate::widgets::WidgetInstanceState::List {
-                                scroll_offset,
-                                selected_index,
-                                item_height,
-                                user_scrolled,
-                            }) => (
-                                *scroll_offset,
-                                *selected_index,
-                                *item_height,
-                                *user_scrolled,
-                            ),
-                            _ => (0, -1, 1, false),
-                        };
-                    // Re-pinning the *same* index (which `refreshOpenDialog`
-                    // does on every repaint) must preserve a user scroll —
-                    // otherwise a probe-poll refresh would snap the view back
-                    // to the selection a beat after a mouse scroll. Only an
-                    // actual selection change re-arms scroll-follows-selection.
-                    let user_scrolled = prev_user_scrolled && index == prev_index;
-                    panel.instance_states.insert(
-                        widget_key,
-                        crate::widgets::WidgetInstanceState::List {
-                            scroll_offset: prev_scroll,
-                            selected_index: index,
-                            item_height: prev_item_height,
-                            user_scrolled,
-                        },
-                    );
+                    Self::set_widget_selected_index_state(panel, &widget_key, index);
                 }
             }
             WidgetMutation::SetCompletions { widget_key, items } => {
