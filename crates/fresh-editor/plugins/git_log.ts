@@ -1155,6 +1155,10 @@ async function git_log_detail_open_file(): Promise<void> {
     readOnly: true,
     editingDisabled: true,
     showLineNumbers: true,
+    // This view shows real source (highlighted from the filename), so keep
+    // indentation guides — virtual buffers default off, but a historical file
+    // view is code the user is reading.
+    indentationGuide: true,
     entries,
     initialCursorLine: Math.max(0, line - 1),
   });

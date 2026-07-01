@@ -1070,6 +1070,7 @@ impl Editor {
                 editing_disabled,
                 hidden_from_tabs,
                 initial_cursor_line,
+                indentation_guide,
                 request_id,
             } => {
                 self.handle_create_virtual_buffer_with_content(
@@ -1082,6 +1083,7 @@ impl Editor {
                     editing_disabled,
                     hidden_from_tabs,
                     initial_cursor_line,
+                    indentation_guide,
                     request_id,
                 );
             }
@@ -1809,6 +1811,7 @@ impl Editor {
         show_line_numbers: bool,
         show_cursors: bool,
         editing_disabled: bool,
+        indentation_guide: Option<bool>,
     ) {
         if let Some(state) = self
             .windows
@@ -1820,6 +1823,12 @@ impl Editor {
             state.margins.configure_for_line_numbers(show_line_numbers);
             state.show_cursors = show_cursors;
             state.editing_disabled = editing_disabled;
+            // `None` leaves the default (virtual buffers get no guides); a
+            // plugin that shows real source in a virtual buffer (e.g. git log's
+            // file-at-commit view) passes `Some(true)` to keep them.
+            if let Some(enabled) = indentation_guide {
+                state.indentation_guide_override = Some(enabled);
+            }
         }
     }
 
@@ -1847,7 +1856,13 @@ impl Editor {
         let buffer_id =
             self.active_window_mut()
                 .create_virtual_buffer(name.clone(), mode, read_only);
-        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        self.configure_vbuf_display(
+            buffer_id,
+            show_line_numbers,
+            show_cursors,
+            editing_disabled,
+            None,
+        );
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid.to_string(), buffer_id);
         }
@@ -2867,6 +2882,7 @@ impl Editor {
         editing_disabled: bool,
         hidden_from_tabs: bool,
         initial_cursor_line: Option<u32>,
+        indentation_guide: Option<bool>,
         request_id: Option<u64>,
     ) {
         // Hidden-from-tabs buffers (e.g. composite source panes) must NOT be
@@ -2896,7 +2912,13 @@ impl Editor {
         // margins each frame via configure_for_line_numbers(), making the margin
         // setting here effectively write-only. Consider removing the margin call
         // and only setting BufferViewState.show_line_numbers.
-        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        self.configure_vbuf_display(
+            buffer_id,
+            show_line_numbers,
+            show_cursors,
+            editing_disabled,
+            indentation_guide,
+        );
         if !hidden_from_tabs {
             let active_split = self.split_manager().active_split();
             if let Some(view_state) = self
@@ -3083,7 +3105,13 @@ impl Editor {
             buffer_id
         );
 
-        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        self.configure_vbuf_display(
+            buffer_id,
+            show_line_numbers,
+            show_cursors,
+            editing_disabled,
+            None,
+        );
 
         if let Some(pid) = panel_id {
             self.panel_ids_mut().insert(pid, buffer_id);
@@ -3228,7 +3256,13 @@ impl Editor {
             buffer_id
         );
 
-        self.configure_vbuf_display(buffer_id, show_line_numbers, show_cursors, editing_disabled);
+        self.configure_vbuf_display(
+            buffer_id,
+            show_line_numbers,
+            show_cursors,
+            editing_disabled,
+            None,
+        );
 
         if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries) {
             tracing::error!("Failed to set virtual buffer content: {}", e);

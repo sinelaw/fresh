@@ -33,6 +33,7 @@ fn reproduce_cursor_panic() {
         editing_disabled: false,
         hidden_from_tabs: false,
         initial_cursor_line: None,
+        indentation_guide: None,
         request_id: None,
     };
 

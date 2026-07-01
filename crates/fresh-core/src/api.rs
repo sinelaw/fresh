@@ -3018,6 +3018,11 @@ pub enum PluginCommand {
         /// it has just set, which keeps the UTF-8 byte math on the host
         /// side.
         initial_cursor_line: Option<u32>,
+        /// Optional per-buffer indentation-guide override. `None` keeps the
+        /// default (virtual buffers show no guides); `Some(true)` forces guides
+        /// on for a virtual buffer that shows real source (e.g. git log's
+        /// file-at-commit view).
+        indentation_guide: Option<bool>,
         /// Optional request ID for async response
         request_id: Option<u64>,
     },
@@ -4466,6 +4471,12 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "initialCursorLine")]
     #[ts(optional, rename = "initialCursorLine")]
     pub initial_cursor_line: Option<u32>,
+    /// Override indentation-guide visibility for this buffer (default: follows
+    /// the global setting, but virtual buffers show none). Set `true` when the
+    /// buffer displays real source — e.g. a file opened at a past commit.
+    #[serde(default, rename = "indentationGuide")]
+    #[ts(optional, rename = "indentationGuide")]
+    pub indentation_guide: Option<bool>,
 }
 
 /// Options for createVirtualBufferInSplit
@@ -5306,6 +5317,7 @@ impl PluginApi {
             editing_disabled: false,
             hidden_from_tabs: false,
             initial_cursor_line: None,
+            indentation_guide: None,
             request_id: None,
         })
     }

@@ -61,3 +61,62 @@ fn git_log_view_does_not_render_indentation_guides() {
         "Git Log panels must not render indentation guides (`▏`).\nScreen:\n{screen}"
     );
 }
+
+// Pressing Enter on a diff line opens that file at the commit version — a
+// read-only *virtual* buffer showing real source. Virtual buffers default to
+// no guides, but this one is code the user is reading, so git_log opts it back
+// in via `createVirtualBuffer({ indentationGuide: true })`. The guides must
+// render there (regression: they didn't, because the virtual default hid them).
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn git_log_file_opened_at_commit_shows_indentation_guides() {
+    let repo = GitTestRepo::new();
+    repo.create_file("indented.rs", "fn main() {\n    let x = 1;\n}\n");
+    repo.git_add(&["indented.rs"]);
+    repo.git_commit("Add indented file");
+    repo.setup_git_log_plugin();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, repo.path.clone()).unwrap();
+    harness.open_file(&repo.path.join("indented.rs")).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Git Log").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("switch pane") && s.contains("Add indented file")
+        })
+        .unwrap();
+
+    // Focus the detail pane, then move down into the diff body so the cursor
+    // sits inside indented.rs's `+++ b/…` section (git_log derives the file to
+    // open by scanning backward from the cursor for that header).
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..40 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The file-at-commit view opens; its indented body must carry guides.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("let x = 1"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('▏'),
+        "a file opened at a commit version should render indentation guides (`▏`).\nScreen:\n{screen}"
+    );
+}

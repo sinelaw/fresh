@@ -1589,6 +1589,12 @@ type CreateVirtualBufferOptions = {
 	* plugin would otherwise have to navigate.
 	*/
 	initialCursorLine?: number;
+	/**
+	* Override indentation-guide visibility for this buffer (default: follows
+	* the global setting, but virtual buffers show none). Set `true` when the
+	* buffer displays real source — e.g. a file opened at a past commit.
+	*/
+	indentationGuide?: boolean;
 };
 type GrepMatch = {
 	/**
