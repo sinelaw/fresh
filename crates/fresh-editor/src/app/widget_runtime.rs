@@ -105,6 +105,65 @@ pub(super) fn translate_plugin_animation_kind(
 }
 
 impl Editor {
+    /// Set the host-owned selected index for a `List` or `Tree`
+    /// instance in `panel`, dispatching on the *existing* instance
+    /// variant so a Tree keeps its scroll + expanded-keys set (and a
+    /// List keeps its item height / user-scroll flag). Shared by the
+    /// mouse-click select path (here) and the `SetSelectedIndex`
+    /// mutation (in the plugin dispatcher) so both move Tree
+    /// selections, not just List ones. Lives here rather than in the
+    /// plugin dispatcher because the widget runtime — and the click
+    /// path that calls this — compiles even without the `plugins`
+    /// feature. Does not re-render; callers decide when to repaint.
+    pub(super) fn set_widget_selected_index_state(
+        panel: &mut crate::widgets::WidgetPanelState,
+        widget_key: &str,
+        index: i32,
+    ) {
+        use crate::widgets::WidgetInstanceState;
+        let new_state = match panel.instance_states.get(widget_key) {
+            Some(WidgetInstanceState::Tree {
+                scroll_offset,
+                expanded_keys,
+                ..
+            }) => WidgetInstanceState::Tree {
+                scroll_offset: *scroll_offset,
+                selected_index: index,
+                expanded_keys: expanded_keys.clone(),
+            },
+            other => {
+                let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
+                    Some(WidgetInstanceState::List {
+                        scroll_offset,
+                        selected_index,
+                        item_height,
+                        user_scrolled,
+                    }) => (
+                        *scroll_offset,
+                        *selected_index,
+                        *item_height,
+                        *user_scrolled,
+                    ),
+                    _ => (0, -1, 1, false),
+                };
+                // Re-pinning the *same* index (which `refreshOpenDialog`
+                // does on every repaint) must preserve a user scroll —
+                // otherwise a probe-poll refresh would snap the view back
+                // to the selection a beat after a mouse scroll. Only an
+                // actual selection change re-arms scroll-follows-selection.
+                WidgetInstanceState::List {
+                    scroll_offset: prev_scroll,
+                    selected_index: index,
+                    item_height: prev_item_height,
+                    user_scrolled: prev_user_scrolled && index == prev_index,
+                }
+            }
+        };
+        panel
+            .instance_states
+            .insert(widget_key.to_string(), new_state);
+    }
+
     /// Process a resolved widget hit (from a TUI cell click or a native-frontend
     /// click): move focus to the clicked widget, apply host-owned state changes
     /// (tree expand / list selection) and fire the plugin's `widget_event`. This
