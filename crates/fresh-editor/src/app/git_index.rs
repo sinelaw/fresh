@@ -119,15 +119,19 @@ fn resolve_git_indexes_blocking(
         }
     }
 
-    // Working dir is not a git repo — recursively scan subdirectories
-    // (up to 3 levels) to find all sub-repos' .git/index (monorepo).
+    // Working dir is not a git repo — scan subdirectories to find all
+    // sub-repos' .git/index (monorepo). `MAX_DEPTH` levels below the working
+    // dir are scanned (level 1 = direct children). This MUST match the levels
+    // scanned by the TypeScript `discoverSubRepos` (lib/git_history.ts) — the
+    // two walks are expected to discover the same repos.
     use std::collections::VecDeque;
-    let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
-    queue.push_back((working_dir, 0));
     const MAX_DEPTH: u32 = 3;
+    // Queue entries are (dir_to_scan, level_of_that_dir's_children).
+    let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
+    queue.push_back((working_dir, 1));
     let mut indexes = Vec::new();
 
-    while let Some((dir, depth)) = queue.pop_front() {
+    while let Some((dir, level)) = queue.pop_front() {
         let entries = match fs.read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue,
@@ -160,8 +164,8 @@ fn resolve_git_indexes_blocking(
                         indexes.push(git_dir_path.join("index"));
                     }
                 }
-            } else if depth < MAX_DEPTH {
-                queue.push_back((entry.path.clone(), depth + 1));
+            } else if level < MAX_DEPTH {
+                queue.push_back((entry.path.clone(), level + 1));
             }
         }
     }

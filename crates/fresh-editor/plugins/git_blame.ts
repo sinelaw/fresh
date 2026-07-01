@@ -250,10 +250,14 @@ function formatRelativeDate(timestamp: number): string {
  */
 async function fetchFileContent(filePath: string, commit: string | null): Promise<string> {
   if (commit) {
-    // Get historical file content — use file's directory as cwd for
-    // monorepo sub-projects where editor cwd isn't a git repo.
+    // Get historical file content. Run from the file's directory and refer to
+    // it as `<rev>:./<name>` — the `./` makes git resolve the path relative to
+    // cwd. `git show <rev>:<abs-path>` is a fatal error, which would otherwise
+    // silently fall through to the *current* working-tree content below. This
+    // also covers monorepo sub-projects where the editor cwd isn't a repo.
     const cwd = editor.pathDirname(filePath);
-    const result = await editor.spawnProcess("git", ["show", `${commit}:${filePath}`], cwd);
+    const name = editor.pathBasename(filePath);
+    const result = await editor.spawnProcess("git", ["show", `${commit}:./${name}`], cwd);
     if (result.exit_code === 0) {
       return result.stdout;
     }

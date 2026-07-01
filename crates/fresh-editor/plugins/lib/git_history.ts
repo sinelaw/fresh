@@ -15,13 +15,15 @@
 // =============================================================================
 
 /**
- * Recursively discover directories containing `.git` entries, up to
- * `maxDepth` levels. Stops descending into a directory once `.git` is
- * found (git repo internals are managed by git itself). Skips hidden
- * directories and `node_modules`.
+ * Recursively discover directories containing `.git` entries. Scans
+ * `maxDepth` levels below `dir` (level 1 = direct children of `dir`).
+ * Stops descending into a directory once `.git` is found (git repo
+ * internals are managed by git itself). Skips hidden directories and
+ * `node_modules`.
  *
  * NOTE: a parallel BFS lives on the Rust side in `app/git_index.rs`
- * (`resolve_git_indexes_blocking`). Keep the two in sync.
+ * (`resolve_git_indexes_blocking`). It scans the SAME levels — keep the
+ * two in sync (both scan levels 1..=maxDepth below the working dir).
  */
 export function discoverSubRepos(
   editor: EditorAPI,

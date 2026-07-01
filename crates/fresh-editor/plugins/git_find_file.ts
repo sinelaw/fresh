@@ -8,51 +8,54 @@
  */
 
 import { Finder } from "./lib/finder.ts";
+import { resolveGitRepo } from "./lib/git_repo.ts";
 
 const editor = getEditor();
 
+// One git-tracked file: `rel` (repo-relative) is what the user sees and
+// fuzzy-matches against; `abs` is what actually opens, because in a monorepo
+// the workspace root can differ from the repo root, so a relative path
+// wouldn't resolve.
+type GitFile = { rel: string; abs: string };
+
 // Create the finder instance with filter mode
-const finder = new Finder<string>(editor, {
+const finder = new Finder<GitFile>(editor, {
   id: "git-find-file",
   format: (file) => ({
-    label: file,
-    location: { file, line: 1, column: 1 },
+    label: file.rel,
+    location: { file: file.abs, line: 1, column: 1 },
   }),
   preview: false, // No preview for file finder
   maxResults: 100,
 });
 
 // Load git-tracked files
-async function loadGitFiles(): Promise<string[]> {
-  const result = await editor.spawnProcess("git", [
-    "ls-files",
-    "--full-name",
-  ]);
+async function loadGitFiles(): Promise<GitFile[]> {
+  // Resolve the repo from the active buffer's dir too, so this works from a
+  // sub-project buffer even when the workspace root isn't itself a repo.
+  const repo = await resolveGitRepo(editor);
+  if (!repo) {
+    editor.debug("git-find-file: not inside a git repository");
+    return [];
+  }
 
+  const result = await editor.spawnProcess(
+    "git",
+    ["ls-files", "--full-name"],
+    repo.root,
+  );
   if (result.exit_code !== 0) {
     editor.debug(`Failed to load git files: ${result.stderr}`);
     return [];
   }
 
-  const files = result.stdout
+  // `ls-files --full-name` yields repo-relative paths. Keep them for display
+  // and join to the repo root for opening.
+  return result.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line !== "");
-
-  // `ls-files --full-name` returns paths relative to the repo root.
-  // Resolve them to absolute paths so openFile works regardless of the
-  // workspace root (important in monorepo setups where the workspace
-  // root may differ from the git root).
-  const topResult = await editor.spawnProcess("git", [
-    "rev-parse",
-    "--show-toplevel",
-  ]);
-  if (topResult.exit_code === 0) {
-    const repoRoot = topResult.stdout.trim();
-    return files.map((f) => `${repoRoot}/${f}`);
-  }
-
-  return files;
+    .filter((line) => line !== "")
+    .map((rel) => ({ rel, abs: editor.pathJoin(repo.root, rel) }));
 }
 
 // Global function to start file finder
