@@ -323,7 +323,7 @@ impl Editor {
         }
 
         // Sort edits by position descending (required by apply_bulk_edits)
-        edits.sort_by(|a, b| b.0.cmp(&a.0));
+        edits.sort_by_key(|b| std::cmp::Reverse(b.0));
 
         // Convert to references for apply_bulk_edits
         let edit_refs: Vec<(usize, usize, &str)> = edits

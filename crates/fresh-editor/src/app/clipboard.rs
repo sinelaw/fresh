@@ -1006,7 +1006,7 @@ impl Editor {
             // Sort anchors by position descending so each insertion
             // doesn't shift subsequent ones forward. The original
             // index is retained for column-mode line lookup.
-            anchor_positions.sort_by(|a, b| b.1.cmp(&a.1));
+            anchor_positions.sort_by_key(|b| std::cmp::Reverse(b.1));
 
             let total = pending.cursor_count_at_dispatch;
             let mut events = Vec::with_capacity(anchor_positions.len());

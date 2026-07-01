@@ -2188,7 +2188,7 @@ impl TextBuffer {
         let mut tree = pristine;
 
         // Apply deletions from HIGH to LOW offset so earlier offsets stay valid.
-        deletions.sort_by(|a, b| b.0.cmp(&a.0));
+        deletions.sort_by_key(|b| std::cmp::Reverse(b.0));
         for &(offset, len) in &deletions {
             tree.delete(offset, len, &self.buffers);
         }

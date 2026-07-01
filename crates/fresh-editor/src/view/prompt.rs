@@ -663,7 +663,7 @@ impl Prompt {
             })
             .collect();
 
-        filtered.sort_by(|a, b| b.1.cmp(&a.1));
+        filtered.sort_by_key(|b| std::cmp::Reverse(b.1));
         self.suggestions = filtered.into_iter().map(|(s, _)| s).collect();
         self.selected_suggestion = if self.suggestions.is_empty() {
             None

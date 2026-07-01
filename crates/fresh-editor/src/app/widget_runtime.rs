@@ -581,12 +581,11 @@ impl Editor {
                 }
                 _ => {}
             },
-            "Backspace" | "Delete" | "Home" | "End" => match widget {
-                Some(fresh_core::api::WidgetSpec::Text { .. }) => {
+            "Backspace" | "Delete" | "Home" | "End" => {
+                if let Some(fresh_core::api::WidgetSpec::Text { .. }) = widget {
                     self.handle_widget_text_key(panel_key, key);
                 }
-                _ => {}
-            },
+            }
             "Enter" => match widget {
                 Some(fresh_core::api::WidgetSpec::Button { .. })
                 | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {

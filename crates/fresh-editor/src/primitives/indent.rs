@@ -84,10 +84,7 @@ impl IndentCalculator {
             // languages are no longer bundled (they use syntect highlighting +
             // the regex indent-rules tier), so this bails to the caller's
             // fallback for them. See fresh_languages::Language::ts_language.
-            let ts_language: fresh_languages::tree_sitter::Language = match language.ts_language() {
-                Some(l) => l,
-                None => return None,
-            };
+            let ts_language: fresh_languages::tree_sitter::Language = language.ts_language()?;
             let (lang_name, query_str) = match language {
                 Language::Rust => ("rust", include_str!("../../queries/rust/indents.scm")),
                 Language::Python => ("python", include_str!("../../queries/python/indents.scm")),
