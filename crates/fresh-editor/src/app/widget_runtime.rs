@@ -1750,12 +1750,10 @@ impl Editor {
         &self,
         buffer_id: crate::model::event::BufferId,
     ) -> Option<crate::widgets::PanelKey> {
-        for panel_key in self.widget_registry.panels_for_buffer(buffer_id) {
-            if self.panel_focused_widget_is_text(&panel_key) {
-                return Some(panel_key);
-            }
-        }
-        None
+        self.widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .find(|panel_key| self.panel_focused_widget_is_text(panel_key))
     }
 
     /// True when `panel_key`'s currently-focused widget is a `Text`

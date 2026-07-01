@@ -1502,8 +1502,7 @@ impl JsEditorApi {
         } else {
             HashMap::new()
         };
-        let res = self.services.translate(&plugin_name, &key, &args_map);
-        res
+        self.services.translate(&plugin_name, &key, &args_map)
     }
 
     // === Buffer Queries (additional) ===

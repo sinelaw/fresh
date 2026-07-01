@@ -1176,9 +1176,7 @@ impl crate::app::window::Window {
         let active_buffer_id = self
             .buffers
             .with_all_mut(|__buffers_mut, _mgr, vs_map| {
-                let Some(view_state) = vs_map.get_mut(&current_split_id) else {
-                    return None;
-                };
+                let view_state = vs_map.get_mut(&current_split_id)?;
                 let mut active_buffer_id: Option<BufferId> = None;
                 if !split_state.open_tabs.is_empty() {
                     // Clear pre-existing open_buffers (e.g. the initial empty buffer

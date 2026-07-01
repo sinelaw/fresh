@@ -201,11 +201,7 @@ impl FileTreeView {
         }
         let mut prefix = Vec::new();
         let mut cur = anchor;
-        loop {
-            let cur_node = match self.tree.get_node(cur) {
-                Some(n) => n,
-                None => break,
-            };
+        while let Some(cur_node) = self.tree.get_node(cur) {
             let parent_id = match cur_node.parent {
                 Some(p) => p,
                 None => break,
@@ -293,11 +289,7 @@ impl FileTreeView {
     fn count_absorbed_ancestors(&self, id: NodeId) -> usize {
         let mut count = 0usize;
         let mut cur = id;
-        loop {
-            let parent_id = match self.tree.get_node(cur).and_then(|n| n.parent) {
-                Some(p) => p,
-                None => break,
-            };
+        while let Some(parent_id) = self.tree.get_node(cur).and_then(|n| n.parent) {
             if self.is_absorbed(parent_id) {
                 count += 1;
             }

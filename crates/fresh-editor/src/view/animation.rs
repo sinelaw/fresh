@@ -346,7 +346,7 @@ impl FrameEffect for CursorJump {
         // Trail length scales with the path so short jumps don't get an
         // oversized tail. Min 2 keeps a hint of motion even on tiny jumps.
         let path_cells = dx.abs().max(dy.abs()).round() as i32;
-        let trail_len = (path_cells.min(8).max(2)) as usize;
+        let trail_len = path_cells.clamp(2, 8) as usize;
 
         for i in 0..trail_len {
             // Trail samples behind the head: i=0 is the head (alpha=1, full
@@ -589,8 +589,8 @@ impl WaveEffect {
         for dy in 0..area.height {
             let mut run: Vec<usize> = Vec::new();
             let close_run = |run: &mut Vec<usize>,
-                                 particles: &mut Vec<WaveParticle>,
-                                 words: &mut Vec<Word>| {
+                             particles: &mut Vec<WaveParticle>,
+                             words: &mut Vec<Word>| {
                 if run.is_empty() {
                     return;
                 }

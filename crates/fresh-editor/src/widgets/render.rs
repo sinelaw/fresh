@@ -1488,10 +1488,10 @@ fn collect_list(
         // scroll.
         let mut emitted = 0u32;
         let last = if end < total as usize { end + 1 } else { end };
-        'cards: for i in start..last {
+        'cards: for (offset, card) in rendered_cards[start..last].iter().enumerate() {
+            let i = start + offset;
             let is_selected = i as i32 == effective_sel;
             let item_key = item_keys.get(i).cloned().unwrap_or_default();
-            let card = &rendered_cards[i];
             for r in 0..item_height as usize {
                 if emitted >= avail_rows {
                     break 'cards;

@@ -212,8 +212,8 @@ pub(super) fn fold_indicators_for_viewport(
 
                 let mut subsequent_lines = Vec::new();
                 let lookahead_limit = (i + 1 + max_lookahead).min(view_lines.len());
-                for j in i..lookahead_limit {
-                    subsequent_lines.push(view_lines[j].text.as_bytes());
+                for line in &view_lines[i..lookahead_limit] {
+                    subsequent_lines.push(line.text.as_bytes());
                 }
 
                 if indent_folding::is_line_foldable_in_bytes(&subsequent_lines, tab_size) {

@@ -336,7 +336,9 @@ pub fn wrap_str_to_width(text: &str, wrap_width: usize) -> Vec<Range<usize>> {
         return Vec::new();
     }
     if wrap_width == 0 {
-        return vec![0..text.len()];
+        // A single chunk spanning the whole string (one `Range` element,
+        // not a range collected into individual indices).
+        return std::iter::once(0..text.len()).collect();
     }
 
     use unicode_segmentation::UnicodeSegmentation;

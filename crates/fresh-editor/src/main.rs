@@ -3165,11 +3165,10 @@ fn forward_to_session(session: &str, files: &[String]) -> AnyhowResult<bool> {
         loop {
             match conn.read_control() {
                 Ok(Some(line)) => {
-                    if let Ok(msg) = serde_json::from_str::<ServerControl>(&line) {
-                        match msg {
-                            ServerControl::WaitComplete | ServerControl::Quit { .. } => break,
-                            _ => {}
-                        }
+                    if let Ok(ServerControl::WaitComplete | ServerControl::Quit { .. }) =
+                        serde_json::from_str::<ServerControl>(&line)
+                    {
+                        break;
                     }
                 }
                 Ok(None) => break, // parent closed the connection

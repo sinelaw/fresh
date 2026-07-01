@@ -807,10 +807,11 @@ fn build_docker_exec_prefix(
 /// [`RemoteAgentSpec`]) verbatim so there is no new backend vocabulary and
 /// `fresh-core` stays backend-opaque. Externally tagged so it round-trips
 /// through JSON robustly and additively.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum SessionAuthoritySpec {
     /// Host-local backend. The default for a brand-new session and for any
     /// session with no persisted spec (back-compat).
+    #[default]
     Local,
     /// A backend installed via `editor.setAuthority(...)` — devcontainer /
     /// docker. Reconnecting it is the owning plugin's job (only it can run
@@ -819,12 +820,6 @@ pub enum SessionAuthoritySpec {
     /// A born-attached remote agent (SSH / Kubernetes). Reconnectable from
     /// core via `connect_ssh_authority` / `connect_kube_authority`.
     RemoteAgent(RemoteAgentSpec),
-}
-
-impl Default for SessionAuthoritySpec {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 impl SessionAuthoritySpec {

@@ -177,7 +177,7 @@ pub(super) fn create_wrapped_virtual_lines(
             if text.is_empty() {
                 Vec::new()
             } else {
-                vec![0..text.len()]
+                std::iter::once(0..text.len()).collect()
             }
         }
     };

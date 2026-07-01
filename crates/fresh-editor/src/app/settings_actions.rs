@@ -618,20 +618,17 @@ impl Editor {
             }
         };
 
-        match control_type {
-            // Number inc/dec removed — direct typing only. Action still
-            // exists for Dropdown cycling.
-            Some("dropdown") => {
-                if let Some(ref mut state) = self.settings_state {
-                    if let Some(item) = state.current_item_mut() {
-                        if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
-                            dropdown_state.select_next();
-                        }
+        // Number inc/dec removed — direct typing only. Action still
+        // exists for Dropdown cycling.
+        if let Some("dropdown") = control_type {
+            if let Some(ref mut state) = self.settings_state {
+                if let Some(item) = state.current_item_mut() {
+                    if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
+                        dropdown_state.select_next();
                     }
-                    state.on_value_changed();
                 }
+                state.on_value_changed();
             }
-            _ => {}
         }
     }
 
@@ -676,20 +673,17 @@ impl Editor {
             }
         };
 
-        match control_type {
-            // Number inc/dec removed — direct typing only. Action still
-            // exists for Dropdown cycling.
-            Some("dropdown") => {
-                if let Some(ref mut state) = self.settings_state {
-                    if let Some(item) = state.current_item_mut() {
-                        if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
-                            dropdown_state.select_prev();
-                        }
+        // Number inc/dec removed — direct typing only. Action still
+        // exists for Dropdown cycling.
+        if let Some("dropdown") = control_type {
+            if let Some(ref mut state) = self.settings_state {
+                if let Some(item) = state.current_item_mut() {
+                    if let SettingControl::Dropdown(ref mut dropdown_state) = item.control {
+                        dropdown_state.select_prev();
                     }
-                    state.on_value_changed();
                 }
+                state.on_value_changed();
             }
-            _ => {}
         }
     }
 
