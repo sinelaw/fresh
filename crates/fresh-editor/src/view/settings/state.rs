@@ -755,20 +755,6 @@ impl SettingsState {
             .unwrap_or(true)
     }
 
-    /// Check if entry dialog's current text field can be exited (valid JSON if required)
-    pub fn entry_dialog_can_exit_text_editing(&self) -> bool {
-        self.entry_dialog()
-            .and_then(|dialog| dialog.current_item())
-            .map(|item| {
-                if let SettingControl::Text(state) = &item.control {
-                    state.is_valid()
-                } else {
-                    true
-                }
-            })
-            .unwrap_or(true)
-    }
-
     /// Initialize map focus when entering a Map control.
     /// `from_above`: true = start at first entry, false = start at add-new field
     fn init_map_focus(&mut self, from_above: bool) {
