@@ -500,7 +500,7 @@ impl Editor {
                     crate::services::lsp::diagnostics::apply_diagnostics_to_state_cached(
                         state,
                         &diagnostics,
-                        &*self.theme.read().unwrap(),
+                        &self.theme.read().unwrap(),
                     );
                 }
             }
@@ -530,7 +530,7 @@ impl Editor {
                     crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                         state,
                         &tokens,
-                        &*self.theme.read().unwrap(),
+                        &self.theme.read().unwrap(),
                     );
                 }
             }

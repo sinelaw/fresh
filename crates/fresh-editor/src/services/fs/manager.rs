@@ -230,7 +230,7 @@ impl FsManager {
         let metadata_results = self.get_metadata(paths).await;
 
         // Attach metadata to entries
-        for (entry, metadata_result) in entries.iter_mut().zip(metadata_results.into_iter()) {
+        for (entry, metadata_result) in entries.iter_mut().zip(metadata_results) {
             if let Ok(metadata) = metadata_result {
                 entry.metadata = Some(metadata);
             }

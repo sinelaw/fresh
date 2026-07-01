@@ -103,7 +103,7 @@ impl Editor {
         let updated = crate::services::lsp::diagnostics::apply_diagnostics_to_state_cached(
             state,
             diagnostics,
-            &*self.theme.read().unwrap(),
+            &self.theme.read().unwrap(),
         );
         Some((buffer_id, updated))
     }
@@ -599,7 +599,7 @@ impl Editor {
                             state,
                             range.clone(),
                             &spans,
-                            &*self.theme.read().unwrap(),
+                            &self.theme.read().unwrap(),
                         );
                         if applied {
                             self.active_window_mut()
@@ -671,7 +671,7 @@ impl Editor {
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                             state,
                             &decoded.spans,
-                            &*self.theme.read().unwrap(),
+                            &self.theme.read().unwrap(),
                         );
 
                         state.set_semantic_tokens(SemanticTokenStore {
@@ -782,7 +782,7 @@ impl Editor {
                         crate::services::lsp::semantic_tokens::apply_semantic_tokens_to_state(
                             state,
                             &spans,
-                            &*self.theme.read().unwrap(),
+                            &self.theme.read().unwrap(),
                         );
 
                         state.set_semantic_tokens(SemanticTokenStore {

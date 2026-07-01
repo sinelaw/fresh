@@ -1553,7 +1553,7 @@ impl Editor {
                 &files_with_unsaved_changes,
                 &keybindings,
                 key_context_clone,
-                &*self.theme.read().unwrap(),
+                &self.theme.read().unwrap(),
                 close_button_hovered,
                 remote_connection.as_deref(),
                 cut_paths,
@@ -1836,7 +1836,7 @@ impl Editor {
                     frame,
                     chrome_area,
                     settings_state,
-                    &*self.theme.read().unwrap(),
+                    &self.theme.read().unwrap(),
                 );
                 self.active_chrome_mut().settings_layout = Some(settings_layout);
             }
@@ -1852,7 +1852,7 @@ impl Editor {
                     frame,
                     chrome_area,
                     wizard,
-                    &*self.theme.read().unwrap(),
+                    &self.theme.read().unwrap(),
                 );
             }
         }
@@ -1870,7 +1870,7 @@ impl Editor {
                     frame,
                     chrome_area,
                     kb_editor,
-                    &*self.theme.read().unwrap(),
+                    &self.theme.read().unwrap(),
                 );
             }
         }
@@ -1884,7 +1884,7 @@ impl Editor {
                     frame,
                     chrome_area,
                     debug,
-                    &*self.theme.read().unwrap(),
+                    &self.theme.read().unwrap(),
                 );
             }
         }
@@ -1917,7 +1917,7 @@ impl Editor {
                 &all_menus,
                 &self.menu_state,
                 &keybindings,
-                &*self.theme.read().unwrap(),
+                &self.theme.read().unwrap(),
                 hover_target.as_ref(),
                 menu_bar_mnemonics,
                 Some(&mut crate::app::types::CellThemeRecorder::new(
@@ -2357,7 +2357,7 @@ impl Editor {
             frame,
             suggestions_area,
             prompt,
-            &*self.theme.read().unwrap(),
+            &self.theme.read().unwrap(),
             self.active_window().mouse_state.hover_target.as_ref(),
             true,
             !self.suppress_chrome_cells,
@@ -2382,7 +2382,7 @@ impl Editor {
                 height: hints_height,
             };
             frame.render_widget(ratatui::widgets::Clear, hints_area);
-            Self::render_quick_open_hints(frame, hints_area, &*self.theme.read().unwrap());
+            Self::render_quick_open_hints(frame, hints_area, &self.theme.read().unwrap());
         }
     }
 
@@ -5019,7 +5019,7 @@ fn paint_text_property_entry(
         let span_w = crate::primitives::display_width::str_width(&slice) as u16;
         if let Some((map, sw, region)) = recorder.as_mut() {
             record_entry_span_cells(
-                map, *sw, *region, y, col_cursor, span_w, x, width, &fg_key, &bg_key,
+                map, *sw, region, y, col_cursor, span_w, x, width, &fg_key, &bg_key,
             );
         }
         col_cursor = col_cursor.saturating_add(span_w);
@@ -5034,7 +5034,7 @@ fn paint_text_property_entry(
             record_entry_span_cells(
                 map,
                 *sw,
-                *region,
+                region,
                 y,
                 col_cursor,
                 row_end - col_cursor,

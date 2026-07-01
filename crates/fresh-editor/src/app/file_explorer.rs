@@ -1868,7 +1868,7 @@ impl crate::app::window::Window {
 
         self.file_explorer_decoration_cache =
             crate::view::file_tree::FileExplorerDecorationCache::rebuild(
-                decorations.into_iter(),
+                decorations,
                 &self.root,
                 &symlink_mappings,
             );
@@ -1897,7 +1897,7 @@ impl crate::app::window::Window {
 
         self.file_explorer_slot_override_cache =
             crate::view::file_tree::FileExplorerSlotOverrideCache::rebuild(
-                slots.into_iter(),
+                slots,
                 &self.root,
                 &symlink_mappings,
             );

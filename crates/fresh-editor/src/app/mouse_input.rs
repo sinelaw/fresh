@@ -3823,7 +3823,7 @@ impl Editor {
         }
 
         // Create popup
-        let mut popup = Popup::text(lines, &*self.theme.read().unwrap());
+        let mut popup = Popup::text(lines, &self.theme.read().unwrap());
         popup.title = Some(summary.title);
         popup.transient = true;
         popup.position = PopupPosition::Fixed { x: col, y: row + 1 };

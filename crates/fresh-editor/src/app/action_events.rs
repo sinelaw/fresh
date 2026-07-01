@@ -268,7 +268,7 @@ impl crate::app::window::Window {
                 .get(&active_split)
                 .unwrap()
                 .cursors;
-            let state = (&self.buffers).get(&active_buffer).unwrap();
+            let state = self.buffers.get(&active_buffer).unwrap();
             cursors
                 .iter()
                 .map(|(cursor_id, cursor)| {
@@ -491,7 +491,7 @@ impl crate::app::window::Window {
                 mappings.get(row_idx)?.line_end_byte
             };
 
-            let state = (&mut self.buffers).get_mut(&active_buffer)?;
+            let state = self.buffers.get_mut(&active_buffer)?;
             let buffer = &mut state.buffer;
             let buffer_len = buffer.len();
             if cur_row_line_end >= buffer_len {
@@ -564,7 +564,7 @@ impl crate::app::window::Window {
             // the user wouldn't expect (issue #1574, Windows-CRLF
             // variant).  For LF or a lone CR the byte arithmetic falls
             // through to a one-byte step.
-            let state = (&mut self.buffers).get_mut(&active_buffer)?;
+            let state = self.buffers.get_mut(&active_buffer)?;
             let buffer = &mut state.buffer;
             let _ = row_is_empty;
             let target_pos = step_before_line_break(buffer, cur_row_anchor);

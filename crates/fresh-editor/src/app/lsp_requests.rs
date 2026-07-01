@@ -1081,7 +1081,7 @@ impl Editor {
         } else if is_markdown {
             parse_markdown(
                 &contents,
-                &*self.theme.read().unwrap(),
+                &self.theme.read().unwrap(),
                 Some(&self.grammar_registry),
             )
         } else {
@@ -1141,7 +1141,7 @@ impl Editor {
         let dynamic_height = (self.terminal_height * 60 / 100).clamp(15, 40);
 
         // Construct the popup with the fused content.
-        let mut popup = Popup::text(Vec::new(), &*self.theme.read().unwrap());
+        let mut popup = Popup::text(Vec::new(), &self.theme.read().unwrap());
         popup.content = PopupContent::Markdown(all_lines);
         popup.title = Some(t!("lsp.popup_hover").to_string());
         popup.transient = true;
@@ -1619,7 +1619,7 @@ impl Editor {
 
         let mut popup = Popup::markdown(
             &content,
-            &*self.theme.read().unwrap(),
+            &self.theme.read().unwrap(),
             Some(&self.grammar_registry),
         );
         popup.title = Some(t!("lsp.popup_signature").to_string());
@@ -1888,7 +1888,7 @@ impl Editor {
                 .collect()
         };
 
-        let mut popup = Popup::list(items, &*self.theme.read().unwrap());
+        let mut popup = Popup::list(items, &self.theme.read().unwrap());
         popup.kind = crate::view::popup::PopupKind::Action;
         popup.title = Some(t!("lsp.popup_code_actions").to_string());
         popup.position = PopupPosition::BelowCursor;

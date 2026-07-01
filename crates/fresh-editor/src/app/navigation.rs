@@ -86,7 +86,7 @@ impl crate::app::window::Window {
             if opts.clear_anchor {
                 view_state.cursors.primary_mut().anchor = None;
             }
-            if let Some(state) = (&mut self.buffers).get_mut(&active_buffer) {
+            if let Some(state) = self.buffers.get_mut(&active_buffer) {
                 if let Some(pos) = state.buffer.offset_to_position(position) {
                     state.primary_cursor_line_number = LineNumber::Absolute(pos.line);
                 }
