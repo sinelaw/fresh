@@ -582,7 +582,7 @@
           "x-section": "Display"
         },
         "indentation_guide": {
-          "description": "Vertical indentation guide rendering mode.\nGuides are drawn at indentation levels derived from the active buffer's\ntab size. They replace existing leading whitespace cells visually only;\nbuffer text, cursor positions, and mouse mappings are unchanged.\nModes:\n- `none`: disable indentation guides.\n- `all`: draw every indentation level in leading whitespace.\n- `active`: draw only the innermost guide for the cursor's current\n  indentation block.\nDefault: none",
+          "description": "Vertical indentation guide rendering mode.\nGuides are drawn at indentation levels derived from the active buffer's\ntab size. They replace existing leading whitespace cells visually only;\nbuffer text, cursor positions, and mouse mappings are unchanged.\nModes:\n- `none`: disable indentation guides.\n- `all`: draw every indentation level in leading whitespace.\n- `active`: draw only the innermost guide for the cursor's current\n  indentation block.\n\nDefault: none",
           "$ref": "#/$defs/IndentationGuideMode",
           "default": "none",
           "x-section": "Display"
