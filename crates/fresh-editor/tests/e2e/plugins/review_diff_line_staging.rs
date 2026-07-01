@@ -402,13 +402,30 @@ fn test_review_visual_stage_line_in_second_file() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Hunk navigation + focus-mode repaint are async: focus mode only paints the
-    // focused file's body, so `+ADDED_B` isn't on screen until the jump to the
-    // second file completes. `diff_line_of` renders just once and panics if the
-    // row is missing, so wait for the second file's body to render first.
+    // Hunk navigation + focus-mode repaint are async *and multi-phase*: focus
+    // mode only paints the focused file's body, and after `+ADDED_B` first
+    // appears the plugin can still reflow the panel. `diff_line_of` maps a
+    // *screen* row to a diff-buffer line against a fixed panel offset
+    // (`CENTER_FIRST_ROW`), so sampling a mid-reflow frame yields a wrong target:
+    // the cursor lands off `+ADDED_B`, `s` stages nothing, and the wait below
+    // hangs until the external timeout. Wait for the body to appear *and* for the
+    // async plugin pipeline to go quiet, so the row→line mapping is read from a
+    // converged frame.
     harness.wait_for_screen_contains("+ADDED_B").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let bravo_added = diff_line_of(&mut harness, "+ADDED_B");
     move_cursor_to_line(&mut harness, bravo_added);
+
+    // Fail fast if the cursor didn't land on the `+ADDED_B` row. Without this a
+    // mis-mapped target degrades into an opaque 180s timeout on the indefinite
+    // wait below instead of a clear diagnostic (CONTRIBUTING.md §16: don't let a
+    // wrong state hide behind an unbounded wait).
+    assert_eq!(
+        diff_line_of(&mut harness, "+ADDED_B"),
+        bravo_added,
+        "cursor line {bravo_added} must still map to the +ADDED_B row before staging; screen:\n{}",
+        harness.screen_to_string()
+    );
 
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
