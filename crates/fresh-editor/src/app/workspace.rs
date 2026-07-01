@@ -496,7 +496,7 @@ impl Editor {
         let populated = self
             .windows
             .get(&id)
-            .map(|w| w.buffers.splits().is_some() && w.buffers.len() > 0)
+            .map(|w| w.buffers.splits().is_some() && !w.buffers.is_empty())
             .unwrap_or(false);
 
         let session = self.session_name.clone();
@@ -1814,7 +1814,7 @@ impl crate::app::window::Window {
     /// layout, if it doesn't already have a populated layout. Mirrors
     /// `Editor::build_fresh_layout_if_needed`, rooted on `self`.
     pub(crate) fn seed_initial_layout(&mut self) {
-        if self.buffers.splits().is_some() && self.buffers.len() > 0 {
+        if self.buffers.splits().is_some() && !self.buffers.is_empty() {
             return;
         }
         let buf = self.alloc_buffer_id();

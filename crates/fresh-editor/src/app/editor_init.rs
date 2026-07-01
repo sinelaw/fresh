@@ -1419,7 +1419,7 @@ impl Editor {
         let needs_seed: Vec<fresh_core::WindowId> = editor
             .windows
             .iter()
-            .filter(|(_, s)| s.buffers.splits().is_none() || s.buffers.len() == 0)
+            .filter(|(_, s)| s.buffers.splits().is_none() || s.buffers.is_empty())
             .map(|(id, _)| *id)
             .collect();
         for id in needs_seed {

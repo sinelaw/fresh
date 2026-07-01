@@ -713,7 +713,7 @@ impl crate::app::Editor {
         if !self
             .windows
             .get(&id)
-            .is_some_and(|s| s.buffers.splits().is_none() || s.buffers.len() == 0)
+            .is_some_and(|s| s.buffers.splits().is_none() || s.buffers.is_empty())
         {
             return None;
         }
