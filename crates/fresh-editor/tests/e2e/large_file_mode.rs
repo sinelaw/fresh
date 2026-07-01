@@ -2,6 +2,20 @@ use crate::common::fixtures::TestFixture;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
+/// A config with a tiny `large_file_threshold_bytes` so any non-trivial file
+/// loads in large-file mode, independent of the (multi-MB) default. These
+/// tests exercise large-file *mechanics* (byte-offset gutter, line-feed scan,
+/// lazy chunks), not the default threshold value.
+fn force_large_file_config() -> fresh::config::Config {
+    fresh::config::Config {
+        editor: fresh::config::EditorConfig {
+            large_file_threshold_bytes: 1024,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 /// Test cursor positioning when moving down in large file mode
 /// This test catches a bug where cursor movement with Down arrow key
 /// doesn't work correctly after the first few lines in large file mode
@@ -693,7 +707,7 @@ fn test_byte_offset_gutter_and_scan() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("byte_offset.txt");
 
-    // Create a file large enough to trigger large file mode (default 1MB threshold)
+    // A multi-MB file; large-file mode is forced via force_large_file_config().
     let lines = 100_000;
     let mut content = String::new();
     for i in 0..lines {
@@ -704,8 +718,13 @@ fn test_byte_offset_gutter_and_scan() {
 
     // Use the temp_dir as working directory so the status bar shows a short
     // relative filename instead of the full absolute path.
-    let mut harness =
-        EditorTestHarness::with_working_dir(80, 24, temp_dir.path().to_path_buf()).unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        force_large_file_config(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
@@ -828,7 +847,7 @@ fn test_line_scan_progress_updates() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("scan_progress.txt");
 
-    // Create a multi-MB file to trigger large file mode.
+    // A multi-MB file; large-file mode is forced via force_large_file_config().
     let lines = 100_000;
     let mut content = String::new();
     for i in 0..lines {
@@ -836,8 +855,13 @@ fn test_line_scan_progress_updates() {
     }
     fs::write(&file_path, &content).unwrap();
 
-    let mut harness =
-        EditorTestHarness::with_working_dir(120, 24, temp_dir.path().to_path_buf()).unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        force_large_file_config(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 
@@ -921,7 +945,7 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("edit_scan_edit.txt");
 
-    // Create a multi-MB file to trigger large file mode.
+    // A multi-MB file; large-file mode is forced via force_large_file_config().
     let lines = 100_000;
     let mut content = String::new();
     for i in 0..lines {
@@ -929,12 +953,17 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
     }
     fs::write(&file_path, &content).unwrap();
 
-    let mut harness =
     // 120×24 instead of 80×24: with the {{remote}} indicator on the
     // default status bar, the trailing Messages element is
     // ellipsis-truncated at 80 cols. The widening keeps the
     // assertions below readable.
-        EditorTestHarness::with_working_dir(120, 24, temp_dir.path().to_path_buf()).unwrap();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        24,
+        force_large_file_config(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
     harness.open_file(&file_path).unwrap();
     harness.render().unwrap();
 

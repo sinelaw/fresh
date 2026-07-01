@@ -1976,8 +1976,13 @@ fn test_search_in_large_file() {
         file_size as f64 / 1024.0 / 1024.0
     );
 
-    // Create harness and open the large file
-    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    // Create harness and open the large file. Force large-file (lazy) mode
+    // with a low threshold so the test exercises search into unloaded chunks
+    // regardless of the default large_file_threshold_bytes.
+    let mut config = Config::default();
+    config.editor.large_file_threshold_bytes = 1024; // 1KB threshold
+    let mut harness =
+        EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
     harness.open_file(&file_path).unwrap();
 
     // Verify the buffer is in large file mode
