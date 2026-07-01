@@ -3607,6 +3607,24 @@ pub enum PluginCommand {
         language: String,
     },
 
+    /// Claim an LSP URI scheme (e.g. `slang-synth`). When an LSP navigation
+    /// resolves to a non-`file://` URI with this scheme, the core fires the
+    /// `lsp_open_external_uri` hook instead of showing its fallback message,
+    /// so the plugin can fetch and open the synthetic document itself.
+    RegisterLspUriScheme {
+        /// The scheme to claim, without the `://` (e.g. `slang-synth`).
+        scheme: String,
+    },
+
+    /// Mark the buffer backing `path` read-only. Resolved by path (not
+    /// buffer id) so it is race-free when issued right after `openFile`:
+    /// both are FIFO commands, so the buffer exists by the time this runs,
+    /// whereas a buffer id read from the state snapshot could still be stale.
+    MarkBufferReadOnly {
+        /// Filesystem path of the buffer to mark read-only.
+        path: std::path::PathBuf,
+    },
+
     /// Set the workspace root URI for a specific language's LSP server
     /// This allows plugins to specify project roots (e.g., directory containing .csproj)
     /// If the LSP is already running, it will be restarted with the new root

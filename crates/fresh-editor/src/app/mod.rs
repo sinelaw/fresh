@@ -766,6 +766,15 @@ pub struct Editor {
     /// Quick Open registry for unified prompt providers
     quick_open_registry: QuickOpenRegistry,
 
+    /// URI schemes a plugin has claimed via `registerLspUriScheme`. When an
+    /// LSP navigation (e.g. go-to-definition) resolves to a non-`file://`
+    /// URI whose scheme is in this set, the core fires the
+    /// `lsp_open_external_uri` hook and lets the plugin fetch/open the
+    /// target instead of showing the "external location" fallback message.
+    /// Keeps synthetic-document handling (slangd's `slang-synth://`, jdtls's
+    /// `jdt://`, …) out of the core: the core only dispatches by scheme.
+    pub(crate) lsp_uri_schemes: std::collections::HashSet<String>,
+
     /// Plugin manager (handles both enabled and disabled cases)
     /// Plugin manager, wrapped in `Arc<RwLock<>>` so windows can fire
     /// hooks (`run_hook`) via WindowResources without holding an

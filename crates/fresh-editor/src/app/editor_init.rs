@@ -455,6 +455,7 @@ impl Editor {
             window_cycle_order: None,
             command_registry: parts.command_registry,
             quick_open_registry: parts.quick_open_registry,
+            lsp_uri_schemes: std::collections::HashSet::new(),
             plugin_manager: parts.plugin_manager,
             recovery_service: parts.recovery_service,
             time_source: parts.time_source,

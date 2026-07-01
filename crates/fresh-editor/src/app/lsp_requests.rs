@@ -273,17 +273,55 @@ impl Editor {
         // for a builtin like `float3`, jdtls sends `jdt://…` for
         // class-file contents, and so on. `open_lsp_uri_target` would
         // decode those to nothing and surface the opaque "URI is not a
-        // file path" error with no log trail. Catch the non-`file://`
-        // scheme here, log a warning, and show a message that names the
-        // target so the outcome is understandable rather than looking
-        // like a bug.
-        if location.uri.scheme().map(|s| s.as_str()) != Some("file") {
-            let uri = location.uri.as_str();
+        // file path" error with no log trail.
+        if let Some(scheme) = location
+            .uri
+            .scheme()
+            .map(|s| s.as_str().to_string())
+            .filter(|s| s != "file")
+        {
+            let uri = location.uri.as_str().to_string();
+            let line = location.range.start.line;
+            let character = location.range.start.character;
+
+            // If a plugin claimed this scheme (via `registerLspUriScheme`),
+            // hand the target off through the `lsp_open_external_uri` hook so
+            // it can fetch and open the synthetic document itself — e.g. the
+            // slang plugin dumps the builtin module with
+            // `slangd --print-builtin-module`. The core stays scheme-agnostic.
+            if self.lsp_uri_schemes.contains(&scheme) {
+                let language = self.active_state().language.clone();
+                let server_name = self
+                    .lsp()
+                    .and_then(|lsp| lsp.server_names_for_language(&language).into_iter().next())
+                    .unwrap_or_default();
+                tracing::info!(
+                    "Go-to-definition target '{}' handled by plugin for scheme '{}'",
+                    uri,
+                    scheme
+                );
+                self.plugin_manager.read().unwrap().run_hook(
+                    "lsp_open_external_uri",
+                    crate::services::plugins::hooks::HookArgs::LspOpenExternalUri {
+                        uri,
+                        scheme,
+                        line,
+                        character,
+                        language,
+                        server_name,
+                    },
+                );
+                return Ok(());
+            }
+
+            // No provider: log a warning and show a message that names the
+            // target so the outcome is understandable rather than looking
+            // like a bug.
             tracing::warn!(
                 "Go-to-definition target is a non-file URI '{}'; no local source to open",
                 uri
             );
-            self.set_status_message(t!("lsp.definition_external_uri", uri = uri).to_string());
+            self.set_status_message(t!("lsp.definition_external_uri", uri = &uri).to_string());
             return Ok(());
         }
 

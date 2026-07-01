@@ -1353,6 +1353,15 @@ impl Editor {
                 self.handle_restart_lsp_for_language(language);
             }
 
+            PluginCommand::RegisterLspUriScheme { scheme } => {
+                tracing::debug!("Plugin registered LSP URI scheme: {}", scheme);
+                self.lsp_uri_schemes.insert(scheme);
+            }
+
+            PluginCommand::MarkBufferReadOnly { path } => {
+                self.handle_mark_buffer_read_only(path);
+            }
+
             PluginCommand::SetLspRootUri { language, uri } => {
                 self.handle_set_lsp_root_uri(language, uri);
             }
@@ -5121,6 +5130,30 @@ impl Editor {
         };
         if success {
             self.reopen_buffers_for_language(&language);
+        }
+    }
+
+    /// Mark the buffer backing `path` read-only (plugin `markFileReadOnly`).
+    /// Resolved by path so it composes race-free with a preceding `openFile`
+    /// command: both are processed in order, so the buffer exists here.
+    fn handle_mark_buffer_read_only(&mut self, path: std::path::PathBuf) {
+        let buffer_id = self
+            .active_window()
+            .buffer_metadata
+            .iter()
+            .find(|(_, m)| m.file_path().map(|p| p == &path).unwrap_or(false))
+            .map(|(id, _)| *id);
+        match buffer_id {
+            Some(id) => {
+                self.active_window_mut().mark_buffer_read_only(id, true);
+                tracing::debug!("Marked buffer {:?} read-only ({})", id, path.display());
+            }
+            None => {
+                tracing::warn!(
+                    "markFileReadOnly: no open buffer for path {}",
+                    path.display()
+                );
+            }
         }
     }
 

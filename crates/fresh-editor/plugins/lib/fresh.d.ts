@@ -3104,6 +3104,27 @@ interface EditorAPI {
 	*/
 	restartLspForLanguage(language: string): boolean;
 	/**
+	* Claim an LSP URI scheme (e.g. "slang-synth"), without the "://".
+	*
+	* When an LSP navigation (go-to-definition, …) resolves to a non-file
+	* URI whose scheme was registered here, the editor fires the
+	* `lsp_open_external_uri` hook — carrying `{ uri, scheme, line,
+	* character, language, server_name }` — instead of showing its
+	* "external location, no local source file" fallback. The plugin then
+	* fetches the synthetic document and opens it (e.g. slangd builtin
+	* modules via `slangd --print-builtin-module`).
+	*/
+	registerLspUriScheme(scheme: string): boolean;
+	/**
+	* Mark the buffer backing `path` read-only.
+	*
+	* Resolved by path rather than buffer id, so it is race-free when
+	* called immediately after `openFile(path, …)`: both are FIFO commands,
+	* so the buffer exists when this runs, whereas `getActiveBufferId()`
+	* reads a snapshot that may not yet reflect the open.
+	*/
+	markFileReadOnly(path: string): boolean;
+	/**
 	* Set the workspace root URI for a specific language's LSP server
 	* This allows plugins to specify project roots (e.g., directory containing .csproj)
 	*/
@@ -3678,6 +3699,14 @@ interface HookEventMap {
 			line: number;
 			column: number;
 		}[];
+	};
+	lsp_open_external_uri: {
+		uri: string;
+		scheme: string;
+		line: number;
+		character: number;
+		language: string;
+		server_name: string;
 	};
 	lsp_server_request: {
 		language: string;

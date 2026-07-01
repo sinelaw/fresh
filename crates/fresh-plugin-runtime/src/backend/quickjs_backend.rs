@@ -5448,6 +5448,25 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Claim an LSP URI scheme (e.g. "slang-synth"). LSP navigations that
+    /// resolve to a non-file URI with this scheme are routed to the
+    /// `lsp_open_external_uri` hook instead of the core's fallback message.
+    pub fn register_lsp_uri_scheme(&self, scheme: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::RegisterLspUriScheme { scheme })
+            .is_ok()
+    }
+
+    /// Mark the buffer backing `path` read-only. Race-free right after
+    /// `openFile` because both are FIFO commands.
+    pub fn mark_file_read_only(&self, path: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::MarkBufferReadOnly {
+                path: std::path::PathBuf::from(path),
+            })
+            .is_ok()
+    }
+
     /// Set the workspace root URI for a specific language's LSP server
     /// This allows plugins to specify project roots (e.g., directory containing .csproj)
     pub fn set_lsp_root_uri(&self, language: String, uri: String) -> bool {
