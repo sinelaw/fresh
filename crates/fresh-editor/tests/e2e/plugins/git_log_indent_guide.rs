@@ -92,10 +92,18 @@ fn git_log_file_opened_at_commit_shows_indentation_guides() {
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // Wait for the detail pane's diff body to finish rendering — not just the
+    // commit list — before navigating. The `+++ b/indented.rs` header is emitted
+    // by `git show` and is exactly the line git_log scans back for, so its
+    // presence proves the diff the cursor is about to enter is on screen. Keying
+    // only on the commit list (as before) let the `Down`/`Enter` keys race the
+    // async `git show`, landing the cursor on unloaded content.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("switch pane") && s.contains("Add indented file")
+            s.contains("switch pane")
+                && s.contains("Add indented file")
+                && s.contains("+++ b/indented.rs")
         })
         .unwrap();
 
@@ -110,9 +118,18 @@ fn git_log_file_opened_at_commit_shows_indentation_guides() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // The file-at-commit view opens; its indented body must carry guides.
+    // Wait for the file-at-commit view itself, not merely a code line that also
+    // appears in the diff. git_log titles that tab `*<hash>:indented.rs*`, so the
+    // `:indented.rs` marker is unique to the opened view — the diff pane shows
+    // `b/indented.rs`, never `:indented.rs`. The old wait keyed on `let x = 1`,
+    // which the diff pane already renders as `+    let x = 1;`; it could pass
+    // without the view ever opening and then fail the guide assertion, because
+    // the git-log diff pane intentionally renders no guides.
     harness
-        .wait_until(|h| h.screen_to_string().contains("let x = 1"))
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains(":indented.rs") && s.contains("let x = 1")
+        })
         .unwrap();
     let screen = harness.screen_to_string();
     assert!(
