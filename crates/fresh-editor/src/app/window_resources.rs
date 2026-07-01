@@ -165,11 +165,13 @@ pub struct WindowResources {
     pub async_bridge: Option<crate::services::async_bridge::AsyncBridge>,
 
     /// Plugin manager (single QuickJS instance), wrapped in
-    /// `Arc<RwLock<>>` so windows can fire hooks and read state
+    /// `Rc<RwLock<>>` so windows can fire hooks and read state
     /// without going through `Editor`. Reads take a read lock; the
     /// few `&mut self` methods (process_commands, check_thread_health,
-    /// test_inject_command) take a write lock.
-    pub plugin_manager: Arc<RwLock<crate::services::plugins::manager::PluginManager>>,
+    /// test_inject_command) take a write lock. `Rc` rather than `Arc`:
+    /// `PluginManager` is not `Sync` and never leaves the UI thread, so
+    /// atomic refcounting would buy nothing.
+    pub plugin_manager: std::rc::Rc<RwLock<crate::services::plugins::manager::PluginManager>>,
 
     /// Active resolved theme, mirrored from `Editor.theme`. Each
     /// `set_theme` / theme-reload pushes the new value into this

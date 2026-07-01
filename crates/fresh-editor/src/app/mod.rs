@@ -773,7 +773,7 @@ pub struct Editor {
     /// deliver_response, has_hook_handlers, …) take a read lock; the
     /// few `&mut self` methods (process_commands, check_thread_health,
     /// test_inject_command) take a write lock.
-    plugin_manager: Arc<RwLock<PluginManager>>,
+    plugin_manager: std::rc::Rc<RwLock<PluginManager>>,
 
     // `plugin_dev_workspaces` moved onto `Window` — keyed by `BufferId`,
     // and buffers are per-window, so the workspace map follows.

@@ -105,7 +105,7 @@ fn set_dot_path(root: &mut serde_json::Value, path: &str, value: serde_json::Val
 /// No-op when the plugin manager is inactive.
 #[allow(clippy::too_many_arguments)]
 fn load_startup_plugins(
-    plugin_manager: &Arc<RwLock<PluginManager>>,
+    plugin_manager: &std::rc::Rc<RwLock<PluginManager>>,
     dir_context: &DirectoryContext,
     bundle_plugin_dirs: &[std::path::PathBuf],
     config: &mut Config,
@@ -381,7 +381,7 @@ pub(super) struct EditorParts {
     // Registries / managers
     pub(super) command_registry: Arc<RwLock<CommandRegistry>>,
     pub(super) quick_open_registry: QuickOpenRegistry,
-    pub(super) plugin_manager: Arc<RwLock<PluginManager>>,
+    pub(super) plugin_manager: std::rc::Rc<RwLock<PluginManager>>,
     pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
     pub(super) key_translator: crate::input::key_translator::KeyTranslator,
     pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
@@ -975,7 +975,7 @@ impl Editor {
 
         t.phase("split_quickopen_authority");
         // Initialize plugin manager (handles both enabled and disabled cases internally)
-        let plugin_manager = Arc::new(RwLock::new(PluginManager::new(
+        let plugin_manager = std::rc::Rc::new(RwLock::new(PluginManager::new(
             enable_plugins,
             Arc::clone(&command_registry),
             dir_context.clone(),
@@ -1121,7 +1121,7 @@ impl Editor {
             dir_context: dir_context.clone(),
             tokio_runtime: tokio_runtime.clone(),
             async_bridge: Some(async_bridge.clone()),
-            plugin_manager: Arc::clone(&plugin_manager),
+            plugin_manager: std::rc::Rc::clone(&plugin_manager),
             theme: Arc::clone(&theme),
             event_broadcaster: event_broadcaster.clone(),
             recovery_service: Arc::clone(&recovery_service),
@@ -1310,7 +1310,7 @@ impl Editor {
                     dir_context: dir_context.clone(),
                     tokio_runtime: tokio_runtime.clone(),
                     async_bridge: Some(async_bridge.clone()),
-                    plugin_manager: Arc::clone(&plugin_manager),
+                    plugin_manager: std::rc::Rc::clone(&plugin_manager),
                     theme: Arc::clone(&theme),
                     event_broadcaster: event_broadcaster.clone(),
                     recovery_service: Arc::clone(&recovery_service),
