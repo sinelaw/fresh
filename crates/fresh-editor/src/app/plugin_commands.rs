@@ -41,6 +41,18 @@ fn make_search_opts(
     }
 }
 
+/// Fields of a `PluginCommand::BeginSearch`, grouped so
+/// [`Editor::handle_begin_search`] takes one argument instead of seven.
+pub(super) struct BeginSearchArgs {
+    pub pattern: String,
+    pub fixed_string: bool,
+    pub case_sensitive: bool,
+    pub max_results: usize,
+    pub whole_words: bool,
+    pub source_buffer_id: usize,
+    pub handle_id: u64,
+}
+
 impl Editor {
     // ==================== Menu Helpers ====================
 
@@ -2592,16 +2604,16 @@ impl Editor {
     /// dispatches. Aborts when the handle's `cancel` flag flips (set by
     /// `_searchHandleCancel` or by the next `BeginSearch` superseding this
     /// one).
-    pub(super) fn handle_begin_search(
-        &mut self,
-        pattern: String,
-        fixed_string: bool,
-        case_sensitive: bool,
-        max_results: usize,
-        whole_words: bool,
-        source_buffer_id: usize,
-        handle_id: u64,
-    ) {
+    pub(super) fn handle_begin_search(&mut self, args: BeginSearchArgs) {
+        let BeginSearchArgs {
+            pattern,
+            fixed_string,
+            case_sensitive,
+            max_results,
+            whole_words,
+            source_buffer_id,
+            handle_id,
+        } = args;
         // Look up the handle the plugin pre-registered. If it's missing
         // (registry races with a unit test), drop the request — there's no
         // observer to deliver results to.

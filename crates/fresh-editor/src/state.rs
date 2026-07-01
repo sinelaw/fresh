@@ -263,6 +263,18 @@ pub struct EditorState {
     pub coord_map: crate::model::coord_map::CoordMap,
 }
 
+/// The fields of an [`Event::AddOverlay`], grouped so
+/// [`EditorState::apply_add_overlay`] takes one argument instead of seven.
+struct AddOverlaySpec<'a> {
+    namespace: &'a Option<crate::view::overlay::OverlayNamespace>,
+    range: &'a Range<usize>,
+    face: &'a EventOverlayFace,
+    priority: i32,
+    message: &'a Option<String>,
+    extend_to_line_end: bool,
+    url: &'a Option<String>,
+}
+
 impl EditorState {
     /// Create a new editor state with an empty buffer
     ///
@@ -693,15 +705,15 @@ impl EditorState {
                 message,
                 extend_to_line_end,
                 url,
-            } => self.apply_add_overlay(
+            } => self.apply_add_overlay(AddOverlaySpec {
                 namespace,
                 range,
                 face,
-                *priority,
+                priority: *priority,
                 message,
-                *extend_to_line_end,
+                extend_to_line_end: *extend_to_line_end,
                 url,
-            ),
+            }),
 
             Event::RemoveOverlay { handle } => {
                 tracing::trace!("RemoveOverlay: handle={:?}", handle);
@@ -864,23 +876,18 @@ impl EditorState {
     }
 
     /// Materialize an `AddOverlay` event into a tracked [`Overlay`].
-    fn apply_add_overlay(
-        &mut self,
-        namespace: &Option<crate::view::overlay::OverlayNamespace>,
-        range: &Range<usize>,
-        face: &EventOverlayFace,
-        priority: i32,
-        message: &Option<String>,
-        extend_to_line_end: bool,
-        url: &Option<String>,
-    ) {
-        let overlay_face = convert_event_face_to_overlay_face(face);
-        let mut overlay =
-            Overlay::with_priority(&mut self.marker_list, range.clone(), overlay_face, priority);
-        overlay.namespace = namespace.clone();
-        overlay.message = message.clone();
-        overlay.extend_to_line_end = extend_to_line_end;
-        overlay.url = url.clone();
+    fn apply_add_overlay(&mut self, spec: AddOverlaySpec) {
+        let overlay_face = convert_event_face_to_overlay_face(spec.face);
+        let mut overlay = Overlay::with_priority(
+            &mut self.marker_list,
+            spec.range.clone(),
+            overlay_face,
+            spec.priority,
+        );
+        overlay.namespace = spec.namespace.clone();
+        overlay.message = spec.message.clone();
+        overlay.extend_to_line_end = spec.extend_to_line_end;
+        overlay.url = spec.url.clone();
         self.overlays.add(overlay);
     }
 

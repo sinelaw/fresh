@@ -32,6 +32,19 @@ pub struct ExplorerDecorations<'a> {
 
 pub struct FileExplorerRenderer;
 
+/// Inputs to [`FileExplorerRenderer::trailing_slot_screen_bounds`], grouped
+/// so the call takes one argument instead of eight.
+pub(crate) struct TrailingSlotBoundsCtx<'a> {
+    pub view: &'a FileTreeView,
+    pub node_id: NodeId,
+    pub indent: usize,
+    pub content_width: usize,
+    pub slot_resolution: &'a ExplorerSlotResolution,
+    pub tree_indicator_collapsed: &'a str,
+    pub tree_indicator_expanded: &'a str,
+    pub explorer_area: Rect,
+}
+
 impl FileExplorerRenderer {
     /// Check if a directory contains any modified files
     fn folder_has_modified_files(
@@ -520,16 +533,17 @@ impl FileExplorerRenderer {
         Line::from(spans)
     }
 
-    pub(crate) fn trailing_slot_screen_bounds(
-        view: &FileTreeView,
-        node_id: NodeId,
-        indent: usize,
-        content_width: usize,
-        slot_resolution: &ExplorerSlotResolution,
-        tree_indicator_collapsed: &str,
-        tree_indicator_expanded: &str,
-        explorer_area: Rect,
-    ) -> Option<(u16, u16)> {
+    pub(crate) fn trailing_slot_screen_bounds(ctx: TrailingSlotBoundsCtx) -> Option<(u16, u16)> {
+        let TrailingSlotBoundsCtx {
+            view,
+            node_id,
+            indent,
+            content_width,
+            slot_resolution,
+            tree_indicator_collapsed,
+            tree_indicator_expanded,
+            explorer_area,
+        } = ctx;
         let trailing_slot = slot_resolution.trailing.as_ref()?;
         let node = view.tree().get_node(node_id).expect("Node should exist");
 
@@ -893,16 +907,16 @@ mod tests {
         let area = Rect::new(0, 0, 40, 10);
         let content_width = area.width.saturating_sub(3) as usize;
 
-        let bounds = FileExplorerRenderer::trailing_slot_screen_bounds(
-            &view,
-            schema_id,
-            2,
+        let bounds = FileExplorerRenderer::trailing_slot_screen_bounds(TrailingSlotBoundsCtx {
+            view: &view,
+            node_id: schema_id,
+            indent: 2,
             content_width,
-            &slot_resolution,
-            ">",
-            "▼",
-            area,
-        )
+            slot_resolution: &slot_resolution,
+            tree_indicator_collapsed: ">",
+            tree_indicator_expanded: "▼",
+            explorer_area: area,
+        })
         .expect("modified file should render a trailing slot");
 
         assert_eq!(bounds.1, area.x + area.width.saturating_sub(1));

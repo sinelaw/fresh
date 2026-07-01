@@ -85,6 +85,19 @@ fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String
     }
 }
 
+/// Spawn options for [`Window::create_plugin_terminal`], grouped so the
+/// call takes one argument instead of seven.
+pub struct PluginTerminalSpec {
+    pub cwd: Option<PathBuf>,
+    pub direction: Option<crate::model::event::SplitDirection>,
+    pub ratio: Option<f32>,
+    /// Split focus: whether the new terminal becomes the active leaf.
+    pub focus: bool,
+    pub persistent: bool,
+    pub command: Option<Vec<String>>,
+    pub title: Option<String>,
+}
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config
@@ -366,14 +379,17 @@ impl Window {
     /// seeding a fresh layout in a never-activated window).
     pub fn create_plugin_terminal(
         &mut self,
-        cwd: Option<PathBuf>,
-        direction: Option<crate::model::event::SplitDirection>,
-        ratio: Option<f32>,
-        focus: bool,
-        persistent: bool,
-        command: Option<Vec<String>>,
-        title: Option<String>,
+        spec: PluginTerminalSpec,
     ) -> Result<(TerminalId, BufferId, Option<LeafId>), String> {
+        let PluginTerminalSpec {
+            cwd,
+            direction,
+            ratio,
+            focus,
+            persistent,
+            command,
+            title,
+        } = spec;
         // Derive the auto-title from the command's executable name
         // (basename of argv[0]). The host writes this into the
         // terminal buffer's `BufferMetadata::name` so the tab reads

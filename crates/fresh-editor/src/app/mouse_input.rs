@@ -1193,14 +1193,16 @@ impl Editor {
                             };
                             let slot_resolution = slot_resolver.resolve(&slot_context);
                             if let Some((slot_start, slot_end)) = crate::view::ui::file_explorer::FileExplorerRenderer::trailing_slot_screen_bounds(
-                                explorer,
-                                node_id,
-                                indent,
-                                content_width,
-                                &slot_resolution,
-                                &self.config.file_explorer.tree_indicator_collapsed,
-                                &self.config.file_explorer.tree_indicator_expanded,
-                                explorer_area,
+                                crate::view::ui::file_explorer::TrailingSlotBoundsCtx {
+                                    view: explorer,
+                                    node_id,
+                                    indent,
+                                    content_width,
+                                    slot_resolution: &slot_resolution,
+                                    tree_indicator_collapsed: &self.config.file_explorer.tree_indicator_collapsed,
+                                    tree_indicator_expanded: &self.config.file_explorer.tree_indicator_expanded,
+                                    explorer_area,
+                                },
                             ) {
                                 if col >= slot_start && col < slot_end {
                                     return Some(HoverTarget::FileExplorerStatusIndicator(

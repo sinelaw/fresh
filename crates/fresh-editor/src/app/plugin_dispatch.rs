@@ -1383,13 +1383,15 @@ impl Editor {
                 request_id,
             } => {
                 self.handle_create_composite_buffer(
-                    name,
-                    mode,
-                    layout,
-                    sources,
-                    hunks,
-                    initial_focus_hunk,
-                    request_id,
+                    crate::app::composite_buffer_actions::CreateCompositeBufferArgs {
+                        name,
+                        mode,
+                        layout_config: layout,
+                        source_configs: sources,
+                        hunks,
+                        initial_focus_hunk,
+                        request_id,
+                    },
                 );
             }
             PluginCommand::UpdateCompositeAlignment { buffer_id, hunks } => {
@@ -1521,7 +1523,7 @@ impl Editor {
                 source_buffer_id,
                 handle_id,
             } => {
-                self.handle_begin_search(
+                self.handle_begin_search(crate::app::plugin_commands::BeginSearchArgs {
                     pattern,
                     fixed_string,
                     case_sensitive,
@@ -1529,7 +1531,7 @@ impl Editor {
                     whole_words,
                     source_buffer_id,
                     handle_id,
-                );
+                });
             }
 
             PluginCommand::ReplaceInBuffer {
@@ -3731,15 +3733,15 @@ impl Editor {
                 .windows
                 .get_mut(&target_id)
                 .expect("target window present (existence checked above)");
-            target.create_plugin_terminal(
-                cwd_buf,
-                split_direction,
+            target.create_plugin_terminal(crate::app::terminal::PluginTerminalSpec {
+                cwd: cwd_buf,
+                direction: split_direction,
                 ratio,
-                focus.unwrap_or(true),
+                focus: focus.unwrap_or(true),
                 persistent,
                 command,
-                title.filter(|t| !t.is_empty()),
-            )
+                title: title.filter(|t| !t.is_empty()),
+            })
         };
         match result {
             Ok((terminal_id, buffer_id, created_split_id)) => {

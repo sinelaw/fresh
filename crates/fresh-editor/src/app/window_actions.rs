@@ -313,15 +313,15 @@ impl crate::app::Editor {
                 .windows
                 .get_mut(&id)
                 .expect("just-inserted window must be present");
-            target.create_plugin_terminal(
-                cwd.or_else(|| Some(root.clone())),
-                None, // no split direction — let the no-layout branch seed
-                None,
-                true,  // focus — newly spawned terminal is the seed
-                false, // ephemeral by default; orchestrator owns persistence
+            target.create_plugin_terminal(crate::app::terminal::PluginTerminalSpec {
+                cwd: cwd.or_else(|| Some(root.clone())),
+                direction: None, // no split direction — let the no-layout branch seed
+                ratio: None,
+                focus: true,       // newly spawned terminal is the seed
+                persistent: false, // ephemeral by default; orchestrator owns persistence
                 command,
-                title.filter(|t| !t.is_empty()),
-            )
+                title: title.filter(|t| !t.is_empty()),
+            })
         };
 
         let (terminal_id, buffer_id, _split_id) = match spawn_result {

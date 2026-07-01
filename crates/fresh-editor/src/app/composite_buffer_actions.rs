@@ -386,6 +386,19 @@ impl crate::app::window::Window {
     }
 }
 
+/// Fields of a `PluginCommand::CreateCompositeBuffer`, grouped so
+/// [`Editor::handle_create_composite_buffer`] takes one argument.
+#[cfg(feature = "plugins")]
+pub(crate) struct CreateCompositeBufferArgs {
+    pub name: String,
+    pub mode: String,
+    pub layout_config: fresh_core::api::CompositeLayoutConfig,
+    pub source_configs: Vec<fresh_core::api::CompositeSourceConfig>,
+    pub hunks: Option<Vec<fresh_core::api::CompositeHunk>>,
+    pub initial_focus_hunk: Option<usize>,
+    pub request_id: Option<u64>,
+}
+
 impl Editor {
     // =========================================================================
     // Layout Flush (synchronous state materialization)
@@ -1083,16 +1096,16 @@ impl Editor {
 
     /// Handle the CreateCompositeBuffer plugin command
     #[cfg(feature = "plugins")]
-    pub(crate) fn handle_create_composite_buffer(
-        &mut self,
-        name: String,
-        mode: String,
-        layout_config: fresh_core::api::CompositeLayoutConfig,
-        source_configs: Vec<fresh_core::api::CompositeSourceConfig>,
-        hunks: Option<Vec<fresh_core::api::CompositeHunk>>,
-        initial_focus_hunk: Option<usize>,
-        _request_id: Option<u64>,
-    ) {
+    pub(crate) fn handle_create_composite_buffer(&mut self, args: CreateCompositeBufferArgs) {
+        let CreateCompositeBufferArgs {
+            name,
+            mode,
+            layout_config,
+            source_configs,
+            hunks,
+            initial_focus_hunk,
+            request_id: _request_id,
+        } = args;
         use crate::model::composite_buffer::{
             CompositeLayout, DiffHunk, GutterStyle, LineAlignment, PaneStyle, SourcePane,
         };
