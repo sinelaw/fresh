@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "현재 버퍼에 연결된 파일 없음",
   "lsp.buffer_not_found": "버퍼를 찾을 수 없음",
   "lsp.cannot_open_definition": "정의 위치를 열 수 없음",
+  "lsp.definition_external_uri": "정의가 로컬 소스 파일이 없는 외부 위치에 있습니다: %{uri}",
   "lsp.cannot_rename_unsaved": "저장되지 않은 버퍼에서 이름 바꾸기 불가",
   "lsp.code_action_applied": "적용 완료: %{title} (%{count}개 변경)",
   "lsp.code_action_hint": "번호를 눌러 선택, Esc로 취소",

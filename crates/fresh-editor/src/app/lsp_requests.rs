@@ -268,6 +268,25 @@ impl Editor {
         // For now, just jump to the first location
         let location = &locations[0];
 
+        // Some servers point definitions at documents that have no
+        // on-disk source: slangd sends `slang-synth://core/core.builtin`
+        // for a builtin like `float3`, jdtls sends `jdt://…` for
+        // class-file contents, and so on. `open_lsp_uri_target` would
+        // decode those to nothing and surface the opaque "URI is not a
+        // file path" error with no log trail. Catch the non-`file://`
+        // scheme here, log a warning, and show a message that names the
+        // target so the outcome is understandable rather than looking
+        // like a bug.
+        if location.uri.scheme().map(|s| s.as_str()) != Some("file") {
+            let uri = location.uri.as_str();
+            tracing::warn!(
+                "Go-to-definition target is a non-file URI '{}'; no local source to open",
+                uri
+            );
+            self.set_status_message(t!("lsp.definition_external_uri", uri = uri).to_string());
+            return Ok(());
+        }
+
         // Resolve the URI to a buffer. `open_lsp_uri_target` handles
         // all three cases: host file under the workspace mount,
         // container-only file fetched via `docker exec cat`, and

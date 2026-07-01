@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "Le tampon actuel n'a pas de fichier associé",
   "lsp.buffer_not_found": "Tampon non trouvé",
   "lsp.cannot_open_definition": "Impossible d'ouvrir l'emplacement de la définition",
+  "lsp.definition_external_uri": "La définition se trouve dans un emplacement externe sans fichier source local : %{uri}",
   "lsp.cannot_rename_unsaved": "Impossible de renommer dans un tampon non enregistré",
   "lsp.code_action_applied": "Appliqué : %{title} (%{count} modifications)",
   "lsp.code_action_hint": "Appuyez sur un numéro pour sélectionner, Échap pour annuler",

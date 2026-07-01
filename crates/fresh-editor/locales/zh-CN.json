@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "当前缓冲区没有关联的文件",
   "lsp.buffer_not_found": "未找到缓冲区",
   "lsp.cannot_open_definition": "无法打开定义：%{error}",
+  "lsp.definition_external_uri": "定义位于没有本地源文件的外部位置：%{uri}",
   "lsp.cannot_rename_unsaved": "无法重命名未保存的缓冲区",
   "lsp.code_action_applied": "已应用: %{title}（%{count} 处更改）",
   "lsp.code_action_hint": "按数字选择，Esc 取消",

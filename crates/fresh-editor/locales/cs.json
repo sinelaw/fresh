@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "Aktuální buffer nemá přiřazený žádný soubor",
   "lsp.buffer_not_found": "Buffer nenalezen",
   "lsp.cannot_open_definition": "Nelze otevřít umístění definice",
+  "lsp.definition_external_uri": "Definice je v externím umístění bez místního zdrojového souboru: %{uri}",
   "lsp.cannot_rename_unsaved": "Nelze přejmenovat v neuloženém bufferu",
   "lsp.code_action_applied": "Použito: %{title} (%{count} změn)",
   "lsp.code_action_hint": "Stiskněte číslo pro výběr, Esc pro zrušení",

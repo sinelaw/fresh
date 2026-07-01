@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "Текущий буфер не связан с файлом",
   "lsp.buffer_not_found": "Буфер не найден",
   "lsp.cannot_open_definition": "Не удалось открыть расположение определения",
+  "lsp.definition_external_uri": "Определение находится во внешнем расположении без локального исходного файла: %{uri}",
   "lsp.cannot_rename_unsaved": "Невозможно переименовать в несохранённом буфере",
   "lsp.code_action_applied": "Применено: %{title} (%{count} изменений)",
   "lsp.code_action_hint": "Нажмите цифру для выбора, Esc для отмены",

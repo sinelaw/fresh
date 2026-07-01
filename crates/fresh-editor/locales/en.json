@@ -1115,6 +1115,7 @@
   "lsp.buffer_not_found": "Buffer not found",
   "lsp.cannot_open_definition": "Could not open definition location",
   "lsp.cannot_rename_unsaved": "Cannot rename in unsaved buffer",
+  "lsp.definition_external_uri": "Definition is in an external location with no local source file: %{uri}",
   "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
   "lsp.code_action_hint": "Press number to select, Esc to cancel",
   "lsp.disabled.library_file": "Library file (outside project)",

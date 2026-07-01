@@ -1771,31 +1771,7 @@ impl LspState {
         {
             Ok(result) => {
                 tracing::debug!("Raw LSP hover response: {:?}", result);
-                // Parse the hover response
-                let (contents, is_markdown, range) = if result.is_null() {
-                    // No hover information available
-                    (String::new(), false, None)
-                } else {
-                    match serde_json::from_value::<lsp_types::Hover>(result) {
-                        Ok(hover) => {
-                            // Extract text from hover contents
-                            let (contents, is_markdown) =
-                                Self::extract_hover_contents(&hover.contents);
-                            // Extract the range if provided (tells us which symbol was hovered)
-                            let range = hover.range.map(|r| {
-                                (
-                                    (r.start.line, r.start.character),
-                                    (r.end.line, r.end.character),
-                                )
-                            });
-                            (contents, is_markdown, range)
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to parse hover response: {}", e);
-                            (String::new(), false, None)
-                        }
-                    }
-                };
+                let (contents, is_markdown, range) = Self::parse_hover_response(result);
 
                 // Send to main loop
                 let _ = self.async_tx.send(AsyncMessage::LspHover {
@@ -1816,6 +1792,50 @@ impl LspState {
                     range: None,
                 });
                 Err(e)
+            }
+        }
+    }
+
+    /// Decode a `textDocument/hover` response `Value` into the
+    /// `(contents, is_markdown, range)` triple the editor consumes.
+    ///
+    /// The LSP spec says a server with no hover info should answer
+    /// `null`, but some servers instead return an empty object `{}` — or,
+    /// more generally, an object with no `contents` field. slangd is one:
+    /// hovering a keyword or an attribute like `[numthreads]` yields `{}`
+    /// (sinelaw/fresh). `contents` is a required field on
+    /// `lsp_types::Hover`, so feeding `{}` straight to `from_value`
+    /// produces `missing field \`contents\``. Treating a missing
+    /// `contents` as "nothing to show here" — exactly like `null` — keeps
+    /// that routine outcome from surfacing as an ERROR-level parse
+    /// failure. An empty `contents` string means the same and is reported
+    /// as no-hover.
+    fn parse_hover_response(result: Value) -> (String, bool, Option<((u32, u32), (u32, u32))>) {
+        let no_contents = result
+            .as_object()
+            .is_some_and(|obj| !obj.contains_key("contents"));
+        if result.is_null() || no_contents {
+            return (String::new(), false, None);
+        }
+        match serde_json::from_value::<lsp_types::Hover>(result) {
+            Ok(hover) => {
+                let (contents, is_markdown) = Self::extract_hover_contents(&hover.contents);
+                // The range tells us which symbol was hovered.
+                let range = hover.range.map(|r| {
+                    (
+                        (r.start.line, r.start.character),
+                        (r.end.line, r.end.character),
+                    )
+                });
+                (contents, is_markdown, range)
+            }
+            Err(e) => {
+                // `contents` is present but the payload is still malformed.
+                // Hover is informational, so a broken response just means
+                // "no hover here" — log at debug rather than spamming ERROR
+                // for something the user can't act on.
+                tracing::debug!("Failed to parse hover response: {}", e);
+                (String::new(), false, None)
             }
         }
     }
@@ -6295,5 +6315,61 @@ mod tests {
             "shutdown from Error must advance state, got {:?}",
             final_state
         );
+    }
+
+    #[test]
+    fn hover_null_is_no_hover() {
+        let (contents, is_markdown, range) = LspState::parse_hover_response(Value::Null);
+        assert_eq!(contents, "");
+        assert!(!is_markdown);
+        assert_eq!(range, None);
+    }
+
+    #[test]
+    fn hover_empty_object_is_no_hover() {
+        // slangd returns `{}` (not `null`) when there is nothing to show,
+        // e.g. hovering a keyword or a `[numthreads]` attribute. `contents`
+        // is required on `lsp_types::Hover`, so this must be handled as
+        // no-hover instead of a `missing field \`contents\`` parse error.
+        let (contents, is_markdown, range) =
+            LspState::parse_hover_response(serde_json::json!({}));
+        assert_eq!(contents, "");
+        assert!(!is_markdown);
+        assert_eq!(range, None);
+    }
+
+    #[test]
+    fn hover_object_without_contents_is_no_hover() {
+        // A range but no `contents` field is likewise "nothing to show".
+        let (contents, ..) = LspState::parse_hover_response(serde_json::json!({
+            "range": { "start": { "line": 1, "character": 2 },
+                       "end":   { "line": 1, "character": 5 } }
+        }));
+        assert_eq!(contents, "");
+    }
+
+    #[test]
+    fn hover_markup_contents_parsed_with_range() {
+        // A well-formed slangd hover (MarkupContent + range).
+        let (contents, is_markdown, range) = LspState::parse_hover_response(serde_json::json!({
+            "contents": { "kind": "markdown", "value": "```\ntypedef float3 float3\n```" },
+            "range": { "start": { "line": 7, "character": 4 },
+                       "end":   { "line": 7, "character": 10 } }
+        }));
+        assert_eq!(contents, "```\ntypedef float3 float3\n```");
+        assert!(is_markdown);
+        assert_eq!(range, Some(((7, 4), (7, 10))));
+    }
+
+    #[test]
+    fn hover_malformed_contents_is_no_hover() {
+        // `contents` present but not a valid HoverContents shape: still a
+        // graceful no-hover, logged at debug rather than ERROR.
+        let (contents, is_markdown, range) = LspState::parse_hover_response(serde_json::json!({
+            "contents": 42
+        }));
+        assert_eq!(contents, "");
+        assert!(!is_markdown);
+        assert_eq!(range, None);
     }
 }

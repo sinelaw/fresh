@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "Il buffer corrente non ha un file associato",
   "lsp.buffer_not_found": "Buffer non trovato",
   "lsp.cannot_open_definition": "Impossibile aprire la posizione della definizione",
+  "lsp.definition_external_uri": "La definizione si trova in una posizione esterna senza file sorgente locale: %{uri}",
   "lsp.cannot_rename_unsaved": "Impossibile rinominare in un buffer non salvato",
   "lsp.code_action_applied": "Applicato: %{title} (%{count} modifiche)",
   "lsp.code_action_hint": "Premi un numero per selezionare, Esc per annullare",

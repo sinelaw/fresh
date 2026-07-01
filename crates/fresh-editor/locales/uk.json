@@ -1091,6 +1091,7 @@
   "lsp.buffer_has_no_file": "Поточний буфер не пов'язаний з файлом",
   "lsp.buffer_not_found": "Буфер не знайдено",
   "lsp.cannot_open_definition": "Не вдалося відкрити розташування визначення",
+  "lsp.definition_external_uri": "Визначення розташоване у зовнішньому місці без локального вихідного файлу: %{uri}",
   "lsp.cannot_rename_unsaved": "Неможливо перейменувати в незбереженому буфері",
   "lsp.code_action_applied": "Застосовано: %{title} (%{count} змін)",
   "lsp.code_action_hint": "Натисніть цифру для вибору, Esc для скасування",
