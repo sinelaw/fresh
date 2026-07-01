@@ -295,7 +295,7 @@ fn discover_sessions(
             .unwrap_or_default();
         found.push((root, label, plugin_state, authority_spec));
     }
-    found.sort_by(|a, b| canonical_key(&a.0).cmp(&canonical_key(&b.0)));
+    found.sort_by_key(|a| canonical_key(&a.0));
     found
         .into_iter()
         .enumerate()

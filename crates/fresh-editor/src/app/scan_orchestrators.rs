@@ -116,8 +116,7 @@ impl Editor {
                     .get(&active_id)
                     .expect("active window present")
                     .line_scan
-                    .leaves()[chunk.leaf_index]
-                    .clone();
+                    .leaves()[chunk.leaf_index];
                 let leaf = &leaf;
 
                 let win = self.windows.get(&active_id).expect("active window present");

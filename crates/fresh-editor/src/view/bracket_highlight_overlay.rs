@@ -409,7 +409,7 @@ impl BracketHighlightOverlay {
         viewport_end: usize,
         skip_ranges: &[Range<usize>],
     ) -> bool {
-        if viewport_start >= viewport_end || buffer.len() == 0 {
+        if viewport_start >= viewport_end || buffer.is_empty() {
             return self.clear_colorization(overlays, marker_list);
         }
 

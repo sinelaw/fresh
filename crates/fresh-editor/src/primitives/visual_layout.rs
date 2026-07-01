@@ -411,7 +411,7 @@ pub fn wrap_str_to_width(text: &str, wrap_width: usize) -> Vec<Range<usize>> {
         if text_len > chunk_start_byte
             && text_len >= floor_byte
             && text_len <= slice_end_hard
-            && best_target_byte.map_or(true, |b| text_len > b)
+            && best_target_byte.is_none_or(|b| text_len > b)
         {
             best_target_byte = Some(text_len);
         }

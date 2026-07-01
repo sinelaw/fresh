@@ -66,8 +66,7 @@ impl Editor {
             self.active_buffer()
         } else {
             // Create new buffer ID
-            let id = self.alloc_buffer_id();
-            id
+            self.alloc_buffer_id()
         };
 
         // Get file size for status message before loading

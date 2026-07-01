@@ -3016,7 +3016,7 @@ impl TextBuffer {
         }
 
         // Get some text before pos
-        let start = pos.saturating_sub(256).max(0);
+        let start = pos.saturating_sub(256);
         let Some(bytes) = self.get_text_range(start, pos - start) else {
             // Data unloaded, return pos as fallback
             return pos;

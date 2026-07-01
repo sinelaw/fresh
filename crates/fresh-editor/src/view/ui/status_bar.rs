@@ -1242,15 +1242,13 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::CustomToken(key) => {
-                if let Some(value) = ctx.dynamic_status_bar_elements.get(key) {
-                    Some(RenderedElement {
+                ctx.dynamic_status_bar_elements
+                    .get(key)
+                    .map(|value| RenderedElement {
                         text: value.clone(),
                         kind: ElementKind::Custom,
                         token_key: Some(key.clone()),
                     })
-                } else {
-                    None // Skip rendering if no value set
-                }
             }
         }
     }

@@ -300,7 +300,7 @@ impl Editor {
 
         // Read cursor state from split view state
         let cursors = self.active_cursors();
-        let old_cursor = cursors.primary().clone();
+        let old_cursor = *cursors.primary();
         let cursor_id = cursors.primary_id();
         let old_position = cursors.primary().position;
         let old_anchor = cursors.primary().anchor;

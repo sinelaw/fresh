@@ -4014,7 +4014,7 @@ impl Editor {
                 // Synthetic, window-derived request id (well clear of the
                 // low-numbered JS callback ids) so the in-flight/cancel
                 // tracking works and a repeated switch doesn't double-connect.
-                let request_id = u64::MAX - window_id.0 as u64;
+                let request_id = u64::MAX - window_id.0;
                 if self.remote_attach_inflight.contains(&request_id) {
                     return;
                 }

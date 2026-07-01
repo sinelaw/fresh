@@ -625,7 +625,7 @@ impl Editor {
         // Find the index of the current keybinding map
         let current_index = all_maps
             .iter()
-            .position(|name| name.to_string() == current_map)
+            .position(|name| *name == current_map)
             .unwrap_or(0);
 
         let suggestions: Vec<crate::input::commands::Suggestion> = all_maps

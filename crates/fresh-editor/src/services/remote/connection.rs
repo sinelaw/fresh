@@ -521,8 +521,7 @@ async fn read_ssh_stderr(stderr: Option<ChildStderr>) -> Option<String> {
     buf.trim()
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
+        .rfind(|line| !line.is_empty())
         .map(str::to_string)
 }
 
