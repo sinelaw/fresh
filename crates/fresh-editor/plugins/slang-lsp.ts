@@ -79,6 +79,24 @@ editor.registerLspUriScheme(SCHEME);
 editor.on("lsp_open_external_uri", async (data: LspOpenExternalUriData) => {
   if (data.scheme !== SCHEME) return; // not ours
 
+  // The builtin-module cache is host-side: `getDataDir`/`fileExists`/
+  // `createDir` and `stdoutTo` all resolve on the host, while `openFile`
+  // reads through the active window's authority filesystem. On the local
+  // authority those are the same filesystem, so this is consistent. On a
+  // remote/SSH/container authority they diverge — the dump lands host-side
+  // but `openFile` would look for it on the remote — so caching + opening
+  // can't line up without an authority-aware write, which the plugin API
+  // doesn't expose. Rather than open a phantom empty buffer, bail with a
+  // clear message on non-local authorities. (Highlighted builtin
+  // navigation over a remote authority needs a core primitive that opens
+  // in-memory content with a syntax language; tracked as follow-up.)
+  if (editor.getAuthorityLabel() !== "") {
+    editor.setStatus(
+      "slang-lsp: opening builtin modules is only supported on the local authority"
+    );
+    return;
+  }
+
   const module = moduleFromUri(data.uri);
   if (!module) {
     editor.setStatus(`slang-lsp: could not parse module from ${data.uri}`);
