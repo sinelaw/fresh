@@ -1069,7 +1069,16 @@ impl SettingsState {
 
         match event.code {
             KeyCode::Esc => {
-                // Check if current text field requires JSON validation
+                // A plain Text field: Esc cancels the in-progress edit and
+                // restores the pre-edit value (platform convention: Enter/Tab
+                // commit, Esc reverts). Previously Esc called stop_editing(),
+                // which *accepted* the edit, so there was no way to back out.
+                if self.is_editing_plain_text() {
+                    self.revert_editing();
+                    return InputResult::Consumed;
+                }
+                // Other editable controls (TextList/Map) keep their prior
+                // dismiss semantics; the JSON-validity gate only matters here.
                 if !self.can_exit_text_editing() {
                     return InputResult::Consumed;
                 }
@@ -1077,7 +1086,21 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Enter => {
-                self.text_add_item();
+                // A plain Text field: Enter accepts the typed value and exits
+                // edit mode (platform convention, matching the footer's "Enter"
+                // hint). Previously Enter ran text_add_item — a no-op for Text —
+                // so the user was trapped in edit mode with the following
+                // Tab/Esc/arrows appearing dead. TextList/Map keep Enter = add
+                // a row and stay in edit mode so the user can keep adding.
+                if self.is_editing_plain_text() {
+                    if self.can_exit_text_editing() {
+                        self.commit_text_edit();
+                        self.stop_editing();
+                    }
+                    // Invalid text stays in edit mode until fixed or Esc.
+                } else {
+                    self.text_add_item();
+                }
                 InputResult::Consumed
             }
             KeyCode::Char(c) => {

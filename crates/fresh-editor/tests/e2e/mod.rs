@@ -206,6 +206,7 @@ pub mod settings_quicklsp_entry_bug;
 pub mod settings_ruler_keyboard_nav;
 pub mod settings_save_error_popup;
 pub mod settings_scrolled_list_click;
+pub mod settings_text_field_esc_cancels;
 pub mod settings_text_input_focus;
 pub mod settings_tree_view;
 pub mod settings_ui_usability;

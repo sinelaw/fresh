@@ -198,6 +198,34 @@ pub struct SettingsState {
     /// and scrolling the body updates this so Up/Down resumes from the
     /// section the user is actually looking at.
     pub tree_cursor_section: Option<usize>,
+    /// Snapshot of a plain `Text` control taken when its edit began, so Esc
+    /// can revert an abandoned edit to exactly what it was. `None` whenever a
+    /// Text edit is not in progress. See [`Self::start_editing`] /
+    /// [`Self::revert_editing`].
+    text_edit_snapshot: Option<TextEditSnapshot>,
+}
+
+/// Pre-edit state of a plain `Text` setting, captured by `start_editing` and
+/// restored by `revert_editing` (the Esc path). Enter/Tab commit instead and
+/// clear it. Reverting has to undo not just the control's typed buffer but also
+/// the pending-change bookkeeping, since a mid-edit `on_value_changed` (e.g.
+/// from Delete) can flush the buffer into `pending_changes` before Esc.
+#[derive(Debug)]
+struct TextEditSnapshot {
+    /// JSON pointer of the edited setting (`current_item().path`).
+    path: String,
+    /// The control exactly as it was before the first keystroke.
+    control: SettingControl,
+    /// `item.modified` before the edit.
+    modified: bool,
+    /// `item.layer_source` before the edit.
+    layer_source: ConfigLayer,
+    /// `item.is_null` before the edit.
+    is_null: bool,
+    /// The `pending_changes` entry for `path` before the edit (`None` = absent).
+    pending: Option<serde_json::Value>,
+    /// Whether `path` was in `pending_deletions` before the edit.
+    was_pending_deletion: bool,
 }
 
 /// One row of the left-panel tree. Either a top-level category, or a section
@@ -325,6 +353,7 @@ impl SettingsState {
             expanded_categories: std::collections::HashSet::new(),
             categories_scroll: ScrollablePanel::new(),
             tree_cursor_section: None,
+            text_edit_snapshot: None,
         })
     }
 
@@ -2154,6 +2183,36 @@ impl SettingsState {
     }
 
     pub fn start_editing(&mut self) {
+        // Snapshot a plain Text field before mutating it, so Esc can revert an
+        // abandoned edit to its pre-edit value (Enter/Tab commit, Esc cancels).
+        // Only plain Text gets this treatment; TextList/Map/Json/DualList keep
+        // their own in-place dismiss semantics.
+        self.text_edit_snapshot = None;
+        let text_snap = self.current_item().and_then(|item| {
+            matches!(item.control, SettingControl::Text(_)).then(|| {
+                (
+                    item.path.clone(),
+                    item.control.clone(),
+                    item.modified,
+                    item.layer_source,
+                    item.is_null,
+                )
+            })
+        });
+        if let Some((path, control, modified, layer_source, is_null)) = text_snap {
+            let pending = self.pending_changes.get(&path).cloned();
+            let was_pending_deletion = self.pending_deletions.contains(&path);
+            self.text_edit_snapshot = Some(TextEditSnapshot {
+                path,
+                control,
+                modified,
+                layer_source,
+                is_null,
+                pending,
+                was_pending_deletion,
+            });
+        }
+
         if let Some(item) = self.current_item() {
             if matches!(
                 item.control,
@@ -2207,9 +2266,12 @@ impl SettingsState {
         is_text
     }
 
-    /// Stop text editing mode
+    /// Stop text editing mode. This is the *accept* path — Enter, Tab, and
+    /// clicking away all land here and keep the typed value, so any pending
+    /// revert snapshot is dropped.
     pub fn stop_editing(&mut self) {
         self.editing_text = false;
+        self.text_edit_snapshot = None;
         if let Some(item) = self.current_item_mut() {
             match item.control {
                 SettingControl::DualList(ref mut dl) => {
@@ -2220,6 +2282,51 @@ impl SettingsState {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// True while editing a plain single-line `Text` field (not a
+    /// TextList/Map/Json/DualList). These get the platform edit convention:
+    /// Enter/Tab commit the typed value, Esc reverts it.
+    pub fn is_editing_plain_text(&self) -> bool {
+        self.editing_text
+            && matches!(
+                self.current_item().map(|item| &item.control),
+                Some(SettingControl::Text(_))
+            )
+    }
+
+    /// Cancel a plain `Text` edit, discarding what was typed and restoring the
+    /// field to its pre-edit state — the Esc path, matching the Windows/macOS/
+    /// web convention where Esc reverts an edit while Enter/Tab commit it.
+    /// Restores both the control's buffer and the pending-change bookkeeping
+    /// (in case a mid-edit `on_value_changed` already flushed the buffer). With
+    /// no snapshot (a non-Text control), this just exits edit mode cleanly.
+    pub fn revert_editing(&mut self) {
+        self.editing_text = false;
+        let Some(snap) = self.text_edit_snapshot.take() else {
+            return;
+        };
+        if let Some(item) = self.current_item_mut() {
+            item.control = snap.control;
+            item.modified = snap.modified;
+            item.layer_source = snap.layer_source;
+            item.is_null = snap.is_null;
+        }
+        // Restore pending_changes / pending_deletions for this path to exactly
+        // what they were before the edit began.
+        match snap.pending {
+            Some(value) => {
+                self.pending_changes.insert(snap.path.clone(), value);
+            }
+            None => {
+                self.pending_changes.remove(&snap.path);
+            }
+        }
+        if snap.was_pending_deletion {
+            self.pending_deletions.insert(snap.path);
+        } else {
+            self.pending_deletions.remove(&snap.path);
         }
     }
 
