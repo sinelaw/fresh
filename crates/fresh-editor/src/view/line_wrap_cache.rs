@@ -449,6 +449,7 @@ impl WrapGeometry {
 ///   2. `apply_soft_breaks` (Compose mode, when any soft breaks overlap)
 ///   3. `apply_conceal_ranges` (Compose mode, when any conceals overlap)
 ///   4. `apply_wrapping_transform`
+///
 /// followed by `ViewLineIterator::collect()` to materialise the
 /// `Vec<ViewLine>`.
 ///

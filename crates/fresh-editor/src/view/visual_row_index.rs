@@ -19,11 +19,12 @@
 //!     prefix_sums[N] = total visual rows
 //!     line_starts[N] = buffer length (sentinel)
 //!
-//! Population: derived from `LineWrapCache`. Each entry `prefix_sums[i+1]
-//! - prefix_sums[i]` equals `cache_entry.len()` for line `i`. On a miss
-//! the build path falls through to `compute_line_layout` (same miss
-//! handler the per-line cache uses), so the row counts always match the
-//! pipeline output. No second wrap implementation; no drift.
+//! Population: derived from `LineWrapCache`. Each entry
+//! `prefix_sums[i+1] - prefix_sums[i]` equals `cache_entry.len()` for
+//! line `i`. On a miss the build path falls through to
+//! `compute_line_layout` (same miss handler the per-line cache uses),
+//! so the row counts always match the pipeline output. No second wrap
+//! implementation; no drift.
 //!
 //! Invalidation: keyed on the same pipeline-input version + geometry
 //! that determines per-line row counts. Any version bump or width /

@@ -1205,6 +1205,7 @@ pub struct EditorConfig {
     /// - `all`: draw every indentation level in leading whitespace.
     /// - `active`: draw only the innermost guide for the cursor's current
     ///   indentation block.
+    ///
     /// Default: none
     #[serde(default)]
     #[schemars(extend("x-section" = "Display"))]

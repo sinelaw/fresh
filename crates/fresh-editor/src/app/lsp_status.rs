@@ -52,14 +52,14 @@ fn centered(s: &str) -> String {
 /// in `status_bar::element_style`; the text is what's rendered inside the
 /// segment.  Priority:
 ///
-///   0. Buffer-level skip (large file, binary, per-buffer toggle)
-///                     — "LSP (n/a)",              state = OffDismissed
-///   1. Progress       — detailed progress string, state = On
-///   2. Error          — "LSP (error)",            state = Error
-///   3. Running        — "LSP (on)",               state = On
-///   4. Configured-but-not-running (either auto_start or opt-in dormant)
-///                     — "LSP (off)",              state = Off / OffDismissed
-///   5. Nothing        — empty,                    state = None
+///     0. Buffer-level skip (large file, binary, per-buffer toggle)
+///                       — "LSP (n/a)",              state = OffDismissed
+///     1. Progress       — detailed progress string, state = On
+///     2. Error          — "LSP (error)",            state = Error
+///     3. Running        — "LSP (on)",               state = On
+///     4. Configured-but-not-running (either auto_start or opt-in dormant)
+///                       — "LSP (off)",              state = Off / OffDismissed
+///     5. Nothing        — empty,                    state = None
 ///
 /// The buffer-level skip only wins over running language state: showing
 /// "LSP (on)" while LSP is actively skipping this buffer (e.g. rust-

@@ -23,8 +23,8 @@ use crate::view::line_wrap_cache::CacheViewMode;
 use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
-/// sync with the real gutter sizing in the render path (indicator + digits
-/// + separator) — see `Viewport::gutter_width`, which uses the same
+/// sync with the real gutter sizing in the render path (indicator +
+/// digits + separator) — see `Viewport::gutter_width`, which uses the same
 /// formula with `MIN_LINE_NUMBER_DIGITS` as the floor.  Returns 0 when
 /// `show_line_numbers` is false (compose mode etc.) — the renderer's
 /// `state.margins.left_total_width()` returns 0 there too, and any

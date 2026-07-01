@@ -2546,12 +2546,11 @@ fn render_completion_bottom_border(total_cols: usize) -> TextPropertyEntry {
     }
 }
 
-/// Overlay variant of `render_completion_item`. Same body
-/// (leading space + candidate text + optional scrollbar glyph
-/// + trailing pad), but wrapped with the popup's own
-/// `│ ... │` chrome since overlay rows paint at the panel
-/// width directly without going through a `LabeledSection`'s
-/// row wrapper.
+/// Overlay variant of `render_completion_item`. Same body (leading
+/// space + candidate text + optional scrollbar glyph + trailing pad),
+/// but wrapped with the popup's own `│ ... │` chrome since overlay rows
+/// paint at the panel width directly without going through a
+/// `LabeledSection`'s row wrapper.
 fn render_completion_item_overlay(
     item: &str,
     kind: Option<&str>,
