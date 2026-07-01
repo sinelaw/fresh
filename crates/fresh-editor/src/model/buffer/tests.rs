@@ -17,9 +17,14 @@ fn test_streaming_load_and_extend() {
     std::fs::write(tmp.path(), b"").unwrap();
 
     // Open the empty file via the normal threshold-based loader.
-    // Below the 1 MB threshold this takes the small-file path, which
-    // produces a Loaded buffer with `line_feed_cnt = Some(0)`.
-    let mut buf = TextBuffer::load_from_file(tmp.path(), 0, test_fs()).unwrap();
+    // Below the threshold this takes the small-file path, which produces a
+    // Loaded buffer with `line_feed_cnt = Some(0)`.
+    let mut buf = TextBuffer::load_from_file(
+        tmp.path(),
+        crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        test_fs(),
+    )
+    .unwrap();
     assert_eq!(buf.total_bytes(), 0);
     assert_eq!(buf.line_count(), Some(1)); // empty doc = 1 line
 
@@ -388,15 +393,20 @@ mod large_file_support {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("small.txt");
 
-        // Create a small file (10 bytes < 100MB threshold)
+        // Create a small file (10 bytes, well under the threshold)
         let test_data = b"hello\ntest";
         File::create(&file_path)
             .unwrap()
             .write_all(test_data)
             .unwrap();
 
-        // Load with default threshold
-        let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
+        // Load with the default threshold
+        let buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
 
         // Should be eagerly loaded (not large_file mode)
         assert!(!buffer.file_kind.is_large_file());
@@ -420,7 +430,12 @@ mod large_file_support {
         let data = b"\x1b[31mhello\x00world\x7f\x1b[0m\n";
         File::create(&file_path).unwrap().write_all(data).unwrap();
 
-        let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
+        let buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
         assert!(
             buffer.is_binary(),
             "control bytes should trip binary detection on the normal load path"
@@ -438,7 +453,12 @@ mod large_file_support {
         let small = temp_dir.path().join("small.txt");
         let data = b"\x1b[31mhello\x00world\x7f\x1b[0m\n";
         File::create(&small).unwrap().write_all(data).unwrap();
-        let buffer = TextBuffer::load_from_file_force_text(&small, 0, test_fs()).unwrap();
+        let buffer = TextBuffer::load_from_file_force_text(
+            &small,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
         assert!(
             !buffer.is_binary(),
             "force_text small-file load must not flag the buffer binary"
@@ -568,7 +588,7 @@ mod large_file_support {
     }
 
     #[test]
-    fn test_large_file_default_threshold() {
+    fn test_small_file_under_threshold_not_large() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
 
@@ -578,10 +598,13 @@ mod large_file_support {
             .write_all(b"hello")
             .unwrap();
 
-        // Load with threshold 0 - should use DEFAULT_LARGE_FILE_THRESHOLD
-        let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
-
-        // 5 bytes < 100MB, so should not be large file
+        // A file well under the threshold loads eagerly (not large-file mode).
+        let buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
         assert!(!buffer.file_kind.is_large_file());
     }
 
@@ -617,8 +640,13 @@ mod large_file_support {
         // Create an empty file
         File::create(&file_path).unwrap();
 
-        // Load as large file
-        let buffer = TextBuffer::load_from_file(&file_path, 0, test_fs()).unwrap();
+        // Empty file, loaded via the normal threshold-based loader.
+        let buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
 
         // Empty file is handled gracefully
         assert_eq!(buffer.total_bytes(), 0);
@@ -1376,9 +1404,12 @@ mod line_ending_conversion {
         std::fs::write(&file_path, original_content).unwrap();
 
         // Load the file
-        let mut buffer =
-            TextBuffer::load_from_file(&file_path, DEFAULT_LARGE_FILE_THRESHOLD, test_fs())
-                .unwrap();
+        let mut buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
         assert_eq!(buffer.line_ending(), LineEnding::LF);
 
         // Change line ending to CRLF
@@ -1406,9 +1437,12 @@ mod line_ending_conversion {
         std::fs::write(&file_path, original_content).unwrap();
 
         // Load the file
-        let mut buffer =
-            TextBuffer::load_from_file(&file_path, DEFAULT_LARGE_FILE_THRESHOLD, test_fs())
-                .unwrap();
+        let mut buffer = TextBuffer::load_from_file(
+            &file_path,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        )
+        .unwrap();
         assert_eq!(buffer.line_ending(), LineEnding::CRLF);
 
         // Change line ending to LF
@@ -1574,21 +1608,6 @@ mod large_file_encoding_tests {
         assert!(Encoding::Gbk.requires_full_file_load());
         assert!(Encoding::ShiftJis.requires_full_file_load());
         assert!(Encoding::EucKr.requires_full_file_load());
-    }
-
-    #[test]
-    fn test_check_large_file_encoding_small_file() {
-        use tempfile::NamedTempFile;
-
-        // Create a small file (well under threshold)
-        let temp = NamedTempFile::new().unwrap();
-        std::fs::write(temp.path(), b"hello world").unwrap();
-
-        let result = TextBuffer::check_large_file_encoding(temp.path(), test_fs()).unwrap();
-        assert!(
-            result.is_none(),
-            "Small files should not require confirmation"
-        );
     }
 
     #[test]

@@ -9,7 +9,6 @@
 //! Must work instantly when loading a 1GB file and jumping to an arbitrary offset.
 //! This is achieved by only parsing the visible viewport (~50 lines), not the entire file.
 
-use crate::config::LARGE_FILE_THRESHOLD_BYTES;
 use crate::model::buffer::Buffer;
 use crate::view::theme::Theme;
 use fresh_languages::tree_sitter_highlight::{
@@ -19,8 +18,13 @@ pub use fresh_languages::{HighlightCategory, Language};
 use ratatui::style::Color;
 use std::ops::Range;
 
-/// Maximum bytes to parse in a single operation (for viewport highlighting)
-const MAX_PARSE_BYTES: usize = LARGE_FILE_THRESHOLD_BYTES as usize; // 1MB
+/// Maximum bytes to parse in a single operation (for viewport highlighting).
+///
+/// This is a highlighter-internal budget that bounds how much text tree-sitter
+/// parses per pass — a distinct concern from the large-file *loading* threshold
+/// (`editor.large_file_threshold_bytes`), so it has its own constant rather
+/// than tracking that setting.
+const MAX_PARSE_BYTES: usize = 1024 * 1024; // 1 MB
 
 /// Get the color for a highlight category from the theme
 pub fn highlight_color(category: HighlightCategory, theme: &Theme) -> Color {

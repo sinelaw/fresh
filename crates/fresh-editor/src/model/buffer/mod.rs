@@ -81,10 +81,12 @@ pub struct LineScanChunk {
 // search below (in-editor Ctrl+F and dirty buffers).
 pub use crate::model::filesystem::SearchMatch;
 
-// Large file support configuration
-/// Default threshold for considering a file "large" (100 MB)
-pub const DEFAULT_LARGE_FILE_THRESHOLD: usize = 100 * 1024 * 1024;
-
+// Large file support configuration.
+//
+// There is intentionally no threshold constant here: the large-file
+// threshold is the single `editor.large_file_threshold_bytes` setting
+// (default `crate::config::LARGE_FILE_THRESHOLD_BYTES`), which callers pass
+// into the load functions below.
 /// Chunk size to load when lazy loading (1 MB)
 pub const LOAD_CHUNK_SIZE: usize = 1024 * 1024;
 
@@ -420,15 +422,10 @@ impl TextBuffer {
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
 
-        // Use threshold parameter or default
-        let threshold = if large_file_threshold > 0 {
-            large_file_threshold
-        } else {
-            DEFAULT_LARGE_FILE_THRESHOLD
-        };
-
-        // Choose loading strategy based on file size
-        if file_size >= threshold {
+        // Choose loading strategy based on file size. `large_file_threshold`
+        // is the resolved `editor.large_file_threshold_bytes` setting, passed
+        // in by the caller — the single source of truth, no local default.
+        if file_size >= large_file_threshold {
             Self::load_large_file_internal(path, file_size, fs, false, force_text)
         } else {
             Self::load_small_file(path, fs, force_text)
@@ -484,50 +481,6 @@ impl TextBuffer {
         }
         // Note: line_ending and encoding are already set by from_bytes/from_bytes_raw
         Ok(buffer)
-    }
-
-    /// Check if loading a large file requires user confirmation due to encoding.
-    ///
-    /// Some encodings (like Shift-JIS, GB18030, GBK, EUC-KR) cannot be "resynchronized" -
-    /// meaning you cannot determine character boundaries when jumping into the middle
-    /// of a file. These encodings require loading the entire file into memory.
-    ///
-    /// Returns `Some(confirmation)` if user confirmation is needed, `None` if the file
-    /// can be loaded with lazy/streaming loading.
-    pub fn check_large_file_encoding(
-        path: impl AsRef<Path>,
-        fs: Arc<dyn FileSystem + Send + Sync>,
-    ) -> anyhow::Result<Option<LargeFileEncodingConfirmation>> {
-        let path = path.as_ref();
-        let metadata = fs.metadata(path)?;
-        let file_size = metadata.size as usize;
-
-        // Only check for large files
-        if file_size < DEFAULT_LARGE_FILE_THRESHOLD {
-            return Ok(None);
-        }
-
-        // Read a sample to detect encoding
-        let sample_size = file_size.min(8 * 1024);
-        let sample = fs.read_range(path, 0, sample_size)?;
-        let (encoding, is_binary) =
-            format::detect_encoding_or_binary(&sample, file_size > sample_size);
-
-        // Binary files don't need confirmation (loaded as-is)
-        if is_binary {
-            return Ok(None);
-        }
-
-        // Check if the encoding requires full file loading
-        if encoding.requires_full_file_load() {
-            return Ok(Some(LargeFileEncodingConfirmation {
-                path: path.to_path_buf(),
-                file_size,
-                encoding,
-            }));
-        }
-
-        Ok(None)
     }
 
     /// Load a large file, optionally forcing full load for non-resynchronizable encodings.

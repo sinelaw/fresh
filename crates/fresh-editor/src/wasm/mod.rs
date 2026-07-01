@@ -27,9 +27,6 @@ pub use crate::model::event::{Event, EventLog};
 pub use crate::model::filesystem::{FileSystem, NoopFileSystem, StdFileSystem};
 pub use crate::model::piece_tree::{PieceTree, Position};
 
-/// Default large file threshold for WASM (100MB)
-const LARGE_FILE_THRESHOLD: usize = 100 * 1024 * 1024;
-
 /// WASM-specific editor state
 ///
 /// This provides a simple wrapper around the core Buffer type
@@ -51,7 +48,13 @@ impl WasmEditor {
     pub fn with_content(content: &str) -> Self {
         let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(NoopFileSystem);
         Self {
-            buffer: Buffer::from_str(content, LARGE_FILE_THRESHOLD, fs),
+            // `from_str` builds an in-memory buffer and ignores the threshold;
+            // pass the single config default so no separate constant exists.
+            buffer: Buffer::from_str(
+                content,
+                crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+                fs,
+            ),
         }
     }
 

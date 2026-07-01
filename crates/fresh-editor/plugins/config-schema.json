@@ -127,7 +127,7 @@
         "highlight_timeout_ms": 5,
         "snapshot_interval": 100,
         "highlight_context_bytes": 10000,
-        "large_file_threshold_bytes": 1048576,
+        "large_file_threshold_bytes": 10485760,
         "estimated_line_length": 80,
         "read_concurrency": 64,
         "file_tree_poll_interval_ms": 3000
@@ -896,7 +896,7 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
-          "default": 1048576,
+          "default": 10485760,
           "x-section": "Performance"
         },
         "estimated_line_length": {

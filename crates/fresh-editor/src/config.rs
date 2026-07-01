@@ -1635,10 +1635,17 @@ fn default_tab_size() -> usize {
     4
 }
 
-/// Large file threshold in bytes
-/// Files larger than this will use optimized algorithms (estimation, viewport-only parsing)
-/// Files smaller will use exact algorithms (full line tracking, complete parsing)
-pub const LARGE_FILE_THRESHOLD_BYTES: u64 = 1024 * 1024; // 1MB
+/// The single source of truth for the large-file threshold: the default for
+/// the `editor.large_file_threshold_bytes` setting. Files at or above this
+/// size load lazily (chunked, no eager line index → byte-offset display) and
+/// skip LSP; smaller files load eagerly with full line tracking and viewport
+/// parsing.
+///
+/// This is the *only* threshold constant. Production code reads the resolved
+/// setting (`config.editor.large_file_threshold_bytes`), never this constant
+/// directly — it exists purely as the config default. (Tests may reference it
+/// for convenience.)
+pub const LARGE_FILE_THRESHOLD_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 
 fn default_large_file_threshold() -> u64 {
     LARGE_FILE_THRESHOLD_BYTES

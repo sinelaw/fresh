@@ -507,7 +507,7 @@ impl Editor {
         let mut state = crate::state::EditorState::new(
             80,
             24,
-            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            self.config.editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.authority().filesystem),
         );
         state.is_composite_buffer = true;
