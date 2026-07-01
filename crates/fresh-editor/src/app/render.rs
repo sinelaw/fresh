@@ -1677,10 +1677,10 @@ impl Editor {
                                         level = WarningLevel::Error;
                                         break;
                                     }
-                                    LspServerStatus::Starting | LspServerStatus::Initializing => {
-                                        if level != WarningLevel::Error {
-                                            level = WarningLevel::Warning;
-                                        }
+                                    LspServerStatus::Starting | LspServerStatus::Initializing
+                                        if level != WarningLevel::Error =>
+                                    {
+                                        level = WarningLevel::Warning;
                                     }
                                     _ => {}
                                 }

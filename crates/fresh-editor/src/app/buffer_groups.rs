@@ -659,11 +659,11 @@ impl super::Editor {
         // this, retargeting only updates focus state and the panel
         // keeps drawing the prior (now-empty) buffer.
         for node in self.active_window_mut().grouped_subtrees.values_mut() {
-            if let Some(found) = node.find_mut(panel_leaf.into()) {
-                if let crate::view::split::SplitNode::Leaf { buffer_id, .. } = found {
-                    *buffer_id = new_buffer_id;
-                    break;
-                }
+            if let Some(crate::view::split::SplitNode::Leaf { buffer_id, .. }) =
+                node.find_mut(panel_leaf.into())
+            {
+                *buffer_id = new_buffer_id;
+                break;
             }
         }
 

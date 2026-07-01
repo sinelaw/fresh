@@ -2324,15 +2324,13 @@ impl SettingsState {
             match &mut item.control {
                 SettingControl::TextList(state) => state.backspace(),
                 SettingControl::Text(state) => state.backspace(),
-                SettingControl::Map(state) => {
-                    if state.cursor > 0 {
-                        let mut char_start = state.cursor - 1;
-                        while char_start > 0 && !state.new_key_text.is_char_boundary(char_start) {
-                            char_start -= 1;
-                        }
-                        state.new_key_text.remove(char_start);
-                        state.cursor = char_start;
+                SettingControl::Map(state) if state.cursor > 0 => {
+                    let mut char_start = state.cursor - 1;
+                    while char_start > 0 && !state.new_key_text.is_char_boundary(char_start) {
+                        char_start -= 1;
                     }
+                    state.new_key_text.remove(char_start);
+                    state.cursor = char_start;
                 }
                 SettingControl::Json(state) => state.backspace(),
                 _ => {}
@@ -2346,14 +2344,12 @@ impl SettingsState {
             match &mut item.control {
                 SettingControl::TextList(state) => state.move_left(),
                 SettingControl::Text(state) => state.move_left(),
-                SettingControl::Map(state) => {
-                    if state.cursor > 0 {
-                        let mut new_pos = state.cursor - 1;
-                        while new_pos > 0 && !state.new_key_text.is_char_boundary(new_pos) {
-                            new_pos -= 1;
-                        }
-                        state.cursor = new_pos;
+                SettingControl::Map(state) if state.cursor > 0 => {
+                    let mut new_pos = state.cursor - 1;
+                    while new_pos > 0 && !state.new_key_text.is_char_boundary(new_pos) {
+                        new_pos -= 1;
                     }
+                    state.cursor = new_pos;
                 }
                 SettingControl::Json(state) => state.move_left(),
                 _ => {}
@@ -2367,16 +2363,14 @@ impl SettingsState {
             match &mut item.control {
                 SettingControl::TextList(state) => state.move_right(),
                 SettingControl::Text(state) => state.move_right(),
-                SettingControl::Map(state) => {
-                    if state.cursor < state.new_key_text.len() {
-                        let mut new_pos = state.cursor + 1;
-                        while new_pos < state.new_key_text.len()
-                            && !state.new_key_text.is_char_boundary(new_pos)
-                        {
-                            new_pos += 1;
-                        }
-                        state.cursor = new_pos;
+                SettingControl::Map(state) if state.cursor < state.new_key_text.len() => {
+                    let mut new_pos = state.cursor + 1;
+                    while new_pos < state.new_key_text.len()
+                        && !state.new_key_text.is_char_boundary(new_pos)
+                    {
+                        new_pos += 1;
                     }
+                    state.cursor = new_pos;
                 }
                 SettingControl::Json(state) => state.move_right(),
                 _ => {}

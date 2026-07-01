@@ -1600,27 +1600,23 @@ fn handle_edit_dialog_input(
                     dialog.focus_area = 1;
                     dialog.mode = EditMode::EditingAction;
                 }
-                (KeyCode::Left, _) => {
-                    if dialog.context_option_index > 0 {
-                        dialog.context_option_index -= 1;
-                        dialog.context =
-                            dialog.context_options[dialog.context_option_index].clone();
-                        // Update conflicts
-                        if let Some(key_code) = dialog.key_code {
-                            dialog.conflicts =
-                                editor.find_conflicts(key_code, dialog.modifiers, &dialog.context);
-                        }
+                (KeyCode::Left, _) if dialog.context_option_index > 0 => {
+                    dialog.context_option_index -= 1;
+                    dialog.context = dialog.context_options[dialog.context_option_index].clone();
+                    // Update conflicts
+                    if let Some(key_code) = dialog.key_code {
+                        dialog.conflicts =
+                            editor.find_conflicts(key_code, dialog.modifiers, &dialog.context);
                     }
                 }
-                (KeyCode::Right, _) => {
-                    if dialog.context_option_index + 1 < dialog.context_options.len() {
-                        dialog.context_option_index += 1;
-                        dialog.context =
-                            dialog.context_options[dialog.context_option_index].clone();
-                        if let Some(key_code) = dialog.key_code {
-                            dialog.conflicts =
-                                editor.find_conflicts(key_code, dialog.modifiers, &dialog.context);
-                        }
+                (KeyCode::Right, _)
+                    if dialog.context_option_index + 1 < dialog.context_options.len() =>
+                {
+                    dialog.context_option_index += 1;
+                    dialog.context = dialog.context_options[dialog.context_option_index].clone();
+                    if let Some(key_code) = dialog.key_code {
+                        dialog.conflicts =
+                            editor.find_conflicts(key_code, dialog.modifiers, &dialog.context);
                     }
                 }
                 (KeyCode::Enter, _) => {
@@ -1657,15 +1653,11 @@ fn handle_edit_dialog_input(
                     dialog.focus_area = 2;
                     dialog.mode = EditMode::EditingContext;
                 }
-                (KeyCode::Left, _) => {
-                    if dialog.selected_button > 0 {
-                        dialog.selected_button -= 1;
-                    }
+                (KeyCode::Left, _) if dialog.selected_button > 0 => {
+                    dialog.selected_button -= 1;
                 }
-                (KeyCode::Right, _) => {
-                    if dialog.selected_button < 1 {
-                        dialog.selected_button += 1;
-                    }
+                (KeyCode::Right, _) if dialog.selected_button < 1 => {
+                    dialog.selected_button += 1;
                 }
                 (KeyCode::Enter, _) => {
                     if dialog.selected_button == 0 {

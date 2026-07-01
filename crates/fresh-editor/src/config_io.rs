@@ -161,11 +161,9 @@ fn find_changed_paths_recursive(
                 find_changed_paths_recursive(old_val, new_val, path, changed);
             }
         }
-        (old_val, new_val) if old_val != new_val => {
-            // Leaf values differ - mark as changed
-            if !prefix.is_empty() {
-                changed.insert(prefix);
-            }
+        // Leaf values differ - mark as changed (skip the empty root prefix)
+        (old_val, new_val) if old_val != new_val && !prefix.is_empty() => {
+            changed.insert(prefix);
         }
         _ => {} // Values are equal, no change
     }

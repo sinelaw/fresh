@@ -654,7 +654,8 @@ impl Editor {
                     // would do). Falls back to `activate` for trees
                     // that aren't checkable, or rows that don't have
                     // a checkbox glyph (`checked: None`).
-                    if !self.fire_tree_toggle_if_checkable(panel_key, &focus_key) {
+                    let toggled = self.fire_tree_toggle_if_checkable(panel_key, &focus_key);
+                    if !toggled {
                         self.fire_tree_activate(panel_key, &focus_key);
                     }
                 }

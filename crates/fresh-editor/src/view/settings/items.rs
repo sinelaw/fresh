@@ -392,13 +392,9 @@ impl SettingControl {
                 (base + expanded_height) as u16
             }
             // Dropdown needs extra height when open to show options
-            Self::Dropdown(state) => {
-                if state.open {
-                    // 1 for label/button + number of options (max 8 visible)
-                    1 + state.options.len().min(8) as u16
-                } else {
-                    1
-                }
+            Self::Dropdown(state) if state.open => {
+                // 1 for label/button + number of options (max 8 visible)
+                1 + state.options.len().min(8) as u16
             }
             // KeybindingList needs: 1 label + bindings + 1 add-new row
             Self::ObjectArray(state) => {

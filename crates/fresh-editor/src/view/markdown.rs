@@ -515,11 +515,11 @@ pub fn parse_markdown(
                         style_stack
                             .push(current.add_modifier(Modifier::UNDERLINED).fg(Color::Cyan));
                     }
-                    Tag::List(_) | Tag::Item => {
-                        // Start list items on new line
-                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
-                            lines.push(StyledLine::new());
-                        }
+                    // Start list items on a new line
+                    Tag::List(_) | Tag::Item
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) =>
+                    {
+                        lines.push(StyledLine::new());
                     }
                     Tag::Paragraph => {
                         // Start paragraphs on new line if we have any prior content.
