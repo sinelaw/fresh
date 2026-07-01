@@ -6332,8 +6332,7 @@ mod tests {
         // e.g. hovering a keyword or a `[numthreads]` attribute. `contents`
         // is required on `lsp_types::Hover`, so this must be handled as
         // no-hover instead of a `missing field \`contents\`` parse error.
-        let (contents, is_markdown, range) =
-            LspState::parse_hover_response(serde_json::json!({}));
+        let (contents, is_markdown, range) = LspState::parse_hover_response(serde_json::json!({}));
         assert_eq!(contents, "");
         assert!(!is_markdown);
         assert_eq!(range, None);
