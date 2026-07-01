@@ -137,20 +137,17 @@ impl SettingsState {
             .map(|d| d.is_editing_json())
             .unwrap_or(false);
 
-        // Check validation first before borrowing dialog mutably
-        let can_exit = self.entry_dialog_can_exit_text_editing();
-
         let Some(dialog) = self.entry_dialog_mut() else {
             return InputResult::Consumed;
         };
 
         match event.code {
             KeyCode::Esc => {
-                // Escape accepts changes (same as Tab) - exit editing mode
-                if !can_exit {
-                    // If validation fails, just stop editing anyway (accept whatever is there)
-                }
-                dialog.stop_editing();
+                // Escape cancels the in-progress field edit and restores the
+                // pre-edit value — the platform convention (Enter/Tab commit,
+                // Esc reverts). JSON validity doesn't matter here: we're
+                // throwing the edit away regardless.
+                dialog.revert_editing();
             }
             KeyCode::Enter => {
                 if is_editing_json {

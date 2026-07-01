@@ -141,6 +141,26 @@ pub struct EntryDialogState {
     /// with no global fallback) it's labelled `[Clear]`, since null just unsets
     /// the value rather than inheriting one. Empty means "nothing inherits".
     pub inheritable_fields: HashSet<String>,
+    /// Snapshot of the field being text-edited, captured the moment editing
+    /// begins (before `start_editing` mutates the control). Esc restores it so
+    /// an in-progress edit is discarded — the platform convention where Enter
+    /// and Tab commit a field while Esc cancels it. `None` whenever no edit is
+    /// in flight.
+    edit_snapshot: Option<FieldEditSnapshot>,
+}
+
+/// Pre-edit state of a single dialog field, used to revert an abandoned edit.
+/// Cloning the whole control covers every editable kind uniformly (Text,
+/// Number, TextList, Json) — each restores its exact text/value, cursor, and
+/// buffers. `is_null` and the dialog-level `user_edited` flag are captured too
+/// so reverting also undoes the "field is now set / dialog is dirty" side
+/// effects that typing triggered via `mark_field_edited`.
+#[derive(Debug, Clone)]
+struct FieldEditSnapshot {
+    item_index: usize,
+    control: SettingControl,
+    is_null: bool,
+    user_edited: bool,
 }
 
 impl EntryDialogState {
@@ -246,6 +266,7 @@ impl EntryDialogState {
             user_edited: false,
             field_button_focus: None,
             inheritable_fields: HashSet::new(),
+            edit_snapshot: None,
         };
         // Pre-focus the first item in any ObjectArray controls so pressing
         // Enter opens the item editor instead of "Add new".
@@ -326,6 +347,7 @@ impl EntryDialogState {
             user_edited: false,
             field_button_focus: None,
             inheritable_fields: HashSet::new(),
+            edit_snapshot: None,
         }
     }
 
@@ -1217,6 +1239,30 @@ impl EntryDialogState {
 
     /// Start text editing mode for the current control
     pub fn start_editing(&mut self) {
+        // Snapshot the field *before* mutating it, so Esc can revert an
+        // abandoned edit to exactly what it was. Only the editable text
+        // controls below enter edit mode, so only those are worth snapshotting.
+        if !self.focus_on_buttons {
+            if let Some(item) = self.items.get(self.selected_item) {
+                if item.read_only {
+                    return;
+                }
+                if matches!(
+                    item.control,
+                    SettingControl::Text(_)
+                        | SettingControl::TextList(_)
+                        | SettingControl::Number(_)
+                        | SettingControl::Json(_)
+                ) {
+                    self.edit_snapshot = Some(FieldEditSnapshot {
+                        item_index: self.selected_item,
+                        control: item.control.clone(),
+                        is_null: item.is_null,
+                        user_edited: self.user_edited,
+                    });
+                }
+            }
+        }
         if let Some(item) = self.current_item_mut() {
             // Don't allow editing read-only fields
             if item.read_only {
@@ -1254,33 +1300,52 @@ impl EntryDialogState {
         }
     }
 
-    /// Stop text editing mode
+    /// Commit text editing mode. This is the *accept* path — Enter, Tab, and
+    /// clicking away (blur) all land here, following the platform convention
+    /// that those gestures keep the typed value. Esc takes `revert_editing`
+    /// instead.
     pub fn stop_editing(&mut self) {
         if let Some(item) = self.current_item_mut() {
             match &mut item.control {
-                // Enter/Tab/Esc all *accept* the field in this dialog (see the
-                // input handler), exactly like a Text field keeps its typed
-                // value. A number's typed digits live in a separate edit buffer
-                // that only flushes into `value` on confirm; cancelling here
-                // dropped them, so every tab-size / page-width edit reverted to
-                // the old value on commit. Confirm so the typed value sticks.
+                // A number's typed digits live in a separate edit buffer that
+                // only flushes into `value` on confirm; without this every
+                // tab-size / page-width edit reverted to the old value on
+                // commit. Confirm so the typed value sticks.
                 SettingControl::Number(state) => state.confirm_editing(),
                 SettingControl::Text(state) => state.editing = false,
-                // Cancelling on a pending list row (the trailing
-                // [+] add-new slot) discards whatever the user typed
-                // and collapses the row back to `[+] Add new`. Without
-                // this, Esc was a silent no-op that left the draft
-                // text dangling until the user committed or cleared it
-                // manually.
+                // On the trailing `[+] Add new` slot the pending draft has
+                // already been flushed to the list by the Enter/Tab handler;
+                // collapse the slot back to `[+] Add new`.
                 SettingControl::TextList(state) if state.focused_item.is_none() => {
                     state.cancel_pending();
                 }
-                // If the user opened a JSON field but didn't type
-                // anything (or deleted everything), put the `null`
-                // sentinel back so the value still round-trips as JSON.
+                // If the user opened a JSON field but didn't type anything (or
+                // deleted everything), put the `null` sentinel back so the
+                // value still round-trips as JSON.
                 SettingControl::Json(state) => state.restore_unset_if_empty(),
                 _ => {}
             }
+        }
+        // The edit was accepted — there is nothing left to revert.
+        self.edit_snapshot = None;
+        self.editing_text = false;
+    }
+
+    /// Cancel text editing mode, discarding the in-progress edit and restoring
+    /// the field to its pre-edit state. This is the Esc path — matching the
+    /// Windows/macOS/web convention where Esc reverts an edit while Enter and
+    /// Tab commit it. If no snapshot was captured (e.g. a control that mutates
+    /// nothing until commit), this still exits edit mode cleanly.
+    pub fn revert_editing(&mut self) {
+        if let Some(snap) = self.edit_snapshot.take() {
+            if let Some(item) = self.items.get_mut(snap.item_index) {
+                item.control = snap.control;
+                item.is_null = snap.is_null;
+            }
+            // Restore the dialog's dirty flag to what it was before this edit,
+            // so reverting the *only* change also drops the "unsaved" state
+            // while preserving edits made to other fields earlier.
+            self.user_edited = snap.user_edited;
         }
         self.editing_text = false;
     }
@@ -2088,5 +2153,209 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(no_delete_dialog.button_count(), 2); // Save, Cancel (no Delete)
+    }
+
+    // ---- Esc-reverts / Enter-commits field editing --------------------------
+
+    /// Build a single-property schema whose one field has the given type, so a
+    /// dialog can be driven straight to that control.
+    fn prop_schema(path: &str, name: &str, ty: SettingType) -> SettingSchema {
+        SettingSchema {
+            path: "/test".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            setting_type: SettingType::Object {
+                properties: vec![SettingSchema {
+                    path: path.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                    setting_type: ty,
+                    default: None,
+                    read_only: false,
+                    section: None,
+                    order: None,
+                    nullable: false,
+                    enum_from: None,
+                    dual_list_sibling: None,
+                    dynamically_extendable_status_bar_elements: false,
+                }],
+            },
+            default: None,
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: None,
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        }
+    }
+
+    /// Focus the field at `path` (leaving button focus), returning its index.
+    fn select_field(dialog: &mut EntryDialogState, path: &str) -> usize {
+        let idx = dialog
+            .items
+            .iter()
+            .position(|it| it.path == path)
+            .expect("field should exist");
+        dialog.selected_item = idx;
+        dialog.focus_on_buttons = false;
+        idx
+    }
+
+    /// Esc reverts a Text field to its original string; the edit is discarded.
+    #[test]
+    fn esc_reverts_text_field() {
+        let schema = prop_schema("/grammar", "Grammar", SettingType::String);
+        let mut dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({ "grammar": "typescript" }),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        let idx = select_field(&mut dialog, "/grammar");
+
+        dialog.start_editing();
+        dialog.insert_char('X');
+        dialog.insert_char('Y');
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!("typescriptXY"),
+            "sanity: the edit is applied live before reverting"
+        );
+
+        dialog.revert_editing();
+        assert!(!dialog.editing_text, "revert exits edit mode");
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!("typescript"),
+            "Esc must restore the original text"
+        );
+    }
+
+    /// Esc reverts a Number field to its original value (typed digits dropped).
+    #[test]
+    fn esc_reverts_number_field() {
+        let schema = prop_schema(
+            "/tab_size",
+            "Tab Size",
+            SettingType::Integer {
+                minimum: None,
+                maximum: None,
+            },
+        );
+        let mut dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({ "tab_size": 4 }),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        let idx = select_field(&mut dialog, "/tab_size");
+
+        dialog.start_editing();
+        dialog.insert_char('9'); // replaces the selected "4" in the edit buffer
+        dialog.revert_editing();
+
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!(4),
+            "Esc must restore the original number"
+        );
+    }
+
+    /// Esc reverts an in-place edit of an existing TextList item — the case the
+    /// old accept-on-Esc path silently kept.
+    #[test]
+    fn esc_reverts_textlist_item_edit() {
+        let schema = prop_schema("/extensions", "Extensions", SettingType::StringArray);
+        let mut dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({ "extensions": ["ts", "tsx"] }),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        let idx = select_field(&mut dialog, "/extensions");
+
+        // Put the control into "editing the first existing item" state.
+        if let SettingControl::TextList(state) = &mut dialog.items[idx].control {
+            state.focused_item = Some(0);
+            state.cursor = state.items[0].len();
+        }
+        dialog.start_editing();
+        dialog.insert_char('Z'); // "ts" -> "tsZ"
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!(["tsZ", "tsx"]),
+            "sanity: the item is mutated live before reverting"
+        );
+
+        dialog.revert_editing();
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!(["ts", "tsx"]),
+            "Esc must restore the original list items"
+        );
+    }
+
+    /// Esc reverts a JSON/object field (a language `formatter`) to its original.
+    #[test]
+    fn esc_reverts_json_field() {
+        let schema = prop_schema("/formatter", "Formatter", SettingType::Complex);
+        let mut dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({ "formatter": { "command": "prettier" } }),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        let idx = select_field(&mut dialog, "/formatter");
+
+        dialog.start_editing();
+        dialog.insert_char('X'); // corrupt the JSON text in the editor
+        dialog.revert_editing();
+
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!({ "command": "prettier" }),
+            "Esc must restore the original JSON value"
+        );
+    }
+
+    /// The commit path is unchanged: Enter/Tab (via `stop_editing`) keep the
+    /// typed value, so the two keys are genuinely distinct.
+    #[test]
+    fn stop_editing_commits_text_field() {
+        let schema = prop_schema("/grammar", "Grammar", SettingType::String);
+        let mut dialog = EntryDialogState::from_schema(
+            "k".to_string(),
+            &serde_json::json!({ "grammar": "typescript" }),
+            &schema,
+            "/test",
+            false,
+            false,
+            &HashMap::new(),
+        );
+        let idx = select_field(&mut dialog, "/grammar");
+
+        dialog.start_editing();
+        dialog.insert_char('X');
+        dialog.stop_editing();
+
+        assert_eq!(
+            control_to_value(&dialog.items[idx].control),
+            serde_json::json!("typescriptX"),
+            "Enter/Tab must keep the typed value"
+        );
     }
 }

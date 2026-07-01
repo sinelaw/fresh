@@ -83,6 +83,7 @@ pub mod issue_2405_brackets_in_comments;
 pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
+pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod suspend_process;
 
