@@ -31,8 +31,14 @@ use tempfile::TempDir;
 /// is what `DirectoryContext::for_testing` is rooted at; the editor's
 /// data dir is therefore `data_root/data`.
 struct Scenario {
+    // Held purely for their `Drop` guard: these `TempDir`s keep the on-disk
+    // directories alive for the test's lifetime. The tests navigate via the
+    // canonicalized paths below, so the handles themselves are never read.
+    #[allow(dead_code)]
     project: TempDir,
+    #[allow(dead_code)]
     worktree: TempDir,
+    #[allow(dead_code)]
     other: TempDir,
     data_root: TempDir,
     project_canon: PathBuf,

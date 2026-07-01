@@ -118,8 +118,11 @@ pub fn start() -> std::io::Result<&'static str> {
 struct BoundControl {
     req_rx: Receiver<LocalControlRequest>,
     waiters: Arc<Mutex<HashMap<u64, Sender<()>>>>,
-    /// Set to stop the accept thread. Held by the caller so the socket and
-    /// its thread live exactly as long as needed.
+    /// Set to stop the accept thread. Production (`start`) drops this and lets
+    /// the socket live for the whole process; only the tests hold it to shut
+    /// the accept thread down deterministically, so it reads as dead outside
+    /// `cfg(test)`.
+    #[cfg_attr(not(test), allow(dead_code))]
     shutdown: Arc<AtomicBool>,
 }
 

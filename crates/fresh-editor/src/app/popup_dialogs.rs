@@ -38,7 +38,7 @@ fn hard_wrap(text: &str, width: usize) -> Vec<String> {
     let mut cur = String::new();
     let mut cur_w = 0usize;
 
-    let mut push_word =
+    let push_word =
         |word: &str, lines: &mut Vec<String>, cur: &mut String, cur_w: &mut usize| {
             for c in word.chars() {
                 let w = ch_width(c);

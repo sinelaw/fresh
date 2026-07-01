@@ -451,14 +451,14 @@ enum PState {
     Sinking,
 }
 
-/// One painted cell turned into a physics particle. `home` is its original
-/// screen cell (area-local float coords); `pos`/`vel` evolve once its word
-/// is struck by the wave. `cell` carries the full visual (glyph, fg, bg,
-/// modifier) so chrome colors fly along with the text. `word` indexes the
-/// run of characters it belongs to — the unit that launches together.
+/// One painted cell turned into a physics particle. `home_x` is its original
+/// area-local column, kept for the surface/sway calculations; `pos`/`vel`
+/// evolve once its word is struck by the wave. `cell` carries the full visual
+/// (glyph, fg, bg, modifier) so chrome colors fly along with the text. `word`
+/// indexes the run of characters it belongs to — the unit that launches
+/// together.
 struct WaveParticle {
     home_x: f32,
-    home_y: f32,
     x: f32,
     y: f32,
     vx: f32,
@@ -588,7 +588,7 @@ impl WaveEffect {
         self.words.clear();
         for dy in 0..area.height {
             let mut run: Vec<usize> = Vec::new();
-            let mut close_run = |run: &mut Vec<usize>,
+            let close_run = |run: &mut Vec<usize>,
                                  particles: &mut Vec<WaveParticle>,
                                  words: &mut Vec<Word>| {
                 if run.is_empty() {
@@ -617,7 +617,6 @@ impl WaveEffect {
                 }
                 self.particles.push(WaveParticle {
                     home_x: dx as f32,
-                    home_y: dy as f32,
                     x: dx as f32,
                     y: dy as f32,
                     vx: 0.0,

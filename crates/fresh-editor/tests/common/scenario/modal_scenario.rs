@@ -21,7 +21,7 @@ use crate::common::scenario::context::PromptKind;
 use crate::common::scenario::failure::ScenarioFailure;
 use crate::common::scenario::input_event::InputEvent;
 use crate::common::scenario::observable::{ModalState, Observable, PopupSnapshot};
-use fresh::test_api::{Action, EditorTestApi};
+use fresh::test_api::Action;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ModalScenario {

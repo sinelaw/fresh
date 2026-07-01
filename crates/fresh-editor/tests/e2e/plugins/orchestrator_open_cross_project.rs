@@ -11,7 +11,6 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh_core::api::PluginCommand;
-use fresh_core::WindowId;
 use serde_json::Value;
 use std::path::Path;
 

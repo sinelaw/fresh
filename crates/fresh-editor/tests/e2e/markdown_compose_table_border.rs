@@ -845,7 +845,7 @@ fn test_wide_table_not_corrupted_by_rapid_delete_above() {
     let raw_pipe_lines = |s: &str| s.lines().filter(|l| l.contains('|')).count();
     let mut worst = 0usize;
     let mut worst_frame = String::new();
-    let mut record = |h: &EditorTestHarness, worst: &mut usize, wf: &mut String| {
+    let record = |h: &EditorTestHarness, worst: &mut usize, wf: &mut String| {
         let s = h.screen_to_string();
         let c = raw_pipe_lines(&s);
         if c > *worst {
