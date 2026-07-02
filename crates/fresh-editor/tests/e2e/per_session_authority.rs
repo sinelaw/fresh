@@ -420,14 +420,14 @@ fn switching_to_a_dormant_remote_session_starts_reconnect() -> anyhow::Result<()
 }
 
 #[test]
-fn a_failed_remote_reconnect_shows_failedattach_on_the_status_line() -> anyhow::Result<()> {
+fn a_failed_remote_reconnect_shows_disconnected_on_the_status_line() -> anyhow::Result<()> {
     // When a window's most recent remote reconnect fails, the `{remote}`
-    // status indicator must surface it as "Reconnect failed: <reason>" — the
-    // core, per-window counterpart to the plugin-driven FailedAttach override.
-    // Regression for the "show reconnect failures via the FailedAttach status
-    // indicator" fix: without the `remote_reconnect_error` derivation branch in
-    // `status_bar.rs` (and the value being threaded through `render.rs`), the
-    // indicator falls back to "Local" and the failure is invisible.
+    // status indicator must surface it — but as a short "Disconnected", not the
+    // full SSH error, which used to fill the whole bar. The reason is carried on
+    // the window (`remote_reconnect_error`, threaded through `render.rs`) and
+    // shown in the remote-indicator popup / warning log; the bar itself stays
+    // glanceable. Without the derivation branch in `status_bar.rs` the indicator
+    // would fall back to "Local" and the failure would be invisible.
     let temp = tempfile::tempdir()?;
     let mut harness = EditorTestHarness::create(
         120,
@@ -441,10 +441,12 @@ fn a_failed_remote_reconnect_shows_failedattach_on_the_status_line() -> anyhow::
     harness
         .editor_mut()
         .active_window_mut()
-        .remote_reconnect_error = Some("ssh connect failed".into());
+        .remote_reconnect_error =
+        Some("Agent failed to start: SSH could not connect (exit code 255)".into());
     harness.render()?;
 
-    harness.assert_screen_contains("Reconnect failed");
+    harness.assert_screen_contains("Disconnected");
+    harness.assert_screen_not_contains("Agent failed to start");
 
     Ok(())
 }

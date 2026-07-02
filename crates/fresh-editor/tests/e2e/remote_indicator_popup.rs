@@ -371,8 +371,9 @@ fn test_remote_indicator_popup_failed_attach_offers_retry() -> anyhow::Result<()
 /// A *live* remote-agent (SSH/kube) window whose backend dropped its carrier
 /// must offer a working **Reconnect** in the Remote Indicator popup — the
 /// status-bar surface for rebuilding the link (re-point authority, respawn the
-/// dead terminal). The row dispatches the core reconnect (`reconnect`), distinct
-/// from "Go Local" (`detach`).
+/// dead terminal). The row dispatches the core reconnect (`reconnect`). The
+/// old "Go Local" (`detach`) row must NOT be offered — it silently swapped the
+/// window's authority for the local one, stranding the open remote buffers.
 #[test]
 fn test_remote_indicator_popup_disconnected_remote_agent_offers_reconnect() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
@@ -415,11 +416,13 @@ fn test_remote_indicator_popup_disconnected_remote_agent_offers_reconnect() -> a
         "Reconnect must not be disabled. Row: {reconnect:?}"
     );
 
-    // "Go Local" is still offered as the escape hatch.
+    // "Go Local" (`detach`) must no longer be offered — it stranded open
+    // remote buffers on a mismatched local filesystem.
     assert!(
-        rows.iter()
-            .any(|(t, d, _)| t.contains("Go Local") && d.as_deref() == Some("detach")),
-        "Disconnected popup must still offer 'Go Local'. Rows: {rows:#?}"
+        !rows
+            .iter()
+            .any(|(t, d, _)| t.contains("Go Local") || d.as_deref() == Some("detach")),
+        "Disconnected popup must not offer 'Go Local'/detach. Rows: {rows:#?}"
     );
     Ok(())
 }

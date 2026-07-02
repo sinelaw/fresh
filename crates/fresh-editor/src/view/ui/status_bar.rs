@@ -1196,15 +1196,19 @@ impl StatusBarRenderer {
                 // derived states synthesize one from `remote_connection`.
                 let (text, state) = if let Some(over) = ctx.remote_state_override {
                     (over.label(), over.state())
-                } else if let Some(err) = ctx.remote_reconnect_error {
-                    // Core-driven FailedAttach for the active window's dormant
-                    // remote workspace whose reconnect failed. Takes precedence
-                    // over the connection-derived state (which would read
-                    // "Local", since the live authority is still the local
-                    // placeholder until a reconnect lands).
+                } else if ctx.remote_reconnect_error.is_some() {
+                    // A reconnect of the active window's remote workspace failed.
+                    // Keep the indicator short — just "Disconnected" — rather
+                    // than inlining the full SSH error, which used to swamp the
+                    // whole status bar. The detail isn't lost: it's emitted as a
+                    // `tracing::warn!` (which lights the warning indicator) and
+                    // surfaced in the remote-indicator popup. Takes precedence
+                    // over the connection-derived state (which for a dormant
+                    // workspace would read "Local", since the live authority is
+                    // still the local placeholder until a reconnect lands).
                     (
-                        format!("Reconnect failed: {err}"),
-                        RemoteIndicatorState::FailedAttach,
+                        "Disconnected".to_string(),
+                        RemoteIndicatorState::Disconnected,
                     )
                 } else {
                     match ctx.remote_connection {

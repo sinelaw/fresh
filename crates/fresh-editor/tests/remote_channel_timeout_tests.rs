@@ -513,7 +513,10 @@ fn test_auto_reconnect_task() {
         channel_clone,
         connect_fn,
         ReconnectConfig {
-            interval: Duration::from_millis(100), // Fast retry for tests
+            // Fast, non-backing-off retry for tests.
+            initial_interval: Duration::from_millis(100),
+            max_interval: Duration::from_millis(100),
+            poll_interval: Duration::from_millis(100),
         },
         "test",
     );

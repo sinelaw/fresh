@@ -284,21 +284,41 @@ impl Drop for SshConnection {
     }
 }
 
-/// Default interval between reconnection attempts.
-const DEFAULT_RECONNECT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+/// Delay before the *first* reconnection attempt after a drop, and the base the
+/// exponential backoff doubles from.
+const DEFAULT_RECONNECT_INITIAL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// Ceiling on the backoff delay between reconnection attempts. A host that stays
+/// down is retried at most this often rather than being hammered every few
+/// seconds forever.
+const DEFAULT_RECONNECT_MAX_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// How often to poll a live link for a drop.
+const DEFAULT_RECONNECT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Configuration for the reconnect task.
 pub struct ReconnectConfig {
-    /// How long to wait between reconnection attempts.
-    pub interval: std::time::Duration,
+    /// Delay before the first reconnection attempt after a drop, and the base
+    /// the exponential backoff doubles from.
+    pub initial_interval: std::time::Duration,
+    /// Upper bound on the backoff delay between successive failed attempts.
+    pub max_interval: std::time::Duration,
+    /// How often to poll `is_connected()` while the link is up, watching for a
+    /// drop.
+    pub poll_interval: std::time::Duration,
 }
 
 impl Default for ReconnectConfig {
     fn default() -> Self {
         Self {
-            interval: DEFAULT_RECONNECT_INTERVAL,
+            initial_interval: DEFAULT_RECONNECT_INITIAL_INTERVAL,
+            max_interval: DEFAULT_RECONNECT_MAX_INTERVAL,
+            poll_interval: DEFAULT_RECONNECT_POLL_INTERVAL,
         }
     }
+}
+
+/// Next backoff delay: double the current one, capped at `max`.
+fn next_backoff(current: std::time::Duration, max: std::time::Duration) -> std::time::Duration {
+    current.saturating_mul(2).min(max)
 }
 
 /// Spawn a background task that automatically reconnects when the channel
@@ -361,20 +381,23 @@ where
         loop {
             // Wait until disconnected
             while channel.is_connected() {
-                tokio::time::sleep(config.interval).await;
+                tokio::time::sleep(config.poll_interval).await;
             }
 
             tracing::info!("{label}: connection lost, attempting reconnection...");
 
-            // Retry loop
+            // Retry loop with exponential backoff. We start at `initial_interval`
+            // and double after each failed attempt up to `max_interval`, so a
+            // brief blip recovers quickly while a host that stays down settles
+            // into an unobtrusive ~max_interval retry cadence instead of a tight
+            // hammering loop.
+            let mut delay = config.initial_interval;
             loop {
-                tokio::time::sleep(config.interval).await;
+                tokio::time::sleep(delay).await;
 
-                // Check if channel was dropped (write_tx gone)
-                if !channel.is_connected() {
-                    // Still disconnected — try to reconnect
-                } else {
-                    // Something else reconnected us (e.g., manual replace_transport)
+                // Something else reconnected us (e.g., manual replace_transport)
+                // while we were sleeping — nothing left to do.
+                if channel.is_connected() {
                     break;
                 }
 
@@ -385,7 +408,11 @@ where
                         break;
                     }
                     Err(e) => {
-                        tracing::debug!("{label}: reconnection attempt failed: {e}");
+                        tracing::debug!(
+                            "{label}: reconnection attempt failed (next retry in {:?}): {e}",
+                            next_backoff(delay, config.max_interval)
+                        );
+                        delay = next_backoff(delay, config.max_interval);
                     }
                 }
             }
@@ -799,6 +826,42 @@ mod tests {
         // Empty user / empty host are still rejected.
         assert!(ConnectionParams::parse("@host").is_none());
         assert!(ConnectionParams::parse("user@").is_none());
+    }
+
+    #[test]
+    fn reconnect_backoff_doubles_and_caps() {
+        use std::time::Duration;
+
+        let max = Duration::from_secs(30);
+        // Starting from the default 1s base, the delay doubles each failed
+        // attempt: 1 → 2 → 4 → 8 → 16 → 30 (capped) → 30 …
+        let mut delay = Duration::from_secs(1);
+        let expected = [2, 4, 8, 16, 30, 30, 30];
+        for want in expected {
+            delay = next_backoff(delay, max);
+            assert_eq!(
+                delay,
+                Duration::from_secs(want),
+                "backoff should double toward, then hold at, the {max:?} cap"
+            );
+        }
+    }
+
+    #[test]
+    fn reconnect_config_default_caps_at_30s_with_backoff() {
+        use std::time::Duration;
+
+        let cfg = ReconnectConfig::default();
+        // The whole point of the backoff: a host that stays down is retried at
+        // most every 30s, not hammered on a tight fixed interval.
+        assert_eq!(cfg.max_interval, Duration::from_secs(30));
+        // And it genuinely backs off — the first attempt is sooner than the cap.
+        assert!(
+            cfg.initial_interval < cfg.max_interval,
+            "initial interval ({:?}) must be below the {:?} cap so the delay grows",
+            cfg.initial_interval,
+            cfg.max_interval
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

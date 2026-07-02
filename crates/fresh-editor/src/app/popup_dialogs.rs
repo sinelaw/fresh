@@ -701,7 +701,8 @@ impl Editor {
     /// - **Connected (container):** offers "Reopen Locally" (detach),
     ///   "Rebuild Container", and "Show Container Info".
     /// - **Connected (SSH):** offers "Disconnect Remote" and "Show Info".
-    /// - **Disconnected:** offers "Reconnect" (best-effort) and "Go Local".
+    /// - **Disconnected:** offers "Reconnect" (best-effort) for a remote-agent
+    ///   window; nothing else (the reconnect also runs automatically).
     ///
     /// Clicking the `{remote}` status-bar element a second time toggles
     /// the popup closed, matching the LSP-indicator affordance.
@@ -877,7 +878,13 @@ impl Editor {
                         );
                     }
                 }
-                // Disconnected — warn and offer fallbacks.
+                // Disconnected — offer a reconnect and nothing else. The old
+                // "Go Local" (`detach`) escape hatch was removed: it silently
+                // swapped the window's remote authority for the local one,
+                // stranding the open remote buffers on a mismatched filesystem —
+                // surprising behaviour with no obvious way back. Recovery from a
+                // dropped link is a reconnect, which also runs automatically in
+                // the background.
                 (Some(_), true) => {
                     title = "Remote: Disconnected".to_string();
                     // Offer Reconnect for a live remote-agent (SSH/kube) window:
@@ -896,10 +903,6 @@ impl Editor {
                                 .with_data("reconnect".to_string()),
                         );
                     }
-                    items.push(
-                        PopupListItem::new("    Go Local".to_string())
-                            .with_data("detach".to_string()),
-                    );
                 }
                 // Local authority.
                 (None, _) => {

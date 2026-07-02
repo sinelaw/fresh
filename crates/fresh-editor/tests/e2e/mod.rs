@@ -177,6 +177,7 @@ pub mod recovery;
 pub mod remote_auto_reconnect_terminal;
 pub mod remote_fs_test;
 pub mod remote_indicator_popup;
+pub mod remote_indicator_status;
 pub mod remote_reconnect_terminal;
 pub mod rendering;
 pub mod restored_agent_terminal;

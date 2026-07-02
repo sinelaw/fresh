@@ -124,6 +124,11 @@ pub fn editor_tick(
     if async_messages {
         needs_render = true;
     }
+    // Keep the status-bar remote indicator in sync with a background
+    // reconnect that never routes through an input event or async message.
+    if editor.poll_remote_connection_changes() {
+        needs_render = true;
+    }
     let pending_file_opens = {
         let _s = tracing::info_span!("process_pending_file_opens").entered();
         editor.process_pending_file_opens()
@@ -547,6 +552,15 @@ pub struct Editor {
     /// rather than polled. `ensure_remote_reconnect_forwarders` registers one
     /// lazily per remote window; this set makes that idempotent.
     remote_reconnect_forwarders: std::collections::HashSet<u64>,
+
+    /// Last-seen remote-connection state per window, so a per-tick poll can
+    /// force a re-render when a link drops or comes back. The background
+    /// reconnect task flips `is_remote_connected()` without any input event or
+    /// (on a plain drop) async message, so without this poll the status-bar
+    /// remote indicator would stay stale — showing "connected" after a drop, or
+    /// "(Disconnected)" after the link settled back — until the user happens to
+    /// press a key. Only windows with a remote authority are tracked.
+    remote_connected_cache: HashMap<fresh_core::WindowId, bool>,
 
     /// In-flight async system-clipboard reads, keyed by `request_id`.
     /// Each entry owns an anchor (`VirtualText("▍")`) in some buffer

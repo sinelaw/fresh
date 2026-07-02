@@ -275,3 +275,85 @@ fn auto_reconnect_respawns_a_dead_remote_terminal() {
         "a duplicate reconnect event does not respawn an already-live terminal"
     );
 }
+
+/// When the focused buffer is a terminal that was in terminal (input) mode at
+/// the moment the carrier dropped, an auto-reconnect must bring it back live —
+/// reactivating terminal input mode, not stranding it in scrollback/Normal.
+///
+/// The drop clears the window's `terminal_mode` (via `handle_terminal_exited`)
+/// but preserves the buffer's remembered `Live` interaction mode; respawning
+/// the PTY alone does not restore the window flags, so before the fix a
+/// reconnected terminal sat inert until the user clicked it. This drives the
+/// reconnect dispatch and asserts the input mode is restored.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Unix PTY shell
+fn auto_reconnect_reactivates_focused_terminal_in_input_mode() {
+    use fresh::input::keybindings::KeyContext;
+
+    if !pty_available() {
+        eprintln!("Skipping auto-reconnect terminal-mode test: PTY not available");
+        return;
+    }
+
+    const CHANNEL_ID: u64 = 4343;
+    let temp = tempfile::tempdir().unwrap();
+    let connected = Arc::new(AtomicBool::new(true));
+    let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(ToggleRemoteFs {
+        inner: StdFileSystem,
+        connected: connected.clone(),
+        channel_id: CHANNEL_ID,
+    });
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new()
+            .with_working_dir(temp.path().to_path_buf())
+            .with_filesystem(fs),
+    )
+    .unwrap();
+
+    // A focused, live terminal in terminal (input) mode — the pre-disconnect
+    // state a user has when they're typing in an embedded shell.
+    let (old_id, _buffer_id) = harness
+        .editor_mut()
+        .active_window_mut()
+        .open_terminal_in_window()
+        .expect("terminal should spawn");
+    assert!(
+        harness.editor().active_window().terminal_mode,
+        "a freshly opened, focused terminal starts in input mode"
+    );
+
+    // Carrier drop: the PTY dies and `handle_terminal_exited` clears the
+    // window's `terminal_mode` (dropping to Normal) while leaving the buffer's
+    // remembered `Live` interaction mode intact for the reconnect. Reproduce
+    // exactly that state.
+    connected.store(false, Ordering::SeqCst);
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .terminal_manager
+        .close(old_id);
+    {
+        let w = harness.editor_mut().active_window_mut();
+        w.terminal_mode = false;
+        w.key_context = KeyContext::Normal;
+    }
+
+    // The link comes back: the reconnect dispatch reattaches the window,
+    // respawns the dead PTY, and must reactivate the focused terminal.
+    connected.store(true, Ordering::SeqCst);
+    harness
+        .editor_mut()
+        .test_dispatch_remote_reconnected(CHANNEL_ID);
+
+    assert!(
+        harness.editor().active_window().terminal_mode,
+        "reconnect must reactivate the focused terminal in input mode, not leave it in scrollback"
+    );
+    assert_eq!(
+        harness.editor().active_window().key_context,
+        KeyContext::Terminal,
+        "reconnect must restore the Terminal key context so keystrokes reach the PTY"
+    );
+}

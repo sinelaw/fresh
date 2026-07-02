@@ -831,6 +831,18 @@ impl Editor {
         if revived > 0 {
             let label = window.label.clone();
             self.set_status_message(format!("Reconnected: {label}"));
+            // Reactivate the focused buffer. A terminal that was focused (and in
+            // terminal input mode) when the carrier dropped had `terminal_mode`
+            // cleared by `handle_terminal_exited`; respawning the PTY doesn't
+            // restore it, so without this the reborn terminal is stranded in
+            // scrollback / Normal mode until the user clicks it. Re-deriving the
+            // flags from the active buffer's remembered (still-`Live`) mode
+            // brings it back live in place. Only the active window owns the
+            // `terminal_mode` / `key_context` input state; a background window
+            // re-syncs when the user next focuses it.
+            if window_id == self.active_window {
+                self.sync_terminal_mode_to_active_buffer();
+            }
         }
     }
 
@@ -877,6 +889,39 @@ impl Editor {
                     }
                 }
             });
+        }
+    }
+
+    /// Detect remote-connection state changes (a link dropped or came back)
+    /// across windows and report whether any changed since the last poll.
+    ///
+    /// The background reconnect task flips `is_remote_connected()` on its own
+    /// timeline: a plain drop fires no async message at all, and the eventual
+    /// settle after a flap may land between the `RemoteReconnected` events that
+    /// do fire. Neither is tied to an input event, so without this poll the
+    /// status-bar remote indicator goes stale — still reading "connected" after
+    /// a drop, or "(Disconnected)" after the link came back — until the user
+    /// happens to press a key. Called once per editor tick; when it returns
+    /// `true` the caller re-renders. Cheap: a bool load per remote window, and
+    /// no allocation at all when there are no remote windows.
+    pub(crate) fn poll_remote_connection_changes(&mut self) -> bool {
+        let current: std::collections::HashMap<fresh_core::WindowId, bool> = self
+            .windows
+            .iter()
+            .filter_map(|(id, w)| {
+                let fs = &w.authority().filesystem;
+                // Only windows with a real remote authority matter; a local
+                // filesystem's default `is_remote_connected() == true` is noise.
+                fs.remote_connection_info()
+                    .is_some()
+                    .then(|| (*id, fs.is_remote_connected()))
+            })
+            .collect();
+        if current != self.remote_connected_cache {
+            self.remote_connected_cache = current;
+            true
+        } else {
+            false
         }
     }
 
@@ -1200,9 +1245,11 @@ impl Editor {
         if let Some(window_id) = reconnect_window {
             let reason = error.lines().next().unwrap_or(&error).to_string();
             if let Some(w) = self.windows.get_mut(&window_id) {
-                // An already-live remote window whose reconnect
-                // failed: record on the window so its status-bar
-                // indicator shows FailedAttach.
+                // An already-live remote window whose reconnect failed: record
+                // the reason on the window. The status-bar indicator renders a
+                // short "Disconnected" from this (the full error went to the
+                // `tracing::warn!` above, which lights the warning indicator);
+                // the reason itself is surfaced in the remote-indicator popup.
                 w.remote_reconnect_error = Some(reason);
             } else {
                 // A dormant session's connect failed: it has no

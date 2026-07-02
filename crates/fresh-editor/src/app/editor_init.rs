@@ -465,6 +465,7 @@ impl Editor {
 
             // Trivial defaults (no external dependencies):
             remote_reconnect_forwarders: std::collections::HashSet::new(),
+            remote_connected_cache: HashMap::new(),
             materialize_pending: std::collections::HashSet::new(),
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
