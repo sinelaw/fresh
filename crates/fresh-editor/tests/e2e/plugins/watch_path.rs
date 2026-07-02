@@ -13,7 +13,6 @@
 use crate::common::harness::EditorTestHarness;
 use crate::common::tracing::init_tracing_from_env;
 use fresh_core::api::PluginCommand;
-use std::time::Duration;
 
 #[test]
 fn watch_path_round_trip_registers_and_fires() {
@@ -42,32 +41,26 @@ fn watch_path_round_trip_registers_and_fires() {
         .expect("watchPath should succeed for a fresh tmp directory");
     assert!(handle > 0, "handle should be a positive opaque id");
 
-    // Create a file inside the watched directory. notify reports
-    // create + (often) modify; we just need at least one
-    // PathChanged to surface to the editor.
+    // Create a file inside the watched directory. notify's backend decides
+    // whether the surfaced event names the created file or the watched
+    // directory itself — Linux inotify reports the directory (kind "other") —
+    // and how many events coalesce. So the only stable contract is the one the
+    // plugin hook guarantees: *some* path_changed fires for our handle under
+    // the watched dir. Wait indefinitely (semantic wait); nextest bounds it
+    // externally. A fixed timeout here is the source of the CI flake.
     let f = watched.join("trigger.txt");
     std::fs::write(&f, "hello").unwrap();
 
-    let mut got_event = false;
-    for _ in 0..120 {
-        harness.process_async_and_render().unwrap();
-        if harness
-            .editor()
-            .last_path_change_for_test()
-            .map(|(_h, p, _k)| p.ends_with("trigger.txt"))
-            .unwrap_or(false)
-        {
-            got_event = true;
-            break;
-        }
-        harness.sleep(Duration::from_millis(25));
-    }
-    assert!(
-        got_event,
-        "creating a file under the watched dir should produce a path_changed event; \
-         last seen: {:?}",
-        harness.editor().last_path_change_for_test()
-    );
+    harness
+        .wait_until(|h| {
+            h.editor()
+                .last_path_change_for_test()
+                .map(|(evt_handle, path, _kind)| {
+                    *evt_handle == handle && path.starts_with(&watched)
+                })
+                .unwrap_or(false)
+        })
+        .unwrap();
 
     harness
         .editor_mut()
