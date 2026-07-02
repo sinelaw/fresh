@@ -1237,8 +1237,8 @@ impl Editor {
         // and no plugin dialog open, so its only user-visible signal
         // is the status-bar remote indicator. Record the reason on
         // the workspace's window so the indicator renders
-        // `FailedAttach` (persistent, error-styled, with a Retry /
-        // Reopen Locally popup) until the next reconnect attempt.
+        // `FailedAttach` (persistent, error-styled, with a Retry-only
+        // popup) until the next reconnect attempt.
         // Born-attached / restart attaches carry `None` here; their
         // failure is surfaced by the launching plugin's rejected
         // promise (e.g. the New-Session dialog's inline error).

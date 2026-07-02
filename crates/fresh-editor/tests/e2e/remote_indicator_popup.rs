@@ -427,6 +427,52 @@ fn test_remote_indicator_popup_disconnected_remote_agent_offers_reconnect() -> a
     Ok(())
 }
 
+/// A remote-agent (SSH) window whose reconnect failed drives the core
+/// `FailedAttach` branch via `remote_reconnect_error`. That popup must offer
+/// only **Retry** (re-run the core reconnect) and must NOT offer any
+/// "Reopen Locally" / local-fallback row: the SSH flow keeps its remote
+/// authority (the error clears on a successful reconnect, which also runs
+/// automatically), so a local fallback would strand the open remote buffers.
+/// The devcontainer FailedAttach override keeps its own "Reopen Locally"
+/// (`clear_override`) — this guard is scoped to the SSH/remote flow.
+#[test]
+fn test_remote_indicator_popup_ssh_reconnect_failed_offers_retry_only() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        120,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .remote_reconnect_error = Some("ssh connect failed (exit 255)".into());
+
+    harness.editor_mut().show_remote_indicator_popup();
+    harness.render()?;
+
+    let rows = popup_item_rows(&harness);
+    let retry = rows
+        .iter()
+        .find(|(t, _, _)| t.contains("Retry"))
+        .unwrap_or_else(|| panic!("SSH reconnect-failed popup lacks a Retry row. Rows: {rows:#?}"));
+    assert_eq!(
+        retry.1.as_deref(),
+        Some("retry_reconnect"),
+        "Retry must dispatch the core reconnect. Row: {retry:?}"
+    );
+
+    // No "Reopen Locally" / local-fallback row in the SSH flow.
+    assert!(
+        !rows.iter().any(|(t, d, _)| t.contains("Reopen Locally")
+            || d.as_deref() == Some("clear_reconnect_error")
+            || d.as_deref() == Some("detach")),
+        "SSH reconnect-failed popup must not offer a local-fallback row. Rows: {rows:#?}"
+    );
+    Ok(())
+}
+
 /// A local session's Remote Indicator popup must NOT offer Reconnect — there is
 /// no remote backend to rebuild. Guards against the Reconnect row leaking into
 /// non-remote (or container) windows.

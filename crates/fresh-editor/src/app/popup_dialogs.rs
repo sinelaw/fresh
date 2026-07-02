@@ -805,11 +805,14 @@ impl Editor {
             }
         }
 
-        // Core-driven FailedAttach: a dormant remote workspace whose
-        // dive-triggered reconnect failed (recorded on the window, not via the
-        // plugin override). Offer a generic Retry (re-run the core reconnect)
-        // and a Dismiss that clears the error — independent of the
-        // devcontainer-specific override path above.
+        // Core-driven FailedAttach: a remote (SSH) workspace whose reconnect
+        // failed (recorded on the window, not via the plugin override). Offer a
+        // single Retry that re-runs the core reconnect — independent of the
+        // devcontainer-specific override path above. There is deliberately no
+        // "Reopen Locally" here: the SSH flow keeps its remote authority (the
+        // error clears on a successful reconnect, which also runs automatically
+        // in the background), so a local fallback would only strand the open
+        // remote buffers on a mismatched filesystem.
         let core_failed_attach = !override_handled
             && self
                 .active_window()
@@ -830,10 +833,6 @@ impl Editor {
             items.push(
                 PopupListItem::new("    Retry".to_string())
                     .with_data("retry_reconnect".to_string()),
-            );
-            items.push(
-                PopupListItem::new("    Reopen Locally".to_string())
-                    .with_data("clear_reconnect_error".to_string()),
             );
         }
 
@@ -1156,15 +1155,6 @@ impl Editor {
             // in a plugins-less build.
             #[cfg(feature = "plugins")]
             self.force_reconnect_remote_session(self.active_window);
-            return;
-        }
-        if action_key == "clear_reconnect_error" {
-            // "Reopen Locally" / dismiss: drop the failed-reconnect error so the
-            // indicator stops showing FailedAttach. The workspace keeps its
-            // remote `authority_spec`, so a later dive still retries the connect.
-            if let Some(w) = self.windows.get_mut(&self.active_window) {
-                w.remote_reconnect_error = None;
-            }
             return;
         }
         if action_key == "cancel_popup" {
