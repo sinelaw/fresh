@@ -946,12 +946,12 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     file_watcher_manager: crate::services::file_watcher::FileWatcherManager,
 
-    /// Test-only sink for `path_changed` plugin events. Captured
-    /// by `async_dispatch` whenever a PathChanged AsyncMessage
-    /// arrives, so e2e tests can assert filesystem events
-    /// reached the editor without standing up a JS plugin.
-    /// Production builds never read this.
-    pub(crate) last_path_change_for_test: Option<(u64, std::path::PathBuf, &'static str)>,
+    /// Test-only log of `path_changed` plugin events. Captured by
+    /// `async_dispatch` whenever a PathChanged AsyncMessage arrives,
+    /// so e2e tests can assert filesystem events reached the editor
+    /// without standing up a JS plugin. Production builds never read
+    /// this.
+    pub(crate) path_changes_for_test: Vec<(u64, std::path::PathBuf, &'static str)>,
 
     /// Test-only sink for the most-recent `WatchPathRegistered`
     /// plugin response, keyed by request_id. Used by

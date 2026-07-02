@@ -54,11 +54,11 @@ fn watch_path_round_trip_registers_and_fires() {
     harness
         .wait_until(|h| {
             h.editor()
-                .last_path_change_for_test()
-                .map(|(evt_handle, path, _kind)| {
+                .path_changes_for_test()
+                .iter()
+                .any(|(evt_handle, path, _kind)| {
                     *evt_handle == handle && path.starts_with(&watched)
                 })
-                .unwrap_or(false)
         })
         .unwrap();
 

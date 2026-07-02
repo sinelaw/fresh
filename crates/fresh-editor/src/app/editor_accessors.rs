@@ -884,12 +884,12 @@ impl Editor {
         self.lsp().is_some()
     }
 
-    /// Most-recent `path_changed` event the editor received.
-    /// Test-only — used by `watch_path` e2e tests to assert
-    /// kernel events surfaced to the editor.
+    /// `path_changed` events received so far. Test-only — used by
+    /// `watch_path` e2e tests to assert kernel events surfaced to
+    /// the editor.
     #[doc(hidden)]
-    pub fn last_path_change_for_test(&self) -> Option<&(u64, std::path::PathBuf, &'static str)> {
-        self.last_path_change_for_test.as_ref()
+    pub fn path_changes_for_test(&self) -> &[(u64, std::path::PathBuf, &'static str)] {
+        &self.path_changes_for_test
     }
 
     /// Most-recent `WatchPathRegistered` plugin response, paired

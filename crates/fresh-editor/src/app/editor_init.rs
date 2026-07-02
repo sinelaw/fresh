@@ -507,7 +507,7 @@ impl Editor {
             status_log_path: None,
             #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
-            last_path_change_for_test: None,
+            path_changes_for_test: Vec::new(),
             last_watch_response_for_test: None,
             preview_window_id: None,
             settings_state: None,

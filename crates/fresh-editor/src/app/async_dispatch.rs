@@ -784,7 +784,8 @@ impl Editor {
         path: std::path::PathBuf,
         kind: crate::services::async_bridge::PathChangeKind,
     ) {
-        self.last_path_change_for_test = Some((handle, path.clone(), kind.as_str()));
+        self.path_changes_for_test
+            .push((handle, path.clone(), kind.as_str()));
         self.plugin_manager.read().unwrap().run_hook(
             "path_changed",
             crate::services::plugins::hooks::HookArgs::PathChanged {
