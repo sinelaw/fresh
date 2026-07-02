@@ -573,6 +573,23 @@ impl crate::app::Editor {
             },
         );
 
+        // Bring `terminal_mode` in line with the incoming window's active
+        // buffer, exactly as the tab-switch path (`set_active_buffer`) does.
+        // A window whose active buffer is a *restored* terminal comes back
+        // with that buffer marked `Live` (see
+        // `restore_terminals_from_workspace`) but its window-level
+        // `terminal_mode` flag defaulted to `false` and the buffer left
+        // read-only — the window switch never touched either. Without this
+        // sync the first dive into such a session after an editor restart
+        // lands on the read-only scrollback view instead of the live
+        // terminal, and the user has to type (or wait for new output) to
+        // wake it. Diving is a focus change just like a tab switch, so it
+        // must route through the same single mode authority. A terminal the
+        // user had explicitly dropped to Scrollback stays read-only (its
+        // remembered mode isn't `Live`), so this only revives genuinely-live
+        // terminals.
+        self.sync_terminal_mode_to_active_buffer();
+
         // Reflow the newly-active window's visible terminal PTYs to
         // match their dive-view split rects. Without this, a session
         // that was just previewed in the orchestrator picker

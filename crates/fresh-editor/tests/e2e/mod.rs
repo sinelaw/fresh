@@ -180,6 +180,7 @@ pub mod remote_indicator_popup;
 pub mod remote_reconnect_terminal;
 pub mod rendering;
 pub mod restored_agent_terminal;
+pub mod restored_terminal_dock_activation;
 pub mod restored_terminal_focus;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
