@@ -16,8 +16,8 @@ use crate::view::controls::{
     render_text_input_aligned, render_toggle_aligned, DropdownColors, DualListColors, MapColors,
     NumberInputColors, TextInputColors, TextListColors, ToggleColors,
 };
-use crate::view::theme::Theme;
 use crate::view::glyphs::glyphs;
+use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -1312,7 +1312,8 @@ fn render_setting_item_pure(
         }
         if pending_dirty && label_row_visible && inner_area.width >= 2 {
             frame.render_widget(
-                Paragraph::new(glyphs().bullet).style(Style::default().fg(theme.settings_selected_fg)),
+                Paragraph::new(glyphs().bullet)
+                    .style(Style::default().fg(theme.settings_selected_fg)),
                 Rect::new(inner_area.x + 1, inner_area.y, 1, 1),
             );
         }
@@ -3394,7 +3395,11 @@ fn render_confirm_dialog(
         frame,
         inner,
         button_y,
-        &format!("{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
+        &format!(
+            "{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel",
+            glyphs().arrow_left,
+            glyphs().arrow_right
+        ),
         theme,
     );
 }
@@ -3450,7 +3455,11 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         frame,
         inner,
         button_y,
-        &format!("{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
+        &format!(
+            "{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel",
+            glyphs().arrow_left,
+            glyphs().arrow_right
+        ),
         theme,
     );
 }
@@ -3497,7 +3506,11 @@ fn render_entry_discard_confirm(
         frame,
         inner,
         button_y,
-        &format!("Tab/{}{}: Select   Enter: Confirm   Esc: Keep editing", glyphs().arrow_left, glyphs().arrow_right),
+        &format!(
+            "Tab/{}{}: Select   Enter: Confirm   Esc: Keep editing",
+            glyphs().arrow_left,
+            glyphs().arrow_right
+        ),
         theme,
     );
 }
@@ -3588,7 +3601,11 @@ fn render_entry_delete_confirm(
         frame,
         inner,
         button_y,
-        &format!("Tab/{}{}: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
+        &format!(
+            "Tab/{}{}: Select   Enter: Confirm   Esc: Cancel",
+            glyphs().arrow_left,
+            glyphs().arrow_right
+        ),
         theme,
     );
 }

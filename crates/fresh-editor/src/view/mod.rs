@@ -24,9 +24,9 @@ pub mod conceal;
 pub mod controls;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod dimming;
-pub mod glyphs;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod folding;
+pub mod glyphs;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod line_wrap_cache;
 #[cfg(any(feature = "runtime", feature = "wasm"))]

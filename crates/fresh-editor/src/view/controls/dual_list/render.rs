@@ -171,7 +171,10 @@ pub fn render_dual_list_partial(
             // Separator row between transfer and reorder buttons
             2 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled(g.h.repeat(3), dim_style)), btn_area);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(g.h.repeat(3), dim_style)),
+                    btn_area,
+                );
             }
             3 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
