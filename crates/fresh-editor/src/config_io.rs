@@ -48,7 +48,18 @@ fn strip_empty_defaults(value: Value) -> Option<Value> {
         Value::Object(map) => {
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
-                .filter_map(|(k, v)| strip_empty_defaults(v).map(|v| (k, v)))
+                .filter_map(|(k, v)| {
+                    // An empty `args` array is a *meaningful* override for an LSP
+                    // server: it means "launch with no arguments", as opposed to an
+                    // omitted `args` which inherits the default server's arguments
+                    // (e.g. marksman's `server`). Stripping it as a redundant empty
+                    // default would make it impossible to replace a default server
+                    // that takes args with one that takes none (#2549), so keep it.
+                    if k == "args" && matches!(&v, Value::Array(a) if a.is_empty()) {
+                        return Some((k, v));
+                    }
+                    strip_empty_defaults(v).map(|v| (k, v))
+                })
                 .collect();
             if filtered.is_empty() {
                 None
@@ -1285,6 +1296,65 @@ mod tests {
             "saving an unrelated field must not drop the commented tab_size"
         );
         assert!(!reloaded.editor.line_numbers);
+        drop(temp);
+    }
+
+    #[test]
+    fn clearing_default_lsp_args_persists_empty_and_survives_reload() {
+        // Regression for #2549: replacing a default LSP server that takes args
+        // (markdown → `marksman server`) with no arguments. The Settings UI
+        // records the edited entry as a pending change with an empty `args`
+        // array; saving it must (a) persist `"args": []` to disk rather than
+        // stripping it as an empty default, and (b) resolve back to no args
+        // instead of re-inheriting marksman's `server`.
+        let (temp, resolver) = create_test_resolver();
+
+        // Sanity: the default really does carry the `server` argument.
+        let defaults = resolver.resolve().unwrap();
+        assert_eq!(
+            defaults.lsp["markdown"].as_slice()[0].args,
+            Some(vec!["server".to_string()]),
+            "precondition: default markdown LSP is `marksman server`"
+        );
+
+        // Simulate the Settings UI save: the markdown entry with args cleared.
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            "/lsp/markdown".to_string(),
+            serde_json::json!([{
+                "command": "markdown-oxide",
+                "enabled": true,
+                "auto_start": false,
+                "args": [],
+            }]),
+        );
+        resolver
+            .save_changes_to_layer(
+                &changes,
+                &std::collections::HashSet::new(),
+                ConfigLayer::User,
+            )
+            .unwrap();
+
+        // (a) The empty args array must be written to disk, not stripped.
+        let saved = std::fs::read_to_string(resolver.user_config_path()).unwrap();
+        let saved_json: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        assert_eq!(
+            saved_json.pointer("/lsp/markdown/0/args"),
+            Some(&serde_json::json!([])),
+            "explicit empty args must be persisted, not dropped. File: {saved}"
+        );
+
+        // (b) On reload the server runs with no arguments, not the default.
+        let reloaded = resolver.resolve().unwrap();
+        let server = &reloaded.lsp["markdown"].as_slice()[0];
+        assert_eq!(server.command, "markdown-oxide");
+        assert_eq!(
+            server.args,
+            Some(vec![]),
+            "cleared args must not re-inherit the default `server` argument"
+        );
+        assert!(server.args().is_empty());
         drop(temp);
     }
 
