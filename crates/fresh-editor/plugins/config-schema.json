@@ -1677,12 +1677,15 @@
           "x-order": 3
         },
         "args": {
-          "description": "Arguments to pass to the server",
-          "type": "array",
+          "description": "Arguments to pass to the server.\n\n`None` (field omitted) inherits the default server's args, while an\nexplicit list — including an empty `[]` — replaces them. This lets a\nuser swap a default server that takes args (e.g. `marksman server`)\nfor one that takes none (e.g. `markdown-oxide`) by setting `\"args\": []`.",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "string"
           },
-          "default": [],
+          "default": null,
           "x-order": 4
         },
         "auto_start": {
