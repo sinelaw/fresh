@@ -130,7 +130,7 @@ fn test_lsp_popup_shows_start_for_stopped_server() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -211,7 +211,7 @@ fn test_lsp_indicator_on_shows_server_actions() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

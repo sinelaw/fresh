@@ -119,7 +119,7 @@ fn test_dormant_lsp_renders_off_indicator_on_status_bar() -> anyhow::Result<()> 
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script.to_string_lossy().to_string(),
-            args: vec![marker.to_string_lossy().to_string()],
+            args: Some(vec![marker.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: false, // configured but dormant
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -191,7 +191,7 @@ fn test_dormant_lsp_count_reflects_configured_servers() -> anyhow::Result<()> {
 
     let build = |name: &str, marker: &std::path::Path| fresh::services::lsp::LspServerConfig {
         command: script.to_string_lossy().to_string(),
-        args: vec![marker.to_string_lossy().to_string()],
+        args: Some(vec![marker.to_string_lossy().to_string()]),
         enabled: true,
         auto_start: false,
         process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -309,7 +309,7 @@ fn test_dormant_indicator_refreshes_on_buffer_switch() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script.to_string_lossy().to_string(),
-            args: vec![marker.to_string_lossy().to_string()],
+            args: Some(vec![marker.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

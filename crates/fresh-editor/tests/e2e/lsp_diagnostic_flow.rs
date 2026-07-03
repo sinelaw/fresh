@@ -200,7 +200,7 @@ fn test_rust_analyzer_push_diagnostics_displayed() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -293,7 +293,7 @@ fn test_rust_analyzer_diagnostics_cleared_after_fix() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -555,7 +555,7 @@ fn test_edit_save_edit_save_diagnostic_flow() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -702,7 +702,7 @@ fn test_workspace_diagnostic_refresh_handled() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -914,7 +914,7 @@ fn test_stale_diagnostics_dropped_during_rapid_typing() -> anyhow::Result<()> {
         "python".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1116,7 +1116,7 @@ fn test_hover_popup_fuses_overlapping_diagnostic() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1278,7 +1278,7 @@ done
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

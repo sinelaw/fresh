@@ -154,7 +154,7 @@ fn config_with_rust_lsp(command: &str) -> fresh::config::Config {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: command.to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -429,7 +429,7 @@ fn issue_3_external_kill_leaves_popup_state_stale() -> anyhow::Result<()> {
     let mut config = config_with_rust_lsp(&script.to_string_lossy());
     if let Some(lsp_cfg) = config.lsp.get_mut("rust") {
         for c in lsp_cfg.as_mut_slice() {
-            c.args = vec![log.to_string_lossy().to_string()];
+            c.args = Some(vec![log.to_string_lossy().to_string()]);
         }
     }
 
@@ -521,7 +521,7 @@ fn issue_4_disable_lsp_does_not_stop_running_server() -> anyhow::Result<()> {
     let mut config = config_with_rust_lsp(&script.to_string_lossy());
     if let Some(lsp_cfg) = config.lsp.get_mut("rust") {
         for c in lsp_cfg.as_mut_slice() {
-            c.args = vec![log.to_string_lossy().to_string()];
+            c.args = Some(vec![log.to_string_lossy().to_string()]);
         }
     }
 
@@ -621,7 +621,7 @@ fn issue_5_spinner_has_no_auto_redraw_schedule() -> anyhow::Result<()> {
     let mut config = config_with_rust_lsp(&script.to_string_lossy());
     if let Some(lsp_cfg) = config.lsp.get_mut("rust") {
         for c in lsp_cfg.as_mut_slice() {
-            c.args = vec![log.to_string_lossy().to_string()];
+            c.args = Some(vec![log.to_string_lossy().to_string()]);
         }
     }
 

@@ -43,7 +43,7 @@ fn test_code_action_request_includes_overlapping_diagnostic() -> anyhow::Result<
             command: FakeLspServer::diagnostic_gated_code_actions_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

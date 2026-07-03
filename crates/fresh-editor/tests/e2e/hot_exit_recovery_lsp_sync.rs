@@ -116,7 +116,7 @@ fn rust_lsp_config(script: &std::path::Path, log_file: &std::path::Path) -> Conf
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

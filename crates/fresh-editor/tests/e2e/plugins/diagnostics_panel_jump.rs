@@ -53,7 +53,7 @@ fn test_diagnostics_panel_enter_does_not_jump() {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -205,7 +205,7 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

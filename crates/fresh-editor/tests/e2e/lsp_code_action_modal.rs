@@ -37,7 +37,7 @@ fn test_code_action_number_key_selects_and_applies() -> anyhow::Result<()> {
             command: FakeLspServer::code_actions_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -138,7 +138,7 @@ fn test_code_action_arrow_enter_applies() -> anyhow::Result<()> {
             command: FakeLspServer::code_actions_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

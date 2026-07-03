@@ -32,7 +32,7 @@ fn test_lsp_env_vars_passed_to_server() -> anyhow::Result<()> {
             command: FakeLspServer::env_echo_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

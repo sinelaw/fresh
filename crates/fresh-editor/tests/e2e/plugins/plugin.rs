@@ -319,7 +319,7 @@ fn test_diagnostics_panel_plugin_loads() {
             command: FakeLspServer::many_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -751,7 +751,7 @@ fn test_clangd_plugin_file_status_notification() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: ProcessLimits::default(),
@@ -829,7 +829,7 @@ fn test_clangd_plugin_switch_source_header() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: ProcessLimits::default(),
@@ -1064,7 +1064,7 @@ editor.setStatus("Test diagnostics plugin loaded");
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: ProcessLimits::default(),

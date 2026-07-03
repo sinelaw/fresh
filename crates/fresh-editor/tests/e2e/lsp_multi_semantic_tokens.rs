@@ -31,7 +31,7 @@ fn test_multi_lsp_semantic_tokens_capability_mismatch() -> anyhow::Result<()> {
                 command: FakeLspServer::no_semantic_tokens_script_path(temp_dir.path())
                     .to_string_lossy()
                     .to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 name: Some("no-semtok".to_string()),
@@ -48,7 +48,7 @@ fn test_multi_lsp_semantic_tokens_capability_mismatch() -> anyhow::Result<()> {
                 command: FakeLspServer::script_path(temp_dir.path())
                     .to_string_lossy()
                     .to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 name: Some("with-semtok".to_string()),

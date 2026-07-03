@@ -545,7 +545,7 @@ fn test_folded_gutter_line_numbers_match_content_during_scroll() -> anyhow::Resu
             command: FakeLspServer::folding_ranges_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

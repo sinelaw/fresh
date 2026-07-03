@@ -129,7 +129,7 @@ fn build_server_config(
 ) -> fresh::services::lsp::LspServerConfig {
     fresh::services::lsp::LspServerConfig {
         command: script.to_string_lossy().to_string(),
-        args: vec![log_path.to_string_lossy().to_string(), severity.to_string()],
+        args: Some(vec![log_path.to_string_lossy().to_string(), severity.to_string()]),
         enabled,
         auto_start,
         process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -483,7 +483,7 @@ fn test_universal_lsp_spawned_once_across_languages() -> anyhow::Result<()> {
         "test-universal".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script.to_string_lossy().to_string(),
-            args: vec![spawn_log.to_string_lossy().to_string()],
+            args: Some(vec![spawn_log.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             name: Some("TestUniversal".to_string()),

@@ -237,7 +237,7 @@ fn test_stopping_server_clears_diagnostics() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -310,7 +310,7 @@ fn test_two_servers_both_receive_didopen_and_publish_diagnostics() -> anyhow::Re
         fresh::types::LspLanguageConfig::Multi(vec![
             fresh::services::lsp::LspServerConfig {
                 command: error_script.to_string_lossy().to_string(),
-                args: vec![error_log.to_string_lossy().to_string()],
+                args: Some(vec![error_log.to_string_lossy().to_string()]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -324,7 +324,7 @@ fn test_two_servers_both_receive_didopen_and_publish_diagnostics() -> anyhow::Re
             },
             fresh::services::lsp::LspServerConfig {
                 command: warning_script.to_string_lossy().to_string(),
-                args: vec![warning_log.to_string_lossy().to_string()],
+                args: Some(vec![warning_log.to_string_lossy().to_string()]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),

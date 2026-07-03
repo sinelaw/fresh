@@ -804,7 +804,7 @@ fn test_lsp_waiting_indicator() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -877,7 +877,7 @@ fn test_semantic_tokens_version_gating() -> anyhow::Result<()> {
             command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -978,7 +978,7 @@ fn test_semantic_tokens_range_preserves_overlays_on_edit() -> anyhow::Result<()>
             command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1077,7 +1077,7 @@ fn test_semantic_tokens_persist_on_enter_key() -> anyhow::Result<()> {
             command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1177,7 +1177,7 @@ fn test_semantic_tokens_overlays_shift_on_edit() -> anyhow::Result<()> {
             command: FakeLspServer::semantic_tokens_delay_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1285,7 +1285,7 @@ fn test_semantic_tokens_range_only_viewport_highlighting() -> anyhow::Result<()>
             command: FakeLspServer::semantic_tokens_range_only_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1456,7 +1456,7 @@ fn test_lsp_completion_canceled_on_cursor_move() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1529,7 +1529,7 @@ fn test_lsp_cursor_animation() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -1605,7 +1605,7 @@ fn test_lsp_completion_canceled_on_text_edit() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -2196,7 +2196,7 @@ fn test_lsp_diagnostics_non_blocking() -> anyhow::Result<()> {
             command: FakeLspServer::blocking_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -2356,10 +2356,10 @@ fn test_rust_analyzer_rename_real_scenario() -> anyhow::Result<()> {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: "rust-analyzer".to_string(),
-            args: vec![
+            args: Some(vec![
                 "--log-file".to_string(),
                 ra_log_file.to_string_lossy().to_string(),
-            ],
+            ]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -2972,7 +2972,7 @@ fn test_lsp_progress_status_display() -> anyhow::Result<()> {
             command: FakeLspServer::progress_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -3139,7 +3139,7 @@ fn test_lsp_crash_detection_and_restart() -> anyhow::Result<()> {
             command: FakeLspServer::crashing_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -3438,7 +3438,7 @@ fn test_pull_diagnostics_auto_trigger_after_open() -> anyhow::Result<()> {
             command: FakeLspServer::pull_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -3522,7 +3522,7 @@ fn test_pull_diagnostics_result_id_tracking() -> anyhow::Result<()> {
             command: FakeLspServer::pull_diagnostics_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -3844,7 +3844,7 @@ fn test_stopped_lsp_does_not_auto_restart_on_edit() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true, // Auto-start so it starts when we open the file
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -4180,7 +4180,7 @@ fn test_hover_popup_persists_within_symbol_and_popup() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -4280,7 +4280,7 @@ fn test_hover_popup_persists_through_click_after_outside_move() -> anyhow::Resul
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -4380,7 +4380,7 @@ fn test_hover_popup_does_not_accumulate_across_hovers() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6009,7 +6009,7 @@ fn test_hover_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false, // This is the key setting - LSP should NOT auto-start
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6102,7 +6102,7 @@ fn test_typing_does_not_autostart_lsp_when_disabled() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false, // This is the key setting - LSP should NOT auto-start
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6183,7 +6183,7 @@ fn test_completion_triggered_on_trigger_character() -> anyhow::Result<()> {
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6270,7 +6270,7 @@ fn test_completion_triggered_on_word_char_with_quick_suggestions() -> anyhow::Re
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6355,7 +6355,7 @@ fn test_completion_not_triggered_on_word_char_without_quick_suggestions() -> any
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6442,7 +6442,7 @@ fn test_completion_not_triggered_on_non_word_char() -> anyhow::Result<()> {
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6591,7 +6591,7 @@ fn test_completion_no_auto_show_by_default() -> anyhow::Result<()> {
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6675,7 +6675,7 @@ fn test_completion_auto_show_when_enabled() -> anyhow::Result<()> {
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -6828,7 +6828,7 @@ fn test_hover_popup_follows_mouse_when_lsp_returns_no_range() -> anyhow::Result<
             command: FakeLspServer::no_range_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -7065,7 +7065,7 @@ fn test_hover_does_not_trigger_past_end_of_line() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -7172,7 +7172,7 @@ fn test_hover_does_not_trigger_on_empty_line() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -7265,7 +7265,7 @@ fn test_hover_suppressed_while_lsp_status_popup_open() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -7373,7 +7373,7 @@ fn test_hover_no_duplicate_popup_when_moving_within_symbol() -> anyhow::Result<(
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -8139,7 +8139,7 @@ log("STOPPED")
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::types::LspServerConfig {
             command: "python3".to_string(),
-            args: vec![script_path.to_string_lossy().to_string()],
+            args: Some(vec![script_path.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
@@ -8459,7 +8459,7 @@ log("STOPPED")
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::types::LspServerConfig {
             command: "python3".to_string(),
-            args: vec![script_path.to_string_lossy().to_string()],
+            args: Some(vec![script_path.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
@@ -8764,7 +8764,7 @@ log("STOPPED")
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::types::LspServerConfig {
             command: "python3".to_string(),
-            args: vec![script_path.to_string_lossy().to_string()],
+            args: Some(vec![script_path.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::types::ProcessLimits::default(),
@@ -8953,7 +8953,7 @@ done
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9111,7 +9111,7 @@ done
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9376,7 +9376,7 @@ done
         "c".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9565,7 +9565,7 @@ done
         "lua".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false, // KEY: must be manually started to exercise manual_restart
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9666,7 +9666,7 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
         fresh::types::LspLanguageConfig::Multi(vec![
             fresh::services::lsp::LspServerConfig {
                 command: script.clone(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9680,7 +9680,7 @@ fn test_restart_lsp_prompt_shows_suggestions() -> anyhow::Result<()> {
             },
             fresh::services::lsp::LspServerConfig {
                 command: script,
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9769,7 +9769,7 @@ fn test_restart_lsp_prompt_restarts_stopped_server() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9857,7 +9857,7 @@ fn test_stop_lsp_via_prompt_no_warning() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -9977,7 +9977,7 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
         "pascal".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: bogus.clone(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

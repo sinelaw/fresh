@@ -39,7 +39,7 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
                 command: FakeLspServer::code_actions_script_path(temp_dir.path())
                     .to_string_lossy()
                     .to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),
@@ -55,7 +55,7 @@ fn test_code_actions_merged_from_two_servers() -> anyhow::Result<()> {
                 command: FakeLspServer::code_actions_b_script_path(temp_dir.path())
                     .to_string_lossy()
                     .to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: true,
                 process_limits: fresh::services::process_limits::ProcessLimits::default(),

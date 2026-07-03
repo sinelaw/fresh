@@ -30,7 +30,7 @@ fn test_lsp_hover_popup_text_selection_copy() -> anyhow::Result<()> {
             command: FakeLspServer::script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

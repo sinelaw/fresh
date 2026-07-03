@@ -22,7 +22,7 @@ fn make_config_with_dormant_rust_lsp() -> fresh::config::Config {
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: "rust-analyzer".to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

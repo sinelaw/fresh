@@ -33,7 +33,7 @@ fn test_inlay_hint_skipped_when_server_does_not_advertise_capability() -> anyhow
             command: FakeLspServer::logging_script_path(temp_dir.path())
                 .to_string_lossy()
                 .to_string(),
-            args: vec![log_file.to_string_lossy().to_string()],
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
             enabled: true,
             auto_start: true,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),

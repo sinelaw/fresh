@@ -429,7 +429,7 @@ editor.on("action_popup_result", "devmock_on_result");
         "rust".to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: "rust-analyzer".to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false,
             process_limits: fresh::services::process_limits::ProcessLimits::default(),
