@@ -6175,7 +6175,7 @@ impl Config {
             "quicklsp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "quicklsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: false,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6214,7 +6214,7 @@ impl Config {
             "rust".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "rust-analyzer".to_string(),
-                args: vec!["--log-file".to_string(), ra_log_path],
+                args: Some(vec!["--log-file".to_string(), ra_log_path]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::unlimited(),
@@ -6237,7 +6237,7 @@ impl Config {
             "python".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "pylsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6264,7 +6264,7 @@ impl Config {
             "gdscript".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "nc".to_string(),
-                args: vec!["127.0.0.1".to_string(), "6005".to_string()],
+                args: Some(vec!["127.0.0.1".to_string(), "6005".to_string()]),
                 enabled: false,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6284,7 +6284,7 @@ impl Config {
             "javascript".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "typescript-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6309,7 +6309,7 @@ impl Config {
             "typescript".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "typescript-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6336,7 +6336,7 @@ impl Config {
             "html".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vscode-html-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6355,7 +6355,7 @@ impl Config {
             "css".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vscode-css-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6374,7 +6374,7 @@ impl Config {
             "c".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "clangd".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6396,7 +6396,7 @@ impl Config {
             "cpp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "clangd".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6420,7 +6420,7 @@ impl Config {
             "go".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "gopls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6443,7 +6443,7 @@ impl Config {
             "json".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vscode-json-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6464,7 +6464,7 @@ impl Config {
             "jsonc".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vscode-json-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6483,7 +6483,7 @@ impl Config {
             "csharp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "csharp-ls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6507,7 +6507,7 @@ impl Config {
             "odin".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "ols".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6527,7 +6527,7 @@ impl Config {
             "zig".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "zls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6547,7 +6547,7 @@ impl Config {
             "c3".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "c3lsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6568,7 +6568,7 @@ impl Config {
             "slang".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "slangd".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6588,7 +6588,7 @@ impl Config {
             "java".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "jdtls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6613,7 +6613,7 @@ impl Config {
             "latex".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "texlab".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6633,7 +6633,7 @@ impl Config {
             "markdown".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "marksman".to_string(),
-                args: vec!["server".to_string()],
+                args: Some(vec!["server".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6653,7 +6653,7 @@ impl Config {
             "templ".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "templ".to_string(),
-                args: vec!["lsp".to_string()],
+                args: Some(vec!["lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6673,7 +6673,7 @@ impl Config {
             "typst".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "tinymist".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6692,7 +6692,7 @@ impl Config {
             "bash".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "bash-language-server".to_string(),
-                args: vec!["start".to_string()],
+                args: Some(vec!["start".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6712,7 +6712,7 @@ impl Config {
             "lua".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "lua-language-server".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6737,7 +6737,7 @@ impl Config {
             "ruby".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "solargraph".to_string(),
-                args: vec!["stdio".to_string()],
+                args: Some(vec!["stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6761,7 +6761,7 @@ impl Config {
             "php".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "phpactor".to_string(),
-                args: vec!["language-server".to_string()],
+                args: Some(vec!["language-server".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6780,7 +6780,7 @@ impl Config {
             "yaml".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "yaml-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6800,7 +6800,7 @@ impl Config {
             "toml".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "taplo".to_string(),
-                args: vec!["lsp".to_string(), "stdio".to_string()],
+                args: Some(vec!["lsp".to_string(), "stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6820,7 +6820,7 @@ impl Config {
             "dart".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "dart".to_string(),
-                args: vec!["language-server".to_string(), "--protocol=lsp".to_string()],
+                args: Some(vec!["language-server".to_string(), "--protocol=lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6840,7 +6840,7 @@ impl Config {
             "nushell".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "nu".to_string(),
-                args: vec!["--lsp".to_string()],
+                args: Some(vec!["--lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6860,7 +6860,7 @@ impl Config {
             "solidity".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "nomicfoundation-solidity-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6882,7 +6882,7 @@ impl Config {
             "terraform".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "terraform-ls".to_string(),
-                args: vec!["serve".to_string()],
+                args: Some(vec!["serve".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6906,7 +6906,7 @@ impl Config {
             "cmake".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "cmake-language-server".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6926,7 +6926,7 @@ impl Config {
             "protobuf".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "buf".to_string(),
-                args: vec!["beta".to_string(), "lsp".to_string()],
+                args: Some(vec!["beta".to_string(), "lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6946,7 +6946,7 @@ impl Config {
             "graphql".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "graphql-lsp".to_string(),
-                args: vec!["server".to_string(), "-m".to_string(), "stream".to_string()],
+                args: Some(vec!["server".to_string(), "-m".to_string(), "stream".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6966,7 +6966,7 @@ impl Config {
             "sql".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "sqls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6987,7 +6987,7 @@ impl Config {
             "vue".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "vue-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7006,7 +7006,7 @@ impl Config {
             "svelte".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "svelteserver".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7025,7 +7025,7 @@ impl Config {
             "astro".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "astro-ls".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7044,7 +7044,7 @@ impl Config {
             "tailwindcss".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "tailwindcss-language-server".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7066,7 +7066,7 @@ impl Config {
             "nix".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "nil".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7086,7 +7086,7 @@ impl Config {
             "kotlin".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "kotlin-language-server".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7105,7 +7105,7 @@ impl Config {
             "swift".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "sourcekit-lsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7125,7 +7125,7 @@ impl Config {
             "scala".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "metals".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7145,7 +7145,7 @@ impl Config {
             "elixir".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "elixir-ls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7164,7 +7164,7 @@ impl Config {
             "erlang".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "erlang_ls".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7184,7 +7184,7 @@ impl Config {
             "haskell".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "haskell-language-server-wrapper".to_string(),
-                args: vec!["--lsp".to_string()],
+                args: Some(vec!["--lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7204,7 +7204,7 @@ impl Config {
             "ocaml".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "ocamllsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7224,7 +7224,7 @@ impl Config {
             "clojure".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "clojure-lsp".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7244,11 +7244,11 @@ impl Config {
             "r".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "R".to_string(),
-                args: vec![
+                args: Some(vec![
                     "--vanilla".to_string(),
                     "-e".to_string(),
                     "languageserver::run()".to_string(),
-                ],
+                ]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7268,12 +7268,12 @@ impl Config {
             "julia".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "julia".to_string(),
-                args: vec![
+                args: Some(vec![
                     "--startup-file=no".to_string(),
                     "--history-file=no".to_string(),
                     "-e".to_string(),
                     "using LanguageServer; runserver()".to_string(),
-                ],
+                ]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7293,7 +7293,7 @@ impl Config {
             "perl".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "perlnavigator".to_string(),
-                args: vec!["--stdio".to_string()],
+                args: Some(vec!["--stdio".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7313,7 +7313,7 @@ impl Config {
             "nim".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "nimlangserver".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7332,7 +7332,7 @@ impl Config {
             "gleam".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "gleam".to_string(),
-                args: vec!["lsp".to_string()],
+                args: Some(vec!["lsp".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7352,7 +7352,7 @@ impl Config {
             "racket".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "racket-langserver".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7372,7 +7372,7 @@ impl Config {
             "fsharp".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "fsautocomplete".to_string(),
-                args: vec!["--adaptive-lsp-server-enabled".to_string()],
+                args: Some(vec!["--adaptive-lsp-server-enabled".to_string()]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -7391,7 +7391,7 @@ impl Config {
         // Handles both Verilog and SystemVerilog; configured per-project via .svls.toml.
         let svls_config = LspServerConfig {
             command: "svls".to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false,
             process_limits: ProcessLimits::default(),
@@ -7424,7 +7424,7 @@ impl Config {
         // Pushed diagnostics are unaffected by the feature filter.
         let asm_lsp_config = LspServerConfig {
             command: "asm-lsp".to_string(),
-            args: vec![],
+            args: Some(vec![]),
             enabled: true,
             auto_start: false,
             process_limits: ProcessLimits::default(),
@@ -8317,7 +8317,7 @@ mod tests {
         let config = Config::default();
         let server = &config.lsp["gdscript"].as_slice()[0];
         assert_eq!(server.command, "nc");
-        assert_eq!(server.args, vec!["127.0.0.1", "6005"]);
+        assert_eq!(server.args, Some(vec!["127.0.0.1".to_string(), "6005".to_string()]));
         assert!(!server.enabled);
         assert_eq!(server.name.as_deref(), Some("Godot GDScript"));
     }

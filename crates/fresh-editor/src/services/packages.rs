@@ -322,7 +322,7 @@ impl LspManifestConfig {
 
         LspServerConfig {
             command: self.command.clone(),
-            args: self.args.clone(),
+            args: Some(self.args.clone()),
             enabled: true,
             auto_start: self.auto_start.unwrap_or(true),
             initialization_options: self.initialization_options.clone(),
@@ -593,7 +593,7 @@ mod tests {
 
         let lsp = fresh.lsp.unwrap();
         assert_eq!(lsp.command, "hare-lsp");
-        assert_eq!(lsp.args, vec!["--stdio"]);
+        assert_eq!(lsp.args, vec!["--stdio".to_string()]);
         assert_eq!(lsp.auto_start, Some(true));
 
         // Verify conversion to LspServerConfig

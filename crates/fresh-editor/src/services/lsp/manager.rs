@@ -1295,7 +1295,7 @@ impl LspManager {
             match LspHandle::spawn(
                 &runtime,
                 &config.command,
-                &config.args,
+                config.args(),
                 config.env.clone(),
                 LanguageScope::single(language),
                 server_name.clone(),
@@ -1411,7 +1411,7 @@ impl LspManager {
             match LspHandle::spawn(
                 &runtime,
                 &config.command,
-                &config.args,
+                config.args(),
                 config.env.clone(),
                 LanguageScope::all(),
                 server_name.clone(),
@@ -1738,7 +1738,7 @@ impl LspManager {
         match LspHandle::spawn(
             &runtime,
             &config.command,
-            &config.args,
+            config.args(),
             config.env.clone(),
             scope,
             server_name.to_string(),
@@ -2144,7 +2144,7 @@ mod tests {
         let config = LspServerConfig {
             enabled: true,
             command: "rust-analyzer".to_string(),
-            args: vec![],
+            args: Some(vec![]),
             process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
             auto_start: false,
             initialization_options: None,
@@ -2173,7 +2173,7 @@ mod tests {
             LspServerConfig {
                 enabled: true,
                 command: "rust-analyzer".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
                 initialization_options: None,
@@ -2218,7 +2218,7 @@ mod tests {
             LspServerConfig {
                 enabled: false,
                 command: String::new(), // command not required when disabled
-                args: vec![],
+                args: Some(vec![]),
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
                 initialization_options: None,
@@ -2253,7 +2253,7 @@ mod tests {
             LspServerConfig {
                 enabled: false,
                 command: String::new(),
-                args: vec![],
+                args: Some(vec![]),
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: false,
                 initialization_options: None,
@@ -2285,7 +2285,7 @@ mod tests {
             LspServerConfig {
                 enabled: true,
                 command: "rust-analyzer".to_string(),
-                args: vec![],
+                args: Some(vec![]),
                 process_limits: crate::services::process_limits::ProcessLimits::unlimited(),
                 auto_start: true,
                 initialization_options: None,

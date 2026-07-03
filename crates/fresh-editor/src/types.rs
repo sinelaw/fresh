@@ -285,10 +285,15 @@ pub struct LspServerConfig {
     #[schemars(extend("x-order" = 3))]
     pub name: Option<String>,
 
-    /// Arguments to pass to the server
+    /// Arguments to pass to the server.
+    ///
+    /// `None` (field omitted) inherits the default server's args, while an
+    /// explicit list — including an empty `[]` — replaces them. This lets a
+    /// user swap a default server that takes args (e.g. `marksman server`)
+    /// for one that takes none (e.g. `markdown-oxide`) by setting `"args": []`.
     #[serde(default)]
     #[schemars(extend("x-order" = 4))]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
 
     /// Whether to auto-start this LSP server when opening matching files.
     /// Defaults to true: a server you configure is normally one you want
@@ -374,6 +379,14 @@ impl LspServerConfig {
         FeatureFilter::from_config(&self.only_features, &self.except_features)
     }
 
+    /// The arguments to launch this server with, treating an omitted
+    /// (`None`) list as no arguments. Use this at spawn time; use the
+    /// `args` field directly only when the unset-vs-empty distinction
+    /// matters (e.g. merging user config with defaults).
+    pub fn args(&self) -> &[String] {
+        self.args.as_deref().unwrap_or(&[])
+    }
+
     /// Merge this config with defaults, using default values for empty/unset fields.
     ///
     /// This is used when loading configs where fields like `command` may be empty
@@ -386,11 +399,11 @@ impl LspServerConfig {
             } else {
                 self.command
             },
-            args: if self.args.is_empty() {
-                defaults.args.clone()
-            } else {
-                self.args
-            },
+            // Inherit the default args only when the user omitted the field
+            // entirely (`None`). An explicit list — including an empty `[]` —
+            // is respected as-is, so a replacement server can opt out of the
+            // default's arguments.
+            args: self.args.or_else(|| defaults.args.clone()),
             enabled: self.enabled,
             auto_start: self.auto_start,
             process_limits: self.process_limits,
@@ -509,5 +522,69 @@ mod tests {
     fn test_feature_filter_default() {
         let filter = FeatureFilter::default();
         assert!(matches!(filter, FeatureFilter::All));
+    }
+
+    /// A default server (e.g. `marksman server`) that a user replaces with a
+    /// command taking a different set of args.
+    fn marksman_default() -> LspServerConfig {
+        LspServerConfig {
+            command: "marksman".to_string(),
+            args: Some(vec!["server".to_string()]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_merge_omitted_args_inherits_default() {
+        // User omits `args` entirely (deserializes to None): inherit the
+        // default server's args.
+        let user = LspServerConfig {
+            command: "marksman".to_string(),
+            args: None,
+            ..Default::default()
+        };
+        let merged = user.merge_with_defaults(&marksman_default());
+        assert_eq!(merged.args, Some(vec!["server".to_string()]));
+        assert_eq!(merged.args(), ["server".to_string()]);
+    }
+
+    #[test]
+    fn test_merge_explicit_empty_args_overrides_default() {
+        // Regression for #2549: a user replacing marksman with a server that
+        // takes no arguments sets `"args": []`. This must NOT fall back to the
+        // default `["server"]` — the server should be launched with no args.
+        let user = LspServerConfig {
+            command: "markdown-oxide".to_string(),
+            args: Some(vec![]),
+            ..Default::default()
+        };
+        let merged = user.merge_with_defaults(&marksman_default());
+        assert_eq!(merged.command, "markdown-oxide");
+        assert_eq!(merged.args, Some(vec![]));
+        assert!(merged.args().is_empty());
+    }
+
+    #[test]
+    fn test_merge_explicit_args_replaces_default() {
+        let user = LspServerConfig {
+            command: "markdown-oxide".to_string(),
+            args: Some(vec!["--stdio".to_string()]),
+            ..Default::default()
+        };
+        let merged = user.merge_with_defaults(&marksman_default());
+        assert_eq!(merged.args, Some(vec!["--stdio".to_string()]));
+    }
+
+    #[test]
+    fn test_args_deserializes_missing_as_none_and_empty_as_some() {
+        // The unset-vs-empty distinction hinges on serde: an omitted field is
+        // None, while an explicit empty array is Some([]).
+        let omitted: LspServerConfig =
+            serde_json::from_str(r#"{"command":"markdown-oxide"}"#).unwrap();
+        assert_eq!(omitted.args, None);
+
+        let empty: LspServerConfig =
+            serde_json::from_str(r#"{"command":"markdown-oxide","args":[]}"#).unwrap();
+        assert_eq!(empty.args, Some(vec![]));
     }
 }

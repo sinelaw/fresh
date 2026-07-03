@@ -930,7 +930,7 @@ pub(crate) fn configure_lsp_servers(
         tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
         let deno_config = LspServerConfig {
             command: "deno".to_string(),
-            args: vec!["lsp".to_string()],
+            args: Some(vec!["lsp".to_string()]),
             enabled: true,
             auto_start: false,
             process_limits: ProcessLimits::default(),

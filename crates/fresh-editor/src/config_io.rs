@@ -2471,7 +2471,10 @@ mod tests {
         );
         assert_eq!(
             rust_analyzer.args,
-            vec!["--log-file", "/tmp/rust-analyzer-{pid}.log"],
+            Some(vec![
+                "--log-file".to_string(),
+                "/tmp/rust-analyzer-{pid}.log".to_string()
+            ]),
             "rust-analyzer args should be preserved"
         );
 
@@ -2555,7 +2558,10 @@ mod tests {
         let reloaded_ra = &reloaded.lsp["rust-analyzer"].as_slice()[0];
         assert_eq!(
             reloaded_ra.args,
-            vec!["--log-file", "/tmp/rust-analyzer-{pid}.log"],
+            Some(vec![
+                "--log-file".to_string(),
+                "/tmp/rust-analyzer-{pid}.log".to_string()
+            ]),
             "BUG #806: Custom args should survive save/reload cycle"
         );
     }
