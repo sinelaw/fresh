@@ -997,6 +997,17 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub animations: bool,
 
+    /// Draw chrome (settings editor, file tree, popups, prompts, dialog
+    /// borders) with plain ASCII characters instead of Unicode box-drawing
+    /// and symbol glyphs. Enable this on terminals/fonts that render the
+    /// decorative glyphs (`▶`, `→`, `╭╮╰╯`, `✓`, Nerd-Font category icons,
+    /// …) as `?` or blank boxes. Affects UI chrome only — buffer text,
+    /// whitespace indicators, and indentation guides are unchanged.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub ascii_ui: bool,
+
     /// Enable the cursor-jump trail animation on long cursor moves
     /// (search jumps, go-to-definition, pane switches). Has no effect
     /// when `animations` is `false`.
@@ -1741,6 +1752,7 @@ impl Default for EditorConfig {
             auto_close: true,
             auto_surround: true,
             animations: true,
+            ascii_ui: false,
             cursor_jump_animation: true,
             line_numbers: true,
             relative_line_numbers: false,

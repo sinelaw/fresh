@@ -60,6 +60,11 @@ impl Editor {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
+        // Resolve the chrome glyph set (Unicode vs. ASCII fallback) for this
+        // frame from the live config, so every render site below sees the
+        // current `editor.ascii_ui` value regardless of how it was swapped.
+        crate::view::glyphs::set_ascii_ui(self.config.editor.ascii_ui);
+
         self.drain_pre_layout_plugin_commands();
 
         for window in self.windows.values_mut() {

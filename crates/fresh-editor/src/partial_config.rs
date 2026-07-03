@@ -152,6 +152,7 @@ pub struct PartialEditorConfig {
     pub auto_close: Option<bool>,
     pub auto_surround: Option<bool>,
     pub animations: Option<bool>,
+    pub ascii_ui: Option<bool>,
     pub cursor_jump_animation: Option<bool>,
     pub line_numbers: Option<bool>,
     pub relative_line_numbers: Option<bool>,
@@ -583,6 +584,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             auto_close: Some(cfg.auto_close),
             auto_surround: Some(cfg.auto_surround),
             animations: Some(cfg.animations),
+            ascii_ui: Some(cfg.ascii_ui),
             cursor_jump_animation: Some(cfg.cursor_jump_animation),
             line_numbers: Some(cfg.line_numbers),
             relative_line_numbers: Some(cfg.relative_line_numbers),
@@ -678,6 +680,7 @@ impl PartialEditorConfig {
             auto_close: self.auto_close.unwrap_or(defaults.auto_close),
             auto_surround: self.auto_surround.unwrap_or(defaults.auto_surround),
             animations: self.animations.unwrap_or(defaults.animations),
+            ascii_ui: self.ascii_ui.unwrap_or(defaults.ascii_ui),
             cursor_jump_animation: self
                 .cursor_jump_animation
                 .unwrap_or(defaults.cursor_jump_animation),

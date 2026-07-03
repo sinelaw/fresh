@@ -68,6 +68,7 @@ pub fn render_keybinding_editor(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
 
@@ -635,6 +636,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, theme: &Theme) {
     let block = Block::default()
         .title(format!(" {} ", t!("keybinding_editor.help_title")))
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);
@@ -742,6 +744,7 @@ fn render_edit_dialog(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);
@@ -1067,6 +1070,7 @@ fn render_autocomplete_popup(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(popup_area);
@@ -1131,6 +1135,7 @@ fn render_confirm_dialog(
     let block = Block::default()
         .title(format!(" {} ", t!("keybinding_editor.confirm_title")))
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.popup_bg).fg(theme.popup_text_fg));
     let inner = block.inner(dialog_area);

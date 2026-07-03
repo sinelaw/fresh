@@ -47,13 +47,13 @@ impl<'a> ExplorerRowStatus<'a> {
         is_dir: bool,
     ) -> Option<ExplorerTrailingSlotPayload> {
         let (text, fg) = match self.resolved {
-            Some(ResolvedExplorerStatus::Unsaved) => ("●".to_string(), theme.diagnostic_warning_fg),
+            Some(ResolvedExplorerStatus::Unsaved) => (crate::view::glyphs::glyphs().bullet.to_string(), theme.diagnostic_warning_fg),
             Some(ResolvedExplorerStatus::Decoration(decoration)) => (
                 decoration_symbol(&decoration.symbol),
                 compatibility_decoration_color(decoration, theme),
             ),
             Some(ResolvedExplorerStatus::BubbledDecoration(decoration)) => (
-                "●".to_string(),
+                crate::view::glyphs::glyphs().bullet.to_string(),
                 compatibility_decoration_color(decoration, theme),
             ),
             None => return None,

@@ -31,6 +31,7 @@
       "$ref": "#/$defs/EditorConfig",
       "default": {
         "animations": true,
+        "ascii_ui": false,
         "cursor_jump_animation": true,
         "line_numbers": true,
         "relative_line_numbers": false,
@@ -374,6 +375,12 @@
           "description": "Enable frame-buffer animations (tab-switch slides, dashboard\nbringup, plugin-driven effects). When `false`, every animation\ncall is a no-op: the UI is fully static and each render lands\nthe final frame immediately. Useful on slow terminals, over\nSSH, or for users who prefer no motion.",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "ascii_ui": {
+          "description": "Draw chrome (settings editor, file tree, popups, prompts, dialog\nborders) with plain ASCII characters instead of Unicode box-drawing\nand symbol glyphs. Enable this on terminals/fonts that render the\ndecorative glyphs (`▶`, `→`, `╭╮╰╯`, `✓`, Nerd-Font category icons,\n…) as `?` or blank boxes. Affects UI chrome only — buffer text,\nwhitespace indicators, and indentation guides are unchanged.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "cursor_jump_animation": {

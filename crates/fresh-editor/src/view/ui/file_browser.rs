@@ -80,6 +80,7 @@ impl FileBrowserRenderer {
         // Create the popup block with border
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_set(crate::view::glyphs::glyphs().plain_border_set())
             .border_style(Style::default().fg(theme.popup_border_fg))
             .style(Style::default().bg(theme.popup_bg))
             .title(title_line);
@@ -233,7 +234,7 @@ impl FileBrowserRenderer {
 
         // Separator between checkboxes
         checkbox_spans.push(Span::styled(
-            " │ ",
+            format!(" {} ", crate::view::glyphs::glyphs().v),
             Style::default()
                 .fg(theme.help_separator_fg)
                 .bg(theme.popup_bg),
@@ -341,7 +342,7 @@ impl FileBrowserRenderer {
 
             if idx < state.shortcuts.len() - 1 {
                 nav_spans.push(Span::styled(
-                    " │ ",
+                    format!(" {} ", crate::view::glyphs::glyphs().v),
                     Style::default()
                         .fg(theme.help_separator_fg)
                         .bg(theme.popup_bg),
@@ -397,7 +398,11 @@ impl FileBrowserRenderer {
             .add_modifier(Modifier::BOLD);
 
         // Sort indicator
-        let sort_arrow = if state.sort_ascending { "▲" } else { "▼" };
+        let sort_arrow = if state.sort_ascending {
+            crate::view::glyphs::glyphs().triangle_up
+        } else {
+            crate::view::glyphs::glyphs().triangle_down
+        };
 
         let mut spans = Vec::new();
 

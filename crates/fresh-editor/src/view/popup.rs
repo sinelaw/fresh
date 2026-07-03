@@ -1079,6 +1079,7 @@ impl Popup {
         let block = if self.bordered {
             let mut block = Block::default()
                 .borders(Borders::ALL)
+                .border_set(crate::view::glyphs::glyphs().plain_border_set())
                 .border_style(self.border_style)
                 .style(self.background_style);
 

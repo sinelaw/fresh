@@ -58,6 +58,27 @@ echo $COLORTERM
 
 If something outside Fresh scribbles over the TUI — a stray shell message, an external program's output, a paste with unbalanced escape sequences, or a terminal that got wedged during a resize — the screen can end up with ghost text or misaligned cells. Run **Redraw Screen** from the command palette (`Ctrl+P`) to clear the terminal and repaint the UI from scratch.
 
+## Chrome Glyphs Show as `?` or Blank Boxes
+
+If the settings editor, file tree, popups, or dialog borders render decorative
+symbols (`▶`, `→`, `╭╮╰╯`, `✓`, or the settings category icons) as literal `?`
+characters or empty boxes, your terminal font can't render those glyphs and
+isn't falling back to one that can. The settings category icons in particular
+use [Nerd Font](https://www.nerdfonts.com/) icons, which require a
+Nerd-Font-patched font.
+
+Two fixes:
+
+1. **Switch to ASCII chrome.** Enable `editor.ascii_ui` (Settings UI →
+   *Editor* → *Display*, or `"editor": { "ascii_ui": true }` in `config.toml`).
+   This swaps every chrome glyph for a plain-ASCII equivalent (`>`/`v` for
+   chevrons, `->` for arrows, `+`/`-`/`|` for borders, `[x]` markers, …). It
+   affects UI chrome only — buffer text, whitespace indicators, and indentation
+   guides are unchanged.
+2. **Use a font that has the glyphs.** A Nerd-Font-patched monospace font
+   (e.g. a Nerd Font build of JetBrains Mono, Hack, or Fira Code), or on macOS
+   a font like Menlo/SF Mono, renders the Unicode set correctly.
+
 ## Advanced Topics
 
 ### Visual Regression Testing

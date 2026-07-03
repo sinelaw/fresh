@@ -29,6 +29,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Settings**:
   * language-entry field edits keep their committed value (including **Tab Size**), and `Esc` now cancels an in-progress edit while `Enter`/`Tab` commit it (#2537);
   * committing a text field with `Tab` persists the typed value on Save, matching `Enter` — previously the row showed as modified but Save wrote an empty value (#2515).
+* **ASCII chrome fallback** — a new `editor.ascii_ui` option (Settings → *Editor* → *Display*) redraws UI chrome (settings editor, file tree, popups, prompts, dialog borders) with plain ASCII instead of Unicode box-drawing and symbol glyphs — including the Nerd-Font settings category icons — for terminals/fonts that render them as `?` or blank boxes (#2032, reported by @comesuccingfuccsloot). Buffer text, whitespace indicators, and indentation guides are unaffected.
 
 ### Internals
 

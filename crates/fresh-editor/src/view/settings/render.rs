@@ -17,11 +17,12 @@ use crate::view::controls::{
     NumberInputColors, TextInputColors, TextListColors, ToggleColors,
 };
 use crate::view::theme::Theme;
+use crate::view::glyphs::glyphs;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
 /// Build spans for a text line with selection highlighting
@@ -199,7 +200,7 @@ pub fn render_settings(
     let block = Block::default()
         .title(title.as_str())
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_set(glyphs().border_set())
         .border_style(Style::default().fg(theme.popup_border_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, modal_area);
@@ -336,7 +337,7 @@ fn render_horizontal_layout(
     let divider_style = Style::default().fg(theme.split_separator_fg);
     for y in 0..divider_area.height {
         frame.render_widget(
-            Paragraph::new("│").style(divider_style),
+            Paragraph::new(glyphs().v).style(divider_style),
             Rect::new(divider_area.x, divider_area.y + y, 1, 1),
         );
     }
@@ -401,7 +402,7 @@ fn render_vertical_layout(
 
     // Render horizontal separator
     if sep_y < content_area.y + content_area.height {
-        let sep_line: String = "─".repeat(content_area.width as usize);
+        let sep_line: String = glyphs().h.repeat(content_area.width as usize);
         frame.render_widget(
             Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
             Rect::new(content_area.x, sep_y, content_area.width, 1),
@@ -443,7 +444,11 @@ fn render_categories_horizontal(
         let is_selected = i == state.selected_category;
         let has_modified = state.page_has_pending_changes(i);
 
-        let indicator = if has_modified { "● " } else { "  " };
+        let indicator = if has_modified {
+            format!("{} ", glyphs().bullet)
+        } else {
+            "  ".to_string()
+        };
         let name = &page.name;
 
         let style = if is_selected && is_focused {
@@ -468,19 +473,20 @@ fn render_categories_horizontal(
         // Add separator between categories
         if i > 0 {
             spans.push(Span::styled(
-                " │ ",
+                format!(" {} ", glyphs().v),
                 Style::default().fg(theme.split_separator_fg),
             ));
             total_width += 3;
         }
 
+        let entry_width = (indicator.len() + name.len()) as u16;
         spans.push(Span::styled(indicator, indicator_style));
         spans.push(Span::styled(name.as_str(), style));
-        total_width += (indicator.len() + name.len()) as u16;
+        total_width += entry_width;
 
         // Track category rect for click handling (approximate)
-        let cat_x = area.x + total_width.saturating_sub((indicator.len() + name.len()) as u16);
-        let cat_width = (indicator.len() + name.len()) as u16;
+        let cat_x = area.x + total_width.saturating_sub(entry_width);
+        let cat_width = entry_width;
         layout
             .categories
             .push((i, Rect::new(cat_x, area.y, cat_width, 1)));
@@ -492,29 +498,16 @@ fn render_categories_horizontal(
 
     // Show navigation hint on line 2 if space
     if area.height >= 2 {
-        let hint = "←→: Switch category";
+        let hint = format!(
+            "{}{}: Switch category",
+            glyphs().arrow_left,
+            glyphs().arrow_right
+        );
         let hint_style = Style::default().fg(theme.line_number_fg);
         frame.render_widget(
             Paragraph::new(hint).style(hint_style),
             Rect::new(area.x, area.y + 1, area.width, 1),
         );
-    }
-}
-
-/// Get an icon for a settings category name (Nerd Font icons)
-fn category_icon(name: &str) -> &'static str {
-    match name.to_lowercase().as_str() {
-        "general" => "\u{f013} ",       //
-        "editor" => "\u{f044} ",        //
-        "clipboard" => "\u{f328} ",     //
-        "file browser" => "\u{f07b} ",  //
-        "file explorer" => "\u{f07c} ", //
-        "packages" => "\u{f487} ",      //
-        "plugins" => "\u{f1e6} ",       //
-        "terminal" => "\u{f120} ",      //
-        "warnings" => "\u{f071} ",      //
-        "keybindings" => "\u{f11c} ",   //
-        _ => "\u{f111} ",               //  (dot circle as fallback)
     }
 }
 
@@ -575,9 +568,9 @@ fn render_categories(
                 RowData {
                     chevron: if expandable {
                         if expanded {
-                            "▼"
+                            glyphs().chevron_expanded
                         } else {
-                            "▶"
+                            glyphs().chevron_collapsed
                         }
                     } else {
                         " "
@@ -593,7 +586,7 @@ fn render_categories(
                     cat_idx: Some(idx),
                     section_idx: None,
                     label: page.name.clone(),
-                    icon: Some(category_icon(&page.name)),
+                    icon: Some(glyphs().category_icon(&page.name)),
                 }
             }
             TreeRow::Section {
@@ -1244,7 +1237,7 @@ fn render_setting_item_pure(
             // secondary structure, not nested popups.
             let block = Block::default()
                 .borders(borders)
-                .border_type(BorderType::Rounded)
+                .border_set(glyphs().border_set())
                 .border_style(Style::default().fg(theme.split_separator_fg));
             frame.render_widget(block, card_rect);
         }
@@ -1319,7 +1312,7 @@ fn render_setting_item_pure(
         }
         if pending_dirty && label_row_visible && inner_area.width >= 2 {
             frame.render_widget(
-                Paragraph::new("●").style(Style::default().fg(theme.settings_selected_fg)),
+                Paragraph::new(glyphs().bullet).style(Style::default().fg(theme.settings_selected_fg)),
                 Rect::new(inner_area.x + 1, inner_area.y, 1, 1),
             );
         }
@@ -1682,10 +1675,10 @@ fn render_json_control(
         // Build line with border
         let mut spans = vec![
             Span::raw(" ".repeat(indent as usize)),
-            Span::styled("│", Style::default().fg(border_color)),
+            Span::styled(glyphs().v, Style::default().fg(border_color)),
         ];
         spans.extend(content_spans);
-        spans.push(Span::styled("│", Style::default().fg(border_color)));
+        spans.push(Span::styled(glyphs().v, Style::default().fg(border_color)));
         let line = Line::from(spans);
 
         frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
@@ -2284,7 +2277,10 @@ fn render_keybinding_list_partial(
                         format!("{:<20}", key_combo),
                         Style::default().fg(key_fg).bg(bg),
                     ),
-                    Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
+                    Span::styled(
+                        format!(" {} ", glyphs().arrow_right),
+                        Style::default().fg(arrow_fg).bg(bg),
+                    ),
                     Span::styled(action, Style::default().fg(action_fg).bg(bg)),
                 ])
             };
@@ -2435,7 +2431,7 @@ fn render_footer(
     if footer_y > modal_area.y {
         let sep_y = footer_y.saturating_sub(1);
         let sep_area = Rect::new(modal_area.x + 1, sep_y, footer_width, 1);
-        let sep_line: String = "─".repeat(sep_area.width as usize);
+        let sep_line: String = glyphs().h.repeat(sep_area.width as usize);
         frame.render_widget(
             Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
             sep_area,
@@ -2709,7 +2705,7 @@ fn render_footer_vertical(
     // Draw top separator
     let sep_y = footer_y;
     if sep_y > modal_area.y {
-        let sep_line: String = "─".repeat(footer_width as usize);
+        let sep_line: String = glyphs().h.repeat(footer_width as usize);
         frame.render_widget(
             Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
             Rect::new(modal_area.x + 1, sep_y, footer_width, 1),
@@ -2891,12 +2887,7 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
     // Add scroll indicators
     let has_more_above = state.search_scroll_offset > 0;
     let has_more_below = state.search_scroll_offset + state.search_max_visible < result_count;
-    let scroll_indicator = match (has_more_above, has_more_below) {
-        (true, true) => " ↑↓",
-        (true, false) => " ↑",
-        (false, true) => " ↓",
-        (false, false) => "",
-    };
+    let scroll_indicator = glyphs().scroll_indicator(has_more_above, has_more_below);
 
     let count_style = Style::default().fg(theme.line_number_fg);
     let indicator_style = Style::default()
@@ -3067,7 +3058,11 @@ fn render_search_result_item(
     };
 
     // Build name with match highlighting, prefixed with selection indicator
-    let indicator = if is_selected { "▸ " } else { "  " };
+    let indicator = if is_selected {
+        format!("{} ", glyphs().chevron_collapsed)
+    } else {
+        "  ".to_string()
+    };
     let indicator_style = if is_selected {
         Style::default()
             .fg(theme.settings_selected_fg)
@@ -3191,7 +3186,7 @@ fn centered_dialog_frame(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_set(glyphs().border_set())
         .border_style(Style::default().fg(border_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -3375,7 +3370,7 @@ fn render_confirm_dialog(
     let button_y = dialog_area.y + dialog_area.height - 3;
 
     // Draw separator
-    let sep_line: String = "─".repeat(inner.width as usize);
+    let sep_line: String = glyphs().h.repeat(inner.width as usize);
     frame.render_widget(
         Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
         Rect::new(inner.x, button_y - 1, inner.width, 1),
@@ -3399,7 +3394,7 @@ fn render_confirm_dialog(
         frame,
         inner,
         button_y,
-        "←/→/Tab: Select   Enter: Confirm   Esc: Cancel",
+        &format!("{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
         theme,
     );
 }
@@ -3435,7 +3430,7 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
     let button_y = dialog_area.y + dialog_area.height - 3;
 
     // Draw separator
-    let sep_line: String = "─".repeat(inner.width as usize);
+    let sep_line: String = glyphs().h.repeat(inner.width as usize);
     frame.render_widget(
         Paragraph::new(sep_line).style(Style::default().fg(theme.split_separator_fg)),
         Rect::new(inner.x, button_y - 1, inner.width, 1),
@@ -3455,7 +3450,7 @@ fn render_reset_dialog(frame: &mut Frame, parent_area: Rect, state: &SettingsSta
         frame,
         inner,
         button_y,
-        "←/→/Tab: Select   Enter: Confirm   Esc: Cancel",
+        &format!("{}/{}/Tab: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
         theme,
     );
 }
@@ -3502,7 +3497,7 @@ fn render_entry_discard_confirm(
         frame,
         inner,
         button_y,
-        "Tab/←→: Select   Enter: Confirm   Esc: Keep editing",
+        &format!("Tab/{}{}: Select   Enter: Confirm   Esc: Keep editing", glyphs().arrow_left, glyphs().arrow_right),
         theme,
     );
 }
@@ -3593,7 +3588,7 @@ fn render_entry_delete_confirm(
         frame,
         inner,
         button_y,
-        "Tab/←→: Select   Enter: Confirm   Esc: Cancel",
+        &format!("Tab/{}{}: Select   Enter: Confirm   Esc: Cancel", glyphs().arrow_left, glyphs().arrow_right),
         theme,
     );
 }
@@ -3641,7 +3636,7 @@ fn render_entry_items(
                 && content_y >= scroll_offset
             {
                 let sep_style = Style::default().fg(theme.line_number_fg);
-                let separator_line = "─".repeat(inner.width.saturating_sub(2) as usize);
+                let separator_line = glyphs().h.repeat(inner.width.saturating_sub(2) as usize);
                 frame.render_widget(
                     Paragraph::new(separator_line).style(sep_style),
                     Rect::new(inner.x + 1, screen_y, inner.width.saturating_sub(2), 1),
@@ -3758,7 +3753,7 @@ fn render_entry_items(
         if item.modified && skip_rows == 0 {
             let modified_style = Style::default().fg(theme.settings_selected_fg);
             frame.render_widget(
-                Paragraph::new("●").style(modified_style),
+                Paragraph::new(glyphs().bullet).style(modified_style),
                 Rect::new(inner.x + 1, screen_y, 1, 1),
             );
         }
@@ -3981,18 +3976,21 @@ fn render_entry_footer(
             if let SettingControl::TextList(state) = &it.control {
                 if state.focused_item.is_none() {
                     return Some(if !state.pending_active && state.new_item_text.is_empty() {
-                        "Press Enter (or type) to add a new item; ↓/Tab to leave"
+                        format!(
+                            "Press Enter (or type) to add a new item; {}/Tab to leave",
+                            glyphs().arrow_down
+                        )
                     } else if state.new_item_text.is_empty() {
-                        "Type the new item — Enter to add, Esc to cancel"
+                        "Type the new item — Enter to add, Esc to cancel".to_string()
                     } else {
-                        "Editing new item — Enter to add, Esc to cancel"
+                        "Editing new item — Enter to add, Esc to cancel".to_string()
                     });
                 }
             }
             None
         });
 
-        let text: Option<String> = pending_list_caption.map(String::from).or_else(|| {
+        let text: Option<String> = pending_list_caption.or_else(|| {
             dialog
                 .current_item()
                 .and_then(|it| it.description.as_deref())
@@ -4036,30 +4034,37 @@ fn render_entry_footer(
         1,
     );
 
-    let (text, style) = if has_invalid_json && !is_json_control {
+    let g = glyphs();
+    let (text, style): (String, Style) = if has_invalid_json && !is_json_control {
         (
-            "⚠ Invalid JSON - fix before leaving field",
+            "⚠ Invalid JSON - fix before leaving field".to_string(),
             Style::default().fg(theme.diagnostic_warning_fg),
         )
     } else if has_invalid_json {
         (
-            "⚠ Invalid JSON",
+            "⚠ Invalid JSON".to_string(),
             Style::default().fg(theme.diagnostic_warning_fg),
         )
     } else if is_json_control {
         (
-            "↑↓←→:Move  Enter:Newline  Tab/Esc:Exit",
+            format!(
+                "{}{}{}{}:Move  Enter:Newline  Tab/Esc:Exit",
+                g.arrow_up, g.arrow_down, g.arrow_left, g.arrow_right
+            ),
             Style::default().fg(theme.line_number_fg),
         )
     } else if dialog.editing_text {
         (
-            "Enter/Tab:Commit field  Esc:Cancel",
+            "Enter/Tab:Commit field  Esc:Cancel".to_string(),
             Style::default().fg(theme.line_number_fg),
         )
     } else {
         // The `●:modified` legend is the only place that explains the row-indicator.
         (
-            "↑↓:Navigate  Tab:Fields/Buttons  Enter:Edit/Apply  Ctrl+S:Save  Esc:Cancel  ●:modified",
+            format!(
+                "{}{}:Navigate  Tab:Fields/Buttons  Enter:Edit/Apply  Ctrl+S:Save  Esc:Cancel  {}:modified",
+                g.arrow_up, g.arrow_down, g.bullet
+            ),
             Style::default().fg(theme.line_number_fg),
         )
     };
@@ -4095,7 +4100,7 @@ fn render_entry_dialog_inner(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_set(glyphs().border_set())
         .border_style(Style::default().fg(border_color))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);
@@ -4141,11 +4146,12 @@ fn render_entry_dialog_inner(
 /// Render the help overlay showing keyboard shortcuts
 fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
     // Define the help content
+    let up_down = format!("{} / {}", glyphs().arrow_up, glyphs().arrow_down);
     let help_items = [
         (
             "Navigation",
             vec![
-                ("↑ / ↓", "Move up/down"),
+                (up_down.as_str(), "Move up/down"),
                 ("Tab", "Switch between categories and settings"),
                 ("Enter", "Activate/toggle setting"),
             ],
@@ -4155,7 +4161,7 @@ fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
             vec![
                 ("/", "Start search"),
                 ("Esc", "Cancel search"),
-                ("↑ / ↓", "Navigate results"),
+                (up_down.as_str(), "Navigate results"),
                 ("Enter", "Jump to result"),
             ],
         ),
@@ -4184,7 +4190,7 @@ fn render_help_overlay(frame: &mut Frame, parent_area: Rect, theme: &Theme) {
     let block = Block::default()
         .title(" Keyboard Shortcuts ")
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_set(glyphs().border_set())
         .border_style(Style::default().fg(theme.menu_highlight_fg))
         .style(Style::default().bg(theme.popup_bg));
     frame.render_widget(block, dialog_area);

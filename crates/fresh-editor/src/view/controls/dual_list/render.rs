@@ -2,6 +2,7 @@
 
 use super::{DualListColors, DualListColumn, DualListLayout, DualListRowArea, DualListState};
 use crate::view::controls::FocusState;
+use crate::view::glyphs::glyphs;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -151,30 +152,37 @@ pub fn render_dual_list_partial(
         // Action buttons between columns: add/remove transfer items, up/down reorder
         let btn_style = Style::default().fg(colors.button);
         let dim_style = Style::default().fg(colors.disabled);
+        let g = glyphs();
+        // Centre each glyph in the fixed 3-column button so multi-cell ASCII
+        // fallbacks (`->`, `<-`) still fit without shifting the layout.
         match row_idx {
             0 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled(" → ", btn_style)), btn_area);
+                let label = format!("{:^3}", g.arrow_right);
+                frame.render_widget(Paragraph::new(Span::styled(label, btn_style)), btn_area);
                 layout.add_button = Some(btn_area);
             }
             1 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled(" ← ", btn_style)), btn_area);
+                let label = format!("{:^3}", g.arrow_left);
+                frame.render_widget(Paragraph::new(Span::styled(label, btn_style)), btn_area);
                 layout.remove_button = Some(btn_area);
             }
             // Separator row between transfer and reorder buttons
             2 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled("───", dim_style)), btn_area);
+                frame.render_widget(Paragraph::new(Span::styled(g.h.repeat(3), dim_style)), btn_area);
             }
             3 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled(" ↑ ", btn_style)), btn_area);
+                let label = format!("{:^3}", g.arrow_up);
+                frame.render_widget(Paragraph::new(Span::styled(label, btn_style)), btn_area);
                 layout.move_up_button = Some(btn_area);
             }
             4 => {
                 let btn_area = Rect::new(btn_x, y, btn_width, 1);
-                frame.render_widget(Paragraph::new(Span::styled(" ↓ ", btn_style)), btn_area);
+                let label = format!("{:^3}", g.arrow_down);
+                frame.render_widget(Paragraph::new(Span::styled(label, btn_style)), btn_area);
                 layout.move_down_button = Some(btn_area);
             }
             _ => {}

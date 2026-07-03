@@ -162,6 +162,7 @@ pub fn render_workspace_trust_dialog(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.popup_border_fg).bg(bg))
         .style(Style::default().bg(bg).fg(fg));
     let inner = block.inner(dialog);
@@ -230,7 +231,7 @@ pub fn render_workspace_trust_dialog(
                 frame,
                 r,
                 Line::from(Span::styled(
-                    "─".repeat(iw as usize),
+                    crate::view::glyphs::glyphs().h.repeat(iw as usize),
                     Style::default().fg(theme.popup_border_fg).bg(bg),
                 )),
             ),

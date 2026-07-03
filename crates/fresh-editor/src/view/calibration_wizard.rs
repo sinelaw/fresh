@@ -63,6 +63,7 @@ pub fn render_calibration_wizard(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.editor_fg))
         .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
 
@@ -117,6 +118,7 @@ fn render_confirmation_dialog(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_set(crate::view::glyphs::glyphs().plain_border_set())
         .border_style(Style::default().fg(theme.diagnostic_warning_fg))
         .style(Style::default().bg(theme.editor_bg).fg(theme.editor_fg));
 

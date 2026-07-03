@@ -76,7 +76,11 @@ pub fn render_dropdown_aligned(
     let display_width = max_option_len.max(selected_text.len()).min(20);
     let padded = format!("{:width$}", selected_text, width = display_width);
 
-    let arrow = if state.open { "▲" } else { "▼" };
+    let arrow = if state.open {
+        crate::view::glyphs::glyphs().triangle_up
+    } else {
+        crate::view::glyphs::glyphs().triangle_down
+    };
 
     let actual_label_width = label_width.unwrap_or(state.label.len() as u16);
     let padded_label = format!(
