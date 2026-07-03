@@ -6820,7 +6820,10 @@ impl Config {
             "dart".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "dart".to_string(),
-                args: Some(vec!["language-server".to_string(), "--protocol=lsp".to_string()]),
+                args: Some(vec![
+                    "language-server".to_string(),
+                    "--protocol=lsp".to_string(),
+                ]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -6946,7 +6949,11 @@ impl Config {
             "graphql".to_string(),
             LspLanguageConfig::Multi(vec![LspServerConfig {
                 command: "graphql-lsp".to_string(),
-                args: Some(vec!["server".to_string(), "-m".to_string(), "stream".to_string()]),
+                args: Some(vec![
+                    "server".to_string(),
+                    "-m".to_string(),
+                    "stream".to_string(),
+                ]),
                 enabled: true,
                 auto_start: false,
                 process_limits: ProcessLimits::default(),
@@ -8317,7 +8324,10 @@ mod tests {
         let config = Config::default();
         let server = &config.lsp["gdscript"].as_slice()[0];
         assert_eq!(server.command, "nc");
-        assert_eq!(server.args, Some(vec!["127.0.0.1".to_string(), "6005".to_string()]));
+        assert_eq!(
+            server.args,
+            Some(vec!["127.0.0.1".to_string(), "6005".to_string()])
+        );
         assert!(!server.enabled);
         assert_eq!(server.name.as_deref(), Some("Godot GDScript"));
     }
