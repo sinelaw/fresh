@@ -2903,10 +2903,24 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .fg(theme.menu_active_fg)
         .add_modifier(Modifier::BOLD);
 
+    // Render the query as a block cursor sitting on the character at
+    // `search_cursor` (or a trailing space when the cursor is at the end),
+    // so the caret reflects Left/Right/Home/End movement.
+    let cursor = state.search_cursor.min(state.search_query.len());
+    let before = &state.search_query[..cursor];
+    let (under, after) = {
+        let rest = &state.search_query[cursor..];
+        match rest.chars().next() {
+            Some(c) => (c.to_string(), &rest[c.len_utf8()..]),
+            None => (" ".to_string(), ""),
+        }
+    };
+
     let spans = vec![
         Span::styled("> ", search_style),
-        Span::styled(&state.search_query, search_style),
-        Span::styled(" ", cursor_style), // Cursor
+        Span::styled(before, search_style),
+        Span::styled(under, cursor_style), // Cursor
+        Span::styled(after, search_style),
         Span::styled(count_text, count_style),
         Span::styled(scroll_indicator, indicator_style),
     ];

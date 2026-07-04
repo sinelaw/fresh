@@ -98,6 +98,11 @@ pub struct SettingsState {
     pub visible: bool,
     /// Current search query
     pub search_query: String,
+    /// Cursor position within the search query, as a byte offset into
+    /// `search_query`. Always kept on a char boundary. Lets the filter
+    /// behave like a normal text input (arrow keys, Home/End, mid-string
+    /// insert/delete) instead of only appending at the end.
+    pub search_cursor: usize,
     /// Whether search is active
     pub search_active: bool,
     /// Current search results
@@ -320,6 +325,7 @@ impl SettingsState {
             original_config: config_value,
             visible: false,
             search_query: String::new(),
+            search_cursor: 0,
             search_active: false,
             search_results: Vec::new(),
             selected_search_result: 0,
@@ -459,6 +465,7 @@ impl SettingsState {
         self.visible = false;
         self.search_active = false;
         self.search_query.clear();
+        self.search_cursor = 0;
     }
 
     /// Get the current entry dialog (top of stack), if any
@@ -1384,6 +1391,7 @@ impl SettingsState {
     pub fn start_search(&mut self) {
         self.search_active = true;
         self.search_query.clear();
+        self.search_cursor = 0;
         self.search_results.clear();
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
@@ -1393,6 +1401,7 @@ impl SettingsState {
     pub fn cancel_search(&mut self) {
         self.search_active = false;
         self.search_query.clear();
+        self.search_cursor = 0;
         self.search_results.clear();
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
@@ -1401,25 +1410,95 @@ impl SettingsState {
     /// Update search query and refresh results
     pub fn set_search_query(&mut self, query: String) {
         self.search_query = query;
+        self.search_cursor = self.search_query.len();
         self.search_results = search_settings(&self.pages, &self.search_query);
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
     }
 
-    /// Add a character to the search query
+    /// Recompute results after the query text changed and reset the
+    /// results selection/scroll to the top.
+    fn refresh_search_results(&mut self) {
+        self.search_results = search_settings(&self.pages, &self.search_query);
+        self.selected_search_result = 0;
+        self.search_scroll_offset = 0;
+    }
+
+    /// Insert a character at the cursor position in the search query.
+    pub fn search_insert_char(&mut self, c: char) {
+        self.search_query.insert(self.search_cursor, c);
+        self.search_cursor += c.len_utf8();
+        self.refresh_search_results();
+    }
+
+    /// Add a character to the search query (appends at the cursor).
+    ///
+    /// Kept for backwards compatibility; delegates to `search_insert_char`.
     pub fn search_push_char(&mut self, c: char) {
-        self.search_query.push(c);
-        self.search_results = search_settings(&self.pages, &self.search_query);
-        self.selected_search_result = 0;
-        self.search_scroll_offset = 0;
+        self.search_insert_char(c);
     }
 
-    /// Remove the last character from the search query
+    /// Delete the grapheme cluster before the cursor (Backspace).
+    pub fn search_backspace(&mut self) {
+        if self.search_cursor == 0 {
+            return;
+        }
+        let start =
+            crate::primitives::grapheme::prev_grapheme_boundary(&self.search_query, self.search_cursor);
+        self.search_query.replace_range(start..self.search_cursor, "");
+        self.search_cursor = start;
+        self.refresh_search_results();
+    }
+
+    /// Remove the grapheme cluster before the cursor.
+    ///
+    /// Kept for backwards compatibility; delegates to `search_backspace`.
     pub fn search_pop_char(&mut self) {
-        self.search_query.pop();
-        self.search_results = search_settings(&self.pages, &self.search_query);
-        self.selected_search_result = 0;
-        self.search_scroll_offset = 0;
+        self.search_backspace();
+    }
+
+    /// Delete the grapheme cluster at the cursor (Delete key).
+    pub fn search_delete(&mut self) {
+        if self.search_cursor >= self.search_query.len() {
+            return;
+        }
+        let end =
+            crate::primitives::grapheme::next_grapheme_boundary(&self.search_query, self.search_cursor);
+        self.search_query.replace_range(self.search_cursor..end, "");
+        self.refresh_search_results();
+    }
+
+    /// Move the search cursor left by one grapheme cluster.
+    ///
+    /// Uses grapheme boundaries (like the Command Palette) so combining
+    /// marks — Thai diacritics, emoji modifiers — move as a single unit.
+    pub fn search_cursor_left(&mut self) {
+        if self.search_cursor > 0 {
+            self.search_cursor = crate::primitives::grapheme::prev_grapheme_boundary(
+                &self.search_query,
+                self.search_cursor,
+            );
+        }
+    }
+
+    /// Move the search cursor right by one grapheme cluster.
+    pub fn search_cursor_right(&mut self) {
+        if self.search_cursor < self.search_query.len() {
+            self.search_cursor = crate::primitives::grapheme::next_grapheme_boundary(
+                &self.search_query,
+                self.search_cursor,
+            );
+        }
+    }
+
+    /// Move the search cursor to the start of the query.
+    pub fn search_cursor_home(&mut self) {
+        self.search_cursor = 0;
+    }
+
+    /// Move the search cursor to the end of the query.
+    pub fn search_cursor_end(&mut self) {
+        self.search_cursor = self.search_query.len();
     }
 
     /// Navigate to previous search result
@@ -3993,5 +4072,49 @@ mod tests {
         // TEST_SCHEMA has no DualList items, so all calls should return None
         let result = state.with_dual_list_mut(0, |_| ());
         assert!(result.is_none());
+    }
+
+    /// The search filter moves by grapheme cluster (like the Command
+    /// Palette), so a single Left crosses a multi-codepoint Thai cluster
+    /// rather than landing between its combining marks.
+    #[test]
+    fn test_search_cursor_moves_by_grapheme_cluster() {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA, &config).unwrap();
+
+        // "aที่b": 'a' (1 byte) + Thai cluster "ที่" (9 bytes) + 'b' (1 byte)
+        state.start_search();
+        for c in "aที่b".chars() {
+            state.search_insert_char(c);
+        }
+        let end = state.search_query.len();
+        assert_eq!(state.search_cursor, end);
+
+        // Left: past 'b' (1 byte)
+        state.search_cursor_left();
+        assert_eq!(state.search_cursor, end - 1);
+
+        // Left: skip the whole Thai cluster in one step (9 bytes)
+        state.search_cursor_left();
+        assert_eq!(state.search_cursor, 1);
+
+        // Left: before 'a'
+        state.search_cursor_left();
+        assert_eq!(state.search_cursor, 0);
+
+        // Backspace at start is a no-op; the query is untouched
+        state.search_backspace();
+        assert_eq!(state.search_query, "aที่b");
+
+        // Delete at the start removes the leading 'a' only
+        state.search_delete();
+        assert_eq!(state.search_query, "ที่b");
+        assert_eq!(state.search_cursor, 0);
+
+        // One Right skips the Thai cluster; Delete then removes the 'b'
+        state.search_cursor_right();
+        assert_eq!(state.search_cursor, "ที่".len());
+        state.search_delete();
+        assert_eq!(state.search_query, "ที่");
     }
 }

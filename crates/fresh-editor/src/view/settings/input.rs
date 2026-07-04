@@ -786,12 +786,36 @@ impl SettingsState {
                 self.search_next();
                 InputResult::Consumed
             }
+            // Cursor movement within the query text. Up/Down are reserved
+            // for navigating the result list (above), so Left/Right/Home/End
+            // edit the query — matching the Command Palette, where the same
+            // split makes the filter feel like a real text input.
+            KeyCode::Left => {
+                self.search_cursor_left();
+                InputResult::Consumed
+            }
+            KeyCode::Right => {
+                self.search_cursor_right();
+                InputResult::Consumed
+            }
+            KeyCode::Home => {
+                self.search_cursor_home();
+                InputResult::Consumed
+            }
+            KeyCode::End => {
+                self.search_cursor_end();
+                InputResult::Consumed
+            }
+            KeyCode::Delete => {
+                self.search_delete();
+                InputResult::Consumed
+            }
             KeyCode::Char(c) => {
-                self.search_push_char(c);
+                self.search_insert_char(c);
                 InputResult::Consumed
             }
             KeyCode::Backspace => {
-                self.search_pop_char();
+                self.search_backspace();
                 InputResult::Consumed
             }
             _ => InputResult::Consumed, // Modal: consume all
@@ -1698,6 +1722,53 @@ mod tests {
         state.handle_key_event(&key(KeyCode::Esc), &mut ctx);
         assert!(!state.search_active);
         assert!(state.search_query.is_empty());
+    }
+
+    /// The settings filter used to only append/backspace at the end: arrow
+    /// keys did nothing within the text (unlike the Command Palette). It now
+    /// tracks a cursor, so Left/Right/Home/End move the caret and edits land
+    /// at the cursor — matching the palette.
+    #[test]
+    fn test_search_arrow_keys_edit_within_query() {
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+
+        let mut ctx = InputContext::new();
+
+        // Start search and type "theme"
+        state.handle_key_event(&key(KeyCode::Char('/')), &mut ctx);
+        for c in "theme".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(state.search_query, "theme");
+        assert_eq!(state.search_cursor, 5);
+
+        // Left twice, then insert 'X' -> lands mid-string, not at the end
+        state.handle_key_event(&key(KeyCode::Left), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Left), &mut ctx);
+        assert_eq!(state.search_cursor, 3);
+        state.handle_key_event(&key(KeyCode::Char('X')), &mut ctx);
+        assert_eq!(state.search_query, "theXme");
+        assert_eq!(state.search_cursor, 4);
+
+        // Home jumps to start; Backspace at start is a no-op
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        assert_eq!(state.search_cursor, 0);
+        state.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
+        assert_eq!(state.search_query, "theXme");
+
+        // Delete removes the char at the cursor (the leading 't')
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(state.search_query, "heXme");
+        assert_eq!(state.search_cursor, 0);
+
+        // End jumps to the end; Backspace removes the trailing char
+        state.handle_key_event(&key(KeyCode::End), &mut ctx);
+        assert_eq!(state.search_cursor, state.search_query.len());
+        state.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
+        assert_eq!(state.search_query, "heXm");
     }
 
     #[test]
