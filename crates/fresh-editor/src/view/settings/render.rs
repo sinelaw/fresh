@@ -19,89 +19,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-/// Build spans for a text line with selection highlighting
-///
-/// Returns a vector of spans where selected portions are highlighted.
-#[allow(clippy::too_many_arguments)]
-fn build_selection_spans(
-    display_text: &str,
-    display_len: usize,
-    line_idx: usize,
-    start_row: usize,
-    start_col: usize,
-    end_row: usize,
-    end_col: usize,
-    text_color: Color,
-    selection_bg: Color,
-) -> Vec<Span<'static>> {
-    let chars: Vec<char> = display_text.chars().collect();
-    let char_count = chars.len();
-
-    // Determine selection range for this line
-    let (sel_start, sel_end) = if line_idx < start_row || line_idx > end_row {
-        // Line not in selection
-        (char_count, char_count)
-    } else if line_idx == start_row && line_idx == end_row {
-        // Selection within single line
-        let start = byte_to_char_idx(display_text, start_col).min(char_count);
-        let end = byte_to_char_idx(display_text, end_col).min(char_count);
-        (start, end)
-    } else if line_idx == start_row {
-        // Selection starts on this line
-        let start = byte_to_char_idx(display_text, start_col).min(char_count);
-        (start, char_count)
-    } else if line_idx == end_row {
-        // Selection ends on this line
-        let end = byte_to_char_idx(display_text, end_col).min(char_count);
-        (0, end)
-    } else {
-        // Entire line is selected
-        (0, char_count)
-    };
-
-    let mut spans = Vec::new();
-    let normal_style = Style::default().fg(text_color);
-    let selected_style = Style::default().fg(text_color).bg(selection_bg);
-
-    if sel_start >= sel_end || sel_start >= char_count {
-        // No selection on this line
-        let padded = format!("{:width$}", display_text, width = display_len);
-        spans.push(Span::styled(padded, normal_style));
-    } else {
-        // Before selection
-        if sel_start > 0 {
-            let before: String = chars[..sel_start].iter().collect();
-            spans.push(Span::styled(before, normal_style));
-        }
-
-        // Selection
-        let selected: String = chars[sel_start..sel_end].iter().collect();
-        spans.push(Span::styled(selected, selected_style));
-
-        // After selection
-        if sel_end < char_count {
-            let after: String = chars[sel_end..].iter().collect();
-            spans.push(Span::styled(after, normal_style));
-        }
-
-        // Pad to display_len
-        let current_len = char_count;
-        if current_len < display_len {
-            let padding = " ".repeat(display_len - current_len);
-            spans.push(Span::styled(padding, normal_style));
-        }
-    }
-
-    spans
-}
-
-/// Convert byte offset to char index in a string
-fn byte_to_char_idx(s: &str, byte_offset: usize) -> usize {
-    s.char_indices()
-        .take_while(|(i, _)| *i < byte_offset)
-        .count()
-}
-
 /// Truncate `s` to at most `max_chars` characters, appending `"..."` if it
 /// was actually shortened. Counts characters (not bytes) so non-ASCII
 /// inputs (CJK descriptions, emoji, etc.) don't byte-slice through a
@@ -1366,12 +1283,18 @@ fn render_scalar_via_widget(
     name: &str,
     theme: &Theme,
 ) -> Vec<crate::widgets::HitArea> {
-    render_control_via_widget(frame, area, control, name, theme, 0)
+    render_control_via_widget(frame, area, control, name, theme, 0, "")
 }
 
 /// Like [`render_scalar_via_widget`] but for multi-row controls: paints
 /// entries starting at `skip_rows` (the settings viewport clips tall
 /// controls at the top when scrolled) into `area`.
+///
+/// `focus_key` (usually the control's `name`) marks the widget focused so
+/// the renderer paints the focus highlight and publishes a caret cursor —
+/// pass it when the control is actively editing (Text/JSON); pass `""`
+/// otherwise (the settings chrome shows selection for the rest).
+#[allow(clippy::too_many_arguments)]
 fn render_control_via_widget(
     frame: &mut Frame,
     area: Rect,
@@ -1379,12 +1302,13 @@ fn render_control_via_widget(
     name: &str,
     theme: &Theme,
     skip_rows: u16,
+    focus_key: &str,
 ) -> Vec<crate::widgets::HitArea> {
     let spec = crate::view::settings::widget_map::setting_control_to_widget(name, control);
     let out = crate::widgets::render_spec_no_autofocus(
         &spec,
         &std::collections::HashMap::new(),
-        "",
+        focus_key,
         area.width.max(1) as u32,
     );
     for (i, entry) in out.entries.iter().enumerate() {
@@ -1548,10 +1472,11 @@ fn render_control(
                 ControlLayoutInfo::Text(Rect::default())
             } else {
                 // Editable text (and nullable-null) render through the
-                // widget framework: the mapping carries value + caret
-                // (when editing); render_scalar_via_widget paints it and
-                // places the hardware cursor from the widget's focus.
-                render_scalar_via_widget(frame, area, control, name, theme);
+                // widget framework. While editing, focus the widget (by
+                // its name key) so it paints the focus highlight and
+                // publishes the caret the mapping carries.
+                let focus_key = if state.editing { name } else { "" };
+                render_control_via_widget(frame, area, control, name, theme, 0, focus_key);
                 ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
             }
         }
@@ -1562,7 +1487,7 @@ fn render_control(
             // add row); editing still runs through the settings input
             // path. Per-row hit rects are derived from the on-screen row
             // positions so clicks still target the right item.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
             let mut rows = Vec::new();
             // Row 0 is the label header; items start at row 1.
             for (i, _) in state.items.iter().enumerate() {
@@ -1582,7 +1507,7 @@ fn render_control(
             // Available/Included picker); editing still runs through the
             // settings input path. Mouse hit geometry is approximate for
             // now (keyboard nav is the primary path).
-            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
             ControlLayoutInfo::DualList(Default::default())
         }
 
@@ -1590,7 +1515,7 @@ fn render_control(
             // View migrated: Col of `key: value` rows + add row. Editing
             // (add/remove/edit entries) still runs through the settings
             // input path; expanded/nested entries render collapsed here.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
             let row_rect = |logical: u16| -> Option<Rect> {
                 logical.checked_sub(skip_rows).and_then(|dst| {
                     (dst < area.height).then(|| Rect::new(area.x, area.y + dst, area.width, 1))
@@ -1615,7 +1540,7 @@ fn render_control(
         }
 
         SettingControl::ObjectArray(state) => {
-            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
             let entry_rows = state
                 .bindings
                 .iter()
@@ -1630,13 +1555,19 @@ fn render_control(
             ControlLayoutInfo::ObjectArray { entry_rows }
         }
 
-        // The multiline JSON editor keeps its dedicated renderer: it is
-        // a full TextEdit with JSON validation and a multi-line caret
-        // that the generic widget `Text` doesn't yet replicate. It is
-        // the one control not on the widget view; migrating it faithfully
-        // is a follow-up once widget `Text` carries validation + caret.
+        // The multiline JSON editor renders through the widget framework
+        // too: the mapping produces a multi-line `Text` with the editor's
+        // current text. While focused it renders focused (caret + block).
+        // Editing (and JSON validation) still runs through the settings
+        // input path against the control's `TextEdit`.
         SettingControl::Json(state) => {
-            render_json_control(frame, area, state, name, skip_rows, theme)
+            let focus_key = if matches!(state.focus, crate::view::controls::FocusState::Focused) {
+                name
+            } else {
+                ""
+            };
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, focus_key);
+            ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
         }
 
         SettingControl::Complex { .. } => {
@@ -1645,197 +1576,9 @@ fn render_control(
             }
             // Uneditable placeholder, rendered through the widget
             // framework like the other controls.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
             ControlLayoutInfo::Complex
         }
-    }
-}
-
-/// Render a multiline JSON editor control
-fn render_json_control(
-    frame: &mut Frame,
-    area: Rect,
-    state: &super::items::JsonEditState,
-    name: &str,
-    skip_rows: u16,
-    theme: &Theme,
-) -> ControlLayoutInfo {
-    use crate::view::controls::FocusState;
-
-    let empty_layout = ControlLayoutInfo::Json {
-        edit_area: Rect::default(),
-    };
-
-    if area.height == 0 || area.width < 10 {
-        return empty_layout;
-    }
-
-    let is_focused = state.focus == FocusState::Focused;
-    let is_valid = state.is_valid();
-
-    let label_color = if is_focused {
-        theme.menu_highlight_fg
-    } else {
-        theme.editor_fg
-    };
-
-    let text_color = theme.editor_fg;
-    let border_color = if !is_valid {
-        theme.diagnostic_error_fg
-    } else if is_focused {
-        theme.menu_highlight_fg
-    } else {
-        theme.split_separator_fg
-    };
-
-    let mut y = area.y;
-    let mut content_row = 0u16;
-
-    // Row 0: label (modified indicator is shown in the row indicator column)
-    if content_row >= skip_rows {
-        let label_line = Line::from(vec![Span::styled(
-            format!("{}:", name),
-            Style::default().fg(label_color),
-        )]);
-        frame.render_widget(
-            Paragraph::new(label_line),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-    }
-    content_row += 1;
-
-    let indent = 2u16;
-    let edit_width = area.width.saturating_sub(indent + 1);
-    let edit_x = area.x + indent;
-    let edit_start_y = y;
-
-    // Unset JSON values used to render as the literal text `null` inside
-    // the editor frame, which read like a stray keyword. Replace it with
-    // a muted "(not set — press Enter to add)" hint so the user can tell
-    // the field is empty and editable. start_editing() wipes the `null`
-    // text so typing doesn't concatenate onto it; the placeholder only
-    // disappears once the user has actually started editing.
-    if state.is_unset() && content_row >= skip_rows && y < area.y + area.height {
-        let hint = "(not set — press Enter to add)";
-        let hint_line = Line::from(vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled(
-                hint,
-                Style::default()
-                    .fg(theme.line_number_fg)
-                    .add_modifier(Modifier::ITALIC),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(hint_line),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        return ControlLayoutInfo::Json {
-            edit_area: Rect::new(edit_x, edit_start_y, edit_width, 1),
-        };
-    }
-
-    // Render all lines (scrolling handled by entry dialog/scroll panel)
-    let lines = state.lines();
-    let total_lines = lines.len();
-    for line_idx in 0..total_lines {
-        let actual_line_idx = line_idx;
-
-        if content_row < skip_rows {
-            content_row += 1;
-            continue;
-        }
-
-        if y >= area.y + area.height {
-            break;
-        }
-
-        let line_content = lines.get(actual_line_idx).map(|s| s.as_str()).unwrap_or("");
-
-        // Truncate line if too long
-        let display_len = edit_width.saturating_sub(2) as usize;
-        let display_text: String = line_content.chars().take(display_len).collect();
-
-        // Get selection range and cursor position
-        let selection = state.selection_range();
-        let (cursor_row, cursor_col) = state.cursor_pos();
-
-        // Build content spans with selection highlighting
-        let content_spans = if is_focused {
-            if let Some(((start_row, start_col), (end_row, end_col))) = selection {
-                build_selection_spans(
-                    &display_text,
-                    display_len,
-                    actual_line_idx,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                    text_color,
-                    theme.selection_bg,
-                )
-            } else {
-                vec![Span::styled(
-                    format!("{:width$}", display_text, width = display_len),
-                    Style::default().fg(text_color),
-                )]
-            }
-        } else {
-            vec![Span::styled(
-                format!("{:width$}", display_text, width = display_len),
-                Style::default().fg(text_color),
-            )]
-        };
-
-        // Build line with border
-        let mut spans = vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled("│", Style::default().fg(border_color)),
-        ];
-        spans.extend(content_spans);
-        spans.push(Span::styled("│", Style::default().fg(border_color)));
-        let line = Line::from(spans);
-
-        frame.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
-
-        // Draw cursor if focused and on this line (overlays selection)
-        if is_focused && actual_line_idx == cursor_row {
-            let cursor_x = edit_x + 1 + cursor_col.min(display_len) as u16;
-            if cursor_x < area.x + area.width - 1 {
-                let cursor_char = line_content.chars().nth(cursor_col).unwrap_or(' ');
-                let cursor_span = Span::styled(
-                    cursor_char.to_string(),
-                    Style::default()
-                        .fg(theme.cursor)
-                        .add_modifier(Modifier::REVERSED),
-                );
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![cursor_span])),
-                    Rect::new(cursor_x, y, 1, 1),
-                );
-            }
-        }
-
-        y += 1;
-        content_row += 1;
-    }
-
-    // Show invalid JSON indicator
-    if !is_valid && y < area.y + area.height {
-        let warning = Span::styled(
-            "  ⚠ Invalid JSON",
-            Style::default().fg(theme.diagnostic_warning_fg),
-        );
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![warning])),
-            Rect::new(area.x, y, area.width, 1),
-        );
-    }
-
-    let edit_height = y.saturating_sub(edit_start_y);
-    ControlLayoutInfo::Json {
-        edit_area: Rect::new(edit_x, edit_start_y, edit_width, edit_height),
     }
 }
 
