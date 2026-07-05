@@ -11,7 +11,7 @@ use super::items::{ItemBox, ItemBoxStyle, SettingControl, SettingItem};
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
-use crate::view::controls::{render_dual_list_partial, DualListColors, MapColors, TextListColors};
+use crate::view::controls::{render_dual_list_partial, DualListColors, MapColors};
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1367,6 +1367,20 @@ fn render_scalar_via_widget(
     name: &str,
     theme: &Theme,
 ) -> Vec<crate::widgets::HitArea> {
+    render_control_via_widget(frame, area, control, name, theme, 0)
+}
+
+/// Like [`render_scalar_via_widget`] but for multi-row controls: paints
+/// entries starting at `skip_rows` (the settings viewport clips tall
+/// controls at the top when scrolled) into `area`.
+fn render_control_via_widget(
+    frame: &mut Frame,
+    area: Rect,
+    control: &SettingControl,
+    name: &str,
+    theme: &Theme,
+    skip_rows: u16,
+) -> Vec<crate::widgets::HitArea> {
     let spec = crate::view::settings::widget_map::setting_control_to_widget(name, control);
     let out = crate::widgets::render_spec_no_autofocus(
         &spec,
@@ -1375,12 +1389,17 @@ fn render_scalar_via_widget(
         area.width.max(1) as u32,
     );
     for (i, entry) in out.entries.iter().enumerate() {
-        if (i as u16) < area.height {
+        let row = i as u16;
+        if row < skip_rows {
+            continue;
+        }
+        let dst = row - skip_rows;
+        if dst < area.height {
             crate::app::render::paint_text_property_entry(
                 frame,
                 entry,
                 area.x,
-                area.y + i as u16,
+                area.y + dst,
                 area.width,
                 theme,
                 None,
@@ -1540,15 +1559,23 @@ fn render_control(
 
         // Multi-row controls: pass skip_rows to render partial view
         SettingControl::TextList(state) => {
-            let colors = TextListColors::from_theme(theme);
-            let list_layout = render_text_list_partial(frame, area, state, &colors, 30, skip_rows);
-            ControlLayoutInfo::TextList {
-                rows: list_layout
-                    .rows
-                    .iter()
-                    .map(|r| (r.index, r.text_area))
-                    .collect(),
+            // View migrated to the widget framework (Col of item rows +
+            // add row); editing still runs through the settings input
+            // path. Per-row hit rects are derived from the on-screen row
+            // positions so clicks still target the right item.
+            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            let mut rows = Vec::new();
+            // Row 0 is the label header; items start at row 1.
+            for (i, _) in state.items.iter().enumerate() {
+                let logical = 1 + i as u16;
+                if logical >= skip_rows {
+                    let dst = logical - skip_rows;
+                    if dst < area.height {
+                        rows.push((Some(i), Rect::new(area.x, area.y + dst, area.width, 1)));
+                    }
+                }
             }
+            ControlLayoutInfo::TextList { rows }
         }
 
         SettingControl::DualList(state) => {
@@ -1803,242 +1830,6 @@ fn render_json_control(
     let edit_height = y.saturating_sub(edit_start_y);
     ControlLayoutInfo::Json {
         edit_area: Rect::new(edit_x, edit_start_y, edit_width, edit_height),
-    }
-}
-
-/// Render TextList with partial visibility (skipping top rows)
-fn render_text_list_partial(
-    frame: &mut Frame,
-    area: Rect,
-    state: &crate::view::controls::TextListState,
-    colors: &TextListColors,
-    field_width: u16,
-    skip_rows: u16,
-) -> crate::view::controls::TextListLayout {
-    use crate::view::controls::text_list::{TextListLayout, TextListRowLayout};
-    use crate::view::controls::FocusState;
-
-    let empty_layout = TextListLayout {
-        rows: Vec::new(),
-        full_area: area,
-    };
-
-    if area.height == 0 || area.width < 10 {
-        return empty_layout;
-    }
-
-    // Use focused_fg for label when focused (not focused, which is the bg color)
-    let label_color = match state.focus {
-        FocusState::Focused => colors.focused_fg,
-        FocusState::Hovered => colors.focused_fg,
-        FocusState::Disabled => colors.disabled,
-        FocusState::Normal => colors.label,
-    };
-
-    let mut rows = Vec::new();
-    let mut y = area.y;
-    let mut content_row = 0u16; // Which row of content we're at
-
-    // Row 0 is label
-    if skip_rows == 0 {
-        let label_line = Line::from(vec![
-            Span::styled(&state.label, Style::default().fg(label_color)),
-            Span::raw(":"),
-        ]);
-        frame.render_widget(
-            Paragraph::new(label_line),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-    }
-    content_row += 1;
-
-    let indent = 2u16;
-    let actual_field_width = field_width.min(area.width.saturating_sub(indent + 5));
-
-    // Render existing items (rows 1 to N)
-    for (idx, item) in state.items.iter().enumerate() {
-        if y >= area.y + area.height {
-            break;
-        }
-
-        // Skip rows before skip_rows
-        if content_row < skip_rows {
-            content_row += 1;
-            continue;
-        }
-
-        let is_focused = state.focused_item == Some(idx) && state.focus == FocusState::Focused;
-        let (border_color, text_color) = if is_focused {
-            (colors.focused, colors.text)
-        } else if state.focus == FocusState::Disabled {
-            (colors.disabled, colors.disabled)
-        } else {
-            (colors.border, colors.text)
-        };
-
-        let inner_width = actual_field_width.saturating_sub(2) as usize;
-        let visible: String = item.chars().take(inner_width).collect();
-        let padded = format!("{:width$}", visible, width = inner_width);
-
-        let mut spans = vec![
-            Span::raw(" ".repeat(indent as usize)),
-            Span::styled("[", Style::default().fg(border_color)),
-            Span::styled(padded, Style::default().fg(text_color)),
-            Span::styled("]", Style::default().fg(border_color)),
-            Span::raw(" "),
-            Span::styled("[x]", Style::default().fg(colors.remove_button)),
-        ];
-        // Inline hint on a focused committed row: tell the user
-        // exactly how to remove it. Otherwise the `[x]` looks
-        // clickable but offers no keyboard equivalent.
-        if is_focused {
-            spans.push(Span::styled(
-                "  Del:remove  Enter:edit",
-                Style::default()
-                    .fg(colors.disabled)
-                    .add_modifier(ratatui::style::Modifier::ITALIC),
-            ));
-        }
-        let line = Line::from(spans);
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        frame.render_widget(Paragraph::new(line), row_area);
-
-        let text_area = Rect::new(area.x + indent, y, actual_field_width, 1);
-        let button_area = Rect::new(area.x + indent + actual_field_width + 1, y, 3, 1);
-        rows.push(TextListRowLayout {
-            text_area,
-            button_area,
-            index: Some(idx),
-        });
-
-        y += 1;
-        content_row += 1;
-    }
-
-    // Add-new row
-    if y < area.y + area.height && content_row >= skip_rows {
-        // Check if we're focused on the add-new input (focused_item is None and focused)
-        let is_add_focused = state.focused_item.is_none() && state.focus == FocusState::Focused;
-        // Only show the bracketed input box once the user has explicitly
-        // started adding an item — keep `[+] Add new` visible on plain
-        // focus so the row doesn't look like it disappeared.
-        let show_input_box =
-            is_add_focused && (state.pending_active || !state.new_item_text.is_empty());
-
-        if show_input_box {
-            // Show input field. When empty (just-activated input), drop
-            // a muted "type new item" placeholder INSIDE the box so the
-            // empty bracket pair clearly reads as "this is an editable
-            // input", not a generic empty cell.
-            let inner_width = actual_field_width.saturating_sub(2) as usize;
-            let (visible_text, text_style) = if state.new_item_text.is_empty() {
-                let placeholder = "type new item";
-                let truncated: String = placeholder.chars().take(inner_width).collect();
-                (
-                    truncated,
-                    Style::default()
-                        .fg(colors.disabled)
-                        .add_modifier(ratatui::style::Modifier::ITALIC),
-                )
-            } else {
-                let visible: String = state.new_item_text.chars().take(inner_width).collect();
-                (visible, Style::default().fg(colors.text))
-            };
-            let padded = format!("{:width$}", visible_text, width = inner_width);
-
-            // Dimmed inline hint to the right of the input — so Enter /
-            // Esc semantics are visible next to the row itself instead
-            // of only on the bottom helper bar.
-            let hint = "  Enter:add  Esc:cancel";
-            let line = Line::from(vec![
-                Span::raw(" ".repeat(indent as usize)),
-                Span::styled(
-                    "[",
-                    Style::default()
-                        .fg(colors.focused)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ),
-                Span::styled(padded, text_style),
-                Span::styled(
-                    "]",
-                    Style::default()
-                        .fg(colors.focused)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled("[+]", Style::default().fg(colors.add_button)),
-                Span::styled(
-                    hint,
-                    Style::default()
-                        .fg(colors.disabled)
-                        .add_modifier(ratatui::style::Modifier::ITALIC),
-                ),
-            ]);
-            let row_area = Rect::new(area.x, y, area.width, 1);
-            frame.render_widget(Paragraph::new(line), row_area);
-
-            // Render cursor. Skip when showing the placeholder (empty
-            // buffer) — the cursor block would otherwise eat the first
-            // letter of "type new item" and confuse the placeholder.
-            if !state.new_item_text.is_empty() && state.cursor <= inner_width {
-                let cursor_x = area.x + indent + 1 + state.cursor as u16;
-                let cursor_char = state.new_item_text.chars().nth(state.cursor).unwrap_or(' ');
-                let cursor_area = Rect::new(cursor_x, y, 1, 1);
-                let cursor_span = Span::styled(
-                    cursor_char.to_string(),
-                    Style::default()
-                        .fg(colors.focused)
-                        .add_modifier(ratatui::style::Modifier::REVERSED),
-                );
-                frame.render_widget(Paragraph::new(Line::from(vec![cursor_span])), cursor_area);
-            }
-
-            rows.push(TextListRowLayout {
-                text_area: Rect::new(area.x + indent, y, actual_field_width, 1),
-                button_area: Rect::new(area.x + indent + actual_field_width + 1, y, 3, 1),
-                index: None,
-            });
-        } else {
-            // Show static "[+] Add new" label. When the trailing slot
-            // has focus but isn't yet in input mode, mark the label as
-            // focused (use the same focused fg the other focused rows
-            // use) AND append a dimmed inline hint so the user sees
-            // exactly what Enter will do — without having to look at
-            // the bottom helper bar.
-            let label_fg = if is_add_focused {
-                colors.focused_fg
-            } else {
-                colors.add_button
-            };
-            let mut spans = vec![
-                Span::raw(" ".repeat(indent as usize)),
-                Span::styled("[+] Add new", Style::default().fg(label_fg)),
-            ];
-            if is_add_focused {
-                spans.push(Span::styled(
-                    "  press Enter (or type) to add a new item",
-                    Style::default()
-                        .fg(colors.disabled)
-                        .add_modifier(ratatui::style::Modifier::ITALIC),
-                ));
-            }
-            let add_line = Line::from(spans);
-            let row_area = Rect::new(area.x, y, area.width, 1);
-            frame.render_widget(Paragraph::new(add_line), row_area);
-
-            rows.push(TextListRowLayout {
-                text_area: Rect::new(area.x + indent, y, 11, 1), // "[+] Add new"
-                button_area: Rect::new(area.x + indent, y, 11, 1),
-                index: None,
-            });
-        }
-    }
-
-    TextListLayout {
-        rows,
-        full_area: area,
     }
 }
 

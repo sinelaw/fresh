@@ -110,13 +110,35 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             visible_rows: 6,
             key,
         },
-        // Composite controls: labelled placeholder until their
-        // floating-panel editors land (see the plan's Phase 4/§5.4).
-        SettingControl::TextList(_) => placeholder(field_key, "string list"),
+        // String-list editor: a label header, one row per item, and an
+        // "add new" row — matching `SettingControl::control_height`
+        // (label + items + add). Editing (add/remove/reorder) still runs
+        // through the settings input path; this migrates the *view*.
+        SettingControl::TextList(s) => {
+            let mut children = Vec::with_capacity(s.items.len() + 2);
+            children.push(raw_row(format!("{}:", s.label)));
+            for it in &s.items {
+                children.push(raw_row(format!("  {it}")));
+            }
+            children.push(raw_row("  [+] Add new".to_string()));
+            WidgetSpec::Col { children, key }
+        }
+        // Composite controls with nested values / their own editors keep
+        // a labelled placeholder for now (Map/ObjectArray carry
+        // `serde_json::Value` entries + expansion, Json a `TextEdit`);
+        // their faithful migration rides the entry-editor work.
         SettingControl::Map(_) => placeholder(field_key, "map"),
         SettingControl::ObjectArray(_) => placeholder(field_key, "keybinding list"),
         SettingControl::Json(_) => placeholder(field_key, "JSON"),
         SettingControl::Complex { type_name } => placeholder(field_key, type_name),
+    }
+}
+
+/// A single-row `Raw` widget from a plain string.
+fn raw_row(text: String) -> WidgetSpec {
+    WidgetSpec::Raw {
+        entries: vec![TextPropertyEntry::text(text)],
+        key: None,
     }
 }
 
