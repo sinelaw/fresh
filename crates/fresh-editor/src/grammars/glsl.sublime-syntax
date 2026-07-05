@@ -1,0 +1,147 @@
+%YAML 1.2
+---
+name: GLSL
+file_extensions:
+  - glsl
+  - vert
+  - frag
+  - geom
+  - tesc
+  - tese
+  - comp
+  - rgen
+  - rint
+  - rahit
+  - rchit
+  - rmiss
+  - rcall
+scope: source.glsl
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: numbers
+    - include: layout
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtins
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.glsl
+      push:
+        - meta_scope: comment.block.glsl
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.glsl
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.glsl
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.glsl
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.glsl
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.glsl
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|error|pragma|line|version|extension)\b'
+      scope: keyword.control.directive.glsl
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.glsl
+      push:
+        - meta_scope: string.quoted.double.glsl
+        - match: '"'
+          scope: punctuation.definition.string.end.glsl
+          pop: true
+        - match: '\\[abfnrtv0\\''"?]'
+          scope: constant.character.escape.glsl
+        - match: '\\x[0-9a-fA-F]+'
+          scope: constant.character.escape.hex.glsl
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+([uU]?)\b'
+      scope: constant.numeric.hex.glsl
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fF]?\b'
+      scope: constant.numeric.float.glsl
+    - match: '\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?[fF]?\b'
+      scope: constant.numeric.float.glsl
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+[fF]?\b'
+      scope: constant.numeric.float.glsl
+    - match: '\b[0-9][0-9_]*[uU]?\b'
+      scope: constant.numeric.integer.glsl
+
+  layout:
+    - match: '\b(layout)\s*(\()'
+      captures:
+        1: storage.modifier.layout.glsl
+        2: punctuation.section.parens.begin.glsl
+      push:
+        - meta_scope: meta.layout.glsl
+        - match: '\)'
+          scope: punctuation.section.parens.end.glsl
+          pop: true
+        - include: numbers
+        - match: '\b(location|binding|set|std140|std430|push_constant|early_fragment_tests|local_size_[xyz]|triangles|quads|isolines|points|line_strip|triangle_strip|max_vertices)\b'
+          scope: support.constant.layout.glsl
+        - include: operators
+        - include: punctuation
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|discard)\b'
+      scope: keyword.control.glsl
+    - match: '\b(struct|subroutine)\b'
+      scope: keyword.declaration.glsl
+    - match: '\b(const|in|out|inout|uniform|buffer|shared|attribute|varying|centroid|sample|patch|flat|smooth|noperspective|coherent|volatile|restrict|readonly|writeonly|precision|highp|mediump|lowp|invariant|precise)\b'
+      scope: storage.modifier.glsl
+
+  types:
+    - match: '\b(void|bool|int|uint|float|double|bvec[234]|ivec[234]|uvec[234]|vec[234]|dvec[234]|mat[234](x[234])?|dmat[234](x[234])?)\b'
+      scope: storage.type.glsl
+    - match: '\b(sampler(1D|2D|3D|Cube)(Array)?(Shadow)?|sampler2DRect(Shadow)?|samplerBuffer|sampler2DMS(Array)?|[iu]?sampler(1D|2D|3D|Cube)(Array)?|[iu]?samplerBuffer|image(1D|2D|3D|Cube)(Array)?|[iu]?image(1D|2D|3D|Cube)(Array)?|atomic_uint)\b'
+      scope: storage.type.glsl
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.glsl
+
+  constants:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.glsl
+    - match: '\b(gl_[A-Za-z0-9_]+)\b'
+      scope: support.variable.builtin.glsl
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: constant.other.glsl
+
+  builtins:
+    - match: '\b(abs|acos|acosh|all|any|asin|asinh|atan|atanh|ceil|clamp|cos|cosh|cross|degrees|determinant|distance|dot|dFdx|dFdy|exp|exp2|faceforward|floor|fma|fract|frexp|fwidth|inverse|inversesqrt|isinf|isnan|length|log|log2|matrixCompMult|max|min|mix|mod|modf|normalize|outerProduct|pow|radians|reflect|refract|round|roundEven|sign|sin|sinh|smoothstep|sqrt|step|tan|tanh|transpose|trunc)\b'
+      scope: support.function.builtin.glsl
+    - match: '\b(texture|textureGrad|textureLod|textureOffset|textureProj|texelFetch|imageLoad|imageStore|imageAtomicAdd|imageAtomicAnd|imageAtomicCompSwap|imageAtomicExchange|imageAtomicMax|imageAtomicMin|imageAtomicOr|imageAtomicXor|barrier|memoryBarrier|memoryBarrierBuffer|memoryBarrierImage|memoryBarrierShared)\b'
+      scope: support.function.builtin.glsl
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.glsl
+
+  operators:
+    - match: '(\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.glsl
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.glsl
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.glsl

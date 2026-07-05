@@ -1,0 +1,107 @@
+%YAML 1.2
+---
+name: WGSL
+file_extensions:
+  - wgsl
+scope: source.wgsl
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: attributes
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtins
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.wgsl
+      push:
+        - meta_scope: comment.block.wgsl
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.wgsl
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.wgsl
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.wgsl
+      push:
+        - meta_scope: string.quoted.double.wgsl
+        - match: '"'
+          scope: punctuation.definition.string.end.wgsl
+          pop: true
+        - match: '\\[nrt"\\]'
+          scope: constant.character.escape.wgsl
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+[iu]?\b'
+      scope: constant.numeric.hex.wgsl
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fh]?\b'
+      scope: constant.numeric.float.wgsl
+    - match: '\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?[fh]?\b'
+      scope: constant.numeric.float.wgsl
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+[fh]?\b'
+      scope: constant.numeric.float.wgsl
+    - match: '\b[0-9][0-9_]*[iu]?\b'
+      scope: constant.numeric.integer.wgsl
+
+  attributes:
+    - match: '@{{identifier}}\b'
+      scope: storage.modifier.attribute.wgsl
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|loop|for|while|break|continue|continuing|return|discard|fallthrough)\b'
+      scope: keyword.control.wgsl
+    - match: '\b(fn|struct|let|var|const|override|alias|enable|requires)\b'
+      scope: keyword.declaration.wgsl
+    - match: '\b(bitcast|select)\b'
+      scope: keyword.operator.word.wgsl
+    - match: '\b(private|function|workgroup|uniform|storage|handle|read|write|read_write|perspective|linear|flat|center|centroid|sample)\b'
+      scope: storage.modifier.wgsl
+
+  types:
+    - match: '\b(bool|i32|u32|f32|f16|vec[234][fiu]?|mat[234]x[234][fh]?|vec[234]|mat[234]x[234]|array|ptr|atomic)\b'
+      scope: storage.type.wgsl
+    - match: '\b(texture_1d|texture_2d|texture_2d_array|texture_3d|texture_cube|texture_cube_array|texture_multisampled_2d|texture_depth_2d|texture_depth_2d_array|texture_depth_cube|texture_depth_cube_array|texture_depth_multisampled_2d|texture_storage_1d|texture_storage_2d|texture_storage_2d_array|texture_storage_3d|sampler|sampler_comparison)\b'
+      scope: storage.type.wgsl
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.wgsl
+
+  constants:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.wgsl
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: constant.other.wgsl
+
+  builtins:
+    - match: '\b(abs|acos|acosh|all|any|arrayLength|asin|asinh|atan|atan2|atanh|ceil|clamp|cos|cosh|countLeadingZeros|countOneBits|countTrailingZeros|cross|degrees|determinant|distance|dot|dot4I8Packed|dot4U8Packed|exp|exp2|extractBits|faceForward|firstLeadingBit|firstTrailingBit|floor|fma|fract|frexp|insertBits|inverseSqrt|ldexp|length|log|log2|max|min|mix|modf|normalize|pack2x16float|pack2x16snorm|pack2x16unorm|pack4x8snorm|pack4x8unorm|pow|quantizeToF16|radians|reflect|refract|reverseBits|round|saturate|sign|sin|sinh|smoothstep|sqrt|step|tan|tanh|transpose|trunc)\b'
+      scope: support.function.builtin.wgsl
+    - match: '\b(dpdx|dpdxCoarse|dpdxFine|dpdy|dpdyCoarse|dpdyFine|fwidth|fwidthCoarse|fwidthFine|textureDimensions|textureGather|textureGatherCompare|textureLoad|textureNumLayers|textureNumLevels|textureNumSamples|textureSample|textureSampleBaseClampToEdge|textureSampleBias|textureSampleCompare|textureSampleCompareLevel|textureSampleGrad|textureSampleLevel|textureStore)\b'
+      scope: support.function.builtin.wgsl
+    - match: '\b(workgroupBarrier|storageBarrier|textureBarrier|atomicLoad|atomicStore|atomicAdd|atomicSub|atomicMax|atomicMin|atomicAnd|atomicOr|atomicXor|atomicExchange|atomicCompareExchangeWeak)\b'
+      scope: support.function.builtin.wgsl
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.wgsl
+
+  operators:
+    - match: '(->|\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.wgsl
+
+  punctuation:
+    - match: '(;|,|\.|:)'
+      scope: punctuation.separator.wgsl
+    - match: '(\(|\)|\{|\}|\[|\]|<|>)'
+      scope: punctuation.section.wgsl

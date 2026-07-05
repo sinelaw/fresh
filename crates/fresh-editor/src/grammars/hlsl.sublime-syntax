@@ -1,0 +1,186 @@
+%YAML 1.2
+---
+name: HLSL
+file_extensions:
+  - hlsl
+  - hlsli
+  - fx
+  - fxh
+scope: source.hlsl
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+  vector_dim: '[1-4]'
+  matrix_dim: '[1-4]x[1-4]'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: attributes
+    - include: semantics
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtin-functions
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.hlsl
+      push:
+        - meta_scope: comment.block.hlsl
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.hlsl
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.hlsl
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.hlsl
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.hlsl
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.hlsl
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|warning|line)\b'
+      scope: keyword.control.directive.hlsl
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.hlsl
+      push:
+        - meta_scope: string.quoted.double.hlsl
+        - match: '"'
+          scope: punctuation.definition.string.end.hlsl
+          pop: true
+        - include: string-escapes
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.hlsl
+      push:
+        - meta_scope: string.quoted.single.hlsl
+        - match: "'"
+          scope: punctuation.definition.string.end.hlsl
+          pop: true
+        - include: string-escapes
+
+  string-escapes:
+    - match: '\\[abfnrtv0\\''"?]'
+      scope: constant.character.escape.hlsl
+    - match: '\\x[0-9a-fA-F]+'
+      scope: constant.character.escape.hex.hlsl
+    - match: '\\u[0-9a-fA-F]{4}'
+      scope: constant.character.escape.unicode.hlsl
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+(\.[0-9a-fA-F_]+)?[pP][+-]?[0-9_]+[fFhH]?\b'
+      scope: constant.numeric.float.hex.hlsl
+    - match: '\b0[xX][0-9a-fA-F_]+([uU]|[lL]|[uU][lL]|[lL][uU])?\b'
+      scope: constant.numeric.hex.hlsl
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fFhHlL]?\b'
+      scope: constant.numeric.float.hlsl
+    - match: '\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?[fFhHlL]?\b'
+      scope: constant.numeric.float.hlsl
+    - match: '\b[0-9][0-9_]*[eE][+-]?[0-9_]+[fFhHlL]?\b'
+      scope: constant.numeric.float.hlsl
+    - match: '\b[0-9][0-9_]*[fFhH]\b'
+      scope: constant.numeric.float.hlsl
+    - match: '\b[0-9][0-9_]*([uU]|[lL]|[uU][lL]|[lL][uU])?\b'
+      scope: constant.numeric.integer.hlsl
+
+  attributes:
+    - match: '\[(?=\s*{{identifier}}\s*[\]\(])'
+      scope: punctuation.section.brackets.begin.hlsl
+      push:
+        - meta_scope: storage.modifier.attribute.hlsl
+        - match: '\]'
+          scope: punctuation.section.brackets.end.hlsl
+          pop: true
+        - include: numbers
+        - include: strings
+
+  semantics:
+    - match: '(:)\s*(register|packoffset)\b'
+      captures:
+        1: punctuation.separator.hlsl
+        2: keyword.other.binding.hlsl
+    - match: '(:)\s*(SV_[A-Za-z0-9_]+)'
+      captures:
+        1: punctuation.separator.hlsl
+        2: support.constant.semantic.hlsl
+    - match: '(:)\s*([A-Z][A-Z0-9_]*[0-9]*)\b'
+      captures:
+        1: punctuation.separator.hlsl
+        2: support.constant.semantic.hlsl
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|discard)\b'
+      scope: keyword.control.hlsl
+    - match: '\b(struct|class|interface|typedef|namespace)\b'
+      scope: keyword.declaration.hlsl
+    - match: '\b(const|static|uniform|groupshared|shared|precise|volatile|extern|inline|in|out|inout|row_major|column_major|nointerpolation|linear|centroid|noperspective|sample|globallycoherent|snorm|unorm)\b'
+      scope: storage.modifier.hlsl
+    - match: '\b(cbuffer|tbuffer)\b'
+      scope: keyword.declaration.hlsl
+    - match: '\b(sizeof)\b'
+      scope: keyword.operator.word.hlsl
+
+  types:
+    - match: '\b(RW)?(Texture(1D|2D|3D|Cube)(Array)?(MS)?(Array)?)\b'
+      scope: storage.type.texture.hlsl
+    - match: '\b(SamplerState|SamplerComparisonState|sampler|sampler1D|sampler2D|sampler3D|samplerCUBE)\b'
+      scope: storage.type.sampler.hlsl
+    - match: '\b(RW|Append|Consume)?(StructuredBuffer|ByteAddressBuffer|Buffer)\b'
+      scope: storage.type.buffer.hlsl
+    - match: '\b(RaytracingAccelerationStructure|RayQuery|ConstantBuffer|TextureBuffer)\b'
+      scope: storage.type.buffer.hlsl
+    - match: '\b(float|half|double|int|uint|bool|min16float|min10float|min16int|min12int|min16uint|float16_t|float32_t|float64_t){{matrix_dim}}\b'
+      scope: storage.type.matrix.hlsl
+    - match: '\b(float|half|double|int|uint|bool|min16float|min10float|min16int|min12int|min16uint|float16_t|float32_t|float64_t){{vector_dim}}\b'
+      scope: storage.type.vector.hlsl
+    - match: '\b(void|bool|int|uint|dword|half|float|double|min16float|min10float|min16int|min12int|min16uint|int8_t|int16_t|int32_t|int64_t|uint8_t|uint16_t|uint32_t|uint64_t|float16_t|float32_t|float64_t|vector|matrix|string)\b'
+      scope: storage.type.hlsl
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.hlsl
+
+  constants:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.hlsl
+    - match: '\b(NULL|nullptr)\b'
+      scope: constant.language.null.hlsl
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: constant.other.hlsl
+
+  builtin-functions:
+    - match: '\b(abs|acos|all|any|asin|atan|atan2|ceil|clamp|clip|cos|cosh|cross|ddx|ddx_coarse|ddx_fine|ddy|ddy_coarse|ddy_fine|degrees|determinant|distance|dot|exp|exp2|faceforward|firstbithigh|firstbitlow|floor|fma|fmod|frac|frexp|fwidth|isfinite|isinf|isnan|ldexp|length|lerp|log|log2|log10|mad|max|min|modf|mul|normalize|pow|radians|rcp|reflect|refract|round|rsqrt|saturate|sign|sin|sincos|sinh|smoothstep|sqrt|step|tan|tanh|transpose|trunc|countbits|reversebits)\b'
+      scope: support.function.builtin.hlsl
+    - match: '\b(InterlockedAdd|InterlockedAnd|InterlockedCompareExchange|InterlockedCompareStore|InterlockedExchange|InterlockedMax|InterlockedMin|InterlockedOr|InterlockedXor|GroupMemoryBarrier|GroupMemoryBarrierWithGroupSync|DeviceMemoryBarrier|AllMemoryBarrier|AllMemoryBarrierWithGroupSync)\b'
+      scope: support.function.builtin.hlsl
+    - match: '\b(WaveActiveSum|WaveActiveMax|WaveActiveMin|WaveActiveProduct|WaveActiveBitAnd|WaveActiveBitOr|WaveActiveBitXor|WaveActiveAllTrue|WaveActiveAnyTrue|WaveActiveBallot|WaveGetLaneCount|WaveGetLaneIndex|WaveIsFirstLane|WaveReadLaneAt|WaveReadLaneFirst|WavePrefixSum|WavePrefixProduct)\b'
+      scope: support.function.builtin.hlsl
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.hlsl
+
+  operators:
+    - match: '(\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|->|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.hlsl
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.hlsl
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.hlsl
