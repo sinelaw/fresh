@@ -24,9 +24,9 @@
 //! placeholder keeps the function total and the tree renderable; the
 //! placeholder row is replaced when those editors land.
 
-use super::items::SettingControl;
-use fresh_core::api::{DualListOption, WidgetSpec};
-use fresh_core::text_property::TextPropertyEntry;
+use super::items::{SettingControl, SettingItem};
+use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
+use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 /// Map one Settings control to a `WidgetSpec` node, keyed by the
 /// setting's stable identifier (its JSON-pointer path) so the widget
@@ -115,6 +115,54 @@ fn placeholder(field_key: &str, kind: &str) -> WidgetSpec {
     WidgetSpec::Raw {
         entries: vec![TextPropertyEntry::text(format!("{field_key}: <{kind}>"))],
         key: Some(field_key.to_string()),
+    }
+}
+
+/// Map a whole settings page — an ordered list of `SettingItem`s — into
+/// a single `Col` of control widgets, inserting a section header (and a
+/// divider between sections) at each `is_section_start` boundary. This
+/// is the tree Settings hands to `widgets::render_spec` once it renders
+/// through the widget framework.
+pub fn settings_items_to_widget(items: &[SettingItem]) -> WidgetSpec {
+    let mut children: Vec<WidgetSpec> = Vec::with_capacity(items.len());
+    for item in items {
+        if item.is_section_start {
+            if let Some(section) = item.section.as_deref() {
+                if !children.is_empty() {
+                    children.push(WidgetSpec::Divider {
+                        ch: "─".to_string(),
+                        style: None,
+                        key: None,
+                    });
+                }
+                children.push(section_header(section));
+            }
+        }
+        children.push(setting_control_to_widget(&item.path, &item.control));
+    }
+    WidgetSpec::Col {
+        children,
+        key: Some("settings-page".to_string()),
+    }
+}
+
+/// A styled section-header row (`Raw`, accent fg + bold).
+fn section_header(section: &str) -> WidgetSpec {
+    let mut entry = TextPropertyEntry::text(section);
+    entry.inline_overlays.push(InlineOverlay {
+        start: 0,
+        end: section.len(),
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key("ui.help_key_fg")),
+            bold: true,
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    WidgetSpec::Raw {
+        entries: vec![entry],
+        key: None,
     }
 }
 
@@ -263,6 +311,70 @@ mod tests {
                 assert_eq!(excluded, vec!["git".to_string()]);
             }
             other => panic!("expected DualList, got {other:?}"),
+        }
+    }
+
+    fn item(path: &str, control: SettingControl, section: Option<&str>) -> SettingItem {
+        SettingItem {
+            path: path.into(),
+            name: path.into(),
+            description: None,
+            control,
+            default: None,
+            modified: false,
+            layer_source: crate::config_io::ConfigLayer::System,
+            read_only: false,
+            is_auto_managed: false,
+            nullable: false,
+            is_null: false,
+            section: section.map(|s| s.to_string()),
+            is_section_start: section.is_some(),
+            style: Default::default(),
+            dual_list_sibling: None,
+        }
+    }
+
+    #[test]
+    fn page_builds_col_with_section_headers_and_dividers() {
+        let items = vec![
+            item(
+                "/editor/word_wrap",
+                SettingControl::Toggle(ToggleState::new(true, "Word wrap")),
+                Some("Editor"),
+            ),
+            item(
+                "/editor/tab_size",
+                SettingControl::Number(NumberInputState {
+                    value: 4,
+                    min: Some(1),
+                    max: Some(8),
+                    step: 1,
+                    label: "Tab size".into(),
+                    focus: Default::default(),
+                    editor: None,
+                    is_percentage: false,
+                }),
+                None,
+            ),
+            item(
+                "/ui/theme",
+                SettingControl::Dropdown(DropdownState::new(
+                    vec!["Light".into(), "Dark".into()],
+                    "Theme",
+                )),
+                Some("UI"),
+            ),
+        ];
+        match settings_items_to_widget(&items) {
+            WidgetSpec::Col { children, .. } => {
+                // [Editor header][word_wrap][tab_size][divider][UI header][theme]
+                assert_eq!(children.len(), 6);
+                assert!(matches!(children[1], WidgetSpec::Toggle { .. }));
+                assert!(matches!(children[2], WidgetSpec::Number { .. }));
+                assert!(matches!(children[3], WidgetSpec::Divider { .. }));
+                assert!(matches!(children[5], WidgetSpec::Dropdown { .. }));
+            }
+            other => panic!("expected Col, got {other:?}"),
         }
     }
 
