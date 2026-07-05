@@ -2840,6 +2840,8 @@ pub fn action_to_events(
         | Action::CloseSplit
         | Action::NextSplit
         | Action::PrevSplit
+        | Action::NextPane
+        | Action::PrevPane
         | Action::NextWindow
         | Action::PrevWindow
         | Action::Copy

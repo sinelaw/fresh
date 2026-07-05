@@ -11,7 +11,7 @@ use rust_i18n::t;
 
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::view::folding::CollapsedFoldLineRange;
-use crate::view::split::SplitViewState;
+use crate::view::split::{SplitViewState, TabTarget};
 
 use super::Editor;
 
@@ -466,5 +466,123 @@ impl Editor {
         source_split_id: LeafId,
     ) -> Option<super::types::TabDropZone> {
         self.compute_tab_drop_zone(col, row, source_split_id)
+    }
+
+    /// Cycle through all splits and tabs in the current window as a flat list.
+    ///
+    /// The pane ordering is:
+    ///   (split_0, tab_0), (split_0, tab_1), …,
+    ///   (split_1, tab_0), (split_1, tab_1), …
+    ///
+    /// Within each split, tabs are ordered by their position in the tab bar.
+    /// Splits are ordered by the split-manager's leaf list.
+    ///
+    /// This is different from `NextSplit`/`PrevSplit` (which only move
+    /// between splits, keeping the current tab) and `NextWindow`/`PrevWindow`
+    /// (which cycle between separate editor windows by id).  `NextPane` /
+    /// `PrevPane` treat every (split, tab) pair as a unique step and cycle
+    /// through them as if they were laid out flat on the ground.
+    ///
+    /// If there is only one target total the action is a no-op.
+    pub fn next_pane(&mut self) {
+        self.cycle_pane(true);
+        self.set_status_message(t!("cmd.next_pane").to_string());
+    }
+
+    /// Cycle through all splits and tabs in the current window in reverse order.
+    pub fn prev_pane(&mut self) {
+        self.cycle_pane(false);
+        self.set_status_message(t!("cmd.prev_pane").to_string());
+    }
+
+    fn cycle_pane(&mut self, forward: bool) {
+        // Build the flat list of (split_id, buffer_id) for the active window.
+        let mut targets: Vec<(LeafId, BufferId)> = Vec::new();
+
+        let Some((mgr, vs_map)) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+        else {
+            return;
+        };
+
+        let leaf_ids = mgr.root().leaf_split_ids();
+        for &split_id in &leaf_ids {
+            let Some(vs) = vs_map.get(&split_id) else {
+                continue;
+            };
+            for buf_id in vs.buffer_tab_ids() {
+                targets.push((split_id, buf_id));
+            }
+        }
+
+        if targets.is_empty() {
+            return;
+        }
+
+        // Find the current position in the flat list.
+        // We read the split tree's buffer_id (set by the previous call to
+        // `cycle_pane` via `set_split_buffer`) rather than the view state's
+        // `active_buffer` — the view state gets reset by the render cycle
+        // after every command, but the split-tree buffer_id survives.
+        let current_split = mgr.active_split();
+        let current_buf_from_tree = mgr.active_buffer_id();
+        let current_buf = current_buf_from_tree.unwrap_or_else(|| self.active_buffer());
+        let current_pos = targets
+            .iter()
+            .position(|(s, b)| *s == current_split && *b == current_buf)
+            .unwrap_or(0);
+
+        let len = targets.len();
+        let new_pos = if forward {
+            (current_pos + 1) % len
+        } else {
+            (current_pos + len - 1) % len
+        };
+
+        let (next_split, next_buf) = targets[new_pos];
+
+        // Navigate to the target split.
+        if let Some((mgr_mut, _)) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+        {
+            if mgr_mut.active_split() != next_split {
+                mgr_mut.set_active_split(next_split);
+            }
+        }
+
+        // Navigate to the target buffer/tab within the target split.
+        if let Some((_, vs_map_mut)) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+        {
+            if let Some(vs_mut) = vs_map_mut.get_mut(&next_split) {
+                // Always switch to the target buffer unless it's already
+                // active — even if the current target is a group tab.
+                let needs_switch = match vs_mut.active_target() {
+                    TabTarget::Buffer(buf_id) => buf_id != next_buf,
+                    TabTarget::Group(_) => true,
+                };
+                if needs_switch {
+                    vs_mut.switch_buffer(next_buf);
+                }
+            }
+        }
+
+        // Persist the new buffer into the split tree so that
+        // `mgr.active_buffer_id()` returns it on the next invocation.
+        // This survives the render cycle which resets the view state's
+        // `active_buffer`, keeping the flat-position lookup correct.
+        if let Some((mgr_mut, _)) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+        {
+            mgr_mut.set_split_buffer(next_split, next_buf);
+        }
     }
 }

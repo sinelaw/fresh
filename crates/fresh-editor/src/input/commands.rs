@@ -587,6 +587,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.next_pane",
+        desc_key: "cmd.next_pane_desc",
+        action: || Action::NextPane,
+        contexts: &[Normal, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.previous_pane",
+        desc_key: "cmd.previous_pane_desc",
+        action: || Action::PrevPane,
+        contexts: &[Normal, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.increase_split_size",
         desc_key: "cmd.increase_split_size_desc",
         action: || Action::IncreaseSplitSize,

@@ -248,6 +248,8 @@ pub enum Action {
     CloseSplit,
     NextSplit,
     PrevSplit,
+    NextPane,
+    PrevPane,
     IncreaseSplitSize,
     DecreaseSplitSize,
     ToggleMaximizeSplit,

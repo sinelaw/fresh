@@ -194,6 +194,14 @@ pub enum Event {
     /// Navigate to previous split
     PrevSplit,
 
+    /// Cycle through the next pane (split + tab) across all splits in the
+    /// active window.
+    NextPane,
+
+    /// Cycle through the previous pane (split + tab) across all splits in
+    /// the active window.
+    PrevPane,
+
     /// Batch of events that should be undone/redone atomically
     /// Used for multi-cursor operations where all cursors perform the same action
     Batch {

@@ -58,7 +58,11 @@ impl InputHandler for TerminalModeInputHandler<'_> {
             // For split navigation, exit terminal mode first (non-explicit)
             if matches!(
                 ui_action,
-                Action::NextSplit | Action::PrevSplit | Action::CloseSplit
+                Action::NextSplit
+                    | Action::PrevSplit
+                    | Action::CloseSplit
+                    | Action::NextPane
+                    | Action::PrevPane
             ) {
                 ctx.defer(DeferredAction::ExitTerminalMode { explicit: false });
             }

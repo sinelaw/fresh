@@ -825,7 +825,9 @@ impl EditorState {
             | Event::SetActiveSplit { .. }
             | Event::AdjustSplitRatio { .. }
             | Event::NextSplit
-            | Event::PrevSplit => {
+            | Event::PrevSplit
+            | Event::NextPane
+            | Event::PrevPane => {
                 // No-op: split events are handled by Editor, not EditorState
             }
 

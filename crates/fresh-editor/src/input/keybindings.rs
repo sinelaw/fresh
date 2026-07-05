@@ -600,6 +600,8 @@ pub enum Action {
     PrevSplit,
     NextWindow,
     PrevWindow,
+    NextPane,
+    PrevPane,
     IncreaseSplitSize,
     DecreaseSplitSize,
     ToggleMaximizeSplit,
@@ -1104,6 +1106,8 @@ impl Action {
             "prev_split" => PrevSplit,
             "next_window" => NextWindow,
             "prev_window" => PrevWindow,
+            "next_pane" => NextPane,
+            "prev_pane" => PrevPane,
             "increase_split_size" => IncreaseSplitSize,
             "decrease_split_size" => DecreaseSplitSize,
             "toggle_maximize_split" => ToggleMaximizeSplit,
@@ -1864,6 +1868,9 @@ impl KeybindingResolver {
                 // Split navigation
                 | Action::NextSplit
                 | Action::PrevSplit
+                // Pane navigation (cycle through all splits + tabs)
+                | Action::NextPane
+                | Action::PrevPane
                 // Window navigation
                 | Action::NextWindow
                 | Action::PrevWindow
@@ -2614,6 +2621,8 @@ impl KeybindingResolver {
             Action::PrevSplit => t!("action.prev_split"),
             Action::NextWindow => t!("action.next_window"),
             Action::PrevWindow => t!("action.prev_window"),
+            Action::NextPane => t!("action.next_pane"),
+            Action::PrevPane => t!("action.prev_pane"),
             Action::IncreaseSplitSize => t!("action.increase_split_size"),
             Action::DecreaseSplitSize => t!("action.decrease_split_size"),
             Action::ToggleMaximizeSplit => t!("action.toggle_maximize_split"),

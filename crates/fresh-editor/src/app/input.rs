@@ -1766,6 +1766,8 @@ impl Editor {
             Action::CloseSplit => self.close_active_split(),
             Action::NextSplit => self.next_split(),
             Action::PrevSplit => self.prev_split(),
+            Action::NextPane => self.next_pane(),
+            Action::PrevPane => self.prev_pane(),
             Action::NextWindow => self.next_window(),
             Action::PrevWindow => self.prev_window(),
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
