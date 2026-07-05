@@ -502,6 +502,7 @@ pub enum EnvKind {
 /// One environment detector: which marker files/dirs identify it, how risky
 /// activation is, how to activate it, and what to call it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/name"))]
 pub struct EnvDetector {
     /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
     pub name: String,

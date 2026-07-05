@@ -2052,7 +2052,8 @@
         "markers",
         "kind",
         "snippet"
-      ]
+      ],
+      "x-display-field": "/name"
     },
     "EnvKind": {
       "description": "Activation risk class for an environment — decides whether activating it\nneeds a trust prompt first.",
