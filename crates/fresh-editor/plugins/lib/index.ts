@@ -51,6 +51,7 @@ export {
   button,
   col,
   dropdown,
+  dualList,
   flexSpacer,
   focusAdvance,
   hintBar,

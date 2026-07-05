@@ -214,6 +214,40 @@ export function dropdown(
   };
 }
 
+/** Two-column ordered-subset picker: an `Available` column (options
+ * not yet chosen) and an ordered `Included` column. Left/Right switch
+ * the active column, Up/Down move the cursor, Space moves the focused
+ * item across, PageUp/PageDown reorder the Included column. The
+ * ordered included set is host-owned instance state after first
+ * render; changes fire `widget_event { event_type: "change", payload:
+ * { included: [values] } }`. Set it directly with
+ * `WidgetPanel.setDualIncluded(key, values)`.
+ *
+ * `excluded` names option values owned by a sibling list, kept out of
+ * this list's Available column (cross-exclusion). */
+export function dualList(
+  options: { value: string; label: string }[],
+  opts?: {
+    included?: string[];
+    excluded?: string[];
+    label?: string;
+    focused?: boolean;
+    visibleRows?: number;
+    key?: string;
+  },
+): WidgetSpec {
+  return {
+    kind: "dualList",
+    options,
+    included: opts?.included ?? [],
+    excluded: opts?.excluded ?? [],
+    label: opts?.label ?? "",
+    focused: opts?.focused ?? false,
+    visibleRows: opts?.visibleRows ?? 6,
+    key: opts?.key,
+  };
+}
+
 /** Action button, rendered as `[ Label ]`. `intent` controls visual
  * emphasis: `"normal"` (default) → no override, `"primary"` → bold,
  * `"danger"` → error theme key.
@@ -754,6 +788,13 @@ export class WidgetPanel {
     return this.mutate({ kind: "setDropdown", widgetKey, index });
   }
 
+  /** Replace a `DualList` widget's ordered included set. Unknown
+   * values are dropped on the next render; does not fire a `change`
+   * event. */
+  setDualIncluded(widgetKey: string, included: string[]): boolean {
+    return this.mutate({ kind: "setDualIncluded", widgetKey, included });
+  }
+
   /** Update a Text widget's completion popup candidates. Empty
    * `items` closes the popup; non-empty opens it and resets the
    * host-managed selection to index 0. The host repaints the
@@ -952,6 +993,12 @@ export class FloatingWidgetPanel {
    * render; does not fire a `change` event. */
   setDropdown(widgetKey: string, index: number): boolean {
     return this.mutate({ kind: "setDropdown", widgetKey, index });
+  }
+
+  /** Replace a `DualList` widget's ordered included set. Unknown
+   * values dropped on the next render; does not fire `change`. */
+  setDualIncluded(widgetKey: string, included: string[]): boolean {
+    return this.mutate({ kind: "setDualIncluded", widgetKey, included });
   }
 
   /** Update a Text widget's completion popup candidates. Empty

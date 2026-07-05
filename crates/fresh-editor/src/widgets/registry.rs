@@ -189,6 +189,18 @@ pub enum WidgetInstanceState {
     /// Authoritative after first render; the spec's `selected_index`
     /// is a seed only.
     Dropdown { selected_index: i32 },
+    /// `DualList` instance state: the host-owned ordered included set
+    /// plus which column is active and each column's cursor. The
+    /// included order is the widget's meaningful output; the spec's
+    /// `included` is a seed only.
+    DualList {
+        included: Vec<String>,
+        /// True when the Included column is active (Available when
+        /// false).
+        active_included: bool,
+        available_cursor: u32,
+        included_cursor: u32,
+    },
 }
 
 /// Per-panel state retained between renders. The reconciler will use

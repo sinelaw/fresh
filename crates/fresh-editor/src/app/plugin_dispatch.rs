@@ -4675,6 +4675,42 @@ impl Editor {
                     );
                 }
             }
+            WidgetMutation::SetDualIncluded {
+                widget_key,
+                included,
+            } => {
+                // DualList included order is host-owned instance state;
+                // drop unknown values and preserve/reset cursors. The
+                // trailing rerender repaints. No `change` event.
+                if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    let sanitized = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        Some(fresh_core::api::WidgetSpec::DualList { options, .. }) => {
+                            crate::widgets::dual_sanitize_included(options, &included)
+                        }
+                        _ => included.clone(),
+                    };
+                    let (active, avail_cur, incl_cur) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::DualList {
+                                active_included,
+                                available_cursor,
+                                included_cursor,
+                                ..
+                            }) => (*active_included, *available_cursor, *included_cursor),
+                            _ => (false, 0, 0),
+                        };
+                    panel.instance_states.insert(
+                        widget_key.clone(),
+                        crate::widgets::WidgetInstanceState::DualList {
+                            included: sanitized,
+                            active_included: active,
+                            available_cursor: avail_cur,
+                            included_cursor: incl_cur,
+                        },
+                    );
+                }
+            }
             WidgetMutation::SetCompletions { widget_key, items } => {
                 // Update completion popup state on a Text widget.
                 // Non-empty `items` opens the popup and resets the

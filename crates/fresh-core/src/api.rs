@@ -1447,6 +1447,10 @@ fn default_dropdown_selected() -> i32 {
     0
 }
 
+fn default_dual_visible_rows() -> u32 {
+    6
+}
+
 /// One node in a `Tree` widget's flat-list spec. The plugin walks
 /// its hierarchy depth-first and emits one `TreeNode` per node;
 /// `depth` controls indent, `has_children` controls whether the
@@ -1457,6 +1461,17 @@ fn default_dropdown_selected() -> i32 {
 /// indent + disclosure glyph at render time and shifts the entry's
 /// inline overlays accordingly; plugins emit `text` (and overlays)
 /// in the row's own coordinate space, starting at column 0.
+/// One option in a `DualList` widget's universe: a stable `value`
+/// (what the plugin stores in `included` / `excluded`) plus the
+/// human-readable `label` shown in the columns.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct DualListOption {
+    pub value: String,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -1637,6 +1652,46 @@ pub enum WidgetSpec {
         /// the host owns focus.
         #[serde(default)]
         focused: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Two-column ordered-subset picker: an `Available` column (the
+    /// options not yet chosen) and an ordered `Included` column.
+    /// Move an item across the columns with Space, reorder the
+    /// included column with PageUp/PageDown, switch the active column
+    /// with Left/Right, and move the cursor with Up/Down.
+    ///
+    /// The *included* list (order matters) is host-owned instance
+    /// state after first render; the spec's `included` is a seed
+    /// only. `excluded` names options that belong to a sibling list
+    /// and must not appear in this one's Available column (the
+    /// cross-exclusion the Settings status-bar picker uses). Every
+    /// change fires `widget_event { event_type: "change", payload:
+    /// { included: [values] } }`; plugins can also set the order via
+    /// `WidgetMutation::SetDualIncluded`.
+    DualList {
+        /// The full universe of selectable options.
+        options: Vec<DualListOption>,
+        /// Initial ordered set of included option values. Seed only;
+        /// instance state takes over after first render.
+        #[serde(default)]
+        included: Vec<String>,
+        /// Option values owned by a sibling list — filtered out of
+        /// this list's Available column so the two never overlap.
+        #[serde(default)]
+        excluded: Vec<String>,
+        /// Optional label rendered above the columns. Empty =
+        /// omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once
+        /// the host owns focus.
+        #[serde(default)]
+        focused: bool,
+        /// Number of body rows the columns occupy. Plugin computes
+        /// from its viewport.
+        #[serde(default = "default_dual_visible_rows")]
+        visible_rows: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2222,6 +2277,13 @@ pub enum WidgetMutation {
     /// Set a `Dropdown` widget's selected index (instance state).
     /// Clamped to `[0, options.len())` on the next render.
     SetDropdown { widget_key: String, index: i32 },
+    /// Replace a `DualList` widget's ordered included set (instance
+    /// state). Values not present in the widget's `options` are
+    /// dropped on the next render.
+    SetDualIncluded {
+        widget_key: String,
+        included: Vec<String>,
+    },
     /// Replace a `List`'s items + parallel `item_keys`. Mutates
     /// the List in the spec.
     SetItems {

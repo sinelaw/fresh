@@ -1116,6 +1116,38 @@ type WidgetSpec = {
 	focused: boolean;
 	key?: string | null;
 } | {
+	"kind": "dualList";
+	/**
+	* The full universe of selectable options.
+	*/
+	options: Array<DualListOption>;
+	/**
+	* Initial ordered set of included option values. Seed only;
+	* instance state takes over after first render.
+	*/
+	included: Array<string>;
+	/**
+	* Option values owned by a sibling list — filtered out of
+	* this list's Available column so the two never overlap.
+	*/
+	excluded: Array<string>;
+	/**
+	* Optional label rendered above the columns. Empty =
+	* omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once
+	* the host owns focus.
+	*/
+	focused: boolean;
+	/**
+	* Number of body rows the columns occupy. Plugin computes
+	* from its viewport.
+	*/
+	visibleRows: number;
+	key?: string | null;
+} | {
 	"kind": "button";
 	label: string;
 	focused: boolean;
@@ -1401,6 +1433,10 @@ type WidgetMutation = {
 	"kind": "setDropdown";
 	widgetKey: string;
 	index: number;
+} | {
+	"kind": "setDualIncluded";
+	widgetKey: string;
+	included: Array<string>;
 } | {
 	"kind": "setItems";
 	widgetKey: string;

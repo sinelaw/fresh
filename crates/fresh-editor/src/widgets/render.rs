@@ -22,7 +22,7 @@
 
 use crate::widgets::registry::{HitArea, WidgetInstanceState};
 use fresh_core::api::{
-    ButtonKind, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
+    ButtonKind, DualListOption, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
 };
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use serde_json::json;
@@ -496,6 +496,7 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Number { key: Some(k), .. }
         | WidgetSpec::Dropdown { key: Some(k), .. }
+        | WidgetSpec::DualList { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -586,6 +587,27 @@ fn render_collected(
             prev,
             next_state,
             focus_key,
+        ),
+        WidgetSpec::DualList {
+            options,
+            included,
+            excluded,
+            label,
+            focused,
+            visible_rows,
+            key,
+        } => collect_dual_list(
+            options,
+            included,
+            excluded,
+            label,
+            *focused,
+            *visible_rows,
+            key.as_deref(),
+            prev,
+            next_state,
+            focus_key,
+            panel_width,
         ),
         WidgetSpec::Button {
             label,
@@ -3409,6 +3431,241 @@ fn render_stepper(value_str: &str, label: &str, focused: bool) -> RenderedNumber
         dec_range: (dec_start, dec_end),
         inc_range: (inc_start, inc_end),
     }
+}
+
+// ---- DualList pure model helpers (unit-tested) -------------------
+
+/// Values available to move into the Included column: every option
+/// not already included and not owned by a sibling (excluded),
+/// preserving the options' declaration order.
+pub fn dual_available_values(
+    options: &[DualListOption],
+    included: &[String],
+    excluded: &[String],
+) -> Vec<String> {
+    options
+        .iter()
+        .map(|o| &o.value)
+        .filter(|v| !included.iter().any(|i| i == *v) && !excluded.iter().any(|e| e == *v))
+        .cloned()
+        .collect()
+}
+
+/// The display label for an option value (falls back to the value
+/// when the option isn't found).
+pub fn dual_label<'a>(options: &'a [DualListOption], value: &'a str) -> &'a str {
+    options
+        .iter()
+        .find(|o| o.value == value)
+        .map(|o| o.label.as_str())
+        .unwrap_or(value)
+}
+
+/// Drop any included value that isn't a known option — keeps the
+/// host-owned included set consistent when the options change.
+pub fn dual_sanitize_included(options: &[DualListOption], included: &[String]) -> Vec<String> {
+    included
+        .iter()
+        .filter(|v| options.iter().any(|o| &o.value == *v))
+        .cloned()
+        .collect()
+}
+
+/// Truncate-or-pad a string to exactly `width` display columns
+/// (char-approximate; adequate for the ASCII labels DualList shows).
+fn cell(s: &str, width: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() >= width {
+        chars[..width].iter().collect()
+    } else {
+        let mut out: String = chars.iter().collect();
+        out.extend(std::iter::repeat(' ').take(width - chars.len()));
+        out
+    }
+}
+
+/// Column width used for each DualList column given the panel width.
+fn dual_col_width(panel_width: u32) -> usize {
+    // `u32::MAX` means flex is disabled (tests / unbounded) — fall
+    // back to a readable fixed width. Otherwise split the panel in
+    // two with a two-column gap, clamped to a sane range.
+    let width = if panel_width == u32::MAX {
+        40
+    } else {
+        panel_width
+    };
+    ((width.saturating_sub(4)) / 2).clamp(8, 40) as usize
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_dual_list(
+    options: &[DualListOption],
+    spec_included: &[String],
+    excluded: &[String],
+    label: &str,
+    focused: bool,
+    visible_rows: u32,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+    panel_width: u32,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    let is_focused = match key {
+        Some(k) if !k.is_empty() => k == focus_key,
+        _ => focused,
+    };
+    // Instance state is authoritative after first render.
+    let (included, active_included, mut avail_cur, mut incl_cur) = match key {
+        Some(k) if !k.is_empty() => match prev.get(k) {
+            Some(WidgetInstanceState::DualList {
+                included,
+                active_included,
+                available_cursor,
+                included_cursor,
+            }) => (
+                included.clone(),
+                *active_included,
+                *available_cursor as usize,
+                *included_cursor as usize,
+            ),
+            _ => (spec_included.to_vec(), false, 0, 0),
+        },
+        _ => (spec_included.to_vec(), false, 0, 0),
+    };
+    let included = dual_sanitize_included(options, &included);
+    let available = dual_available_values(options, &included, excluded);
+    // Clamp cursors into their columns.
+    if !available.is_empty() {
+        avail_cur = avail_cur.min(available.len() - 1);
+    } else {
+        avail_cur = 0;
+    }
+    if !included.is_empty() {
+        incl_cur = incl_cur.min(included.len() - 1);
+    } else {
+        incl_cur = 0;
+    }
+    if let Some(k) = key {
+        if !k.is_empty() {
+            next_state.insert(
+                k.to_string(),
+                WidgetInstanceState::DualList {
+                    included: included.clone(),
+                    active_included,
+                    available_cursor: avail_cur as u32,
+                    included_cursor: incl_cur as u32,
+                },
+            );
+        }
+    }
+
+    let col_w = dual_col_width(panel_width);
+    let widget_key = key.unwrap_or("").to_string();
+
+    // Optional label row.
+    if !label.is_empty() {
+        let mut e = TextPropertyEntry::text(label);
+        ensure_trailing_newline(&mut e);
+        out.entries.push(e);
+    }
+    // Header row.
+    let header = format!("{}  {}", cell("Available", col_w), cell("Included", col_w));
+    let mut header_entry = TextPropertyEntry::text(&header);
+    header_entry.inline_overlays.push(InlineOverlay {
+        start: 0,
+        end: header.len(),
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(KEY_SECTION_LABEL_FG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    ensure_trailing_newline(&mut header_entry);
+    let header_row = out.entries.len() as u32;
+    out.entries.push(header_entry);
+
+    // Body rows — one per max(available, included), at least
+    // `visible_rows`.
+    let body_rows = available.len().max(included.len()).max(visible_rows as usize);
+    for i in 0..body_rows {
+        let left_val = available.get(i);
+        let right_val = included.get(i);
+        let left = left_val
+            .map(|v| dual_label(options, v))
+            .unwrap_or("");
+        let right = right_val
+            .map(|v| dual_label(options, v))
+            .unwrap_or("");
+        let left_cell = cell(left, col_w);
+        let right_cell = cell(right, col_w);
+        let text = format!("{}  {}", left_cell, right_cell);
+        let left_start = 0usize;
+        let left_end = left_cell.len();
+        let right_start = left_end + 2;
+        let right_end = right_start + right_cell.len();
+
+        let mut entry = TextPropertyEntry::text(&text);
+        // Cursor highlight on the active column's cursor row (only
+        // when the widget is focused).
+        if is_focused {
+            let (hs, he) = if active_included {
+                if right_val.is_some() && i == incl_cur {
+                    (right_start, right_end)
+                } else {
+                    (0, 0)
+                }
+            } else if left_val.is_some() && i == avail_cur {
+                (left_start, left_end)
+            } else {
+                (0, 0)
+            };
+            if he > hs {
+                entry.inline_overlays.push(InlineOverlay {
+                    start: hs,
+                    end: he,
+                    style: OverlayOptions {
+                        fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                        bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                        bold: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+        ensure_trailing_newline(&mut entry);
+        let row = header_row + 1 + i as u32;
+        // Click hit areas: clicking a cell focuses that column +
+        // cursor row.
+        if left_val.is_some() {
+            out.hits.push(HitArea {
+                widget_key: widget_key.clone(),
+                widget_kind: "dual_list",
+                buffer_row: row,
+                byte_start: left_start,
+                byte_end: left_end,
+                payload: json!({ "column": "available", "index": i }),
+                event_type: "dual_focus",
+            });
+        }
+        if right_val.is_some() {
+            out.hits.push(HitArea {
+                widget_key: widget_key.clone(),
+                widget_kind: "dual_list",
+                buffer_row: row,
+                byte_start: right_start,
+                byte_end: right_end,
+                payload: json!({ "column": "included", "index": i }),
+                event_type: "dual_focus",
+            });
+        }
+        out.entries.push(entry);
+    }
+    out
 }
 
 /// Render a `Button` to a single `TextPropertyEntry`.
@@ -7079,6 +7336,94 @@ mod tests {
     #[test]
     fn dropdown_is_tabbable() {
         let spec = make_dropdown(&["a"], 0, Some("d"));
+        let mut tabbable = Vec::new();
+        collect_tabbable(&spec, &mut tabbable);
+        assert_eq!(tabbable, vec!["d"]);
+    }
+
+    fn opts(pairs: &[(&str, &str)]) -> Vec<DualListOption> {
+        pairs
+            .iter()
+            .map(|(v, l)| DualListOption {
+                value: v.to_string(),
+                label: l.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dual_available_excludes_included_and_excluded() {
+        let o = opts(&[("a", "A"), ("b", "B"), ("c", "C"), ("d", "D")]);
+        let avail = dual_available_values(&o, &["b".into()], &["d".into()]);
+        // b is included, d is excluded → only a, c remain (in order).
+        assert_eq!(avail, vec!["a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn dual_sanitize_drops_unknown_values() {
+        let o = opts(&[("a", "A"), ("b", "B")]);
+        let clean = dual_sanitize_included(&o, &["b".into(), "zzz".into(), "a".into()]);
+        assert_eq!(clean, vec!["b".to_string(), "a".to_string()]);
+    }
+
+    #[test]
+    fn dual_label_falls_back_to_value() {
+        let o = opts(&[("a", "Apple")]);
+        assert_eq!(dual_label(&o, "a"), "Apple");
+        assert_eq!(dual_label(&o, "missing"), "missing");
+    }
+
+    fn make_dual(
+        options: &[(&str, &str)],
+        included: &[&str],
+        key: Option<&str>,
+    ) -> WidgetSpec {
+        WidgetSpec::DualList {
+            options: opts(options),
+            included: included.iter().map(|s| s.to_string()).collect(),
+            excluded: Vec::new(),
+            label: "Elements".into(),
+            focused: false,
+            visible_rows: 3,
+            key: key.map(|k| k.to_string()),
+        }
+    }
+
+    #[test]
+    fn dual_list_renders_header_and_columns() {
+        let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], Some("d"));
+        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        // Label + header + >=1 body rows.
+        assert_eq!(out[0].text.trim_end(), "Elements");
+        assert!(out[1].text.contains("Available"));
+        assert!(out[1].text.contains("Included"));
+        // Body shows Alpha in the available column and Beta in included.
+        let body: String = out[2..].iter().map(|e| e.text.clone()).collect();
+        assert!(body.contains("Alpha"), "available col: {body:?}");
+        assert!(body.contains("Beta"), "included col: {body:?}");
+        // Instance state seeded from spec.
+        match state.get("d") {
+            Some(WidgetInstanceState::DualList { included, .. }) => {
+                assert_eq!(included, &vec!["b".to_string()]);
+            }
+            other => panic!("expected DualList state, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dual_list_emits_cell_hit_areas() {
+        let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], Some("d"));
+        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let cells: Vec<_> = hits.iter().filter(|h| h.widget_kind == "dual_list").collect();
+        // One available cell (a) + one included cell (b).
+        assert_eq!(cells.len(), 2);
+        assert!(cells.iter().any(|h| h.payload["column"] == "available"));
+        assert!(cells.iter().any(|h| h.payload["column"] == "included"));
+    }
+
+    #[test]
+    fn dual_list_is_tabbable() {
+        let spec = make_dual(&[("a", "A")], &[], Some("d"));
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["d"]);
