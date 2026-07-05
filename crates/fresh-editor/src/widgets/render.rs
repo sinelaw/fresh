@@ -1245,23 +1245,32 @@ fn collect_dropdown(
     };
     // Instance state is authoritative after first render; clamp the
     // selected index into the current option set and persist.
-    let cur = match key {
+    let (cur, open) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
-            Some(WidgetInstanceState::Dropdown { selected_index }) => *selected_index,
-            _ => spec_selected,
+            Some(WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => (*selected_index, *open),
+            _ => (spec_selected, false),
         },
-        _ => spec_selected,
+        _ => (spec_selected, false),
     };
     let cur = if options.is_empty() {
         0
     } else {
         cur.clamp(0, options.len() as i32 - 1)
     };
+    // The popup only stays open while the widget is focused — a blur
+    // (Tab away, click elsewhere) closes it.
+    let open = open && is_focused && !options.is_empty();
     if let Some(k) = key {
         if !k.is_empty() {
             next_state.insert(
                 k.to_string(),
-                WidgetInstanceState::Dropdown { selected_index: cur },
+                WidgetInstanceState::Dropdown {
+                    selected_index: cur,
+                    open,
+                },
             );
         }
     }
@@ -1292,7 +1301,54 @@ fn collect_dropdown(
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
+    // When open, paint the option list as OverlayRows below the
+    // inline cycler — reusing the same overlay-paint path as Text
+    // completions (buffer + floating panels both render `overlays`).
+    if open {
+        emit_dropdown_overlays(&mut out, options, cur as usize);
+    }
     out
+}
+
+/// Paint a `Dropdown`'s option list as `OverlayRow`s anchored just
+/// below the cycler row (anchor 1 = the row under the widget). The
+/// selected option gets the focused highlight; the rest get the
+/// popup background so the list reads as one box.
+fn emit_dropdown_overlays(out: &mut CollectedOutput, options: &[String], selected: usize) {
+    // Width the popup to the widest option (plus a little padding) so
+    // the highlight bar reads as a box.
+    let inner = options.iter().map(|o| o.chars().count()).max().unwrap_or(0);
+    let width = (inner + 2).max(4);
+    for (i, opt) in options.iter().enumerate() {
+        let is_sel = i == selected;
+        let text = format!(" {} ", cell(opt, inner));
+        let mut e = TextPropertyEntry::text(&text);
+        let style = if is_sel {
+            OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                bold: true,
+                ..Default::default()
+            }
+        } else {
+            OverlayOptions {
+                bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
+                ..Default::default()
+            }
+        };
+        e.inline_overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style,
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        e.pad_to_chars = Some(width as u32);
+        out.overlays.push(OverlayRow {
+            buffer_row: (i + 1) as u32,
+            entry: e,
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7310,7 +7366,7 @@ mod tests {
         let spec = make_dropdown(&["a", "b", "c"], 9, Some("d"));
         let (_out, _hits, state) = render_no_focus(&spec, &HashMap::new());
         match state.get("d") {
-            Some(WidgetInstanceState::Dropdown { selected_index }) => {
+            Some(WidgetInstanceState::Dropdown { selected_index, .. }) => {
                 assert_eq!(*selected_index, 2)
             }
             other => panic!("expected Dropdown instance state, got {other:?}"),
@@ -7323,7 +7379,10 @@ mod tests {
         let mut prev = HashMap::new();
         prev.insert(
             "d".to_string(),
-            WidgetInstanceState::Dropdown { selected_index: 2 },
+            WidgetInstanceState::Dropdown {
+                selected_index: 2,
+                open: false,
+            },
         );
         let r = render_spec(&spec, &prev, "", u32::MAX);
         assert!(
@@ -7331,6 +7390,46 @@ mod tests {
             "instance selection should win: {:?}",
             r.entries[0].text
         );
+    }
+
+    #[test]
+    fn dropdown_open_emits_option_overlays() {
+        let spec = make_dropdown(&["a", "b", "c"], 1, Some("d"));
+        // Focused + open in instance state → popup overlays painted.
+        let mut prev = HashMap::new();
+        prev.insert(
+            "d".to_string(),
+            WidgetInstanceState::Dropdown {
+                selected_index: 1,
+                open: true,
+            },
+        );
+        let out = render_spec(&spec, &prev, "d", u32::MAX);
+        assert_eq!(out.overlays.len(), 3, "one overlay row per option");
+        // Overlay rows anchor below the cycler (rows 1,2,3).
+        assert_eq!(out.overlays[0].buffer_row, 1);
+        assert!(out.overlays[1].entry.text.contains('b'));
+    }
+
+    #[test]
+    fn dropdown_popup_closes_when_unfocused() {
+        let spec = make_dropdown(&["a", "b"], 0, Some("d"));
+        let mut prev = HashMap::new();
+        prev.insert(
+            "d".to_string(),
+            WidgetInstanceState::Dropdown {
+                selected_index: 0,
+                open: true,
+            },
+        );
+        // Not the focused widget → popup suppressed, state closed.
+        // (no-autofocus so the sole tabbable isn't auto-selected).
+        let out = render_spec_no_autofocus(&spec, &prev, "", u32::MAX);
+        assert!(out.overlays.is_empty());
+        match out.instance_states.get("d") {
+            Some(WidgetInstanceState::Dropdown { open, .. }) => assert!(!open),
+            other => panic!("expected Dropdown state, got {other:?}"),
+        }
     }
 
     #[test]

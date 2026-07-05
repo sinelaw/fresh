@@ -618,6 +618,31 @@ impl Editor {
                 _ => {}
             }
         }
+        // Dropdown-popup short-circuit: while a focused Dropdown's
+        // option popup is open, Up/Down move the (live) selection,
+        // Enter/Space commit-and-close, Esc closes. Mirrors the
+        // completions short-circuit above.
+        let dropdown_open = matches!(key, "Up" | "Down" | "Enter" | "Space" | "Escape")
+            && self.focused_dropdown_open(panel_key);
+        if dropdown_open {
+            match key {
+                "Up" => {
+                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, -1);
+                    return;
+                }
+                "Down" => {
+                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, 1);
+                    return;
+                }
+                "Enter" | "Space" | "Escape" => {
+                    // The selection is already live (Up/Down fired
+                    // `change`); closing just dismisses the list.
+                    self.set_dropdown_open(panel_key, &focus_key, false);
+                    return;
+                }
+                _ => {}
+            }
+        }
         // Re-fetch the focused widget for the main dispatch: the
         // completion block above may have run `&mut self` (dismissing a
         // popup), so we can't hold a borrow from before it. The spec is
@@ -776,6 +801,11 @@ impl Editor {
                     // moves to the next widget.
                     self.handle_widget_focus_advance(panel_key, 1);
                 }
+                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
+                    // Closed dropdown (open case handled above): Enter
+                    // opens the option popup.
+                    self.set_dropdown_open(panel_key, &focus_key, true);
+                }
                 Some(fresh_core::api::WidgetSpec::List { .. }) => {
                     self.fire_list_activate(panel_key, &focus_key);
                 }
@@ -826,9 +856,9 @@ impl Editor {
                     self.handle_widget_activate(panel_key);
                 }
                 Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
-                    // Space cycles to the next option (wrapping) — the
-                    // popup form arrives with the compositor.
-                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, 1);
+                    // Closed dropdown (the open case is handled by the
+                    // short-circuit above): Space opens the option popup.
+                    self.set_dropdown_open(panel_key, &focus_key, true);
                 }
                 Some(fresh_core::api::WidgetSpec::DualList { .. }) => {
                     // Space moves the focused item across columns.
@@ -1289,9 +1319,12 @@ impl Editor {
         if options.is_empty() {
             return;
         }
-        let cur = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Dropdown { selected_index }) => *selected_index,
-            _ => spec_sel,
+        let (cur, open) = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => (*selected_index, *open),
+            _ => (spec_sel, false),
         };
         let cur = cur.clamp(0, options.len() as i32 - 1);
         let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
@@ -1301,6 +1334,9 @@ impl Editor {
                 widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::Dropdown {
                     selected_index: new_sel,
+                    // Preserve the popup's open state across a cycle so
+                    // Up/Down inside the open list keeps it open.
+                    open,
                 },
             );
         }
@@ -1314,6 +1350,62 @@ impl Editor {
                 serde_json::json!({ "index": new_sel, "value": value }),
             );
         }
+    }
+
+    /// True when the panel's focused widget is a `Dropdown` whose
+    /// option popup is currently open. Mirrors
+    /// `focused_text_completions_open` — the smart-key dispatcher uses
+    /// it to route Up/Down/Enter/Esc to the popup.
+    pub(super) fn focused_dropdown_open(&self, panel_key: &crate::widgets::PanelKey) -> bool {
+        let panel = match self.widget_registry.get(panel_key) {
+            Some(p) => p,
+            None => return false,
+        };
+        if panel.focus_key.is_empty() {
+            return false;
+        }
+        matches!(
+            panel.instance_states.get(&panel.focus_key),
+            Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+        )
+    }
+
+    /// Open or close a `Dropdown`'s option popup, preserving the
+    /// selected index. Repaints; no `change` event (opening/closing is
+    /// not a value edit — the selection change fires its own `change`).
+    pub(super) fn set_dropdown_open(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        open: bool,
+    ) {
+        if widget_key.is_empty() {
+            return;
+        }
+        let panel = match self.widget_registry.get(panel_key) {
+            Some(p) => p,
+            None => return,
+        };
+        let spec_sel = match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
+            Some(fresh_core::api::WidgetSpec::Dropdown { selected_index, .. }) => *selected_index,
+            _ => return,
+        };
+        let cur = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Dropdown { selected_index, .. }) => {
+                *selected_index
+            }
+            _ => spec_sel,
+        };
+        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
+            panel_mut.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::Dropdown {
+                    selected_index: cur,
+                    open,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_key);
     }
 
     /// Apply a `DualList` interaction, update the host-owned instance

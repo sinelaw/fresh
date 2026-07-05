@@ -4667,10 +4667,15 @@ impl Editor {
                     } else {
                         index.clamp(0, len as i32 - 1)
                     };
+                    let open = matches!(
+                        panel.instance_states.get(&widget_key),
+                        Some(crate::widgets::WidgetInstanceState::Dropdown { open: true, .. })
+                    );
                     panel.instance_states.insert(
                         widget_key.clone(),
                         crate::widgets::WidgetInstanceState::Dropdown {
                             selected_index: clamped,
+                            open,
                         },
                     );
                 }

@@ -185,10 +185,13 @@ pub enum WidgetInstanceState {
     /// host can step it via `WidgetCommand::Key` or a click without
     /// racing the plugin's spec round-trip).
     Number { value: f64 },
-    /// `Dropdown` instance state: the host-owned selected index.
-    /// Authoritative after first render; the spec's `selected_index`
-    /// is a seed only.
-    Dropdown { selected_index: i32 },
+    /// `Dropdown` instance state: the host-owned selected index plus
+    /// whether the option popup is open. Authoritative after first
+    /// render; the spec's `selected_index` is a seed only. The popup
+    /// paints as `OverlayRow`s below the inline cycler — reusing the
+    /// same overlay-paint path as `Text` completions, no separate
+    /// compositor.
+    Dropdown { selected_index: i32, open: bool },
     /// `DualList` instance state: the host-owned ordered included set
     /// plus which column is active and each column's cursor. The
     /// included order is the widget's meaningful output; the spec's
