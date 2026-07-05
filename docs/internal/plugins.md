@@ -349,11 +349,17 @@ placement.
 
 Spec kinds in the core API: `Row`, `Col` (flex containers), `Spacer`,
 `Divider`, `HintBar`, `Toggle`, `Button` (intent Normal/Primary/Danger), `Text`
-(unified single-line vs multi-line by row count), `List` (virtual-scrolled,
+(unified single-line vs multi-line by row count), `Number` (stepper, integer or
+float-as-percent), `Dropdown` (inline cycler with an `OverlayRow` option popup),
+`DualList` (two-column ordered-subset picker), `List` (virtual-scrolled,
 host-owned scroll/selection), `Tree` (disclosure + optional per-row
-checkboxes), and `Raw` (pre-rendered text-property escape hatch). PLANNED per
-the design: `Table`, tabs/group, and a layer/prompt compositor for
-modals/tooltips.
+checkboxes), and `Raw` (pre-rendered text-property escape hatch). The `Number`,
+`Dropdown`, and `DualList` kinds were added for the Settings↔widget unification
+(see `settings-widget-unification-plan.md`), which maps every scalar Settings
+control onto a widget kind. PLANNED per the design: `Table`, tabs/group, and a
+layer/prompt compositor for modals/tooltips — though the existing overlay-layer
+stack + floating-widget panels already cover most modal/popup needs (the
+Dropdown popup ships on `OverlayRow` today).
 
 ### 7.2 Mount and reconcile
 

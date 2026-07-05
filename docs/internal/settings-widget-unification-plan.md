@@ -11,6 +11,33 @@
 
 ---
 
+## 0. Status (progress against this plan)
+
+- **Phase 1 (rich kinds) — mostly DONE.** `Number`, `Dropdown` (with an
+  `OverlayRow` option popup), and `DualList` shipped as `WidgetSpec` kinds, each
+  with host-owned instance state, keyboard + mouse dispatch, a `Set*` mutation,
+  TS builders, and unit tests. `Map` / `ObjectArray` (keybinding list) are the
+  remaining composites — their editing rides a floating panel (§5.4) rather than
+  a new inline kind, so they're deferred to that step.
+- **Phase 4 (compositor) — reframed to REUSE, largely covered.** No new
+  subsystem: `overlay.rs` + `FloatingWidgetState` + `OverlayRow` already provide
+  the layer stack, modal/dock/anchored panels, and on-top popups. The Dropdown
+  popup ships on `OverlayRow`. The one net-new piece is a small floating-panel
+  *stack* for nested modals (§5.4).
+- **Phase 3 (Settings → `WidgetSpec`) — mapping DONE, render swap REMAINING.**
+  `view/settings/widget_map.rs` maps every scalar `SettingControl` to a widget
+  kind and assembles a whole page into a `Col` tree (unit-tested). What remains
+  is wiring the live Settings renderer to emit that tree through
+  `widgets::render_spec` and route input/mouse through the widget runtime —
+  integration work, not new modelling.
+- **Phase 2 (shared control core) — STARTED.** `render_stepper` is shared by
+  `Number` and `Dropdown`; the broader `view/controls` ↔ `widgets/render`
+  de-duplication is still open.
+- **Phase 5 (docs) — in progress.** `plugins.md` §7.1 lists the new kinds; this
+  doc tracks status.
+
+---
+
 ## 1. The problem in one paragraph
 
 Fresh ships two mature-but-separate control systems. The **plugin widget
