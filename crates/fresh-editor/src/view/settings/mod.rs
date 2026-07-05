@@ -32,6 +32,9 @@ pub mod render;
 pub mod search;
 #[cfg(feature = "runtime")]
 pub mod state;
+// Settings control → WidgetSpec mapping (Settings↔widget unification).
+#[cfg(feature = "runtime")]
+pub mod widget_map;
 
 #[cfg(feature = "runtime")]
 pub use entry_dialog::EntryDialogState;
