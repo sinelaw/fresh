@@ -1630,25 +1630,22 @@ fn render_control(
             ControlLayoutInfo::ObjectArray { entry_rows }
         }
 
+        // The multiline JSON editor keeps its dedicated renderer: it is
+        // a full TextEdit with JSON validation and a multi-line caret
+        // that the generic widget `Text` doesn't yet replicate. It is
+        // the one control not on the widget view; migrating it faithfully
+        // is a follow-up once widget `Text` carries validation + caret.
         SettingControl::Json(state) => {
             render_json_control(frame, area, state, name, skip_rows, theme)
         }
 
-        SettingControl::Complex { type_name } => {
+        SettingControl::Complex { .. } => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Complex;
             }
-            // Render label (modified indicator is shown in the row indicator column)
-            let label_style = Style::default().fg(theme.editor_fg);
-            let value_style = Style::default().fg(theme.line_number_fg);
-
-            let label = Span::styled(format!("{}: ", name), label_style);
-            let value = Span::styled(
-                format!("<{} - edit in config.toml>", type_name),
-                value_style,
-            );
-
-            frame.render_widget(Paragraph::new(Line::from(vec![label, value])), area);
+            // Uneditable placeholder, rendered through the widget
+            // framework like the other controls.
+            render_control_via_widget(frame, area, control, name, theme, skip_rows);
             ControlLayoutInfo::Complex
         }
     }

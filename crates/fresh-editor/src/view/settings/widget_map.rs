@@ -17,12 +17,13 @@
 //! | `Text`     | `Text` (single-line) |
 //! | `DualList` | `DualList` |
 //!
-//! The composite controls (`TextList`, `Map`, `ObjectArray`, `Json`,
-//! `Complex`) don't yet have first-class widget kinds — the plan builds
-//! their editing on floating widget panels rather than bespoke inline
-//! controls — so they map to a labelled `Raw` placeholder for now. The
-//! placeholder keeps the function total and the tree renderable; the
-//! placeholder row is replaced when those editors land.
+//! The composite controls map to widget subtrees: `TextList`, `Map`,
+//! and `ObjectArray` become a `Col` of a label header, one summary row
+//! per entry, and an add row; `Json` becomes a multi-line `Text`;
+//! `Complex` a labelled `Raw` (it is uneditable). Editing still runs
+//! through the settings input path — this migrates the *view*; the
+//! nested/expanded editing surfaces move onto floating widget panels in
+//! a later step.
 
 use super::items::{SettingControl, SettingItem};
 use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
@@ -181,7 +182,12 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
                 key,
             }
         }
-        SettingControl::Complex { type_name } => placeholder(field_key, type_name),
+        SettingControl::Complex { type_name } => WidgetSpec::Raw {
+            entries: vec![TextPropertyEntry::text(format!(
+                "{field_key}: <{type_name} - edit in config.toml>"
+            ))],
+            key: Some(field_key.to_string()),
+        },
     }
 }
 
@@ -200,15 +206,6 @@ fn raw_row(text: String) -> WidgetSpec {
     WidgetSpec::Raw {
         entries: vec![TextPropertyEntry::text(text)],
         key: None,
-    }
-}
-
-/// A single-row `Raw` placeholder for a control that doesn't yet have a
-/// first-class widget kind.
-fn placeholder(field_key: &str, kind: &str) -> WidgetSpec {
-    WidgetSpec::Raw {
-        entries: vec![TextPropertyEntry::text(format!("{field_key}: <{kind}>"))],
-        key: Some(field_key.to_string()),
     }
 }
 
