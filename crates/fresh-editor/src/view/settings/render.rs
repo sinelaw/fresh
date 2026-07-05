@@ -2872,7 +2872,7 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
 
     // Show result count and scroll position inline after cursor
     let result_count = state.search_results.len();
-    let count_text = if state.search_query.is_empty() {
+    let count_text = if state.search_query().is_empty() {
         String::new()
     } else if result_count == 0 {
         " (no results)".to_string()
@@ -2904,12 +2904,13 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .add_modifier(Modifier::BOLD);
 
     // Render the query as a block cursor sitting on the character at
-    // `search_cursor` (or a trailing space when the cursor is at the end),
-    // so the caret reflects Left/Right/Home/End movement.
-    let cursor = state.search_cursor.min(state.search_query.len());
-    let before = &state.search_query[..cursor];
+    // the caret (or a trailing space when the cursor is at the end),
+    // so it reflects Left/Right/Home/End movement.
+    let query = state.search_query();
+    let cursor = state.search_cursor().min(query.len());
+    let before = &query[..cursor];
     let (under, after) = {
-        let rest = &state.search_query[cursor..];
+        let rest = &query[cursor..];
         match rest.chars().next() {
             Some(c) => (c.to_string(), &rest[c.len_utf8()..]),
             None => (" ".to_string(), ""),

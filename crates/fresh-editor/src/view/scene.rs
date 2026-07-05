@@ -1476,7 +1476,7 @@ impl Editor {
             ],
             footer_selected: st.footer_button_index,
             search_active: st.search_active,
-            search_query: st.search_query.clone(),
+            search_query: st.search_query().to_string(),
             search_results: st
                 .search_results
                 .iter()

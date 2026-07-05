@@ -810,7 +810,15 @@ impl SettingsState {
                 self.search_delete();
                 InputResult::Consumed
             }
-            KeyCode::Char(c) => {
+            // Only plain (or Shift-modified) chars type into the filter.
+            // Ctrl/Alt chords — Ctrl+A/C/V/X etc. — must NOT insert their
+            // letter; they fall through to the modal consume below so they
+            // no-op instead of corrupting the query. (Selection and
+            // clipboard aren't wired for this field.)
+            KeyCode::Char(c)
+                if !event.modifiers.contains(KeyModifiers::CONTROL)
+                    && !event.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.search_insert_char(c);
                 InputResult::Consumed
             }
@@ -1716,12 +1724,12 @@ mod tests {
         state.handle_key_event(&key(KeyCode::Char('t')), &mut ctx);
         state.handle_key_event(&key(KeyCode::Char('a')), &mut ctx);
         state.handle_key_event(&key(KeyCode::Char('b')), &mut ctx);
-        assert_eq!(state.search_query, "tab");
+        assert_eq!(state.search_query(), "tab");
 
         // Escape cancels search
         state.handle_key_event(&key(KeyCode::Esc), &mut ctx);
         assert!(!state.search_active);
-        assert!(state.search_query.is_empty());
+        assert!(state.search_query().is_empty());
     }
 
     /// The settings filter used to only append/backspace at the end: arrow
@@ -1742,33 +1750,74 @@ mod tests {
         for c in "theme".chars() {
             state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
         }
-        assert_eq!(state.search_query, "theme");
-        assert_eq!(state.search_cursor, 5);
+        assert_eq!(state.search_query(), "theme");
+        assert_eq!(state.search_cursor(), 5);
 
         // Left twice, then insert 'X' -> lands mid-string, not at the end
         state.handle_key_event(&key(KeyCode::Left), &mut ctx);
         state.handle_key_event(&key(KeyCode::Left), &mut ctx);
-        assert_eq!(state.search_cursor, 3);
+        assert_eq!(state.search_cursor(), 3);
         state.handle_key_event(&key(KeyCode::Char('X')), &mut ctx);
-        assert_eq!(state.search_query, "theXme");
-        assert_eq!(state.search_cursor, 4);
+        assert_eq!(state.search_query(), "theXme");
+        assert_eq!(state.search_cursor(), 4);
 
         // Home jumps to start; Backspace at start is a no-op
         state.handle_key_event(&key(KeyCode::Home), &mut ctx);
-        assert_eq!(state.search_cursor, 0);
+        assert_eq!(state.search_cursor(), 0);
         state.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
-        assert_eq!(state.search_query, "theXme");
+        assert_eq!(state.search_query(), "theXme");
 
         // Delete removes the char at the cursor (the leading 't')
         state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
-        assert_eq!(state.search_query, "heXme");
-        assert_eq!(state.search_cursor, 0);
+        assert_eq!(state.search_query(), "heXme");
+        assert_eq!(state.search_cursor(), 0);
 
         // End jumps to the end; Backspace removes the trailing char
         state.handle_key_event(&key(KeyCode::End), &mut ctx);
-        assert_eq!(state.search_cursor, state.search_query.len());
+        assert_eq!(state.search_cursor(), state.search_query().len());
         state.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
-        assert_eq!(state.search_query, "heXm");
+        assert_eq!(state.search_query(), "heXm");
+    }
+
+    /// Ctrl/Alt chords must not type their letter into the filter. The
+    /// `Char` arm used to match regardless of modifiers, so Ctrl+A/C/V
+    /// inserted a literal `a`/`c`/`v` instead of no-op'ing.
+    #[test]
+    fn test_search_ignores_ctrl_and_alt_chords() {
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+
+        let mut ctx = InputContext::new();
+
+        state.handle_key_event(&key(KeyCode::Char('/')), &mut ctx);
+        for c in "hello".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(state.search_query(), "hello");
+
+        // Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+X leave the query untouched
+        for c in ['a', 'c', 'v', 'x'] {
+            state.handle_key_event(
+                &KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                &mut ctx,
+            );
+        }
+        // Alt chord too
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT),
+            &mut ctx,
+        );
+        assert_eq!(state.search_query(), "hello");
+
+        // A plain char still types; Shift+char types uppercase
+        state.handle_key_event(&key(KeyCode::Char('!')), &mut ctx);
+        state.handle_key_event(
+            &KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::SHIFT),
+            &mut ctx,
+        );
+        assert_eq!(state.search_query(), "hello!Z");
     }
 
     #[test]

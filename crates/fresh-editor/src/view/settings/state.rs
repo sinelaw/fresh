@@ -10,6 +10,7 @@ use super::schema::{parse_schema, SettingCategory, SettingSchema};
 use super::search::{search_settings, DeepMatch, SearchResult};
 use crate::config::Config;
 use crate::config_io::ConfigLayer;
+use crate::view::controls::text_input::TextInputState;
 use crate::view::controls::FocusState;
 use crate::view::ui::{FocusManager, ScrollItem, ScrollablePanel};
 use std::collections::HashMap;
@@ -96,13 +97,13 @@ pub struct SettingsState {
     original_config: serde_json::Value,
     /// Whether the settings panel is visible
     pub visible: bool,
-    /// Current search query
-    pub search_query: String,
-    /// Cursor position within the search query, as a byte offset into
-    /// `search_query`. Always kept on a char boundary. Lets the filter
-    /// behave like a normal text input (arrow keys, Home/End, mid-string
-    /// insert/delete) instead of only appending at the end.
-    pub search_cursor: usize,
+    /// The search filter's text field. Backed by the same `TextInputState`
+    /// control the rest of the Settings dialog uses, so the filter gets
+    /// grapheme-aware cursor movement (arrow keys, Home/End, mid-string
+    /// insert/delete) for free instead of the old append-only string.
+    /// Read the text via [`SettingsState::search_query`] and the caret via
+    /// [`SettingsState::search_cursor`].
+    pub search_input: TextInputState,
     /// Whether search is active
     pub search_active: bool,
     /// Current search results
@@ -324,8 +325,7 @@ impl SettingsState {
             pending_changes: HashMap::new(),
             original_config: config_value,
             visible: false,
-            search_query: String::new(),
-            search_cursor: 0,
+            search_input: TextInputState::new("").with_focus(FocusState::Focused),
             search_active: false,
             search_results: Vec::new(),
             selected_search_result: 0,
@@ -464,8 +464,7 @@ impl SettingsState {
     pub fn hide(&mut self) {
         self.visible = false;
         self.search_active = false;
-        self.search_query.clear();
-        self.search_cursor = 0;
+        self.search_input.clear();
     }
 
     /// Get the current entry dialog (top of stack), if any
@@ -1387,11 +1386,21 @@ impl SettingsState {
         }
     }
 
+    /// The current search filter text.
+    pub fn search_query(&self) -> &str {
+        &self.search_input.value
+    }
+
+    /// The search caret position, as a byte offset into
+    /// [`SettingsState::search_query`] (always on a grapheme boundary).
+    pub fn search_cursor(&self) -> usize {
+        self.search_input.cursor
+    }
+
     /// Start search mode
     pub fn start_search(&mut self) {
         self.search_active = true;
-        self.search_query.clear();
-        self.search_cursor = 0;
+        self.search_input.clear();
         self.search_results.clear();
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
@@ -1400,8 +1409,7 @@ impl SettingsState {
     /// Cancel search mode
     pub fn cancel_search(&mut self) {
         self.search_active = false;
-        self.search_query.clear();
-        self.search_cursor = 0;
+        self.search_input.clear();
         self.search_results.clear();
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
@@ -1409,29 +1417,25 @@ impl SettingsState {
 
     /// Update search query and refresh results
     pub fn set_search_query(&mut self, query: String) {
-        self.search_query = query;
-        self.search_cursor = self.search_query.len();
-        self.search_results = search_settings(&self.pages, &self.search_query);
-        self.selected_search_result = 0;
-        self.search_scroll_offset = 0;
+        self.search_input.set_value(query);
+        self.refresh_search_results();
     }
 
     /// Recompute results after the query text changed and reset the
     /// results selection/scroll to the top.
     fn refresh_search_results(&mut self) {
-        self.search_results = search_settings(&self.pages, &self.search_query);
+        self.search_results = search_settings(&self.pages, &self.search_input.value);
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
     }
 
     /// Insert a character at the cursor position in the search query.
     pub fn search_insert_char(&mut self, c: char) {
-        self.search_query.insert(self.search_cursor, c);
-        self.search_cursor += c.len_utf8();
+        self.search_input.insert(c);
         self.refresh_search_results();
     }
 
-    /// Add a character to the search query (appends at the cursor).
+    /// Add a character to the search query.
     ///
     /// Kept for backwards compatibility; delegates to `search_insert_char`.
     pub fn search_push_char(&mut self, c: char) {
@@ -1440,13 +1444,7 @@ impl SettingsState {
 
     /// Delete the grapheme cluster before the cursor (Backspace).
     pub fn search_backspace(&mut self) {
-        if self.search_cursor == 0 {
-            return;
-        }
-        let start =
-            crate::primitives::grapheme::prev_grapheme_boundary(&self.search_query, self.search_cursor);
-        self.search_query.replace_range(start..self.search_cursor, "");
-        self.search_cursor = start;
+        self.search_input.backspace();
         self.refresh_search_results();
     }
 
@@ -1459,46 +1457,32 @@ impl SettingsState {
 
     /// Delete the grapheme cluster at the cursor (Delete key).
     pub fn search_delete(&mut self) {
-        if self.search_cursor >= self.search_query.len() {
-            return;
-        }
-        let end =
-            crate::primitives::grapheme::next_grapheme_boundary(&self.search_query, self.search_cursor);
-        self.search_query.replace_range(self.search_cursor..end, "");
+        self.search_input.delete();
         self.refresh_search_results();
     }
 
     /// Move the search cursor left by one grapheme cluster.
     ///
-    /// Uses grapheme boundaries (like the Command Palette) so combining
-    /// marks — Thai diacritics, emoji modifiers — move as a single unit.
+    /// Movement is grapheme-aware (via the shared control) so combining
+    /// marks — Thai diacritics, emoji modifiers — move as a single unit,
+    /// matching the Command Palette.
     pub fn search_cursor_left(&mut self) {
-        if self.search_cursor > 0 {
-            self.search_cursor = crate::primitives::grapheme::prev_grapheme_boundary(
-                &self.search_query,
-                self.search_cursor,
-            );
-        }
+        self.search_input.move_left();
     }
 
     /// Move the search cursor right by one grapheme cluster.
     pub fn search_cursor_right(&mut self) {
-        if self.search_cursor < self.search_query.len() {
-            self.search_cursor = crate::primitives::grapheme::next_grapheme_boundary(
-                &self.search_query,
-                self.search_cursor,
-            );
-        }
+        self.search_input.move_right();
     }
 
     /// Move the search cursor to the start of the query.
     pub fn search_cursor_home(&mut self) {
-        self.search_cursor = 0;
+        self.search_input.move_home();
     }
 
     /// Move the search cursor to the end of the query.
     pub fn search_cursor_end(&mut self) {
-        self.search_cursor = self.search_query.len();
+        self.search_input.move_end();
     }
 
     /// Navigate to previous search result
@@ -4087,34 +4071,34 @@ mod tests {
         for c in "aที่b".chars() {
             state.search_insert_char(c);
         }
-        let end = state.search_query.len();
-        assert_eq!(state.search_cursor, end);
+        let end = state.search_query().len();
+        assert_eq!(state.search_cursor(), end);
 
         // Left: past 'b' (1 byte)
         state.search_cursor_left();
-        assert_eq!(state.search_cursor, end - 1);
+        assert_eq!(state.search_cursor(), end - 1);
 
         // Left: skip the whole Thai cluster in one step (9 bytes)
         state.search_cursor_left();
-        assert_eq!(state.search_cursor, 1);
+        assert_eq!(state.search_cursor(), 1);
 
         // Left: before 'a'
         state.search_cursor_left();
-        assert_eq!(state.search_cursor, 0);
+        assert_eq!(state.search_cursor(), 0);
 
         // Backspace at start is a no-op; the query is untouched
         state.search_backspace();
-        assert_eq!(state.search_query, "aที่b");
+        assert_eq!(state.search_query(), "aที่b");
 
         // Delete at the start removes the leading 'a' only
         state.search_delete();
-        assert_eq!(state.search_query, "ที่b");
-        assert_eq!(state.search_cursor, 0);
+        assert_eq!(state.search_query(), "ที่b");
+        assert_eq!(state.search_cursor(), 0);
 
         // One Right skips the Thai cluster; Delete then removes the 'b'
         state.search_cursor_right();
-        assert_eq!(state.search_cursor, "ที่".len());
+        assert_eq!(state.search_cursor(), "ที่".len());
         state.search_delete();
-        assert_eq!(state.search_query, "ที่");
+        assert_eq!(state.search_query(), "ที่");
     }
 }
