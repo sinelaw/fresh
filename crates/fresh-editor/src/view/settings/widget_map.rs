@@ -67,8 +67,19 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
         },
         SettingControl::Text(s) => WidgetSpec::Text {
             value: s.value.clone(),
-            cursor_byte: -1,
-            focused: false,
+            // While editing, carry the caret (char index → byte) and
+            // mark the field focused so the widget renderer highlights
+            // it and the host can place the hardware cursor.
+            cursor_byte: if s.editing {
+                s.value
+                    .char_indices()
+                    .nth(s.cursor)
+                    .map(|(b, _)| b as i32)
+                    .unwrap_or(s.value.len() as i32)
+            } else {
+                -1
+            },
+            focused: s.editing,
             label: s.label.clone(),
             placeholder: if s.placeholder.is_empty() {
                 None

@@ -11,10 +11,7 @@ use super::items::{ItemBox, ItemBoxStyle, SettingControl, SettingItem};
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
-use crate::view::controls::{
-    render_dual_list_partial, render_text_input_aligned, DualListColors, MapColors,
-    TextInputColors, TextListColors,
-};
+use crate::view::controls::{render_dual_list_partial, DualListColors, MapColors, TextListColors};
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1390,6 +1387,20 @@ fn render_scalar_via_widget(
             );
         }
     }
+    // Place the hardware cursor for a focused Text control (edit mode):
+    // convert the widget's byte-offset caret to a display column.
+    if let Some(fc) = out.focus_cursor {
+        if let Some(entry) = out.entries.get(fc.buffer_row as usize) {
+            let byte = (fc.byte_in_row as usize).min(entry.text.len());
+            let col = entry.text[..byte].chars().count() as u16;
+            let x = area
+                .x
+                .saturating_add(col)
+                .min(area.x + area.width.saturating_sub(1));
+            let y = area.y.saturating_add(fc.buffer_row as u16);
+            frame.set_cursor_position((x, y));
+        }
+    }
     out.hits
 }
 
@@ -1433,7 +1444,9 @@ fn render_control(
     theme: &Theme,
     label_width: Option<u16>,
     read_only: bool,
-    is_null: bool,
+    // Nullable-null fields previously rendered with dimmed brackets;
+    // the widget-rendered path shows them like any other value for now.
+    _is_null: bool,
 ) -> ControlLayoutInfo {
     match control {
         // Single-row controls: only render if not skipped.
@@ -1515,17 +1528,13 @@ fn render_control(
                     value_area,
                 );
                 ControlLayoutInfo::Text(Rect::default())
-            } else if is_null {
-                // Nullable-null fields render with dimmed brackets to indicate input presence
-                let colors = TextInputColors::from_theme_disabled(theme);
-                let text_layout =
-                    render_text_input_aligned(frame, area, state, &colors, 30, label_width);
-                ControlLayoutInfo::Text(text_layout.input_area)
             } else {
-                let colors = TextInputColors::from_theme(theme);
-                let text_layout =
-                    render_text_input_aligned(frame, area, state, &colors, 30, label_width);
-                ControlLayoutInfo::Text(text_layout.input_area)
+                // Editable text (and nullable-null) render through the
+                // widget framework: the mapping carries value + caret
+                // (when editing); render_scalar_via_widget paints it and
+                // places the hardware cursor from the widget's focus.
+                render_scalar_via_widget(frame, area, control, name, theme);
+                ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
             }
         }
 
