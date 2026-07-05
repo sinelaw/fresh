@@ -68,6 +68,11 @@ other docs assume.
 | [editor-ux-features.md](editor-ux-features.md) | Smaller shipped features without their own doc: markdown compose/preview, code tour, the input calibration wizard, vi mode, i18n, the menu/command-palette/help/bookmarks cluster, and warning/notification UX. |
 | [testing.md](testing.md) | The testing layers, the headless scenario framework (tests as data, replayed against `EditorTestApi`), the ANSI capture backend, the `TimeSource` determinism abstraction, and CI structure. |
 
+### Plans (forward-looking)
+| Doc | What it covers |
+|-----|----------------|
+| [settings-widget-unification-plan.md](settings-widget-unification-plan.md) | Phased plan to collapse the two separate UI-control systems — the Settings `view/controls/` library and the plugin `WidgetSpec` runtime — into the single declarative widget framework already exposed to plugins. Unlike the docs above, this describes intended work, not the system as built. |
+
 ## A note on history
 
 This set replaces roughly 130 older design notes, plans, and evaluations that
