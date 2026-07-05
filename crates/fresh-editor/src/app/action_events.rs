@@ -482,6 +482,27 @@ impl crate::app::window::Window {
         let active_buffer = self.active_buffer();
 
         if direction > 0 {
+            // Fast path: when neither the current logical line nor the next
+            // one wraps, we can land precisely at the goal visual column
+            // instead of the conservative start-of-next-row jump below. This
+            // keeps the column stable when a batched move crosses the scroll
+            // boundary onto an off-screen row (issue #2565). Wrapped lines
+            // keep the fallback so #1574 stays fixed.
+            if let Some(text_width) = self.visual_text_width(active_split) {
+                if let Some(state) = self.buffers.get_mut(&active_buffer) {
+                    if let Some(pos) = unwrapped_neighbor_goal_pos(
+                        &mut state.buffer,
+                        from_pos,
+                        1,
+                        goal_visual_col,
+                        text_width,
+                        estimated_line_length,
+                    ) {
+                        return Some((pos, goal_visual_col));
+                    }
+                }
+            }
+
             // Find current row's end byte via cached layout — this is the
             // authoritative "end of current visual row" position that the
             // renderer itself uses.
@@ -520,6 +541,25 @@ impl crate::app::window::Window {
             let _ = estimated_line_length;
             Some((target_pos, goal_visual_col))
         } else {
+            // Fast path mirrored from the Down branch: when neither the
+            // current logical line nor the previous one wraps, land at the
+            // goal visual column on the previous line rather than the
+            // conservative end-of-previous-row jump below (issue #2565).
+            if let Some(text_width) = self.visual_text_width(active_split) {
+                if let Some(state) = self.buffers.get_mut(&active_buffer) {
+                    if let Some(pos) = unwrapped_neighbor_goal_pos(
+                        &mut state.buffer,
+                        from_pos,
+                        -1,
+                        goal_visual_col,
+                        text_width,
+                        estimated_line_length,
+                    ) {
+                        return Some((pos, goal_visual_col));
+                    }
+                }
+            }
+
             // Up-direction fallback: mirror the Down logic.  Use the
             // cached layout to locate the current visual row's "anchor"
             // byte (the row start for rows with visible content, or
@@ -572,6 +612,78 @@ impl crate::app::window::Window {
             Some((target_pos, goal_visual_col))
         }
     }
+
+    /// Width (in display columns) of the text area for `split_id` — the
+    /// number of columns a logical line's first visual row can occupy before
+    /// it wraps. Mirrors the renderer's wrap budget
+    /// (`WrapConfig::first_line_width`) so callers can tell whether a given
+    /// logical line wraps. Returns `None` if the split has no viewport yet.
+    fn visual_text_width(&self, split_id: LeafId) -> Option<usize> {
+        use crate::primitives::line_wrapping::WrapConfig;
+        let active_buffer = self.active_buffer();
+        let state = self.buffers.get(&active_buffer)?;
+        let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
+        let gutter = vs.viewport.gutter_width(&state.buffer);
+        let wrap = WrapConfig::new(
+            vs.viewport.effective_width() as usize,
+            gutter,
+            true,
+            vs.viewport.wrap_indent,
+        );
+        Some(wrap.first_line_width)
+    }
+}
+
+/// Column-preserving landing spot for an off-screen vertical move when
+/// neither the current logical line nor the adjacent one (in `direction`:
+/// -1 = up, +1 = down) wraps at `text_width`.
+///
+/// The cached-layout mover (`move_visual_line`) returns `None` when the
+/// target visual row isn't in the last-rendered slice — e.g. a batched move
+/// crossed the scroll boundary. For non-wrapping lines the goal column maps
+/// straight onto the adjacent logical line, so we can land there exactly
+/// (byte offset at `goal_visual_col`) rather than falling back to the
+/// end-/start-of-row jump. Returns `None` when either line wraps, so the
+/// caller keeps that conservative fallback (issue #1574).
+fn unwrapped_neighbor_goal_pos(
+    buffer: &mut crate::model::buffer::Buffer,
+    from_pos: usize,
+    direction: i8,
+    goal_visual_col: usize,
+    text_width: usize,
+    estimated_line_length: usize,
+) -> Option<usize> {
+    use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
+
+    let line_ending: &[char] = &['\n', '\r'];
+
+    // The current logical line must not wrap, otherwise `from_pos`'s visual
+    // row may be a wrapped segment and the "adjacent" row is not the
+    // neighbour logical line.
+    let cur_content = {
+        let mut iter = buffer.line_iterator(from_pos, estimated_line_length);
+        iter.next_line()?.1
+    };
+    if str_width(cur_content.trim_end_matches(line_ending)) > text_width {
+        return None;
+    }
+
+    // The neighbour logical line, and it must not wrap either.
+    let (neighbor_start, neighbor_content) = {
+        let mut iter = buffer.line_iterator(from_pos, estimated_line_length);
+        if direction < 0 {
+            iter.prev()?
+        } else {
+            iter.next_line(); // consume the current line
+            iter.next_line()?
+        }
+    };
+    let neighbor_text = neighbor_content.trim_end_matches(line_ending);
+    if str_width(neighbor_text) > text_width {
+        return None;
+    }
+
+    Some(neighbor_start + byte_offset_at_visual_column(neighbor_text, goal_visual_col))
 }
 
 /// Advance past the line break at `pos`, matching the CRLF handling in

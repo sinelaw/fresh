@@ -679,3 +679,54 @@ fn test_movement_through_multiple_empty_lines() {
         "Should be somewhere on Line 6, got position {final_pos}"
     );
 }
+
+#[test]
+fn batched_vertical_movement_across_scroll_preserves_column() {
+    // Regression (issue #2565): moving the cursor down past the bottom of the
+    // viewport and back up in BATCHES (several keys per render, as the frame
+    // loop does under fast input) must return the cursor to its starting
+    // column. When a batched move crossed the scroll boundary the off-screen
+    // wrap fallback landed the cursor at the *end* of a line instead of at the
+    // goal column, and the drift stuck.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("scroll.txt");
+    // Short lines that never wrap, but more than a screenful so the view must
+    // scroll (and moves cross rows that aren't in the last-rendered layout).
+    let mut content = String::new();
+    for i in 0..60 {
+        content.push_str(&format!("line {i}\n"));
+    }
+    std::fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Cursor starts at line 1, column 0.
+    let (start_x, _) = harness.screen_cursor_position();
+
+    // Down to the bottom then back up, five keys per render — each batch runs
+    // against a stale layout cache, the condition that triggered the drift.
+    for _ in 0..14 {
+        harness
+            .send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 5)
+            .unwrap();
+    }
+    for _ in 0..14 {
+        harness
+            .send_key_repeat(KeyCode::Up, KeyModifiers::NONE, 5)
+            .unwrap();
+    }
+
+    let (end_x, _) = harness.screen_cursor_position();
+    let status = harness.get_status_bar();
+    assert_eq!(
+        end_x, start_x,
+        "cursor column drifted after a batched down/up round trip across a scroll boundary; \
+         status: {status}"
+    );
+    assert!(
+        status.contains("Ln 1, Col 1"),
+        "expected the cursor back at Ln 1, Col 1 after the round trip, got: {status}"
+    );
+}
