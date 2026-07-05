@@ -13,25 +13,34 @@
 
 ## 0. Status (progress against this plan)
 
-- **Phase 1 (rich kinds) — mostly DONE.** `Number`, `Dropdown` (with an
-  `OverlayRow` option popup), and `DualList` shipped as `WidgetSpec` kinds, each
-  with host-owned instance state, keyboard + mouse dispatch, a `Set*` mutation,
-  TS builders, and unit tests. `Map` / `ObjectArray` (keybinding list) are the
-  remaining composites — their editing rides a floating panel (§5.4) rather than
-  a new inline kind, so they're deferred to that step.
-- **Phase 4 (compositor) — reframed to REUSE, largely covered.** No new
-  subsystem: `overlay.rs` + `FloatingWidgetState` + `OverlayRow` already provide
-  the layer stack, modal/dock/anchored panels, and on-top popups. The Dropdown
-  popup ships on `OverlayRow`. The one net-new piece is a small floating-panel
-  *stack* for nested modals (§5.4).
-- **Phase 3 (Settings → `WidgetSpec`) — mapping DONE, render swap REMAINING.**
-  `view/settings/widget_map.rs` maps every scalar `SettingControl` to a widget
-  kind and assembles a whole page into a `Col` tree (unit-tested). What remains
-  is wiring the live Settings renderer to emit that tree through
-  `widgets::render_spec` and route input/mouse through the widget runtime —
-  integration work, not new modelling.
+- **Phase 1 (rich kinds) — DONE.** `Number`, `Dropdown` (with an `OverlayRow`
+  option popup), and `DualList` shipped as `WidgetSpec` kinds, each with
+  host-owned instance state, keyboard + mouse dispatch, a `Set*` mutation, TS
+  builders, and unit tests.
+- **Phase 4 (compositor) — reframed to REUSE.** No new subsystem: `overlay.rs` +
+  `FloatingWidgetState` + `OverlayRow` already provide the layer stack,
+  modal/dock/anchored panels, and on-top popups. The Dropdown popup ships on
+  `OverlayRow`. A small floating-panel *stack* for nested modals is the only
+  net-new host piece, deferred until the entry-editor surfaces need it.
+- **Phase 3 (Settings → `WidgetSpec`) — DONE for the view.** The live Settings
+  dialog now renders every control **except the multiline JSON editor** through
+  `widgets::render_spec`: Toggle, Number, Dropdown, Text, TextList, DualList,
+  Map, ObjectArray, and the Complex placeholder. `view/settings/render.rs`'s
+  `render_control` maps each `SettingControl` to a `WidgetSpec`
+  (`view/settings/widget_map.rs`) and paints it via `paint_text_property_entry`;
+  the control State stays the model (settings input still drives it), so this is
+  a view swap, not an input rewrite. Verified interactively in tmux. The JSON
+  editor keeps its dedicated renderer (full `TextEdit` + validation + multi-line
+  caret) pending a richer widget `Text`. Remaining: route settings *input*
+  through the widget runtime too (currently the widget view reads the control
+  State each frame), and migrate the nested entry-editing surfaces.
 - **Phase 2 (shared control core) — STARTED.** `render_stepper` is shared by
-  `Number` and `Dropdown`; the broader `view/controls` ↔ `widgets/render`
+  `Number` and `Dropdown`; the settings render now calls `render_spec` instead
+  of the `view/controls` `render_*_aligned` for the migrated controls, so those
+  ratatui renderers (`render_toggle_aligned`, `render_number_input_aligned`,
+  `render_dropdown_aligned`, `render_text_list_partial`, `render_map_partial`,
+  `render_keybinding_list_partial`, `render_dual_list_partial`) are now dropped
+  from the settings path. The broader `view/controls` ↔ `widgets/render`
   de-duplication is still open.
 - **Phase 5 (docs) — in progress.** `plugins.md` §7.1 lists the new kinds; this
   doc tracks status.
