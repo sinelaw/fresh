@@ -1093,6 +1093,29 @@ type WidgetSpec = {
 	focused: boolean;
 	key?: string | null;
 } | {
+	"kind": "dropdown";
+	/**
+	* The selectable options, in display order.
+	*/
+	options: Array<string>;
+	/**
+	* Initial selected index into `options`. Read at first
+	* render only; instance state takes over thereafter.
+	* Clamped to `[0, options.len())`.
+	*/
+	selectedIndex: number;
+	/**
+	* Optional label rendered before the cycler. Empty =
+	* omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once
+	* the host owns focus.
+	*/
+	focused: boolean;
+	key?: string | null;
+} | {
 	"kind": "button";
 	label: string;
 	focused: boolean;
@@ -1374,6 +1397,10 @@ type WidgetMutation = {
 	"kind": "setNumber";
 	widgetKey: string;
 	value: number;
+} | {
+	"kind": "setDropdown";
+	widgetKey: string;
+	index: number;
 } | {
 	"kind": "setItems";
 	widgetKey: string;

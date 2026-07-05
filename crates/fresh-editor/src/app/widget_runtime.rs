@@ -209,6 +209,18 @@ impl Editor {
             self.handle_widget_number_adjust(panel_key, &hit.widget_key, steps);
             handled_specially = true;
         }
+        // Dropdown cycle click: the host owns the selected index, so a
+        // click on the `◂`/`▸` glyph cycles it directly (and fires its
+        // own `change` event).
+        if hit.widget_kind == "dropdown" && hit.event_type == "dropdown_cycle" {
+            let delta = hit
+                .payload
+                .get("delta")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            self.handle_widget_dropdown_cycle(panel_key, &hit.widget_key, delta);
+            handled_specially = true;
+        }
         // List row click: the host owns the List's selected index; a click only
         // yields a `select` hit, so sync the selection (and repaint) then fall
         // through to fire `select` with the List's *spec* key (per-item key stays
@@ -610,6 +622,12 @@ impl Editor {
                         let step_delta = if key == "Up" { 1 } else { -1 };
                         self.handle_widget_number_adjust(panel_key, &focus_key, step_delta);
                     }
+                    Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
+                        // Up = previous option, Down = next option
+                        // (wrapping), matching the ◂/▸ glyphs.
+                        let cycle = if key == "Up" { -1 } else { 1 };
+                        self.handle_widget_dropdown_cycle(panel_key, &focus_key, cycle);
+                    }
                     _ => {
                         // Picker-style nav: when the focused widget
                         // doesn't have a meaningful Up/Down (single-
@@ -683,6 +701,10 @@ impl Editor {
                     let step_delta = if key == "Right" { 1 } else { -1 };
                     self.handle_widget_number_adjust(panel_key, &focus_key, step_delta);
                 }
+                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
+                    let cycle = if key == "Right" { 1 } else { -1 };
+                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, cycle);
+                }
                 _ => {}
             },
             "Backspace" | "Delete" | "Home" | "End" => {
@@ -743,6 +765,11 @@ impl Editor {
                 Some(fresh_core::api::WidgetSpec::Button { .. })
                 | Some(fresh_core::api::WidgetSpec::Toggle { .. }) => {
                     self.handle_widget_activate(panel_key);
+                }
+                Some(fresh_core::api::WidgetSpec::Dropdown { .. }) => {
+                    // Space cycles to the next option (wrapping) — the
+                    // popup form arrives with the compositor.
+                    self.handle_widget_dropdown_cycle(panel_key, &focus_key, 1);
                 }
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     self.handle_widget_text_char(panel_key, " ");
@@ -1167,6 +1194,61 @@ impl Editor {
                 widget_key.to_string(),
                 "change".into(),
                 serde_json::json!({ "value": clamped }),
+            );
+        }
+    }
+
+    /// Cycle a `Dropdown` widget's selected option by `delta`
+    /// (wrapping), repaint, and fire `change` with the new
+    /// `{ index, value }`. A click on `◂`/`▸` or an arrow key passes
+    /// `±1`.
+    pub(super) fn handle_widget_dropdown_cycle(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        delta: i32,
+    ) {
+        if widget_key.is_empty() {
+            return;
+        }
+        let panel = match self.widget_registry.get(panel_key) {
+            Some(p) => p,
+            None => return,
+        };
+        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
+            Some(fresh_core::api::WidgetSpec::Dropdown {
+                options,
+                selected_index,
+                ..
+            }) => (options.clone(), *selected_index),
+            _ => return,
+        };
+        if options.is_empty() {
+            return;
+        }
+        let cur = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Dropdown { selected_index }) => *selected_index,
+            _ => spec_sel,
+        };
+        let cur = cur.clamp(0, options.len() as i32 - 1);
+        let new_sel = crate::widgets::wrap_index(cur, delta, options.len());
+        let changed = new_sel != cur;
+        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
+            panel_mut.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::Dropdown {
+                    selected_index: new_sel,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_key);
+        if changed {
+            let value = options.get(new_sel as usize).cloned().unwrap_or_default();
+            self.fire_widget_event(
+                panel_key,
+                widget_key.to_string(),
+                "change".into(),
+                serde_json::json!({ "index": new_sel, "value": value }),
             );
         }
     }

@@ -27,6 +27,7 @@ pub use registry::{
     HitArea, PanelId, PanelKey, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
 };
 pub use render::{
-    clamp_number, format_number_value, render_number, render_spec, render_spec_no_autofocus,
-    render_spec_with_marker, EmbedRect, FocusCursor, OverlayRow, RenderOutput, ScrollRegion,
+    clamp_number, format_number_value, render_dropdown, render_number, render_spec,
+    render_spec_no_autofocus, render_spec_with_marker, wrap_index, EmbedRect, FocusCursor,
+    OverlayRow, RenderOutput, ScrollRegion,
 };

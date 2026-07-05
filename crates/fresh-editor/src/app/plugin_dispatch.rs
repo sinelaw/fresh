@@ -4653,6 +4653,28 @@ impl Editor {
                     );
                 }
             }
+            WidgetMutation::SetDropdown { widget_key, index } => {
+                // Dropdown selected index is host-owned instance state;
+                // clamp to the option set and write it. The trailing
+                // rerender repaints. No `change` event (matches SetValue).
+                if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    let len = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
+                        Some(fresh_core::api::WidgetSpec::Dropdown { options, .. }) => options.len(),
+                        _ => 0,
+                    };
+                    let clamped = if len == 0 {
+                        0
+                    } else {
+                        index.clamp(0, len as i32 - 1)
+                    };
+                    panel.instance_states.insert(
+                        widget_key.clone(),
+                        crate::widgets::WidgetInstanceState::Dropdown {
+                            selected_index: clamped,
+                        },
+                    );
+                }
+            }
             WidgetMutation::SetCompletions { widget_key, items } => {
                 // Update completion popup state on a Text widget.
                 // Non-empty `items` opens the popup and resets the

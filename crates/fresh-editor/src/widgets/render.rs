@@ -495,6 +495,7 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
         }
         WidgetSpec::Toggle { key: Some(k), .. }
         | WidgetSpec::Number { key: Some(k), .. }
+        | WidgetSpec::Dropdown { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -563,6 +564,22 @@ fn render_collected(
             *max,
             *integer,
             *percent,
+            label,
+            *focused,
+            key.as_deref(),
+            prev,
+            next_state,
+            focus_key,
+        ),
+        WidgetSpec::Dropdown {
+            options,
+            selected_index,
+            label,
+            focused,
+            key,
+        } => collect_dropdown(
+            options,
+            *selected_index,
             label,
             *focused,
             key.as_deref(),
@@ -1182,6 +1199,74 @@ fn collect_number(
         byte_end: inc_range.1,
         payload: json!({ "delta": 1 }),
         event_type: "number_step",
+    });
+    ensure_trailing_newline(&mut entry);
+    out.entries.push(entry);
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_dropdown(
+    options: &[String],
+    spec_selected: i32,
+    label: &str,
+    focused: bool,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    let is_focused = match key {
+        Some(k) if !k.is_empty() => k == focus_key,
+        _ => focused,
+    };
+    // Instance state is authoritative after first render; clamp the
+    // selected index into the current option set and persist.
+    let cur = match key {
+        Some(k) if !k.is_empty() => match prev.get(k) {
+            Some(WidgetInstanceState::Dropdown { selected_index }) => *selected_index,
+            _ => spec_selected,
+        },
+        _ => spec_selected,
+    };
+    let cur = if options.is_empty() {
+        0
+    } else {
+        cur.clamp(0, options.len() as i32 - 1)
+    };
+    if let Some(k) = key {
+        if !k.is_empty() {
+            next_state.insert(
+                k.to_string(),
+                WidgetInstanceState::Dropdown { selected_index: cur },
+            );
+        }
+    }
+
+    let RenderedNumber {
+        mut entry,
+        dec_range,
+        inc_range,
+    } = render_dropdown(options, cur, label, is_focused);
+    let widget_key = key.unwrap_or("").to_string();
+    out.hits.push(HitArea {
+        widget_key: widget_key.clone(),
+        widget_kind: "dropdown",
+        buffer_row: 0,
+        byte_start: dec_range.0,
+        byte_end: dec_range.1,
+        payload: json!({ "delta": -1 }),
+        event_type: "dropdown_cycle",
+    });
+    out.hits.push(HitArea {
+        widget_key,
+        widget_kind: "dropdown",
+        buffer_row: 0,
+        byte_start: inc_range.0,
+        byte_end: inc_range.1,
+        payload: json!({ "delta": 1 }),
+        event_type: "dropdown_cycle",
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
@@ -3207,10 +3292,63 @@ pub fn render_number(
     label: &str,
     focused: bool,
 ) -> RenderedNumber {
+    let value_str = format_number_value(value, integer, percent);
+    render_stepper(&value_str, label, focused)
+}
+
+/// Clamp a `Number` value to its optional `[min, max]` bounds.
+pub fn clamp_number(value: f64, min: Option<f64>, max: Option<f64>) -> f64 {
+    let mut v = value;
+    if let Some(lo) = min {
+        if v < lo {
+            v = lo;
+        }
+    }
+    if let Some(hi) = max {
+        if v > hi {
+            v = hi;
+        }
+    }
+    v
+}
+
+/// Wrap `index + delta` into `[0, len)`. Returns `0` for an empty
+/// option set. Used by the `Dropdown` cycler.
+pub fn wrap_index(index: i32, delta: i32, len: usize) -> i32 {
+    if len == 0 {
+        return 0;
+    }
+    let n = len as i32;
+    (((index + delta) % n) + n) % n
+}
+
+/// Render a `Dropdown` cycler to a single `TextPropertyEntry`.
+///
+/// Layout: `{marker}{label }◂ {option} ▸` — the same stepper chrome
+/// as `Number`, but the middle shows the selected option text. The
+/// two glyph ranges come back for click hit areas.
+pub fn render_dropdown(
+    options: &[String],
+    selected_index: i32,
+    label: &str,
+    focused: bool,
+) -> RenderedNumber {
+    let option = if selected_index >= 0 && (selected_index as usize) < options.len() {
+        options[selected_index as usize].as_str()
+    } else {
+        ""
+    };
+    // The stepper chrome is identical to Number's; reuse it by
+    // formatting the option as the "value" string.
+    render_stepper(option, label, focused)
+}
+
+/// Shared stepper chrome: `{marker}{label }◂ {value_str} ▸` with the
+/// two glyph byte-ranges. Backs both `Number` and `Dropdown`.
+fn render_stepper(value_str: &str, label: &str, focused: bool) -> RenderedNumber {
     const DEC: &str = "◂";
     const INC: &str = "▸";
     let marker = focus_gutter_prefix(focused);
-    let value_str = format_number_value(value, integer, percent);
 
     let mut text = String::new();
     text.push_str(marker);
@@ -3222,15 +3360,13 @@ pub fn render_number(
     text.push_str(DEC);
     let dec_end = text.len();
     text.push(' ');
-    text.push_str(&value_str);
+    text.push_str(value_str);
     text.push(' ');
     let inc_start = text.len();
     text.push_str(INC);
     let inc_end = text.len();
 
     let mut overlays = Vec::new();
-    // Accent the two stepper glyphs so they read as controls (only
-    // when the row isn't already fully re-styled by focus below).
     if !focused {
         for (s, e) in [(dec_start, dec_end), (inc_start, inc_end)] {
             overlays.push(InlineOverlay {
@@ -3273,22 +3409,6 @@ pub fn render_number(
         dec_range: (dec_start, dec_end),
         inc_range: (inc_start, inc_end),
     }
-}
-
-/// Clamp a `Number` value to its optional `[min, max]` bounds.
-pub fn clamp_number(value: f64, min: Option<f64>, max: Option<f64>) -> f64 {
-    let mut v = value;
-    if let Some(lo) = min {
-        if v < lo {
-            v = lo;
-        }
-    }
-    if let Some(hi) = max {
-        if v > hi {
-            v = hi;
-        }
-    }
-    v
 }
 
 /// Render a `Button` to a single `TextPropertyEntry`.
@@ -6886,5 +7006,81 @@ mod tests {
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["n"]);
+    }
+
+    fn make_dropdown(options: &[&str], selected: i32, key: Option<&str>) -> WidgetSpec {
+        WidgetSpec::Dropdown {
+            options: options.iter().map(|s| s.to_string()).collect(),
+            selected_index: selected,
+            label: String::new(),
+            focused: false,
+            key: key.map(|k| k.to_string()),
+        }
+    }
+
+    #[test]
+    fn wrap_index_wraps_both_directions() {
+        assert_eq!(wrap_index(0, -1, 3), 2);
+        assert_eq!(wrap_index(2, 1, 3), 0);
+        assert_eq!(wrap_index(1, 1, 3), 2);
+        assert_eq!(wrap_index(0, 1, 0), 0); // empty
+    }
+
+    #[test]
+    fn dropdown_renders_selected_option() {
+        let r = render_dropdown(
+            &["Red".into(), "Green".into(), "Blue".into()],
+            1,
+            "Color",
+            false,
+        );
+        assert_eq!(r.entry.text, "Color ◂ Green ▸");
+    }
+
+    #[test]
+    fn dropdown_emits_two_cycle_hit_areas() {
+        let spec = make_dropdown(&["a", "b"], 0, Some("d"));
+        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let cyc: Vec<_> = hits.iter().filter(|h| h.widget_kind == "dropdown").collect();
+        assert_eq!(cyc.len(), 2);
+        assert_eq!(cyc[0].payload["delta"], -1);
+        assert_eq!(cyc[1].payload["delta"], 1);
+    }
+
+    #[test]
+    fn dropdown_seeds_and_clamps_instance_state() {
+        // Out-of-range spec index clamps into the option set.
+        let spec = make_dropdown(&["a", "b", "c"], 9, Some("d"));
+        let (_out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        match state.get("d") {
+            Some(WidgetInstanceState::Dropdown { selected_index }) => {
+                assert_eq!(*selected_index, 2)
+            }
+            other => panic!("expected Dropdown instance state, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dropdown_instance_state_overrides_spec() {
+        let spec = make_dropdown(&["a", "b", "c"], 0, Some("d"));
+        let mut prev = HashMap::new();
+        prev.insert(
+            "d".to_string(),
+            WidgetInstanceState::Dropdown { selected_index: 2 },
+        );
+        let r = render_spec(&spec, &prev, "", u32::MAX);
+        assert!(
+            r.entries[0].text.contains(" c "),
+            "instance selection should win: {:?}",
+            r.entries[0].text
+        );
+    }
+
+    #[test]
+    fn dropdown_is_tabbable() {
+        let spec = make_dropdown(&["a"], 0, Some("d"));
+        let mut tabbable = Vec::new();
+        collect_tabbable(&spec, &mut tabbable);
+        assert_eq!(tabbable, vec!["d"]);
     }
 }

@@ -184,6 +184,36 @@ export function number(
   };
 }
 
+/** Single-select dropdown, rendered inline as `label ◂ option ▸`.
+ * The selected option cycles through `options` — click a glyph or
+ * press Left/Up (previous) / Right/Down (next), wrapping. Space also
+ * advances to the next option. The selected index is host-owned
+ * instance state after first render (the spec `selectedIndex` is a
+ * seed); each change fires `widget_event { event_type: "change",
+ * payload: { index, value } }`. Push a new selection with
+ * `WidgetPanel.setDropdown(key, index)`.
+ *
+ * v1 is an inline cycler with no popup list (the popup arrives with
+ * the widget compositor). */
+export function dropdown(
+  options: string[],
+  options_?: {
+    selectedIndex?: number;
+    label?: string;
+    focused?: boolean;
+    key?: string;
+  },
+): WidgetSpec {
+  return {
+    kind: "dropdown",
+    options,
+    selectedIndex: options_?.selectedIndex ?? 0,
+    label: options_?.label ?? "",
+    focused: options_?.focused ?? false,
+    key: options_?.key,
+  };
+}
+
 /** Action button, rendered as `[ Label ]`. `intent` controls visual
  * emphasis: `"normal"` (default) → no override, `"primary"` → bold,
  * `"danger"` → error theme key.
@@ -718,6 +748,12 @@ export class WidgetPanel {
     return this.mutate({ kind: "setNumber", widgetKey, value });
   }
 
+  /** Set a `Dropdown` widget's selected index. Clamped to the option
+   * set on the next render; does not fire a `change` event. */
+  setDropdown(widgetKey: string, index: number): boolean {
+    return this.mutate({ kind: "setDropdown", widgetKey, index });
+  }
+
   /** Update a Text widget's completion popup candidates. Empty
    * `items` closes the popup; non-empty opens it and resets the
    * host-managed selection to index 0. The host repaints the
@@ -910,6 +946,12 @@ export class FloatingWidgetPanel {
    * next render; does not fire a `change` event. */
   setNumber(widgetKey: string, value: number): boolean {
     return this.mutate({ kind: "setNumber", widgetKey, value });
+  }
+
+  /** Set a `Dropdown` widget's selected index. Clamped on the next
+   * render; does not fire a `change` event. */
+  setDropdown(widgetKey: string, index: number): boolean {
+    return this.mutate({ kind: "setDropdown", widgetKey, index });
   }
 
   /** Update a Text widget's completion popup candidates. Empty

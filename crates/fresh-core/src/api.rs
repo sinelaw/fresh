@@ -1443,6 +1443,10 @@ fn default_number_step() -> f64 {
     1.0
 }
 
+fn default_dropdown_selected() -> i32 {
+    0
+}
+
 /// One node in a `Tree` widget's flat-list spec. The plugin walks
 /// its hierarchy depth-first and emits one `TreeNode` per node;
 /// `depth` controls indent, `has_children` controls whether the
@@ -1600,6 +1604,37 @@ pub enum WidgetSpec {
         label: String,
         /// Whether this widget has visual focus. Initial-only once
         /// the host owns focus (same as `Toggle`).
+        #[serde(default)]
+        focused: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Single-select dropdown, rendered inline as `label ◂ option ▸`.
+    /// The selected option cycles through `options` — click `◂`/`▸`
+    /// or press Left/Up (previous) / Right/Down (next), wrapping at
+    /// the ends.
+    ///
+    /// v1 is an inline cycler with no popup list (the popup form
+    /// arrives with the widget compositor). Like `List`, the
+    /// *selected index* is host-owned instance state after first
+    /// render; the spec's `selected_index` is a seed only. Every
+    /// change fires `widget_event { event_type: "change", payload:
+    /// { index, value } }`; plugins can also set it via
+    /// `WidgetMutation::SetDropdown`.
+    Dropdown {
+        /// The selectable options, in display order.
+        options: Vec<String>,
+        /// Initial selected index into `options`. Read at first
+        /// render only; instance state takes over thereafter.
+        /// Clamped to `[0, options.len())`.
+        #[serde(default = "default_dropdown_selected")]
+        selected_index: i32,
+        /// Optional label rendered before the cycler. Empty =
+        /// omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once
+        /// the host owns focus.
         #[serde(default)]
         focused: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2184,6 +2219,9 @@ pub enum WidgetMutation {
     /// Set a `Number` widget's value (instance state). The value is
     /// clamped to the widget's `[min, max]` on the next render.
     SetNumber { widget_key: String, value: f64 },
+    /// Set a `Dropdown` widget's selected index (instance state).
+    /// Clamped to `[0, options.len())` on the next render.
+    SetDropdown { widget_key: String, index: i32 },
     /// Replace a `List`'s items + parallel `item_keys`. Mutates
     /// the List in the spec.
     SetItems {

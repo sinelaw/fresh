@@ -185,6 +185,10 @@ pub enum WidgetInstanceState {
     /// host can step it via `WidgetCommand::Key` or a click without
     /// racing the plugin's spec round-trip).
     Number { value: f64 },
+    /// `Dropdown` instance state: the host-owned selected index.
+    /// Authoritative after first render; the spec's `selected_index`
+    /// is a seed only.
+    Dropdown { selected_index: i32 },
 }
 
 /// Per-panel state retained between renders. The reconciler will use
