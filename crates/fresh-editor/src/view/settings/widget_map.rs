@@ -17,13 +17,24 @@
 //! | `Text`     | `Text` (single-line) |
 //! | `DualList` | `DualList` |
 //!
-//! The composite controls map to widget subtrees: `TextList`, `Map`,
-//! and `ObjectArray` become a `Col` of a label header, one summary row
-//! per entry, and an add row; `Json` becomes a multi-line `Text`;
-//! `Complex` a labelled `Raw` (it is uneditable). Editing still runs
-//! through the settings input path — this migrates the *view*; the
-//! nested/expanded editing surfaces move onto floating widget panels in
-//! a later step.
+//! The composite controls compose generic widget primitives fed by
+//! **domain-formatted** content — the robust shape: domain code (here,
+//! the `view/controls` formatters) produces the row text, and a generic
+//! widget renders + navigates it, so nothing re-implements rendering.
+//!
+//! * `Map` / `ObjectArray` → a label (+ `Name │ <col>` header for maps)
+//!   and a generic `List`; rows come from `MapState::get_display_value`
+//!   / `format_key_combo`, and selection is seeded from the control's
+//!   focused entry so the List paints the highlight, `[Enter to edit]`,
+//!   and Up/Down navigation. The `List` is the same primitive plugins
+//!   use — one renderer, no duplication.
+//! * `TextList` → a `Col` of a label, item rows, and an add row.
+//! * `Json` → a multi-line `Text`.
+//! * `Complex` → a labelled `Raw` (uneditable).
+//!
+//! Editing still runs through the settings input path — this migrates
+//! the *view*; the nested entry-editing surfaces move onto floating
+//! widget panels in a later step.
 
 use super::items::{SettingControl, SettingItem};
 use crate::view::controls::keybinding_list::format_key_combo;
