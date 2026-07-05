@@ -202,14 +202,44 @@ Sequencing: do the flat settings page first; the modal **entry dialog** for
 Map/ObjectArray entries is a nested modal stack and depends on the compositor
 (§5.4).
 
-### 5.4 Phase 4 — Compositor / `Layer` (shared dependency, PLANNED)
+### 5.4 Phase 4 — Compositor / `Layer`: **reuse, don't build**
 
-The Settings entry-dialog stack, dropdown popups, and confirm prompts are all
-modal overlays. The widget framework's modal/compositor piece (`Layer` /
-`Prompt`, partially present as the `Overlay` kind) is the gating item the current
-plugin docs already name for further widget migrations. Settings' modal surfaces
-(§5.3 entry dialog, §5.1 dropdown popup) ride on it. Build it once; both plugins
-and Settings consume it.
+Original framing: build a new compositor. On inspection this is unnecessary —
+**the editor already has one**, and the remaining modal surfaces should reuse it:
+
+- **`overlay.rs`** is a first-class, ordered overlay-**layer** stack
+  (`Editor::overlay_layers()`) that already unifies keyboard focus, mouse
+  early-capture, terminal-input gating, and z-order across *every* overlay —
+  Settings, Menu, Prompt, Popup, `FloatingModal`, Dock. Precedence lives in one
+  place.
+- **`FloatingWidgetState`** already renders a `WidgetSpec` as a **centered
+  modal**, a **left dock**, or an **anchored context-menu popup**
+  (`PanelPlacement::{Centered, LeftDock, Anchored}`) — with input capture,
+  click-outside dismiss, scrollbars, and `WindowEmbed`. It rides the
+  `FloatingModal` layer.
+- **`OverlayRow` / `WidgetSpec::Overlay`** paint rows *on top* of a panel at a
+  given buffer row — the mechanism behind `Text` completion popups, rendered by
+  both the buffer and floating-panel paint paths.
+
+So the modal surfaces map onto existing infra with no new subsystem:
+
+| Surface | Reuses |
+|---|---|
+| **Dropdown option popup** | `OverlayRow` (IMPLEMENTED — see `emit_dropdown_overlays`) |
+| **Settings entry-dialog** (Map / ObjectArray entry editing) | a floating widget panel via `MountFloatingWidget` (centered modal) — the widget-tree replacement for `EntryDialogState` |
+| **Confirm prompts / tooltips / context menus** | `PanelPlacement::{Centered, Anchored}` + the `FloatingModal` overlay layer |
+
+The one genuine gap is **stacking**: today only one `floating_widget_panel` is
+mounted at a time (`MountFloatingWidget` replaces any existing one), whereas a
+nested entry-dialog-over-modal needs a small stack. Settings already models this
+with its own `entry_dialog_stack: Vec<EntryDialogState>`; generalizing the
+floating-panel slot into a short stack (top-of-stack captures input; Esc pops
+one) is the *only* net-new host work — and it's a localized change to the
+floating-panel accessors, not a new compositor.
+
+Status: the Dropdown popup ships on `OverlayRow` today, proving the reuse path.
+The floating-panel stack + entry-dialog-on-`WidgetSpec` is the remaining piece,
+sequenced before §5.3's modal entry-dialog surface.
 
 ### 5.5 Phase 5 — Expose and document
 
