@@ -23,17 +23,20 @@
   `OverlayRow`. A small floating-panel *stack* for nested modals is the only
   net-new host piece, deferred until the entry-editor surfaces need it.
 - **Phase 3 (Settings → `WidgetSpec`) — DONE for the view.** The live Settings
-  dialog now renders every control **except the multiline JSON editor** through
-  `widgets::render_spec`: Toggle, Number, Dropdown, Text, TextList, DualList,
-  Map, ObjectArray, and the Complex placeholder. `view/settings/render.rs`'s
-  `render_control` maps each `SettingControl` to a `WidgetSpec`
-  (`view/settings/widget_map.rs`) and paints it via `paint_text_property_entry`;
-  the control State stays the model (settings input still drives it), so this is
-  a view swap, not an input rewrite. Verified interactively in tmux. The JSON
-  editor keeps its dedicated renderer (full `TextEdit` + validation + multi-line
-  caret) pending a richer widget `Text`. Remaining: route settings *input*
-  through the widget runtime too (currently the widget view reads the control
-  State each frame), and migrate the nested entry-editing surfaces.
+  dialog now renders **every** control through `widgets::render_spec`: Toggle,
+  Number, Dropdown, Text, TextList, DualList, Map, ObjectArray, the multiline
+  JSON editor, and the Complex placeholder. Nothing remains on the
+  `view/controls` `render_*` renderers in the settings path.
+  `view/settings/render.rs`'s `render_control` maps each `SettingControl` to a
+  `WidgetSpec` (`view/settings/widget_map.rs`) and paints it via
+  `paint_text_property_entry`; a `focus_key` marks an actively-editing control
+  focused so Text/JSON get a real caret. The control State stays the model
+  (settings input still drives it), so this is a view swap, not an input
+  rewrite. Verified interactively in tmux. Remaining: route settings *input*
+  through the widget runtime too (the widget view currently reads the control
+  State each frame), and migrate the nested entry-editing surfaces; JSON
+  validation coloring inside the editor is not yet reproduced on the widget
+  `Text`.
 - **Phase 2 (shared control core) — STARTED.** `render_stepper` is shared by
   `Number` and `Dropdown`; the settings render now calls `render_spec` instead
   of the `view/controls` `render_*_aligned` for the migrated controls, so those
