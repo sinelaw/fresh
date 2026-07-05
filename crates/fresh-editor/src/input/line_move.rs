@@ -223,19 +223,24 @@ pub(crate) fn move_lines(
     }
 
     #[allow(clippy::type_complexity)]
-    let cursor_snapshots: Vec<(CursorId, Option<Range<usize>>, usize, Option<usize>, usize)> =
-        cursors
-            .iter()
-            .map(|(cursor_id, cursor)| {
-                (
-                    cursor_id,
-                    cursor.selection_range(),
-                    cursor.position,
-                    cursor.anchor,
-                    cursor.sticky_column,
-                )
-            })
-            .collect();
+    let cursor_snapshots: Vec<(
+        CursorId,
+        Option<Range<usize>>,
+        usize,
+        Option<usize>,
+        Option<usize>,
+    )> = cursors
+        .iter()
+        .map(|(cursor_id, cursor)| {
+            (
+                cursor_id,
+                cursor.selection_range(),
+                cursor.position,
+                cursor.anchor,
+                cursor.sticky_column,
+            )
+        })
+        .collect();
 
     let ranges: Vec<LineByteRange> = {
         let buffer = &mut state.buffer;

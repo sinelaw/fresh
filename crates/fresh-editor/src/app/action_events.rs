@@ -345,8 +345,8 @@ impl crate::app::window::Window {
                         .layout_cache
                         .byte_to_visual_column(split_id, from_pos)?;
 
-                    let goal_visual_col = if sticky_column > 0 {
-                        sticky_column
+                    let goal_visual_col = if let Some(sticky) = sticky_column {
+                        sticky
                     } else {
                         current_visual_col
                     };
@@ -357,7 +357,7 @@ impl crate::app::window::Window {
                         goal_visual_col,
                         *direction,
                     ) {
-                        Some(result) => result,
+                        Some((pos, goal)) => (pos, Some(goal)),
                         None => {
                             // Target visual row is past the cached view-line
                             // mappings — the destination row isn't in the
@@ -377,7 +377,7 @@ impl crate::app::window::Window {
                                 *direction,
                                 _estimated_line_length,
                             ) {
-                                Some(result) => result,
+                                Some((pos, goal)) => (pos, Some(goal)),
                                 None => continue, // Genuinely at buffer boundary
                             }
                         }
@@ -390,7 +390,7 @@ impl crate::app::window::Window {
                         .layout_cache
                         .visual_line_end(split_id, position, allow_advance)
                     {
-                        Some(end_pos) => (end_pos, 0),
+                        Some(end_pos) => (end_pos, None),
                         None => return None,
                     }
                 }
@@ -401,7 +401,7 @@ impl crate::app::window::Window {
                         .layout_cache
                         .visual_line_start(split_id, position, allow_advance)
                     {
-                        Some(start_pos) => (start_pos, 0),
+                        Some(start_pos) => (start_pos, None),
                         None => return None,
                     }
                 }

@@ -200,7 +200,7 @@ impl Editor {
                     new_position: new_cursor_pos,
                     old_anchor: None,
                     new_anchor: old_anchor.map(|a| a.min(new_buffer_len)),
-                    old_sticky_column: 0,
+                    old_sticky_column: None,
                     new_sticky_column: old_sticky_column,
                 };
                 events.push(move_cursor_event);

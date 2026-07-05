@@ -1475,8 +1475,8 @@ impl Editor {
             new_position: target_position,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         };
 
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
@@ -1634,8 +1634,8 @@ impl Editor {
             new_position: target_position,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         };
 
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
@@ -3141,7 +3141,7 @@ impl Editor {
                     cursor.sticky_column,
                 )
             })
-            .unwrap_or((CursorId(0), 0, None, 0));
+            .unwrap_or((CursorId(0), 0, None, None));
 
         let event = Event::MoveCursor {
             cursor_id: primary_cursor_id,
@@ -3150,7 +3150,7 @@ impl Editor {
             old_anchor,
             new_anchor: Some(anchor_position),
             old_sticky_column,
-            new_sticky_column: new_sticky_column.unwrap_or(old_sticky_column),
+            new_sticky_column: new_sticky_column.or(old_sticky_column),
         };
 
         if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {

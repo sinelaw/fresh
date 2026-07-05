@@ -30,8 +30,8 @@ pub enum Event {
         new_position: usize,
         old_anchor: Option<usize>,
         new_anchor: Option<usize>,
-        old_sticky_column: usize,
-        new_sticky_column: usize,
+        old_sticky_column: Option<usize>,
+        new_sticky_column: Option<usize>,
     },
 
     /// Add a new cursor
@@ -1282,8 +1282,8 @@ mod tests {
             new_position: 1,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
         assert_eq!(log.current_index(), 2);
 
@@ -1300,8 +1300,8 @@ mod tests {
             new_position: 0,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
         assert!(
             log.can_redo(),

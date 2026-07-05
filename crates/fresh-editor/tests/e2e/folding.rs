@@ -46,7 +46,7 @@ fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
     let cursors = harness.editor_mut().active_cursors_mut();
     cursors.primary_mut().position = top_byte;
     cursors.primary_mut().anchor = None;
-    cursors.primary_mut().sticky_column = 0;
+    cursors.primary_mut().sticky_column = None;
 }
 
 fn set_cursor_line(harness: &mut EditorTestHarness, line: usize) {
@@ -59,7 +59,7 @@ fn set_cursor_line(harness: &mut EditorTestHarness, line: usize) {
     let cursors = harness.editor_mut().active_cursors_mut();
     cursors.primary_mut().position = pos;
     cursors.primary_mut().anchor = None;
-    cursors.primary_mut().sticky_column = 0;
+    cursors.primary_mut().sticky_column = None;
 }
 
 fn find_text_position(harness: &EditorTestHarness, needle: &str) -> (u16, u16) {
@@ -430,7 +430,7 @@ fn test_folded_viewport_inside_range_fills_lines() {
         let cursors = harness.editor_mut().active_cursors_mut();
         cursors.primary_mut().position = cursor_pos;
         cursors.primary_mut().anchor = None;
-        cursors.primary_mut().sticky_column = 0;
+        cursors.primary_mut().sticky_column = None;
     }
     harness.render().unwrap();
 

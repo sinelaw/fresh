@@ -59,7 +59,7 @@ impl Editor {
                 old_anchor: cursor.anchor,
                 new_anchor: None,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: 0,
+                new_sticky_column: None,
             };
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
@@ -131,7 +131,7 @@ impl Editor {
                 old_anchor: cursor.anchor,
                 new_anchor: None,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: 0,
+                new_sticky_column: None,
             };
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);

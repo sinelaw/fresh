@@ -841,7 +841,7 @@ fn create_fold(
         if in_hidden_range || anchor_in_hidden {
             cursor.position = header_byte;
             cursor.anchor = None;
-            cursor.sticky_column = 0;
+            cursor.sticky_column = None;
             cursor.selection_mode = crate::model::cursor::SelectionMode::Normal;
             cursor.block_anchor = None;
             cursor.deselect_on_move = true;

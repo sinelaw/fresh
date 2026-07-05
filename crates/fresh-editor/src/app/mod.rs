@@ -337,7 +337,7 @@ pub(crate) struct GotoLinePreviewSnapshot {
     pub cursor_id: crate::model::event::CursorId,
     pub position: usize,
     pub anchor: Option<usize>,
-    pub sticky_column: usize,
+    pub sticky_column: Option<usize>,
     pub viewport_top_byte: usize,
     pub viewport_top_view_line_offset: usize,
     pub viewport_left_column: usize,
@@ -2059,8 +2059,8 @@ mod tests {
             new_position: 6,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         // Test move up
@@ -2208,8 +2208,8 @@ mod tests {
             new_position: 0,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         let events = editor
@@ -2262,8 +2262,8 @@ mod tests {
             new_position: 0,
             old_anchor: None, // TODO: Get actual old anchor
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         let events = editor
@@ -2709,8 +2709,8 @@ mod tests {
             new_position: 10,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         assert_eq!(editor.active_cursors().primary().position, 10);
@@ -2754,8 +2754,8 @@ mod tests {
             new_position: 26,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         // Call goto_matching_bracket
@@ -2794,8 +2794,8 @@ mod tests {
             new_position: 0,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         // Call goto_matching_bracket
@@ -3113,8 +3113,8 @@ mod tests {
             new_position: 7,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         // Set bookmark '1'
@@ -3135,8 +3135,8 @@ mod tests {
             new_position: 14,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
 
         // Jump back to bookmark

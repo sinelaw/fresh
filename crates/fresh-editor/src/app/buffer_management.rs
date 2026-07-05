@@ -369,7 +369,7 @@ impl Editor {
                 old_anchor,
                 new_anchor,
                 old_sticky_column,
-                new_sticky_column: target_col,
+                new_sticky_column: Some(target_col),
             };
 
             let split_id = self
@@ -457,7 +457,7 @@ impl Editor {
                 old_anchor,
                 new_anchor: Some(start_pos),
                 old_sticky_column,
-                new_sticky_column: end_col_0,
+                new_sticky_column: Some(end_col_0),
             };
 
             let split_id = self
@@ -499,7 +499,7 @@ impl Editor {
                 old_anchor,
                 new_anchor: None,
                 old_sticky_column,
-                new_sticky_column: 0,
+                new_sticky_column: None,
             };
 
             let split_id = self

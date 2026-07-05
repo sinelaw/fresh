@@ -284,7 +284,7 @@ impl Editor {
                             old_anchor: cursor.anchor,
                             new_anchor: None,
                             old_sticky_column: cursor.sticky_column,
-                            new_sticky_column: 0,
+                            new_sticky_column: None,
                         }
                     })
                     .collect();

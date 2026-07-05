@@ -28,9 +28,12 @@ pub struct Cursor {
     /// Selection anchor (if any) for visual selection - byte offset
     pub anchor: Option<usize>,
 
-    /// Desired column for vertical navigation
-    /// When moving up/down, try to stay in this column
-    pub sticky_column: usize,
+    /// Desired *visual* column for vertical navigation.
+    /// When moving up/down, try to stay in this column. `None` means "no goal
+    /// set — derive it from the current position"; `Some(c)` pins visual
+    /// column `c`, including `Some(0)` (a real goal of column 0, which a bare
+    /// `usize` with `0`-means-unset could not represent).
+    pub sticky_column: Option<usize>,
 
     /// Selection mode (normal or block)
     pub selection_mode: SelectionMode,
@@ -50,7 +53,7 @@ impl Cursor {
         Self {
             position,
             anchor: None,
-            sticky_column: 0,
+            sticky_column: None,
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
             deselect_on_move: true, // Default: movement clears selection
@@ -62,7 +65,7 @@ impl Cursor {
         Self {
             position: end,
             anchor: Some(start),
-            sticky_column: 0,
+            sticky_column: None,
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
             deselect_on_move: true, // Default: movement clears selection

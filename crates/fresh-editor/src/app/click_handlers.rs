@@ -377,7 +377,7 @@ impl Editor {
                             cursor.deselect_on_move,
                         )
                     })
-                    .unwrap_or((CursorId(0), 0, None, 0, true));
+                    .unwrap_or((CursorId(0), 0, None, None, true));
 
                 // Check for onClick text property at this position
                 // This enables clickable UI elements in virtual buffers
@@ -440,8 +440,7 @@ impl Editor {
             .buffers()
             .get(&buffer_id)
             .and_then(|state| state.buffer.offset_to_position(target_position))
-            .map(|pos| pos.column)
-            .unwrap_or(0);
+            .map(|pos| pos.column);
 
         let event = Event::MoveCursor {
             cursor_id: primary_cursor_id,

@@ -730,3 +730,48 @@ fn batched_vertical_movement_across_scroll_preserves_column() {
         "expected the cursor back at Ln 1, Col 1 after the round trip, got: {status}"
     );
 }
+
+#[test]
+fn column_zero_preserved_descending_through_wrapped_indented_line() {
+    use crate::common::harness::HarnessOptions;
+    use fresh::config::{Config, IndentationGuideMode};
+    // Regression: with the cursor at column 0, descending past an indented
+    // line that soft-wraps must leave the cursor at column 0 on the lines
+    // below. A goal column of 0 was treated as "no goal", so the cursor
+    // snapped to the indentation width and that column stuck.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("w.rs");
+    // No trailing newline: the final line "lower two" is real content, so a
+    // drifted column persists there instead of being reset by an empty line.
+    let content =
+        "top line here\n    wrapme aaaa bbbb cccc dddd eeee ffff gg\n    lower one\n    lower two";
+    std::fs::write(&file_path, content).unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.line_wrap = true;
+    config.editor.wrap_indent = true;
+    let mut harness =
+        EditorTestHarness::create(40, 16, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Cursor at column 0 of line 1.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+
+    // Descend well past the wrapped line; the cursor ends on the last line.
+    for _ in 0..10 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+
+    // The last logical line is "    lower two". Column 0 means the cursor sits
+    // at that line's start byte, not `start + indent`.
+    let buf = harness.get_buffer_content().unwrap();
+    let last_line_start = buf.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let pos = harness.cursor_position();
+    assert_eq!(
+        pos, last_line_start,
+        "column 0 drifted after descending through a wrapped indented line: cursor at \
+         offset {pos}, expected the last line start {last_line_start} (col 0)"
+    );
+}
