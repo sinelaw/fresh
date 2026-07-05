@@ -494,6 +494,7 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
             out.push(k.clone());
         }
         WidgetSpec::Toggle { key: Some(k), .. }
+        | WidgetSpec::Number { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::Tree { key: Some(k), .. }
             if !k.is_empty() =>
@@ -546,6 +547,29 @@ fn render_collected(
             focused,
             key,
         } => collect_toggle(*checked, label, *focused, key.as_deref(), focus_key),
+        WidgetSpec::Number {
+            value,
+            min,
+            max,
+            integer,
+            percent,
+            label,
+            focused,
+            key,
+            ..
+        } => collect_number(
+            *value,
+            *min,
+            *max,
+            *integer,
+            *percent,
+            label,
+            *focused,
+            key.as_deref(),
+            prev,
+            next_state,
+            focus_key,
+        ),
         WidgetSpec::Button {
             label,
             focused,
@@ -1090,6 +1114,74 @@ fn collect_toggle(
         byte_end,
         payload: json!({ "checked": !checked }),
         event_type: "toggle",
+    });
+    ensure_trailing_newline(&mut entry);
+    out.entries.push(entry);
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_number(
+    spec_value: f64,
+    min: Option<f64>,
+    max: Option<f64>,
+    integer: bool,
+    percent: bool,
+    label: &str,
+    focused: bool,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    focus_key: &str,
+) -> CollectedOutput {
+    let mut out = CollectedOutput::default();
+    let is_focused = match key {
+        Some(k) if !k.is_empty() => k == focus_key,
+        _ => focused,
+    };
+    // Instance state is authoritative once the widget has rendered;
+    // the spec's `value` is a seed only. Read prior value by key,
+    // clamp, and persist for the next render.
+    let cur = match key {
+        Some(k) if !k.is_empty() => match prev.get(k) {
+            Some(WidgetInstanceState::Number { value }) => *value,
+            _ => spec_value,
+        },
+        _ => spec_value,
+    };
+    let cur = clamp_number(cur, min, max);
+    if let Some(k) = key {
+        if !k.is_empty() {
+            next_state.insert(k.to_string(), WidgetInstanceState::Number { value: cur });
+        }
+    }
+
+    let rendered = render_number(cur, integer, percent, label, is_focused);
+    let RenderedNumber {
+        mut entry,
+        dec_range,
+        inc_range,
+    } = rendered;
+    let widget_key = key.unwrap_or("").to_string();
+    // A click on the `◂` / `▸` glyph steps the value host-side (see
+    // `deliver_widget_hit`'s `number_step` special case).
+    out.hits.push(HitArea {
+        widget_key: widget_key.clone(),
+        widget_kind: "number",
+        buffer_row: 0,
+        byte_start: dec_range.0,
+        byte_end: dec_range.1,
+        payload: json!({ "delta": -1 }),
+        event_type: "number_step",
+    });
+    out.hits.push(HitArea {
+        widget_key,
+        widget_kind: "number",
+        buffer_row: 0,
+        byte_start: inc_range.0,
+        byte_end: inc_range.1,
+        payload: json!({ "delta": 1 }),
+        event_type: "number_step",
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
@@ -3071,6 +3163,132 @@ pub fn render_toggle(checked: bool, label: &str, focused: bool) -> TextPropertyE
         pad_to_chars: None,
         truncate_to_chars: None,
     }
+}
+
+/// Format a `Number` widget's value for display.
+///
+/// `integer` truncates to a whole number; `percent` shows
+/// `value * 100` with a `%` suffix (a stored `0.25` → `25%`);
+/// otherwise a plain decimal with trailing zeros trimmed.
+pub fn format_number_value(value: f64, integer: bool, percent: bool) -> String {
+    if percent {
+        format!("{}%", (value * 100.0).round() as i64)
+    } else if integer {
+        format!("{}", value.round() as i64)
+    } else {
+        // Trim trailing zeros / dot from a fixed-precision render so
+        // `3.0` shows as `3` and `3.50` as `3.5`.
+        let s = format!("{:.4}", value);
+        let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+        trimmed.to_string()
+    }
+}
+
+/// Output of [`render_number`]: the rendered entry plus the byte
+/// ranges of the decrement / increment glyphs so the caller can
+/// emit click hit areas over them.
+pub struct RenderedNumber {
+    pub entry: TextPropertyEntry,
+    /// Byte range of the `◂` decrement glyph within `entry.text`.
+    pub dec_range: (usize, usize),
+    /// Byte range of the `▸` increment glyph within `entry.text`.
+    pub inc_range: (usize, usize),
+}
+
+/// Render a `Number` stepper to a single `TextPropertyEntry`.
+///
+/// Layout: `{marker}{label }◂ {value} ▸`. The `◂`/`▸` glyphs get
+/// the accent fg; when focused, the whole entry flips to the
+/// focused fg/bg (matching `Toggle`).
+pub fn render_number(
+    value: f64,
+    integer: bool,
+    percent: bool,
+    label: &str,
+    focused: bool,
+) -> RenderedNumber {
+    const DEC: &str = "◂";
+    const INC: &str = "▸";
+    let marker = focus_gutter_prefix(focused);
+    let value_str = format_number_value(value, integer, percent);
+
+    let mut text = String::new();
+    text.push_str(marker);
+    if !label.is_empty() {
+        text.push_str(label);
+        text.push(' ');
+    }
+    let dec_start = text.len();
+    text.push_str(DEC);
+    let dec_end = text.len();
+    text.push(' ');
+    text.push_str(&value_str);
+    text.push(' ');
+    let inc_start = text.len();
+    text.push_str(INC);
+    let inc_end = text.len();
+
+    let mut overlays = Vec::new();
+    // Accent the two stepper glyphs so they read as controls (only
+    // when the row isn't already fully re-styled by focus below).
+    if !focused {
+        for (s, e) in [(dec_start, dec_end), (inc_start, inc_end)] {
+            overlays.push(InlineOverlay {
+                start: s,
+                end: e,
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+    } else {
+        overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
+    let entry = TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    };
+    RenderedNumber {
+        entry,
+        dec_range: (dec_start, dec_end),
+        inc_range: (inc_start, inc_end),
+    }
+}
+
+/// Clamp a `Number` value to its optional `[min, max]` bounds.
+pub fn clamp_number(value: f64, min: Option<f64>, max: Option<f64>) -> f64 {
+    let mut v = value;
+    if let Some(lo) = min {
+        if v < lo {
+            v = lo;
+        }
+    }
+    if let Some(hi) = max {
+        if v > hi {
+            v = hi;
+        }
+    }
+    v
 }
 
 /// Render a `Button` to a single `TextPropertyEntry`.
@@ -6573,5 +6791,100 @@ mod tests {
         let mut tabbable = Vec::new();
         collect_tabbable(&spec, &mut tabbable);
         assert_eq!(tabbable, vec!["n", "c"]);
+    }
+
+    fn make_number(value: f64, key: Option<&str>) -> WidgetSpec {
+        WidgetSpec::Number {
+            value,
+            min: None,
+            max: None,
+            step: 1.0,
+            integer: false,
+            percent: false,
+            label: String::new(),
+            focused: false,
+            key: key.map(|k| k.to_string()),
+        }
+    }
+
+    #[test]
+    fn format_number_value_variants() {
+        assert_eq!(format_number_value(3.0, false, false), "3");
+        assert_eq!(format_number_value(3.5, false, false), "3.5");
+        assert_eq!(format_number_value(3.7, true, false), "4");
+        assert_eq!(format_number_value(0.25, false, true), "25%");
+    }
+
+    #[test]
+    fn clamp_number_respects_bounds() {
+        assert_eq!(clamp_number(5.0, Some(0.0), Some(10.0)), 5.0);
+        assert_eq!(clamp_number(-1.0, Some(0.0), Some(10.0)), 0.0);
+        assert_eq!(clamp_number(99.0, Some(0.0), Some(10.0)), 10.0);
+        assert_eq!(clamp_number(99.0, None, None), 99.0);
+    }
+
+    #[test]
+    fn number_renders_stepper_glyphs_and_value() {
+        let r = render_number(3.0, true, false, "Size", false);
+        assert_eq!(r.entry.text, "Size ◂ 3 ▸");
+        // Glyph byte ranges land on the arrows.
+        assert_eq!(&r.entry.text[r.dec_range.0..r.dec_range.1], "◂");
+        assert_eq!(&r.entry.text[r.inc_range.0..r.inc_range.1], "▸");
+    }
+
+    #[test]
+    fn number_emits_two_step_hit_areas() {
+        let spec = make_number(2.0, Some("size"));
+        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let steps: Vec<_> = hits
+            .iter()
+            .filter(|h| h.widget_kind == "number")
+            .collect();
+        assert_eq!(steps.len(), 2, "one dec + one inc hit");
+        assert_eq!(steps[0].payload["delta"], -1);
+        assert_eq!(steps[1].payload["delta"], 1);
+    }
+
+    #[test]
+    fn number_seeds_and_clamps_instance_state() {
+        let spec = WidgetSpec::Number {
+            value: 42.0,
+            min: Some(0.0),
+            max: Some(10.0),
+            step: 1.0,
+            integer: true,
+            percent: false,
+            label: String::new(),
+            focused: false,
+            key: Some("n".into()),
+        };
+        let (_out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        // Spec value 42 clamps to max 10 and persists as instance state.
+        match state.get("n") {
+            Some(WidgetInstanceState::Number { value }) => assert_eq!(*value, 10.0),
+            other => panic!("expected Number instance state, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn number_instance_state_overrides_spec_value() {
+        let spec = make_number(1.0, Some("n"));
+        let mut prev = HashMap::new();
+        prev.insert("n".to_string(), WidgetInstanceState::Number { value: 7.0 });
+        let r = render_spec(&spec, &prev, "", u32::MAX);
+        // The rendered value reflects instance state (7), not spec (1).
+        assert!(
+            r.entries[0].text.contains(" 7 "),
+            "instance value should win: {:?}",
+            r.entries[0].text
+        );
+    }
+
+    #[test]
+    fn number_is_tabbable() {
+        let spec = make_number(0.0, Some("n"));
+        let mut tabbable = Vec::new();
+        collect_tabbable(&spec, &mut tabbable);
+        assert_eq!(tabbable, vec!["n"]);
     }
 }

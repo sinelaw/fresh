@@ -1439,6 +1439,10 @@ fn default_text_rows() -> u32 {
     1
 }
 
+fn default_number_step() -> f64 {
+    1.0
+}
+
 /// One node in a `Tree` widget's flat-list spec. The plugin walks
 /// its hierarchy depth-first and emits one `TreeNode` per node;
 /// `depth` controls indent, `has_children` controls whether the
@@ -1546,6 +1550,56 @@ pub enum WidgetSpec {
     Toggle {
         checked: bool,
         label: String,
+        #[serde(default)]
+        focused: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Numeric stepper, rendered as `label ◂ value ▸` where `◂`/`▸`
+    /// are clickable decrement / increment glyphs. Adjusted by the
+    /// mouse (click a glyph) or the keyboard (Left/Down decrement,
+    /// Right/Up increment) in `step` units, clamped to
+    /// `[min, max]` when set.
+    ///
+    /// v1 is a stepper only — there is no in-place text entry of the
+    /// value (that arrives when the widget grows a focused edit mode
+    /// mirroring `Text`). Like `Text`/`List`, the *value* is
+    /// host-owned instance state after first render: the spec's
+    /// `value` is initial-only. Every adjustment fires
+    /// `widget_event { event_type: "change", payload: { value } }`;
+    /// plugins can also push a new value via
+    /// `WidgetMutation::SetNumber`.
+    Number {
+        /// Initial value. Read at first render only; instance state
+        /// takes over thereafter.
+        #[serde(default)]
+        value: f64,
+        /// Inclusive lower bound. Values clamp to it when set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        /// Inclusive upper bound. Values clamp to it when set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+        /// Amount added / subtracted per step. Defaults to `1`.
+        #[serde(default = "default_number_step")]
+        step: f64,
+        /// Render the value as an integer (no decimal point). The
+        /// value is still carried as `f64`; only the display is
+        /// truncated. Defaults to `false`.
+        #[serde(default)]
+        integer: bool,
+        /// Render the value as a percentage: display is `value * 100`
+        /// suffixed with `%` (so a stored `0.25` shows as `25%`).
+        /// Mirrors the Settings UI's float-as-percent controls.
+        /// Defaults to `false`.
+        #[serde(default)]
+        percent: bool,
+        /// Optional label rendered before the stepper. Empty =
+        /// omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once
+        /// the host owns focus (same as `Toggle`).
         #[serde(default)]
         focused: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2127,6 +2181,9 @@ pub enum WidgetMutation {
     SetChecked { widget_key: String, checked: bool },
     /// Set a `List`'s selected index (instance state).
     SetSelectedIndex { widget_key: String, index: i32 },
+    /// Set a `Number` widget's value (instance state). The value is
+    /// clamped to the widget's `[min, max]` on the next render.
+    SetNumber { widget_key: String, value: f64 },
     /// Replace a `List`'s items + parallel `item_keys`. Mutates
     /// the List in the spec.
     SetItems {

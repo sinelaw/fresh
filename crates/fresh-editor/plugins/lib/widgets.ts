@@ -148,6 +148,42 @@ export function toggle(
   };
 }
 
+/** Numeric stepper, rendered as `label ◂ value ▸`. Click a glyph or
+ * press Left/Down (decrement) / Right/Up (increment) to step the value
+ * by `step`, clamped to `[min, max]` when set. The value is host-owned
+ * instance state after first render (the spec `value` is initial-only);
+ * each adjustment fires `widget_event { event_type: "change", payload:
+ * { value } }`. Push a new value with `WidgetPanel.setNumber(key, v)`.
+ *
+ * `integer: true` renders without a decimal point; `percent: true`
+ * shows `value * 100` with a `%` suffix (store `0.25`, display `25%`). */
+export function number(
+  value: number,
+  options?: {
+    min?: number;
+    max?: number;
+    step?: number;
+    integer?: boolean;
+    percent?: boolean;
+    label?: string;
+    focused?: boolean;
+    key?: string;
+  },
+): WidgetSpec {
+  return {
+    kind: "number",
+    value,
+    min: options?.min,
+    max: options?.max,
+    step: options?.step ?? 1,
+    integer: options?.integer ?? false,
+    percent: options?.percent ?? false,
+    label: options?.label ?? "",
+    focused: options?.focused ?? false,
+    key: options?.key,
+  };
+}
+
 /** Action button, rendered as `[ Label ]`. `intent` controls visual
  * emphasis: `"normal"` (default) → no override, `"primary"` → bold,
  * `"danger"` → error theme key.
@@ -675,6 +711,13 @@ export class WidgetPanel {
     return this.mutate({ kind: "setSelectedIndex", widgetKey, index });
   }
 
+  /** Set a `Number` widget's value. Clamped to the widget's
+   * `[min, max]` on the next render. Does not fire a `change`
+   * event (a plugin-driven set is not a user edit). */
+  setNumber(widgetKey: string, value: number): boolean {
+    return this.mutate({ kind: "setNumber", widgetKey, value });
+  }
+
   /** Update a Text widget's completion popup candidates. Empty
    * `items` closes the popup; non-empty opens it and resets the
    * host-managed selection to index 0. The host repaints the
@@ -861,6 +904,12 @@ export class FloatingWidgetPanel {
 
   setSelectedIndex(widgetKey: string, index: number): boolean {
     return this.mutate({ kind: "setSelectedIndex", widgetKey, index });
+  }
+
+  /** Set a `Number` widget's value. Clamped to `[min, max]` on the
+   * next render; does not fire a `change` event. */
+  setNumber(widgetKey: string, value: number): boolean {
+    return this.mutate({ kind: "setNumber", widgetKey, value });
   }
 
   /** Update a Text widget's completion popup candidates. Empty

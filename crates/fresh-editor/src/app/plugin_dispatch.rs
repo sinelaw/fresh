@@ -4633,6 +4633,26 @@ impl Editor {
                     Self::set_widget_selected_index_state(panel, &widget_key, index);
                 }
             }
+            WidgetMutation::SetNumber { widget_key, value } => {
+                // Number value is host-owned instance state; clamp to
+                // the widget's bounds and write it. The trailing
+                // rerender repaints. No `change` event — a plugin-driven
+                // set is not a user edit (matches SetValue).
+                if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    let (min, max) = match crate::widgets::find_widget_by_key(
+                        &panel.spec,
+                        &widget_key,
+                    ) {
+                        Some(fresh_core::api::WidgetSpec::Number { min, max, .. }) => (*min, *max),
+                        _ => (None, None),
+                    };
+                    let clamped = crate::widgets::clamp_number(value, min, max);
+                    panel.instance_states.insert(
+                        widget_key.clone(),
+                        crate::widgets::WidgetInstanceState::Number { value: clamped },
+                    );
+                }
+            }
             WidgetMutation::SetCompletions { widget_key, items } => {
                 // Update completion popup state on a Text widget.
                 // Non-empty `items` opens the popup and resets the

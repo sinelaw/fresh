@@ -55,6 +55,7 @@ export {
   hintBar,
   key,
   list,
+  number,
   parseHintString,
   raw,
   row,

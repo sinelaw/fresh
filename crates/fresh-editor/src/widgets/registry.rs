@@ -179,6 +179,12 @@ pub enum WidgetInstanceState {
         selected_index: i32,
         expanded_keys: HashSet<String>,
     },
+    /// `Number` instance state: the host-owned current value. Becomes
+    /// authoritative after first render — the spec's `value` is a
+    /// seed only, same correctness reasoning as `Text`/`List` (the
+    /// host can step it via `WidgetCommand::Key` or a click without
+    /// racing the plugin's spec round-trip).
+    Number { value: f64 },
 }
 
 /// Per-panel state retained between renders. The reconciler will use

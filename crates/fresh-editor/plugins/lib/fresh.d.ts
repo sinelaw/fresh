@@ -1050,6 +1050,49 @@ type WidgetSpec = {
 	focused: boolean;
 	key?: string | null;
 } | {
+	"kind": "number";
+	/**
+	* Initial value. Read at first render only; instance state
+	* takes over thereafter.
+	*/
+	value: number;
+	/**
+	* Inclusive lower bound. Values clamp to it when set.
+	*/
+	min?: number | null;
+	/**
+	* Inclusive upper bound. Values clamp to it when set.
+	*/
+	max?: number | null;
+	/**
+	* Amount added / subtracted per step. Defaults to `1`.
+	*/
+	step: number;
+	/**
+	* Render the value as an integer (no decimal point). The
+	* value is still carried as `f64`; only the display is
+	* truncated. Defaults to `false`.
+	*/
+	integer: boolean;
+	/**
+	* Render the value as a percentage: display is `value * 100`
+	* suffixed with `%` (so a stored `0.25` shows as `25%`).
+	* Mirrors the Settings UI's float-as-percent controls.
+	* Defaults to `false`.
+	*/
+	percent: boolean;
+	/**
+	* Optional label rendered before the stepper. Empty =
+	* omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once
+	* the host owns focus (same as `Toggle`).
+	*/
+	focused: boolean;
+	key?: string | null;
+} | {
 	"kind": "button";
 	label: string;
 	focused: boolean;
@@ -1327,6 +1370,10 @@ type WidgetMutation = {
 	"kind": "setSelectedIndex";
 	widgetKey: string;
 	index: number;
+} | {
+	"kind": "setNumber";
+	widgetKey: string;
+	value: number;
 } | {
 	"kind": "setItems";
 	widgetKey: string;
@@ -3124,24 +3171,14 @@ interface EditorAPI {
 	*/
 	restartLspForLanguage(language: string): boolean;
 	/**
-	* Claim an LSP URI scheme (e.g. "slang-synth"), without the "://".
-	*
-	* When an LSP navigation (go-to-definition, …) resolves to a non-file
-	* URI whose scheme was registered here, the editor fires the
-	* `lsp_open_external_uri` hook — carrying `{ uri, scheme, line,
-	* character, language, server_name }` — instead of showing its
-	* "external location, no local source file" fallback. The plugin then
-	* fetches the synthetic document and opens it (e.g. slangd builtin
-	* modules via `slangd --print-builtin-module`).
+	* Claim an LSP URI scheme (e.g. "slang-synth"). LSP navigations that
+	* resolve to a non-file URI with this scheme are routed to the
+	* `lsp_open_external_uri` hook instead of the core's fallback message.
 	*/
 	registerLspUriScheme(scheme: string): boolean;
 	/**
-	* Mark the buffer backing `path` read-only.
-	*
-	* Resolved by path rather than buffer id, so it is race-free when
-	* called immediately after `openFile(path, …)`: both are FIFO commands,
-	* so the buffer exists when this runs, whereas `getActiveBufferId()`
-	* reads a snapshot that may not yet reflect the open.
+	* Mark the buffer backing `path` read-only. Race-free right after
+	* `openFile` because both are FIFO commands.
 	*/
 	markFileReadOnly(path: string): boolean;
 	/**
@@ -3719,14 +3756,6 @@ interface HookEventMap {
 			line: number;
 			column: number;
 		}[];
-	};
-	lsp_open_external_uri: {
-		uri: string;
-		scheme: string;
-		line: number;
-		character: number;
-		language: string;
-		server_name: string;
 	};
 	lsp_server_request: {
 		language: string;
