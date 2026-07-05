@@ -26,8 +26,16 @@
 //! a later step.
 
 use super::items::{SettingControl, SettingItem};
+use crate::view::controls::keybinding_list::format_key_combo;
+use crate::view::controls::FocusState;
 use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
-use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
+use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
+
+/// Accent color for the "key" column (key combo / map key). Matches the
+/// widget framework's help-key accent.
+const ACCENT_KEY: &str = "ui.help_key_fg";
+/// Color for the "value" column (action / display value).
+const ACCENT_VALUE: &str = "ui.tab_active_fg";
 
 /// Map one Settings control to a `WidgetSpec` node, keyed by the
 /// setting's stable identifier (its JSON-pointer path) so the widget
@@ -128,38 +136,87 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
         // a labelled placeholder for now (Map/ObjectArray carry
         // `serde_json::Value` entries + expansion, Json a `TextEdit`);
         // their faithful migration rides the entry-editor work.
-        // Key→value map: a label header, one `key: value` row per
-        // entry (collapsed summary), and an add row unless the map is
-        // auto-managed. Nested/expanded editing still runs through the
-        // settings input path.
+        // Key→value map (e.g. Languages, LSP servers). Rendered as a
+        // label + a `Name │ <display>` header + a generic `List` whose
+        // rows are formatted by the domain helper `get_display_value`,
+        // with selection seeded from the control's focused entry so the
+        // List paints the highlight + navigation. This is the robust
+        // shape: domain code formats rows, the generic List renders and
+        // navigates them (the same primitive plugins use).
         SettingControl::Map(s) => {
-            let mut children = Vec::with_capacity(s.entries.len() + 2);
-            children.push(raw_row(format!("{}:", s.label)));
-            for (k, v) in &s.entries {
-                children.push(raw_row(format!("  {k}: {}", json_value_display(v))));
+            let display_title = s.display_field.as_deref().map(column_title);
+            let key_width = 20usize;
+            let rows: Vec<TextPropertyEntry> = s
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(idx, (k, v))| {
+                    let arrow = if s.expanded.contains(&idx) {
+                        "▼ "
+                    } else {
+                        "> "
+                    };
+                    let focused = s.focus == FocusState::Focused && s.focused_entry == Some(idx);
+                    let mut segs = vec![
+                        seg(arrow, None),
+                        seg(&pad(k, key_width), Some(ACCENT_KEY)),
+                        seg("  ", None),
+                        seg(&s.get_display_value(v), Some(ACCENT_VALUE)),
+                    ];
+                    if focused {
+                        segs.push(seg("  [Enter to edit]", Some(ACCENT_KEY)));
+                    }
+                    segments_row(segs)
+                })
+                .collect();
+            let selected = list_selection(s.focus, s.focused_entry);
+            let mut children = vec![raw_row(format!("{}:", s.label))];
+            if let Some(title) = display_title {
+                children.push(header_row(&pad("Name", key_width + 2), &title));
             }
+            children.push(list_of(field_key, rows, selected));
             if !s.no_add {
                 children.push(raw_row("  [+] Add new".to_string()));
             }
             WidgetSpec::Col { children, key }
         }
-        // Object array (keybinding list): a label header, one summary
-        // row per binding (its `display_field`, else compact JSON), and
-        // an add row.
+        // Object array / keybinding list. Rows are formatted by the
+        // domain helper `format_key_combo` (`Alt+= → next_window`); the
+        // generic `List` renders + navigates them.
         SettingControl::ObjectArray(s) => {
-            let mut children = Vec::with_capacity(s.bindings.len() + 2);
-            children.push(raw_row(format!("{}:", s.label)));
-            for b in &s.bindings {
-                let summary = s
-                    .display_field
-                    .as_ref()
-                    .and_then(|f| b.get(f))
-                    .map(json_value_display)
-                    .unwrap_or_else(|| b.to_string());
-                children.push(raw_row(format!("  {summary}")));
+            let field = s.display_field.as_deref().unwrap_or("action");
+            let combo_width = 20usize;
+            let rows: Vec<TextPropertyEntry> = s
+                .bindings
+                .iter()
+                .enumerate()
+                .map(|(idx, b)| {
+                    let combo = format_key_combo(b);
+                    let action = b
+                        .get(field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no action)");
+                    let focused = s.focus == FocusState::Focused && s.focused_index == Some(idx);
+                    let mut segs = vec![
+                        seg(&pad(&combo, combo_width), Some(ACCENT_KEY)),
+                        seg(" → ", None),
+                        seg(action, Some(ACCENT_VALUE)),
+                    ];
+                    if focused {
+                        segs.push(seg("  [Enter to edit]", Some(ACCENT_KEY)));
+                    }
+                    segments_row(segs)
+                })
+                .collect();
+            let selected = list_selection(s.focus, s.focused_index);
+            WidgetSpec::Col {
+                children: vec![
+                    raw_row(format!("{}:", s.label)),
+                    list_of(field_key, rows, selected),
+                    raw_row("  [+] Add new".to_string()),
+                ],
+                key,
             }
-            children.push(raw_row("  [+] Add new".to_string()));
-            WidgetSpec::Col { children, key }
         }
         // Multiline JSON editor → a multi-line `Text` showing the
         // editor's current text. Editing still runs through the settings
@@ -191,21 +248,94 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
     }
 }
 
-/// Compact one-line display for a JSON value: strings unquoted, other
-/// values as compact JSON.
-fn json_value_display(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Null => "null".to_string(),
-        other => other.to_string(),
-    }
-}
-
 /// A single-row `Raw` widget from a plain string.
 fn raw_row(text: String) -> WidgetSpec {
     WidgetSpec::Raw {
         entries: vec![TextPropertyEntry::text(text)],
         key: None,
+    }
+}
+
+/// A styled segment with an optional theme-key foreground.
+fn seg(text: &str, fg_key: Option<&str>) -> StyledSegment {
+    StyledSegment {
+        text: text.to_string(),
+        style: fg_key.map(|k| OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(k)),
+            ..Default::default()
+        }),
+        overlays: Vec::new(),
+    }
+}
+
+/// A `TextPropertyEntry` row built from styled segments (the host
+/// concatenates them into text + overlays at render time).
+fn segments_row(segments: Vec<StyledSegment>) -> TextPropertyEntry {
+    TextPropertyEntry {
+        segments,
+        ..TextPropertyEntry::text("")
+    }
+}
+
+/// Left-pad `s` to `width` display columns (char-approximate).
+fn pad(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        s.to_string()
+    } else {
+        let mut out = s.to_string();
+        out.extend(std::iter::repeat(' ').take(width - n));
+        out
+    }
+}
+
+/// A dimmed two-column header row (`Name │ <title>`).
+fn header_row(left: &str, right: &str) -> WidgetSpec {
+    WidgetSpec::Raw {
+        entries: vec![segments_row(vec![
+            seg("  ", None),
+            seg(left, Some("ui.menu_disabled_fg")),
+            seg(right, Some("ui.menu_disabled_fg")),
+        ])],
+        key: None,
+    }
+}
+
+/// Wrap pre-formatted styled rows in a generic virtual-scrolled `List`
+/// (host-owned selection + navigation). `selected` is the absolute
+/// index to highlight (`-1` for none). `visible_rows` covers the whole
+/// set — the settings viewport does the outer scroll/clipping.
+fn list_of(field_key: &str, rows: Vec<TextPropertyEntry>, selected: i32) -> WidgetSpec {
+    let visible = rows.len().max(1) as u32;
+    WidgetSpec::List {
+        items: rows,
+        item_specs: Vec::new(),
+        item_keys: Vec::new(),
+        selected_index: selected,
+        visible_rows: visible,
+        focusable: true,
+        key: Some(format!("{field_key}::list")),
+    }
+}
+
+/// The List's selected index: the control's focused entry when the
+/// control is focused, else `-1` (no highlight).
+fn list_selection(focus: FocusState, focused: Option<usize>) -> i32 {
+    if focus == FocusState::Focused {
+        focused.map(|i| i as i32).unwrap_or(-1)
+    } else {
+        -1
+    }
+}
+
+/// Human column title from a `display_field` pointer (`/grammar` →
+/// `Grammar`).
+fn column_title(display_field: &str) -> String {
+    let last = display_field.rsplit('/').next().unwrap_or(display_field);
+    let mut chars = last.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 
