@@ -11,7 +11,7 @@ use super::items::{ItemBox, ItemBoxStyle, SettingControl, SettingItem};
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
-use crate::view::controls::{render_dual_list_partial, DualListColors, MapColors};
+use crate::view::controls::MapColors;
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1578,10 +1578,13 @@ fn render_control(
             ControlLayoutInfo::TextList { rows }
         }
 
-        SettingControl::DualList(state) => {
-            let colors = DualListColors::from_theme(theme);
-            let dual_layout = render_dual_list_partial(frame, area, state, &colors, skip_rows);
-            ControlLayoutInfo::DualList(dual_layout)
+        SettingControl::DualList(_) => {
+            // View migrated to the widget `DualList` kind (two-column
+            // Available/Included picker); editing still runs through the
+            // settings input path. Mouse hit geometry is approximate for
+            // now (keyboard nav is the primary path).
+            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            ControlLayoutInfo::DualList(Default::default())
         }
 
         SettingControl::Map(state) => {

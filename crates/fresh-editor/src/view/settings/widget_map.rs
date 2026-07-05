@@ -105,7 +105,7 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
                 .collect(),
             included: s.included.clone(),
             excluded: s.excluded.clone(),
-            label: String::new(),
+            label: s.label.clone(),
             focused: false,
             visible_rows: 6,
             key,
@@ -129,7 +129,27 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
         // their faithful migration rides the entry-editor work.
         SettingControl::Map(_) => placeholder(field_key, "map"),
         SettingControl::ObjectArray(_) => placeholder(field_key, "keybinding list"),
-        SettingControl::Json(_) => placeholder(field_key, "JSON"),
+        // Multiline JSON editor → a multi-line `Text` showing the
+        // editor's current text. Editing still runs through the settings
+        // input path against the control's `TextEdit`.
+        SettingControl::Json(s) => {
+            let value = s.editor.value();
+            let rows = (value.lines().count().max(1)).min(20) as u32;
+            WidgetSpec::Text {
+                value,
+                cursor_byte: -1,
+                focused: false,
+                label: s.label.clone(),
+                placeholder: None,
+                rows,
+                field_width: 0,
+                max_visible_chars: 0,
+                full_width: true,
+                completions: Vec::new(),
+                completions_visible_rows: 0,
+                key,
+            }
+        }
         SettingControl::Complex { type_name } => placeholder(field_key, type_name),
     }
 }
