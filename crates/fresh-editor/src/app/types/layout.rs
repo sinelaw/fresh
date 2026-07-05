@@ -277,9 +277,26 @@ impl WindowLayoutCache {
                 }
             }
         }
-        // Byte is at or past end of row - return column after last character
-        // This handles cursor positions at end of line (e.g., after last char before newline)
-        Some(row.visual_to_char.len())
+        // Byte is at or past end of row - return the column just after the last
+        // *source-backed* cell. Trailing cells that map to no source byte are
+        // purely visual (e.g. indentation guides synthesised on a blank line
+        // inside an indented block); counting them would push the cursor's
+        // column right by one per guide, so a Down onto the next line would
+        // land one column too far (issue #2564). On a normal line every cell is
+        // source-backed, so this still returns the end-of-line column.
+        let last_real_col = row
+            .visual_to_char
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &char_idx)| {
+                row.char_source_bytes
+                    .get(char_idx)
+                    .is_some_and(|b| b.is_some())
+            })
+            .map(|(visual_col, _)| visual_col + 1)
+            .unwrap_or(0);
+        Some(last_real_col)
     }
 
     /// Move by visual line using the cached mappings

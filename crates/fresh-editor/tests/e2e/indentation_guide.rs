@@ -100,6 +100,47 @@ fn indentation_guide_keeps_subdued_color_inside_selection() {
 }
 
 #[test]
+fn indentation_guide_blank_line_does_not_shift_cursor_column_on_move_down() {
+    // Regression (issue #2564): a *genuinely empty* line inside an indented
+    // block renders synthesized indentation-guide cells that map to no source
+    // byte. The visual-column lookup used by vertical movement must ignore
+    // those virtual cells; otherwise moving Down off the blank line lands one
+    // column too far right and the shift sticks.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides_blank_cursor.rs");
+    // Line 3 is genuinely empty (0 chars) between two 4-space-indented lines.
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    let a = 1;\n\n    let b = 2;\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Cursor starts at line 1, column 0. Step onto the first indented line and
+    // record the cursor's on-screen column there.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // -> line 2 "    let a = 1;"
+    let (x_indented, _) = harness.screen_cursor_position();
+
+    // Continue down across the blank line onto the next indented line.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // -> line 3 (blank)
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap(); // -> line 4 "    let b = 2;"
+    let (x_after_blank, _) = harness.screen_cursor_position();
+
+    assert_eq!(
+        x_after_blank, x_indented,
+        "moving Down across a blank line inside an indented block must keep the cursor in \
+         the same column (column 0); the synthesized indentation guide shifted it right"
+    );
+}
+
+#[test]
 fn indentation_guide_all_mode_continues_through_blank_line_in_editor_flow() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("guides_blank.rs");
