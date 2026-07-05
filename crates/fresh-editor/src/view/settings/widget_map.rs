@@ -379,6 +379,52 @@ mod tests {
     }
 
     #[test]
+    fn mapped_page_renders_coherently_through_widget_runtime() {
+        // End-to-end: a settings page maps to a WidgetSpec tree and
+        // renders through the *same* `render_spec` the plugin widget
+        // framework uses — the render path the Settings swap will adopt.
+        use std::collections::HashMap;
+        let items = vec![
+            item(
+                "/editor/word_wrap",
+                SettingControl::Toggle(ToggleState::new(true, "Word wrap")),
+                Some("Editor"),
+            ),
+            item(
+                "/editor/tab_size",
+                SettingControl::Number(NumberInputState {
+                    value: 4,
+                    min: Some(1),
+                    max: Some(8),
+                    step: 1,
+                    label: "Tab size".into(),
+                    focus: Default::default(),
+                    editor: None,
+                    is_percentage: false,
+                }),
+                None,
+            ),
+            item(
+                "/ui/theme",
+                SettingControl::Dropdown(
+                    DropdownState::new(vec!["Light".into(), "Dark".into()], "Theme")
+                        .with_selected(1),
+                ),
+                None,
+            ),
+        ];
+        let tree = settings_items_to_widget(&items);
+        let out = crate::widgets::render_spec(&tree, &HashMap::new(), "", u32::MAX);
+        let screen: String = out.entries.iter().map(|e| e.text.clone()).collect();
+        // Section header, toggle, number stepper, and dropdown cycler
+        // all present in the rendered text.
+        assert!(screen.contains("Editor"), "section header: {screen:?}");
+        assert!(screen.contains("[v] Word wrap"), "toggle: {screen:?}");
+        assert!(screen.contains("Tab size ◂ 4 ▸"), "number: {screen:?}");
+        assert!(screen.contains("Theme ◂ Dark ▸"), "dropdown: {screen:?}");
+    }
+
+    #[test]
     fn complex_control_maps_to_placeholder() {
         let c = SettingControl::Complex {
             type_name: "opaque".into(),
