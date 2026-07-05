@@ -11,7 +11,6 @@ use super::items::{ItemBox, ItemBoxStyle, SettingControl, SettingItem};
 use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
-use crate::view::controls::MapColors;
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1588,40 +1587,47 @@ fn render_control(
         }
 
         SettingControl::Map(state) => {
-            let colors = MapColors::from_theme(theme);
-            let map_layout = render_map_partial(frame, area, state, &colors, 20, skip_rows);
+            // View migrated: Col of `key: value` rows + add row. Editing
+            // (add/remove/edit entries) still runs through the settings
+            // input path; expanded/nested entries render collapsed here.
+            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            let row_rect = |logical: u16| -> Option<Rect> {
+                logical.checked_sub(skip_rows).and_then(|dst| {
+                    (dst < area.height).then(|| Rect::new(area.x, area.y + dst, area.width, 1))
+                })
+            };
+            // Row 0 is the label header; entries start at row 1.
+            let entry_rows = state
+                .entries
+                .iter()
+                .enumerate()
+                .filter_map(|(i, _)| row_rect(1 + i as u16).map(|r| (i, r)))
+                .collect();
+            let add_row_area = if state.no_add {
+                None
+            } else {
+                row_rect(1 + state.entries.len() as u16)
+            };
             ControlLayoutInfo::Map {
-                entry_rows: map_layout
-                    .entry_areas
-                    .iter()
-                    .map(|e| (e.index, e.row_area))
-                    .collect(),
-                add_row_area: map_layout.add_row_area,
+                entry_rows,
+                add_row_area,
             }
         }
 
         SettingControl::ObjectArray(state) => {
-            let colors = crate::view::controls::KeybindingListColors {
-                label_fg: theme.editor_fg,
-                key_fg: theme.help_key_fg,
-                action_fg: theme.syntax_function,
-                // Match the surrounding settings panel so unfocused rows
-                // don't paint a `Color::Reset` strip that falls back to
-                // the host terminal's default bg. See issue #2033.
-                row_bg: theme.popup_bg,
-                // Use settings colors for focused items in settings UI
-                focused_bg: theme.settings_selected_bg,
-                focused_fg: theme.settings_selected_fg,
-                add_fg: theme.syntax_string,
-            };
-            let kb_layout = render_keybinding_list_partial(frame, area, state, &colors, skip_rows);
-            ControlLayoutInfo::ObjectArray {
-                entry_rows: kb_layout
-                    .entry_rects
-                    .iter()
-                    .map(|&(idx, rect)| (idx, rect))
-                    .collect(),
-            }
+            render_control_via_widget(frame, area, control, name, theme, skip_rows);
+            let entry_rows = state
+                .bindings
+                .iter()
+                .enumerate()
+                .filter_map(|(i, _)| {
+                    (1 + i as u16).checked_sub(skip_rows).and_then(|dst| {
+                        (dst < area.height)
+                            .then(|| (i, Rect::new(area.x, area.y + dst, area.width, 1)))
+                    })
+                })
+                .collect();
+            ControlLayoutInfo::ObjectArray { entry_rows }
         }
 
         SettingControl::Json(state) => {
@@ -1833,368 +1839,6 @@ fn render_json_control(
     let edit_height = y.saturating_sub(edit_start_y);
     ControlLayoutInfo::Json {
         edit_area: Rect::new(edit_x, edit_start_y, edit_width, edit_height),
-    }
-}
-
-/// Render Map with partial visibility (skipping top rows)
-fn render_map_partial(
-    frame: &mut Frame,
-    area: Rect,
-    state: &crate::view::controls::MapState,
-    colors: &MapColors,
-    key_width: u16,
-    skip_rows: u16,
-) -> crate::view::controls::MapLayout {
-    use crate::view::controls::map_input::{MapEntryLayout, MapLayout};
-    use crate::view::controls::FocusState;
-
-    let empty_layout = MapLayout {
-        entry_areas: Vec::new(),
-        add_row_area: None,
-        full_area: area,
-    };
-
-    if area.height == 0 || area.width < 15 {
-        return empty_layout;
-    }
-
-    // Use focused_fg for label when focused (not focused, which is the bg color)
-    let label_color = match state.focus {
-        FocusState::Focused => colors.focused_fg,
-        FocusState::Hovered => colors.focused_fg,
-        FocusState::Disabled => colors.disabled,
-        FocusState::Normal => colors.label,
-    };
-
-    let mut entry_areas = Vec::new();
-    let mut y = area.y;
-    let mut content_row = 0u16;
-
-    // Row 0 is label
-    if skip_rows == 0 {
-        let label_line = Line::from(vec![
-            Span::styled(&state.label, Style::default().fg(label_color)),
-            Span::raw(":"),
-        ]);
-        frame.render_widget(
-            Paragraph::new(label_line),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-    }
-    content_row += 1;
-
-    let indent = 2u16;
-
-    // Row 1 is column headers (if display_field is set)
-    if state.display_field.is_some() && y < area.y + area.height {
-        if content_row >= skip_rows {
-            // Derive header name from display_field (e.g., "/enabled" -> "Enabled")
-            let value_header = state
-                .display_field
-                .as_ref()
-                .map(|f| {
-                    let name = f.trim_start_matches('/');
-                    // Capitalize first letter
-                    let mut chars = name.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                    }
-                })
-                .unwrap_or_else(|| "Value".to_string());
-
-            let header_style = Style::default()
-                .fg(colors.label)
-                .add_modifier(Modifier::DIM);
-            let header_line = Line::from(vec![
-                Span::styled(" ".repeat(indent as usize), header_style),
-                Span::styled(
-                    format!("{:width$}", "Name", width = key_width as usize),
-                    header_style,
-                ),
-                Span::raw(" "),
-                Span::styled(value_header, header_style),
-            ]);
-            frame.render_widget(
-                Paragraph::new(header_line),
-                Rect::new(area.x, y, area.width, 1),
-            );
-            y += 1;
-        }
-        content_row += 1;
-    }
-
-    // Render entries
-    for (idx, (key, value)) in state.entries.iter().enumerate() {
-        if y >= area.y + area.height {
-            break;
-        }
-
-        if content_row < skip_rows {
-            content_row += 1;
-            continue;
-        }
-
-        let is_focused = state.focused_entry == Some(idx) && state.focus == FocusState::Focused;
-
-        let row_area = Rect::new(area.x, y, area.width, 1);
-
-        // Full row background highlight for focused entry
-        if is_focused {
-            let highlight_style = Style::default().bg(colors.focused);
-            let bg_line = Line::from(Span::styled(
-                " ".repeat(area.width as usize),
-                highlight_style,
-            ));
-            frame.render_widget(Paragraph::new(bg_line), row_area);
-        }
-
-        let (key_color, value_color) = if is_focused {
-            // Use focused_fg for text on the focused background
-            (colors.focused_fg, colors.focused_fg)
-        } else if state.focus == FocusState::Disabled {
-            (colors.disabled, colors.disabled)
-        } else {
-            (colors.key, colors.value_preview)
-        };
-
-        let base_style = if is_focused {
-            Style::default().bg(colors.focused)
-        } else {
-            Style::default()
-        };
-
-        // Get display value. `truncate_chars_with_ellipsis` counts
-        // characters (not bytes) so a localized / CJK preview value
-        // doesn't panic on truncation (same class as #1718).
-        let value_preview = state.get_display_value(value);
-        let value_preview = truncate_chars_with_ellipsis(&value_preview, 20);
-
-        let display_key: String = key.chars().take(key_width as usize).collect();
-        let mut spans = vec![
-            Span::styled(" ".repeat(indent as usize), base_style),
-            Span::styled(
-                format!("{:width$}", display_key, width = key_width as usize),
-                base_style.fg(key_color),
-            ),
-            Span::raw(" "),
-            Span::styled(value_preview, base_style.fg(value_color)),
-        ];
-
-        // Add [Edit] hint for focused entry
-        if is_focused {
-            spans.push(Span::styled(
-                "  [Enter to edit]",
-                base_style.fg(colors.focused_fg).add_modifier(Modifier::DIM),
-            ));
-        }
-
-        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
-
-        entry_areas.push(MapEntryLayout {
-            index: idx,
-            row_area,
-            expand_area: Rect::default(), // Not rendering expand button in partial view
-            key_area: Rect::new(area.x + indent, y, key_width, 1),
-            remove_area: Rect::new(area.x + indent + key_width + 1, y, 3, 1),
-        });
-
-        y += 1;
-        content_row += 1;
-    }
-
-    // Add-new row (only show if adding is allowed)
-    let add_row_area = if !state.no_add && y < area.y + area.height && content_row >= skip_rows {
-        let row_area = Rect::new(area.x, y, area.width, 1);
-        let is_focused = state.focused_entry.is_none() && state.focus == FocusState::Focused;
-
-        // Highlight row when focused
-        if is_focused {
-            let highlight_style = Style::default().bg(colors.focused);
-            let bg_line = Line::from(Span::styled(
-                " ".repeat(area.width as usize),
-                highlight_style,
-            ));
-            frame.render_widget(Paragraph::new(bg_line), row_area);
-        }
-
-        let base_style = if is_focused {
-            Style::default().bg(colors.focused)
-        } else {
-            Style::default()
-        };
-
-        let mut spans = vec![
-            Span::styled(" ".repeat(indent as usize), base_style),
-            Span::styled("[+] Add new", base_style.fg(colors.add_button)),
-        ];
-
-        if is_focused {
-            spans.push(Span::styled(
-                "  [Enter to add]",
-                base_style.fg(colors.focused_fg).add_modifier(Modifier::DIM),
-            ));
-        }
-
-        frame.render_widget(Paragraph::new(Line::from(spans)), row_area);
-        Some(row_area)
-    } else {
-        None
-    };
-
-    MapLayout {
-        entry_areas,
-        add_row_area,
-        full_area: area,
-    }
-}
-
-/// Render KeybindingList with partial visibility
-fn render_keybinding_list_partial(
-    frame: &mut Frame,
-    area: Rect,
-    state: &crate::view::controls::KeybindingListState,
-    colors: &crate::view::controls::KeybindingListColors,
-    skip_rows: u16,
-) -> crate::view::controls::KeybindingListLayout {
-    use crate::view::controls::keybinding_list::format_key_combo;
-    use crate::view::controls::FocusState;
-    use ratatui::text::{Line, Span};
-    use ratatui::widgets::Paragraph;
-
-    let empty_layout = crate::view::controls::KeybindingListLayout {
-        entry_rects: Vec::new(),
-        add_rect: None,
-    };
-
-    if area.height == 0 {
-        return empty_layout;
-    }
-
-    let indent = 2u16;
-    let is_focused = state.focus == FocusState::Focused;
-    let mut entry_rects = Vec::new();
-    let mut content_row = 0u16;
-    let mut y = area.y;
-
-    // Render label (row 0) - modified indicator is shown in the row indicator column
-    if content_row >= skip_rows {
-        let label_line = Line::from(vec![Span::styled(
-            format!("{}:", state.label),
-            Style::default().fg(colors.label_fg),
-        )]);
-        frame.render_widget(
-            Paragraph::new(label_line),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-    }
-    content_row += 1;
-
-    // Render each keybinding entry
-    for (idx, binding) in state.bindings.iter().enumerate() {
-        if y >= area.y + area.height {
-            break;
-        }
-
-        if content_row >= skip_rows {
-            let entry_area = Rect::new(area.x + indent, y, area.width.saturating_sub(indent), 1);
-            entry_rects.push((idx, entry_area));
-
-            let is_entry_focused = is_focused && state.focused_index == Some(idx);
-            let bg = if is_entry_focused {
-                colors.focused_bg
-            } else {
-                colors.row_bg
-            };
-
-            let key_combo = format_key_combo(binding);
-            // Use display_field from state if available, otherwise default to "action"
-            let field_name = state
-                .display_field
-                .as_ref()
-                .and_then(|p| p.strip_prefix('/'))
-                .unwrap_or("action");
-            let action = binding
-                .get(field_name)
-                .and_then(|a| a.as_str())
-                .unwrap_or("(no action)");
-
-            let indicator = if is_entry_focused { "> " } else { "  " };
-            // Use focused_fg for all text when entry is focused for good contrast
-            let (indicator_fg, key_fg, arrow_fg, action_fg) = if is_entry_focused {
-                (
-                    colors.focused_fg,
-                    colors.focused_fg,
-                    colors.focused_fg,
-                    colors.focused_fg,
-                )
-            } else {
-                (
-                    colors.label_fg,
-                    colors.key_fg,
-                    colors.label_fg,
-                    colors.action_fg,
-                )
-            };
-            // The KeybindingList widget is reused for non-keybinding
-            // ObjectArrays (e.g. LSP servers under a language), where the
-            // `key_combo` column is always empty. Collapse to just the
-            // action so the row reads as a single value.
-            let line = if key_combo.trim().is_empty() {
-                Line::from(vec![
-                    Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
-                    Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
-                    Span::styled(
-                        format!("{:<20}", key_combo),
-                        Style::default().fg(key_fg).bg(bg),
-                    ),
-                    Span::styled(" → ", Style::default().fg(arrow_fg).bg(bg)),
-                    Span::styled(action, Style::default().fg(action_fg).bg(bg)),
-                ])
-            };
-            frame.render_widget(Paragraph::new(line), entry_area);
-
-            y += 1;
-        }
-        content_row += 1;
-    }
-
-    // Render add-new row
-    let add_rect = if y < area.y + area.height && content_row >= skip_rows {
-        let is_add_focused = is_focused && state.focused_index.is_none();
-        let bg = if is_add_focused {
-            colors.focused_bg
-        } else {
-            colors.row_bg
-        };
-
-        let indicator = if is_add_focused { "> " } else { "  " };
-        // Use focused_fg for text when add row is focused
-        let (indicator_fg, add_fg) = if is_add_focused {
-            (colors.focused_fg, colors.focused_fg)
-        } else {
-            (colors.label_fg, colors.add_fg)
-        };
-        let line = Line::from(vec![
-            Span::styled(indicator, Style::default().fg(indicator_fg).bg(bg)),
-            Span::styled("[+] Add new", Style::default().fg(add_fg).bg(bg)),
-        ]);
-        let add_area = Rect::new(area.x + indent, y, area.width.saturating_sub(indent), 1);
-        frame.render_widget(Paragraph::new(line), add_area);
-        Some(add_area)
-    } else {
-        None
-    };
-
-    crate::view::controls::KeybindingListLayout {
-        entry_rects,
-        add_rect,
     }
 }
 

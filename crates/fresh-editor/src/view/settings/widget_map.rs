@@ -127,8 +127,39 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
         // a labelled placeholder for now (Map/ObjectArray carry
         // `serde_json::Value` entries + expansion, Json a `TextEdit`);
         // their faithful migration rides the entry-editor work.
-        SettingControl::Map(_) => placeholder(field_key, "map"),
-        SettingControl::ObjectArray(_) => placeholder(field_key, "keybinding list"),
+        // Key→value map: a label header, one `key: value` row per
+        // entry (collapsed summary), and an add row unless the map is
+        // auto-managed. Nested/expanded editing still runs through the
+        // settings input path.
+        SettingControl::Map(s) => {
+            let mut children = Vec::with_capacity(s.entries.len() + 2);
+            children.push(raw_row(format!("{}:", s.label)));
+            for (k, v) in &s.entries {
+                children.push(raw_row(format!("  {k}: {}", json_value_display(v))));
+            }
+            if !s.no_add {
+                children.push(raw_row("  [+] Add new".to_string()));
+            }
+            WidgetSpec::Col { children, key }
+        }
+        // Object array (keybinding list): a label header, one summary
+        // row per binding (its `display_field`, else compact JSON), and
+        // an add row.
+        SettingControl::ObjectArray(s) => {
+            let mut children = Vec::with_capacity(s.bindings.len() + 2);
+            children.push(raw_row(format!("{}:", s.label)));
+            for b in &s.bindings {
+                let summary = s
+                    .display_field
+                    .as_ref()
+                    .and_then(|f| b.get(f))
+                    .map(json_value_display)
+                    .unwrap_or_else(|| b.to_string());
+                children.push(raw_row(format!("  {summary}")));
+            }
+            children.push(raw_row("  [+] Add new".to_string()));
+            WidgetSpec::Col { children, key }
+        }
         // Multiline JSON editor → a multi-line `Text` showing the
         // editor's current text. Editing still runs through the settings
         // input path against the control's `TextEdit`.
@@ -151,6 +182,16 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             }
         }
         SettingControl::Complex { type_name } => placeholder(field_key, type_name),
+    }
+}
+
+/// Compact one-line display for a JSON value: strings unquoted, other
+/// values as compact JSON.
+fn json_value_display(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(),
     }
 }
 
