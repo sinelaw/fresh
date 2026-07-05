@@ -63,7 +63,7 @@ mod prompt_actions;
 mod prompt_lifecycle;
 mod recovery_actions;
 mod regex_replace;
-mod render;
+pub(crate) mod render;
 mod scan_orchestrators;
 mod scroll_sync;
 mod scrollbar_input;

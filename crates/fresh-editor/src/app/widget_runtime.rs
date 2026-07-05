@@ -252,7 +252,11 @@ impl Editor {
         if hit.widget_kind == "dual_list" && hit.event_type == "dual_focus" {
             let to_included =
                 hit.payload.get("column").and_then(|v| v.as_str()) == Some("included");
-            let index = hit.payload.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+            let index = hit
+                .payload
+                .get("index")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as usize;
             self.handle_widget_dual_click(panel_key, &hit.widget_key, to_included, index);
             handled_specially = true;
         }
@@ -1254,19 +1258,17 @@ impl Editor {
             Some(p) => p,
             None => return,
         };
-        let (spec_value, min, max, step) = match crate::widgets::find_widget_by_key(
-            &panel.spec,
-            widget_key,
-        ) {
-            Some(fresh_core::api::WidgetSpec::Number {
-                value,
-                min,
-                max,
-                step,
-                ..
-            }) => (*value, *min, *max, *step),
-            _ => return,
-        };
+        let (spec_value, min, max, step) =
+            match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
+                Some(fresh_core::api::WidgetSpec::Number {
+                    value,
+                    min,
+                    max,
+                    step,
+                    ..
+                }) => (*value, *min, *max, *step),
+                _ => return,
+            };
         let cur = match panel.instance_states.get(widget_key) {
             Some(crate::widgets::WidgetInstanceState::Number { value }) => *value,
             _ => spec_value,
@@ -1308,7 +1310,8 @@ impl Editor {
             Some(p) => p,
             None => return,
         };
-        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
+        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key)
+        {
             Some(fresh_core::api::WidgetSpec::Dropdown {
                 options,
                 selected_index,
@@ -1547,7 +1550,8 @@ impl Editor {
                 _ => (Vec::new(), false, 0, 0),
             };
         // Re-derive so cursor clamping matches what's on screen.
-        let (options, excluded) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key) {
+        let (options, excluded) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key)
+        {
             Some(fresh_core::api::WidgetSpec::DualList {
                 options, excluded, ..
             }) => (options.clone(), excluded.clone()),
@@ -1575,7 +1579,6 @@ impl Editor {
         }
         self.rerender_widget_panel(panel_key);
     }
-
 
     /// Set a `List` widget's selected index to an absolute item index,
     /// preserving its scroll offset, and repaint. Used by the click

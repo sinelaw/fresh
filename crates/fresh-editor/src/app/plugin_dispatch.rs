@@ -4639,13 +4639,13 @@ impl Editor {
                 // rerender repaints. No `change` event — a plugin-driven
                 // set is not a user edit (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (min, max) = match crate::widgets::find_widget_by_key(
-                        &panel.spec,
-                        &widget_key,
-                    ) {
-                        Some(fresh_core::api::WidgetSpec::Number { min, max, .. }) => (*min, *max),
-                        _ => (None, None),
-                    };
+                    let (min, max) =
+                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
+                            Some(fresh_core::api::WidgetSpec::Number { min, max, .. }) => {
+                                (*min, *max)
+                            }
+                            _ => (None, None),
+                        };
                     let clamped = crate::widgets::clamp_number(value, min, max);
                     panel.instance_states.insert(
                         widget_key.clone(),
@@ -4659,7 +4659,9 @@ impl Editor {
                 // rerender repaints. No `change` event (matches SetValue).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
                     let len = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
-                        Some(fresh_core::api::WidgetSpec::Dropdown { options, .. }) => options.len(),
+                        Some(fresh_core::api::WidgetSpec::Dropdown { options, .. }) => {
+                            options.len()
+                        }
                         _ => 0,
                     };
                     let clamped = if len == 0 {
@@ -4688,23 +4690,23 @@ impl Editor {
                 // drop unknown values and preserve/reset cursors. The
                 // trailing rerender repaints. No `change` event.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let sanitized = match crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
-                    {
-                        Some(fresh_core::api::WidgetSpec::DualList { options, .. }) => {
-                            crate::widgets::dual_sanitize_included(options, &included)
-                        }
-                        _ => included.clone(),
-                    };
-                    let (active, avail_cur, incl_cur) =
-                        match panel.instance_states.get(&widget_key) {
-                            Some(crate::widgets::WidgetInstanceState::DualList {
-                                active_included,
-                                available_cursor,
-                                included_cursor,
-                                ..
-                            }) => (*active_included, *available_cursor, *included_cursor),
-                            _ => (false, 0, 0),
+                    let sanitized =
+                        match crate::widgets::find_widget_by_key(&panel.spec, &widget_key) {
+                            Some(fresh_core::api::WidgetSpec::DualList { options, .. }) => {
+                                crate::widgets::dual_sanitize_included(options, &included)
+                            }
+                            _ => included.clone(),
                         };
+                    let (active, avail_cur, incl_cur) = match panel.instance_states.get(&widget_key)
+                    {
+                        Some(crate::widgets::WidgetInstanceState::DualList {
+                            active_included,
+                            available_cursor,
+                            included_cursor,
+                            ..
+                        }) => (*active_included, *available_cursor, *included_cursor),
+                        _ => (false, 0, 0),
+                    };
                     panel.instance_states.insert(
                         widget_key.clone(),
                         crate::widgets::WidgetInstanceState::DualList {

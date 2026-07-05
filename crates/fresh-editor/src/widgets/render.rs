@@ -3645,16 +3645,15 @@ fn collect_dual_list(
 
     // Body rows — one per max(available, included), at least
     // `visible_rows`.
-    let body_rows = available.len().max(included.len()).max(visible_rows as usize);
+    let body_rows = available
+        .len()
+        .max(included.len())
+        .max(visible_rows as usize);
     for i in 0..body_rows {
         let left_val = available.get(i);
         let right_val = included.get(i);
-        let left = left_val
-            .map(|v| dual_label(options, v))
-            .unwrap_or("");
-        let right = right_val
-            .map(|v| dual_label(options, v))
-            .unwrap_or("");
+        let left = left_val.map(|v| dual_label(options, v)).unwrap_or("");
+        let right = right_val.map(|v| dual_label(options, v)).unwrap_or("");
         let left_cell = cell(left, col_w);
         let right_cell = cell(right, col_w);
         let text = format!("{}  {}", left_cell, right_cell);
@@ -7269,10 +7268,7 @@ mod tests {
     fn number_emits_two_step_hit_areas() {
         let spec = make_number(2.0, Some("size"));
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let steps: Vec<_> = hits
-            .iter()
-            .filter(|h| h.widget_kind == "number")
-            .collect();
+        let steps: Vec<_> = hits.iter().filter(|h| h.widget_kind == "number").collect();
         assert_eq!(steps.len(), 2, "one dec + one inc hit");
         assert_eq!(steps[0].payload["delta"], -1);
         assert_eq!(steps[1].payload["delta"], 1);
@@ -7354,7 +7350,10 @@ mod tests {
     fn dropdown_emits_two_cycle_hit_areas() {
         let spec = make_dropdown(&["a", "b"], 0, Some("d"));
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cyc: Vec<_> = hits.iter().filter(|h| h.widget_kind == "dropdown").collect();
+        let cyc: Vec<_> = hits
+            .iter()
+            .filter(|h| h.widget_kind == "dropdown")
+            .collect();
         assert_eq!(cyc.len(), 2);
         assert_eq!(cyc[0].payload["delta"], -1);
         assert_eq!(cyc[1].payload["delta"], 1);
@@ -7472,11 +7471,7 @@ mod tests {
         assert_eq!(dual_label(&o, "missing"), "missing");
     }
 
-    fn make_dual(
-        options: &[(&str, &str)],
-        included: &[&str],
-        key: Option<&str>,
-    ) -> WidgetSpec {
+    fn make_dual(options: &[(&str, &str)], included: &[&str], key: Option<&str>) -> WidgetSpec {
         WidgetSpec::DualList {
             options: opts(options),
             included: included.iter().map(|s| s.to_string()).collect(),
@@ -7513,7 +7508,10 @@ mod tests {
     fn dual_list_emits_cell_hit_areas() {
         let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], Some("d"));
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cells: Vec<_> = hits.iter().filter(|h| h.widget_kind == "dual_list").collect();
+        let cells: Vec<_> = hits
+            .iter()
+            .filter(|h| h.widget_kind == "dual_list")
+            .collect();
         // One available cell (a) + one included cell (b).
         assert_eq!(cells.len(), 2);
         assert!(cells.iter().any(|h| h.payload["column"] == "available"));

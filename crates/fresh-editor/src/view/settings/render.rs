@@ -12,9 +12,8 @@ use super::layout::{SettingsHit, SettingsLayout};
 use super::search::{DeepMatch, SearchResult};
 use super::state::SettingsState;
 use crate::view::controls::{
-    render_dropdown_aligned, render_dual_list_partial, render_number_input_aligned,
-    render_text_input_aligned, render_toggle_aligned, DropdownColors, DualListColors, MapColors,
-    NumberInputColors, TextInputColors, TextListColors, ToggleColors,
+    render_dual_list_partial, render_text_input_aligned, DualListColors, MapColors,
+    TextInputColors, TextListColors,
 };
 use crate::view::theme::Theme;
 use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
@@ -1358,6 +1357,65 @@ fn render_setting_item_pure(
     }
 }
 
+/// Render a scalar setting control (Toggle/Number/Dropdown) through the
+/// plugin widget framework: map it to a `WidgetSpec`, render with
+/// `render_spec`, and paint the resulting entries into `area` via the
+/// shared `paint_text_property_entry`. Returns the widget hit areas so
+/// the caller can derive click geometry. Stateless: a fresh (empty)
+/// instance-state map each frame, so the spec's values render directly.
+fn render_scalar_via_widget(
+    frame: &mut Frame,
+    area: Rect,
+    control: &SettingControl,
+    name: &str,
+    theme: &Theme,
+) -> Vec<crate::widgets::HitArea> {
+    let spec = crate::view::settings::widget_map::setting_control_to_widget(name, control);
+    let out = crate::widgets::render_spec_no_autofocus(
+        &spec,
+        &std::collections::HashMap::new(),
+        "",
+        area.width.max(1) as u32,
+    );
+    for (i, entry) in out.entries.iter().enumerate() {
+        if (i as u16) < area.height {
+            crate::app::render::paint_text_property_entry(
+                frame,
+                entry,
+                area.x,
+                area.y + i as u16,
+                area.width,
+                theme,
+                None,
+            );
+        }
+    }
+    out.hits
+}
+
+/// Translate a Number widget's `number_step` hit byte-ranges into screen
+/// column rects for the ◂ / ▸ steppers, so mouse clicks still adjust the
+/// value. Falls back to empty rects when the hits aren't present.
+fn number_step_areas(hits: &[crate::widgets::HitArea], area: Rect) -> (Rect, Rect) {
+    let mut dec = Rect::default();
+    let mut inc = Rect::default();
+    for h in hits.iter().filter(|h| h.widget_kind == "number") {
+        // The rendered row is ASCII except the ◂/▸ glyphs (3 bytes, 1
+        // col each); a byte offset maps to a column by counting the
+        // display width of the text before it. The renderer places both
+        // glyphs, so byte_start is a safe proxy: clamp into the area.
+        let col = (h.byte_start as u16).min(area.width.saturating_sub(1));
+        let rect = Rect::new(area.x + col.min(area.width.saturating_sub(1)), area.y, 1, 1);
+        let delta = h.payload.get("delta").and_then(|v| v.as_i64()).unwrap_or(0);
+        if delta < 0 {
+            dec = rect;
+        } else {
+            inc = rect;
+        }
+    }
+    (dec, inc)
+}
+
 /// Render the appropriate control for a setting
 ///
 /// # Arguments
@@ -1378,17 +1436,27 @@ fn render_control(
     is_null: bool,
 ) -> ControlLayoutInfo {
     match control {
-        // Single-row controls: only render if not skipped
-        SettingControl::Toggle(state) => {
+        // Single-row controls: only render if not skipped.
+        //
+        // Toggle / Number / Dropdown render through the plugin widget
+        // framework (Settings↔widget unification): the control maps to a
+        // `WidgetSpec` and paints via `render_spec` +
+        // `paint_text_property_entry`, the same path plugin panels use.
+        // The control's State stays the model (input.rs still drives
+        // it); this swaps the *view* onto the shared framework. Text and
+        // the composite controls keep their existing renderers for now
+        // (Text needs the edit cursor the mapping doesn't yet carry).
+        SettingControl::Toggle(_) => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Toggle(Rect::default());
             }
-            let colors = ToggleColors::from_theme(theme);
-            let toggle_layout = render_toggle_aligned(frame, area, state, &colors, label_width);
-            ControlLayoutInfo::Toggle(toggle_layout.checkbox_area)
+            render_scalar_via_widget(frame, area, control, name, theme);
+            // Approximate hit geometry: the `[v]`/`[ ]` glyph is the
+            // first three columns of the rendered `[v] label`.
+            ControlLayoutInfo::Toggle(Rect::new(area.x, area.y, 3.min(area.width), 1))
         }
 
-        SettingControl::Number(state) => {
+        SettingControl::Number(_) => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Number {
                     decrement: Rect::default(),
@@ -1396,16 +1464,16 @@ fn render_control(
                     value: Rect::default(),
                 };
             }
-            let colors = NumberInputColors::from_theme(theme);
-            let num_layout = render_number_input_aligned(frame, area, state, &colors, label_width);
+            let hits = render_scalar_via_widget(frame, area, control, name, theme);
+            let (decrement, increment) = number_step_areas(&hits, area);
             ControlLayoutInfo::Number {
-                decrement: num_layout.decrement_area,
-                increment: num_layout.increment_area,
-                value: num_layout.value_area,
+                decrement,
+                increment,
+                value: Rect::new(area.x, area.y, area.width, 1),
             }
         }
 
-        SettingControl::Dropdown(state) => {
+        SettingControl::Dropdown(_) => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Dropdown {
                     button_area: Rect::default(),
@@ -1413,12 +1481,11 @@ fn render_control(
                     scroll_offset: 0,
                 };
             }
-            let colors = DropdownColors::from_theme(theme);
-            let drop_layout = render_dropdown_aligned(frame, area, state, &colors, label_width);
+            render_scalar_via_widget(frame, area, control, name, theme);
             ControlLayoutInfo::Dropdown {
-                button_area: drop_layout.button_area,
-                option_areas: drop_layout.option_areas,
-                scroll_offset: drop_layout.scroll_offset,
+                button_area: Rect::new(area.x, area.y, area.width, 1),
+                option_areas: Vec::new(),
+                scroll_offset: 0,
             }
         }
 

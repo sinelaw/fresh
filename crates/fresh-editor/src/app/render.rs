@@ -4847,7 +4847,7 @@ fn paint_dock_seamless_active_tab(
 /// overlays to styled spans using the panel's theme; trailing columns
 /// are filled with spaces in the panel's bg so the row reads as one
 /// solid line.
-fn paint_text_property_entry(
+pub(crate) fn paint_text_property_entry(
     frame: &mut ratatui::Frame,
     entry: &fresh_core::text_property::TextPropertyEntry,
     x: u16,
