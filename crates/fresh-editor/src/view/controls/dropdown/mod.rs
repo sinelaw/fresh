@@ -9,13 +9,11 @@
 //! - Layout/hit testing (`DropdownLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::DropdownEvent;
-pub use render::{render_dropdown, render_dropdown_aligned};
 
 use super::FocusState;
 
@@ -339,50 +337,6 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_dropdown_renders() {
-        test_frame(40, 1, |frame, area| {
-            let state = DropdownState::new(
-                vec!["Option A".to_string(), "Option B".to_string()],
-                "Choice",
-            );
-            let colors = DropdownColors::default();
-            let layout = render_dropdown(frame, area, &state, &colors);
-
-            assert!(layout.button_area.width > 0);
-            assert!(layout.option_areas.is_empty());
-        });
-    }
-
-    #[test]
-    fn test_dropdown_open() {
-        test_frame(40, 5, |frame, area| {
-            let mut state = DropdownState::new(
-                vec!["Option A".to_string(), "Option B".to_string()],
-                "Choice",
-            );
-            state.open = true;
-            let colors = DropdownColors::default();
-            let layout = render_dropdown(frame, area, &state, &colors);
-
-            assert_eq!(layout.option_areas.len(), 2);
-        });
-    }
 
     #[test]
     fn test_dropdown_selection() {

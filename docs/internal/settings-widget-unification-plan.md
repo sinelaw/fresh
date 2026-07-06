@@ -55,16 +55,21 @@
   control-state model (`SettingControl`); routing input through
   `handle_widget_key` and retiring the per-control `*State` structs is the
   remaining (behavior-preserving) step — see §5.3.1.
-- **Phase 2 (shared control core) — STARTED.** The settings render calls
-  `render_spec`; the `view/controls` ratatui renderers
-  (`render_toggle_aligned`, `render_number_input_aligned`,
-  `render_dropdown_aligned`, `render_text_list_partial`, `render_map_partial`,
-  `render_keybinding_list_partial`, `render_dual_list_partial`,
-  `render_json_control`) are out of the settings path. The `*State` structs
-  remain as the model; the broader `view/controls` ↔ `widgets/render`
-  de-duplication rides the input-routing step.
-- **Phase 5 (docs) — in progress.** `plugins.md` §7.1 lists the new kinds;
-  `widgets.ts` + `fresh.d.ts` carry the new options; this doc tracks status.
+- **Phase 2 (shared control core) — render leg DONE.** There is now exactly
+  one renderer per control: the `view/controls` ratatui render modules
+  (toggle / number_input / dropdown / text_input / dual_list / text_list /
+  map_input / keybinding_list / button `render.rs`) are **deleted** — the
+  widget framework is the only paint path. The `*State` structs and their
+  input methods remain as the model (the domain formatter `format_key_combo`
+  moved into `keybinding_list/mod.rs`); retiring them rides the input-routing
+  step (see §5.3.1).
+- **Phase 5 (expose + docs + delete dead path) — largely DONE.** `plugins.md`
+  §7.1 lists the new kinds; `widgets.ts` + `fresh.d.ts` carry the new options
+  (labelFirst/labelWidth/indeterminate, number edit fields, dropdown
+  open/scrollOffset, blockCaret, `reversed` overlays); the dead
+  `view/controls` render path is deleted. Remaining: input routing +
+  `*State` retirement (§5.3.1 steps 6–7 and the behavior-preserving input
+  inversion).
 
 ---
 

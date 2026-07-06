@@ -18,13 +18,11 @@
 //! - Layout/hit testing (`MapLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::MapEvent;
-pub use render::render_map;
 
 use super::FocusState;
 

@@ -9,14 +9,12 @@
 //! - Layout/hit testing (`TextInputLayout`)
 
 mod input;
-mod render;
 
 use crate::primitives::grapheme;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::TextInputEvent;
-pub use render::{render_text_input, render_text_input_aligned};
 
 use super::FocusState;
 
@@ -338,20 +336,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
     #[test]
     fn test_arm_replace_on_type_replaces_value_on_first_char() {
         let mut state = TextInputState::new("Width").with_value("30%");
@@ -388,17 +372,6 @@ mod tests {
         state.backspace();
         assert_eq!(state.value, "");
         assert!(!state.pending_replace_on_type);
-    }
-
-    #[test]
-    fn test_text_input_renders() {
-        test_frame(40, 1, |frame, area| {
-            let state = TextInputState::new("Name").with_value("John");
-            let colors = TextInputColors::default();
-            let layout = render_text_input(frame, area, &state, &colors, 20);
-
-            assert!(layout.input_area.width > 0);
-        });
     }
 
     #[test]

@@ -10,12 +10,8 @@
 //!                  [▼] cursor_count
 //! ```
 
-mod render;
-
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-
-pub use render::render_dual_list_partial;
 
 use super::FocusState;
 

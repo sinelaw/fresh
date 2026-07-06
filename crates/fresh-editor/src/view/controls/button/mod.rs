@@ -9,13 +9,11 @@
 //! - Layout/hit testing (`ButtonLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::ButtonEvent;
-pub use render::{render_button, render_button_row};
 
 use super::FocusState;
 
@@ -148,61 +146,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_button_renders() {
-        test_frame(20, 1, |frame, area| {
-            let state = ButtonState::new("OK");
-            let colors = ButtonColors::default();
-            let layout = render_button(frame, area, &state, &colors);
-
-            assert_eq!(layout.button_area.width, 6); // "[ OK ]"
-        });
-    }
-
-    #[test]
-    fn test_button_hit_detection() {
-        test_frame(20, 1, |frame, area| {
-            let state = ButtonState::new("Click");
-            let colors = ButtonColors::default();
-            let layout = render_button(frame, area, &state, &colors);
-
-            // Inside button
-            assert!(layout.contains(0, 0));
-            assert!(layout.contains(5, 0));
-
-            // Outside button
-            assert!(!layout.contains(15, 0));
-        });
-    }
-
-    #[test]
-    fn test_button_row() {
-        test_frame(40, 1, |frame, area| {
-            let ok = ButtonState::new("OK");
-            let cancel = ButtonState::new("Cancel");
-            let colors = ButtonColors::default();
-
-            let layouts = render_button_row(frame, area, &[(&ok, &colors), (&cancel, &colors)], 2);
-
-            assert_eq!(layouts.len(), 2);
-            assert!(layouts[0].button_area.x < layouts[1].button_area.x);
-        });
-    }
-
     #[test]
     fn test_button_disabled() {
         let state = ButtonState::new("Save").with_focus(FocusState::Disabled);
@@ -216,17 +159,5 @@ mod tests {
 
         state.set_pressed(true);
         assert!(state.pressed);
-    }
-
-    #[test]
-    fn test_button_truncation() {
-        test_frame(8, 1, |frame, area| {
-            let state = ButtonState::new("Very Long Button Text");
-            let colors = ButtonColors::default();
-            let layout = render_button(frame, area, &state, &colors);
-
-            // Button should be truncated to fit
-            assert!(layout.button_area.width <= area.width);
-        });
     }
 }

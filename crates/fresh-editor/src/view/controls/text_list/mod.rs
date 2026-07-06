@@ -15,13 +15,11 @@
 //! - Layout/hit testing (`TextListLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::TextListEvent;
-pub use render::render_text_list;
 
 use super::FocusState;
 
@@ -427,47 +425,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_text_list_empty() {
-        test_frame(40, 5, |frame, area| {
-            let state = TextListState::new("Items");
-            let colors = TextListColors::default();
-            let layout = render_text_list(frame, area, &state, &colors, 20);
-
-            assert_eq!(layout.rows.len(), 1);
-            assert!(layout.rows[0].index.is_none());
-        });
-    }
-
-    #[test]
-    fn test_text_list_with_items() {
-        test_frame(40, 5, |frame, area| {
-            let state =
-                TextListState::new("Items").with_items(vec!["one".to_string(), "two".to_string()]);
-            let colors = TextListColors::default();
-            let layout = render_text_list(frame, area, &state, &colors, 20);
-
-            assert_eq!(layout.rows.len(), 3);
-            assert_eq!(layout.rows[0].index, Some(0));
-            assert_eq!(layout.rows[1].index, Some(1));
-            assert!(layout.rows[2].index.is_none());
-        });
-    }
-
     #[test]
     fn test_text_list_add_item() {
         let mut state = TextListState::new("Items");
@@ -520,22 +477,5 @@ mod tests {
 
         state.focus_next();
         assert!(state.focused_item.is_none());
-    }
-
-    #[test]
-    fn test_text_list_hit_test() {
-        test_frame(40, 5, |frame, area| {
-            let state = TextListState::new("Items").with_items(vec!["one".to_string()]);
-            let colors = TextListColors::default();
-            let layout = render_text_list(frame, area, &state, &colors, 20);
-
-            let btn = &layout.rows[0].button_area;
-            let hit = layout.hit_test(btn.x, btn.y);
-            assert_eq!(hit, Some(TextListHit::Button(Some(0))));
-
-            let add_btn = &layout.rows[1].button_area;
-            let hit = layout.hit_test(add_btn.x, add_btn.y);
-            assert_eq!(hit, Some(TextListHit::Button(None)));
-        });
     }
 }

@@ -10,13 +10,11 @@
 //! - Layout/hit testing (`NumberInputLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::NumberInputEvent;
-pub use render::{render_number_input, render_number_input_aligned};
 
 use super::FocusState;
 use crate::primitives::text_edit::TextEdit;
@@ -457,34 +455,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_number_input_renders() {
-        test_frame(40, 1, |frame, area| {
-            let state = NumberInputState::new(42, "Count");
-            let colors = NumberInputColors::default();
-            let layout = render_number_input(frame, area, &state, &colors);
-
-            assert!(layout.value_area.width > 0);
-            // Inc/dec buttons removed in favour of direct typing — areas are empty.
-            assert_eq!(layout.decrement_area.width, 0);
-            assert_eq!(layout.increment_area.width, 0);
-        });
-    }
-
     #[test]
     fn test_number_input_increment() {
         let mut state = NumberInputState::new(5, "Value");
@@ -524,21 +494,6 @@ mod tests {
         let mut state = NumberInputState::new(5, "Value").with_focus(FocusState::Disabled);
         state.increment();
         assert_eq!(state.value, 5);
-    }
-
-    #[test]
-    fn test_number_input_hit_detection() {
-        test_frame(40, 1, |frame, area| {
-            let state = NumberInputState::new(42, "Count");
-            let colors = NumberInputColors::default();
-            let layout = render_number_input(frame, area, &state, &colors);
-
-            // Value area is hittable; the (removed) inc/dec buttons are not.
-            let val_x = layout.value_area.x;
-            assert!(layout.is_value(val_x, 0));
-            assert!(!layout.is_increment(val_x, 0));
-            assert!(!layout.is_decrement(val_x, 0));
-        });
     }
 
     #[test]
@@ -708,107 +663,6 @@ mod tests {
 
         state.move_end();
         assert_eq!(state.cursor_col(), 3);
-    }
-
-    /// Regression: entering edit mode used to shrink `[  4  ]` (value cell
-    /// rendered as `format!("{:^5}", "4")`) down to `[4]`, shifting the
-    /// `[-]` / `[+]` buttons left. Both states must render the value cell
-    /// at the same width.
-    #[test]
-    fn test_value_cell_width_stable_between_edit_and_view() {
-        fn bracket_columns(state: &NumberInputState) -> (u16, u16) {
-            let backend = TestBackend::new(40, 1);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| {
-                    let area = Rect::new(0, 0, 40, 1);
-                    let colors = NumberInputColors::default();
-                    render_number_input(frame, area, state, &colors);
-                })
-                .unwrap();
-            let buffer = terminal.backend().buffer().clone();
-            let mut open = None;
-            let mut close = None;
-            for x in 0..40 {
-                let symbol = buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or("");
-                if symbol == "[" && open.is_none() {
-                    open = Some(x);
-                } else if symbol == "]" && open.is_some() && close.is_none() {
-                    close = Some(x);
-                }
-            }
-            (
-                open.expect("missing opening bracket"),
-                close.expect("missing closing bracket"),
-            )
-        }
-
-        let view_state = NumberInputState::new(4, "Tab Size");
-        let mut edit_state = NumberInputState::new(4, "Tab Size");
-        edit_state.start_editing();
-
-        let view_brackets = bracket_columns(&view_state);
-        let edit_brackets = bracket_columns(&edit_state);
-        assert_eq!(
-            view_brackets, edit_brackets,
-            "value cell brackets must stay at the same columns when entering edit mode"
-        );
-    }
-
-    /// Regression: the digit's column used to shift left as soon as the
-    /// user started typing — the cursor block claimed the last cell and
-    /// the right-aligned digit slid one column inward. The trailing
-    /// reserved cell now keeps the digit pinned to the same column in
-    /// view mode, while-selected, and while-typing.
-    #[test]
-    fn test_digit_column_stable_across_view_select_and_typing() {
-        fn digit_column(state: &NumberInputState, digit: char) -> u16 {
-            let backend = TestBackend::new(40, 1);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal
-                .draw(|frame| {
-                    let area = Rect::new(0, 0, 40, 1);
-                    let colors = NumberInputColors::default();
-                    render_number_input(frame, area, state, &colors);
-                })
-                .unwrap();
-            let buffer = terminal.backend().buffer().clone();
-            let needle = digit.to_string();
-            for x in 0..40 {
-                let symbol = buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or("");
-                if symbol == needle {
-                    return x;
-                }
-            }
-            panic!("digit {digit:?} not found on rendered line");
-        }
-
-        // View mode: "4" is rendered right-aligned with the trailing
-        // reserved cell.
-        let view_state = NumberInputState::new(4, "Tab Size");
-
-        // Edit mode, select-all (cursor at end, value still "4").
-        let mut select_state = NumberInputState::new(4, "Tab Size");
-        select_state.start_editing();
-
-        // Edit mode, after typing replaces selection with "1" (cursor at
-        // end of the new value).
-        let mut typed_state = NumberInputState::new(4, "Tab Size");
-        typed_state.start_editing();
-        typed_state.insert_char('1');
-
-        let view_col = digit_column(&view_state, '4');
-        let select_col = digit_column(&select_state, '4');
-        let typed_col = digit_column(&typed_state, '1');
-
-        assert_eq!(
-            view_col, select_col,
-            "digit must stay at the same column when entering edit mode"
-        );
-        assert_eq!(
-            view_col, typed_col,
-            "digit must stay at the same column after typing replaces the selection"
-        );
     }
 
     /// Regression: the in-edit selection used to share its bg colour with

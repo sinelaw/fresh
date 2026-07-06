@@ -9,13 +9,11 @@
 //! - Layout/hit testing (`ToggleLayout`)
 
 mod input;
-mod render;
 
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 pub use input::ToggleEvent;
-pub use render::{render_toggle, render_toggle_aligned};
 
 use super::FocusState;
 
@@ -144,66 +142,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn test_frame<F>(width: u16, height: u16, f: F)
-    where
-        F: FnOnce(&mut ratatui::Frame, Rect),
-    {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, width, height);
-                f(frame, area);
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_toggle_checked() {
-        test_frame(40, 1, |frame, area| {
-            let state = ToggleState::new(true, "Enable");
-            let colors = ToggleColors::default();
-            let layout = render_toggle(frame, area, &state, &colors);
-
-            // Chip is "[v]" = 3 cols.
-            assert_eq!(layout.checkbox_area.width, 3);
-            // "Enable" (6) + ": " (2) + chip (3) = 11.
-            assert_eq!(layout.full_area.width, 11);
-        });
-    }
-
-    #[test]
-    fn test_toggle_unchecked() {
-        test_frame(40, 1, |frame, area| {
-            let state = ToggleState::new(false, "Enable");
-            let colors = ToggleColors::default();
-            let layout = render_toggle(frame, area, &state, &colors);
-
-            // Same chip width either way — layout doesn't shift on toggle.
-            assert_eq!(layout.checkbox_area.width, 3);
-        });
-    }
-
-    #[test]
-    fn test_toggle_click_detection() {
-        test_frame(40, 1, |frame, area| {
-            let state = ToggleState::new(true, "Enable");
-            let colors = ToggleColors::default();
-            let layout = render_toggle(frame, area, &state, &colors);
-
-            // Click on the chip (cols 8..11).
-            assert!(layout.contains(8, 0));
-            assert!(layout.contains(10, 0));
-
-            // Click on the label (cols 0..6).
-            assert!(layout.contains(0, 0));
-            assert!(layout.contains(5, 0));
-
-            // Click past the chip.
-            assert!(!layout.contains(15, 0));
-        });
-    }
-
     #[test]
     fn test_toggle_state_toggle() {
         let mut state = ToggleState::new(false, "Test");
@@ -221,17 +159,5 @@ mod tests {
         let mut state = ToggleState::new(false, "Test").with_focus(FocusState::Disabled);
         state.toggle();
         assert!(!state.checked); // Should not change
-    }
-
-    #[test]
-    fn test_toggle_narrow_area() {
-        test_frame(2, 1, |frame, area| {
-            let state = ToggleState::new(true, "Enable");
-            let colors = ToggleColors::default();
-            let layout = render_toggle(frame, area, &state, &colors);
-
-            // Should still have some layout even if truncated
-            assert!(layout.full_area.width <= area.width);
-        });
     }
 }

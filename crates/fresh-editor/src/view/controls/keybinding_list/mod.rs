@@ -7,7 +7,6 @@
 //! - Layout/hit testing (`KeybindingListLayout`)
 
 mod input;
-mod render;
 
 use super::FocusState;
 use ratatui::layout::Rect;
@@ -15,7 +14,6 @@ use ratatui::style::Color;
 use serde_json::Value;
 
 pub use input::KeybindingListEvent;
-pub use render::{format_key_combo, render_keybinding_list};
 
 /// State for an object array control (keybindings, etc.)
 #[derive(Debug, Clone)]
@@ -254,6 +252,69 @@ pub enum KeybindingListHit {
     Entry(usize),
     /// Clicked on add row
     AddRow,
+}
+
+/// Format a keybinding's key combination for display
+pub fn format_key_combo(binding: &Value) -> String {
+    // Check for keys array (chord binding) first
+    if let Some(keys) = binding.get("keys").and_then(|k| k.as_array()) {
+        let parts: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                let mut key_str = String::new();
+                if let Some(mods) = k.get("modifiers").and_then(|m| m.as_array()) {
+                    for m in mods {
+                        if let Some(s) = m.as_str() {
+                            key_str.push_str(&capitalize_mod(s));
+                            key_str.push('+');
+                        }
+                    }
+                }
+                if let Some(key) = k.get("key").and_then(|k| k.as_str()) {
+                    key_str.push_str(&capitalize_key(key));
+                }
+                key_str
+            })
+            .collect();
+        return parts.join(" ");
+    }
+
+    // Single key binding
+    let mut result = String::new();
+    if let Some(mods) = binding.get("modifiers").and_then(|m| m.as_array()) {
+        for m in mods {
+            if let Some(s) = m.as_str() {
+                result.push_str(&capitalize_mod(s));
+                result.push('+');
+            }
+        }
+    }
+    if let Some(key) = binding.get("key").and_then(|k| k.as_str()) {
+        result.push_str(&capitalize_key(key));
+    }
+    result
+}
+
+fn capitalize_mod(s: &str) -> String {
+    match s.to_lowercase().as_str() {
+        "ctrl" | "control" => "Ctrl".to_string(),
+        "alt" => "Alt".to_string(),
+        "shift" => "Shift".to_string(),
+        "super" | "meta" | "cmd" => "Super".to_string(),
+        _ => s.to_string(),
+    }
+}
+
+fn capitalize_key(s: &str) -> String {
+    if s.len() == 1 {
+        s.to_uppercase()
+    } else {
+        let mut chars = s.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(c) => c.to_uppercase().chain(chars).collect(),
+        }
+    }
 }
 
 #[cfg(test)]
