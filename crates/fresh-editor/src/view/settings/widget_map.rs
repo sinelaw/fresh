@@ -207,7 +207,7 @@ pub fn setting_control_to_widget_aligned(
             children.push(raw_row(format!("{}:", s.label)));
             for (idx, it) in s.items.iter().enumerate() {
                 let row_focused = focused && s.focused_item == Some(idx);
-                children.push(text_list_item_row(it, row_focused, s.cursor));
+                children.push(text_list_item_row(it, row_focused, s.editing, s.cursor));
             }
             children.push(text_list_add_row(s, focused));
             WidgetSpec::Col { children, key }
@@ -457,13 +457,13 @@ fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) ->
     }
 }
 
-/// One committed TextList item: `  [{padded item}] [x]`, with a
-/// `Del:remove  Enter:edit` hint and a block caret at the control's
-/// cursor when the row is focused. The caret is what makes in-place
-/// item editing usable — the historical renderer always drew it on the
-/// focused row (REVERSED cell at `state.cursor`), and without it typing
-/// lands with no visible insertion point.
-fn text_list_item_row(item: &str, row_focused: bool, cursor: usize) -> WidgetSpec {
+/// One committed TextList item: `  [{padded item}] [x]`. A focused row
+/// that is *not* being edited shows a `Del:remove  Enter:edit` hint;
+/// once editing starts it shows the block caret at the control's cursor
+/// (a REVERSED cell), matching the historical renderer. The caret is
+/// gated on `editing` — not mere focus — so plain up/down navigation
+/// doesn't paint a caret on a field the user isn't typing into.
+fn text_list_item_row(item: &str, row_focused: bool, editing: bool, cursor: usize) -> WidgetSpec {
     let mut text = String::from("  [");
     let cell_start = text.len();
     text.push_str(&pad(item, TEXTLIST_CELL_WIDTH));
@@ -471,7 +471,9 @@ fn text_list_item_row(item: &str, row_focused: bool, cursor: usize) -> WidgetSpe
     let remove_start = text.len();
     text.push_str("[x]");
     let remove_end = text.len();
-    if row_focused {
+    // Nav hint only when focused-but-not-editing; during an edit the
+    // caret carries the affordance instead.
+    if row_focused && !editing {
         text.push_str("  Del:remove  Enter:edit");
     }
     let mut entry = TextPropertyEntry::text(&text);
@@ -485,7 +487,7 @@ fn text_list_item_row(item: &str, row_focused: bool, cursor: usize) -> WidgetSpe
         properties: Default::default(),
         unit: OffsetUnit::Byte,
     });
-    if row_focused {
+    if row_focused && !editing {
         entry.inline_overlays.push(InlineOverlay {
             start: remove_end + 2,
             end: text.len(),
@@ -496,6 +498,8 @@ fn text_list_item_row(item: &str, row_focused: bool, cursor: usize) -> WidgetSpe
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
+    }
+    if row_focused && editing {
         // Block caret at the cursor's char position within the cell
         // (clamped to just past the item, which lands on the padding).
         let b = cell_start
@@ -1081,6 +1085,7 @@ mod tests {
             .with_items(vec!["cpp".into(), "cc".into()])
             .with_focus(FocusState::Focused);
         s.focused_item = Some(1);
+        s.editing = true; // in edit mode → caret visible
         s.cursor = 1; // between 'c' and 'c'
         let spec =
             setting_control_to_widget("/languages/cpp/extensions", &SettingControl::TextList(s));
@@ -1095,7 +1100,7 @@ mod tests {
             .inline_overlays
             .iter()
             .find(|o| o.style.reversed)
-            .expect("focused item row must carry a reversed caret overlay");
+            .expect("editing item row must carry a reversed caret overlay");
         assert_eq!(
             (caret.start, caret.end),
             (cell_start + 1, cell_start + 2),
@@ -1110,6 +1115,38 @@ mod tests {
         assert!(
             other.inline_overlays.iter().all(|o| !o.style.reversed),
             "only the focused row shows a caret: {other:?}"
+        );
+    }
+
+    #[test]
+    fn text_list_focused_but_not_editing_shows_no_caret() {
+        // Plain up/down navigation focuses a committed item but does NOT
+        // enter edit mode — the row must show the `Enter:edit` hint and
+        // no block caret. Regression: the caret was gated on focus, so a
+        // never-edited Extensions row painted a stray cursor.
+        use crate::view::controls::TextListState;
+        use std::collections::HashMap;
+        let mut s = TextListState::new("Extensions")
+            .with_items(vec!["cpp".into(), "cc".into()])
+            .with_focus(FocusState::Focused);
+        s.focused_item = Some(1);
+        s.editing = false; // navigation only
+        let spec =
+            setting_control_to_widget("/languages/cpp/extensions", &SettingControl::TextList(s));
+        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
+        let row = out
+            .entries
+            .iter()
+            .find(|e| e.text.contains("[cc"))
+            .expect("focused item row");
+        assert!(
+            row.inline_overlays.iter().all(|o| !o.style.reversed),
+            "a focused-but-not-editing row must not paint a caret: {row:?}"
+        );
+        assert!(
+            row.text.contains("Enter:edit"),
+            "nav-mode row shows the edit hint: {:?}",
+            row.text
         );
     }
 

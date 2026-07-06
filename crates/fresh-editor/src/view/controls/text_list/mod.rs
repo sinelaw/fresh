@@ -49,6 +49,13 @@ pub struct TextListState {
     /// look like it had "disappeared". Reset on commit / Esc / when
     /// focus leaves the trailing slot.
     pub pending_active: bool,
+    /// When focused on a *committed* item (`focused_item` is `Some`),
+    /// this is `true` while the user is actually editing that item's
+    /// text (after Enter), and `false` during plain up/down navigation.
+    /// The renderer shows the block caret only while editing — mirrors
+    /// `TextInputState::editing`. `pending_active` is the same signal
+    /// for the trailing add-new slot. Reset on commit / Esc / blur.
+    pub editing: bool,
 }
 
 impl TextListState {
@@ -63,6 +70,7 @@ impl TextListState {
             focus: FocusState::Normal,
             is_integer: false,
             pending_active: false,
+            editing: false,
         }
     }
 

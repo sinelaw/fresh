@@ -1282,6 +1282,9 @@ impl EntryDialogState {
                     // `[+] Add new` into the bracketed input box.
                     if state.focused_item.is_none() {
                         state.activate_pending();
+                    } else {
+                        // Editing a committed item: flip on the caret.
+                        state.editing = true;
                     }
                     self.editing_text = true;
                 }
@@ -1316,8 +1319,11 @@ impl EntryDialogState {
                 // On the trailing `[+] Add new` slot the pending draft has
                 // already been flushed to the list by the Enter/Tab handler;
                 // collapse the slot back to `[+] Add new`.
-                SettingControl::TextList(state) if state.focused_item.is_none() => {
-                    state.cancel_pending();
+                SettingControl::TextList(state) => {
+                    if state.focused_item.is_none() {
+                        state.cancel_pending();
+                    }
+                    state.editing = false;
                 }
                 // If the user opened a JSON field but didn't type anything (or
                 // deleted everything), put the `null` sentinel back so the

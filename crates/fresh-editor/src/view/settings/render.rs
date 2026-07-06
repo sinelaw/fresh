@@ -2282,11 +2282,6 @@ fn render_footer_vertical(
 
 /// Render the search header with query input
 fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    let search_style = Style::default().fg(theme.settings_selected_fg);
-    let cursor_style = Style::default()
-        .fg(theme.settings_selected_fg)
-        .add_modifier(Modifier::REVERSED);
-
     // Show result count and scroll position inline after cursor
     let result_count = state.search_results.len();
     let count_text = if state.search_query().is_empty() {
@@ -2320,30 +2315,69 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .fg(theme.menu_active_fg)
         .add_modifier(Modifier::BOLD);
 
-    // Render the query as a block cursor sitting on the character at
-    // the caret (or a trailing space when the cursor is at the end),
-    // so it reflects Left/Right/Home/End movement.
+    // The editable query renders through the plugin widget framework —
+    // the same `WidgetSpec::Text` + `render_spec` path every settings
+    // field now uses — instead of hand-rolled cursor spans. The widget
+    // owns the caret (a REVERSED block cell via `block_caret`) and the
+    // selection highlight, driven statelessly from the search input's
+    // `TextEdit` (value + byte cursor + live selection). The result
+    // count / scroll indicators are search chrome, painted after the
+    // field at its rendered width.
     let query = state.search_query();
-    let cursor = state.search_cursor().min(query.len());
-    let before = &query[..cursor];
-    let (under, after) = {
-        let rest = &query[cursor..];
-        match rest.chars().next() {
-            Some(c) => (c.to_string(), &rest[c.len_utf8()..]),
-            None => (" ".to_string(), ""),
-        }
+    let cursor = state.search_cursor().min(query.len()) as i32;
+    let (sel_start, sel_end) = state
+        .search_input
+        .editor
+        .selection_flat_range()
+        .map(|(a, b)| (a as i32, b as i32))
+        .unwrap_or((-1, -1));
+    let field_spec = fresh_core::api::WidgetSpec::Text {
+        value: query.to_string(),
+        cursor_byte: cursor,
+        focused: true,
+        label: String::new(),
+        placeholder: None,
+        rows: 1,
+        field_width: 0,
+        max_visible_chars: 0,
+        full_width: false,
+        completions: Vec::new(),
+        completions_visible_rows: 0,
+        block_caret: true,
+        sel_start,
+        sel_end,
+        key: None,
     };
+    let out = crate::widgets::render_spec_no_autofocus(
+        &field_spec,
+        &std::collections::HashMap::new(),
+        "",
+        area.width.max(1) as u32,
+    );
+    let field_width = out
+        .entries
+        .first()
+        .map(|e| crate::primitives::display_width::str_width(e.text.trim_end_matches('\n')))
+        .unwrap_or(0) as u16;
+    if let Some(entry) = out.entries.first() {
+        crate::app::render::paint_text_property_entry(
+            frame, entry, area.x, area.y, area.width, theme, None,
+        );
+    }
 
-    let spans = vec![
-        Span::styled("> ", search_style),
-        Span::styled(before, search_style),
-        Span::styled(under, cursor_style), // Cursor
-        Span::styled(after, search_style),
-        Span::styled(count_text, count_style),
-        Span::styled(scroll_indicator, indicator_style),
-    ];
-    let line = Line::from(spans);
-    frame.render_widget(Paragraph::new(line), area);
+    // Result-count + scroll-indicator suffix, right after the field.
+    let suffix_x = area.x.saturating_add(field_width);
+    if suffix_x < area.x + area.width && !(count_text.is_empty() && scroll_indicator.is_empty()) {
+        let suffix = Line::from(vec![
+            Span::styled(count_text, count_style),
+            Span::styled(scroll_indicator, indicator_style),
+        ]);
+        let suffix_w = (area.x + area.width).saturating_sub(suffix_x);
+        frame.render_widget(
+            Paragraph::new(suffix),
+            Rect::new(suffix_x, area.y, suffix_w, 1),
+        );
+    }
 }
 
 /// Render search hint when search is not active
