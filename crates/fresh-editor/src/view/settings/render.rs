@@ -669,10 +669,16 @@ fn render_categories(
 }
 
 /// Context for rendering a setting item (extracted to avoid borrow issues)
-struct RenderContext {
+struct RenderContext<'a> {
     selected_item: usize,
     settings_focused: bool,
     hover_hit: Option<SettingsHit>,
+    /// Persistent widget instance-state store (see
+    /// [`SettingsState::widget_states`]). Passed to the widget-rendered
+    /// controls as their `prev` instance-state so runtime-owned cursor /
+    /// selection / edit affordances persist across frames. A disjoint
+    /// borrow from `state.scroll_panel`, which `render` holds mutably.
+    widget_states: &'a std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
 }
 
 /// Render the settings panel for the current category
@@ -752,6 +758,7 @@ fn render_settings_panel(
         selected_item: state.selected_item,
         settings_focused: state.focus_panel() == FocusPanel::Settings,
         hover_hit: state.hover_hit,
+        widget_states: &state.widget_states,
     };
 
     // Area for items (below header)
@@ -1128,7 +1135,7 @@ fn render_setting_item_pure(
     item: &SettingItem,
     idx: usize,
     skip_top: u16,
-    ctx: &RenderContext,
+    ctx: &RenderContext<'_>,
     theme: &Theme,
     label_width: Option<u16>,
     pending_dirty: bool,
@@ -1251,6 +1258,7 @@ fn render_setting_item_pure(
                 label_width,
                 item.read_only,
                 item.is_null,
+                ctx.widget_states,
             );
 
             // (Inherited) badge / [Inherit] button, on the control's first row.
@@ -1282,8 +1290,9 @@ fn render_scalar_via_widget(
     control: &SettingControl,
     name: &str,
     theme: &Theme,
+    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
 ) -> Vec<crate::widgets::HitArea> {
-    render_control_via_widget(frame, area, control, name, theme, 0, "")
+    render_control_via_widget(frame, area, control, name, theme, 0, "", prev)
 }
 
 /// Like [`render_scalar_via_widget`] but for multi-row controls: paints
@@ -1303,14 +1312,11 @@ fn render_control_via_widget(
     theme: &Theme,
     skip_rows: u16,
     focus_key: &str,
+    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
 ) -> Vec<crate::widgets::HitArea> {
     let spec = crate::view::settings::widget_map::setting_control_to_widget(name, control);
-    let out = crate::widgets::render_spec_no_autofocus(
-        &spec,
-        &std::collections::HashMap::new(),
-        focus_key,
-        area.width.max(1) as u32,
-    );
+    let out =
+        crate::widgets::render_spec_no_autofocus(&spec, prev, focus_key, area.width.max(1) as u32);
     for (i, entry) in out.entries.iter().enumerate() {
         let row = i as u16;
         if row < skip_rows {
@@ -1389,6 +1395,11 @@ fn render_control(
     // Nullable-null fields previously rendered with dimmed brackets;
     // the widget-rendered path shows them like any other value for now.
     _is_null: bool,
+    // Persistent widget instance-state store used as the `prev` for the
+    // widget-rendered controls (runtime-owned cursor / selection / edit
+    // affordances). Empty until a control's input is routed through the
+    // runtime, in which case rendering matches the old per-control State.
+    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
 ) -> ControlLayoutInfo {
     match control {
         // Single-row controls: only render if not skipped.
@@ -1405,7 +1416,7 @@ fn render_control(
             if skip_rows > 0 {
                 return ControlLayoutInfo::Toggle(Rect::default());
             }
-            render_scalar_via_widget(frame, area, control, name, theme);
+            render_scalar_via_widget(frame, area, control, name, theme, prev);
             // Approximate hit geometry: the `[v]`/`[ ]` glyph is the
             // first three columns of the rendered `[v] label`.
             ControlLayoutInfo::Toggle(Rect::new(area.x, area.y, 3.min(area.width), 1))
@@ -1419,7 +1430,7 @@ fn render_control(
                     value: Rect::default(),
                 };
             }
-            let hits = render_scalar_via_widget(frame, area, control, name, theme);
+            let hits = render_scalar_via_widget(frame, area, control, name, theme, prev);
             let (decrement, increment) = number_step_areas(&hits, area);
             ControlLayoutInfo::Number {
                 decrement,
@@ -1436,7 +1447,7 @@ fn render_control(
                     scroll_offset: 0,
                 };
             }
-            render_scalar_via_widget(frame, area, control, name, theme);
+            render_scalar_via_widget(frame, area, control, name, theme, prev);
             ControlLayoutInfo::Dropdown {
                 button_area: Rect::new(area.x, area.y, area.width, 1),
                 option_areas: Vec::new(),
@@ -1476,7 +1487,7 @@ fn render_control(
                 // its name key) so it paints the focus highlight and
                 // publishes the caret the mapping carries.
                 let focus_key = if state.editing { name } else { "" };
-                render_control_via_widget(frame, area, control, name, theme, 0, focus_key);
+                render_control_via_widget(frame, area, control, name, theme, 0, focus_key, prev);
                 ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
             }
         }
@@ -1487,7 +1498,7 @@ fn render_control(
             // add row); editing still runs through the settings input
             // path. Per-row hit rects are derived from the on-screen row
             // positions so clicks still target the right item.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
             let mut rows = Vec::new();
             // Row 0 is the label header; items start at row 1.
             for (i, _) in state.items.iter().enumerate() {
@@ -1507,7 +1518,7 @@ fn render_control(
             // Available/Included picker); editing still runs through the
             // settings input path. Mouse hit geometry is approximate for
             // now (keyboard nav is the primary path).
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
             ControlLayoutInfo::DualList(Default::default())
         }
 
@@ -1515,7 +1526,7 @@ fn render_control(
             // View migrated: Col of `key: value` rows + add row. Editing
             // (add/remove/edit entries) still runs through the settings
             // input path; expanded/nested entries render collapsed here.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
             let row_rect = |logical: u16| -> Option<Rect> {
                 logical.checked_sub(skip_rows).and_then(|dst| {
                     (dst < area.height).then(|| Rect::new(area.x, area.y + dst, area.width, 1))
@@ -1540,7 +1551,7 @@ fn render_control(
         }
 
         SettingControl::ObjectArray(state) => {
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
             let entry_rows = state
                 .bindings
                 .iter()
@@ -1566,7 +1577,9 @@ fn render_control(
             } else {
                 ""
             };
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, focus_key);
+            render_control_via_widget(
+                frame, area, control, name, theme, skip_rows, focus_key, prev,
+            );
             ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
         }
 
@@ -1576,7 +1589,7 @@ fn render_control(
             }
             // Uneditable placeholder, rendered through the widget
             // framework like the other controls.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "");
+            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
             ControlLayoutInfo::Complex
         }
     }
@@ -3033,6 +3046,9 @@ fn render_entry_items(
             Some(label_col_width.saturating_sub(focus_indicator_width)),
             item.read_only,
             item.is_null,
+            // Entry-dialog controls will carry their own runtime store once
+            // that path is mounted; until then render statelessly (empty prev).
+            &std::collections::HashMap::new(),
         );
 
         // Per-field affordances on the control's first row at the right edge:

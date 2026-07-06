@@ -22,21 +22,23 @@
   modal/dock/anchored panels, and on-top popups. The Dropdown popup ships on
   `OverlayRow`. A small floating-panel *stack* for nested modals is the only
   net-new host piece, deferred until the entry-editor surfaces need it.
-- **Phase 3 (Settings → `WidgetSpec`) — DONE for the view.** The live Settings
-  dialog now renders **every** control through `widgets::render_spec`: Toggle,
-  Number, Dropdown, Text, TextList, DualList, Map, ObjectArray, the multiline
-  JSON editor, and the Complex placeholder. Nothing remains on the
-  `view/controls` `render_*` renderers in the settings path.
-  `view/settings/render.rs`'s `render_control` maps each `SettingControl` to a
-  `WidgetSpec` (`view/settings/widget_map.rs`) and paints it via
-  `paint_text_property_entry`; a `focus_key` marks an actively-editing control
-  focused so Text/JSON get a real caret. The control State stays the model
-  (settings input still drives it), so this is a view swap, not an input
-  rewrite. Verified interactively in tmux. Remaining: route settings *input*
-  through the widget runtime too (the widget view currently reads the control
-  State each frame), and migrate the nested entry-editing surfaces; JSON
-  validation coloring inside the editor is not yet reproduced on the widget
-  `Text`.
+- **Phase 3 (Settings → `WidgetSpec`) — view swap landed, but PROVEN
+  INSUFFICIENT; now building the mounted stateful panel.** The Settings dialog
+  renders **every** control through `widgets::render_spec` (Toggle, Number,
+  Dropdown, Text, TextList, DualList, Map, ObjectArray, the multiline JSON
+  editor, Complex). But that swap only replaced the *render* leg while Settings
+  kept its own input + hit-testing — and rendered **statelessly** (a fresh empty
+  instance-state map each frame). Render, hit-geometry, and input are
+  inseparable, so this split **regressed 25 settings e2e tests + 1 hang**
+  (toggle mouse-hit, number edit-mode, the language dropdown, selection
+  indicators, map/textlist "add new" buttons, per-field inherit buttons, cursor
+  visibility). The decided path forward (not a revert, not a per-regression
+  band-aid) is the **mounted stateful panel**: the widget runtime owns the
+  control's cursor / selection / edit / open state (a *persistent*
+  instance-state store, not `&HashMap::new()`), settings input routes through
+  `handle_widget_key` / `handle_widget_text_key`, and `WidgetMutation`s translate
+  back to config. See §5.3.1 for the concrete seams and increment order; the 25
+  failing tests are the acceptance gate.
 - **Phase 2 (shared control core) — STARTED.** `render_stepper` is shared by
   `Number` and `Dropdown`; the settings render now calls `render_spec` instead
   of the `view/controls` `render_*_aligned` for the migrated controls, so those
@@ -240,6 +242,57 @@ the widget runtime instead of `SettingsLayout`. The schema→control mapping
 Sequencing: do the flat settings page first; the modal **entry dialog** for
 Map/ObjectArray entries is a nested modal stack and depends on the compositor
 (§5.4).
+
+#### 5.3.1 Concrete execution plan for the mounted stateful panel
+
+The full "one `WidgetSpec` tree for the whole dialog" rewrite (above) would also
+regress the ~120 *passing* settings tests (categories sidebar, search, scroll,
+footer, per-field label alignment, entry-dialog modal stack) — so it is done
+**incrementally, per control**, keeping the settings chrome as-is and moving one
+control's interaction into the runtime at a time. The mapped seams:
+
+- **Persistent store.** `SettingsState::widget_states:
+  HashMap<String, WidgetInstanceState>` (added; keyed by field JSON pointer,
+  cleared in `show()`). This is the runtime-owned interaction model — TextEdit
+  cursor+selection, Number edit buffer, Dropdown-open, DualList cursors. It is
+  threaded read-only into render via `RenderContext<'a>.widget_states` (a borrow
+  disjoint from `state.scroll_panel`, which `render` holds mutably) and passed to
+  `render_control` → `render_control_via_widget` as the `prev` instance-state,
+  replacing the old `&HashMap::new()`.
+- **Data flow (the key inversion).** `render_setting_item_pure` is a *pure*
+  function (state → cells) with no mutable interaction state. Keep it pure: the
+  store is mutated only by **input**, and render only *reads* it as `prev`. So
+  input handlers own evolution, render reflects it — exactly the mounted-panel
+  contract, without making render `&mut`.
+- **Input routing.** For the focused control, `view/settings/input.rs` routes the
+  key through the runtime handlers (`App::handle_widget_key` /
+  `handle_widget_text_key` in `app/widget_runtime.rs`, which already implement
+  Dropdown popup open/cycle/commit, TextEdit selection+clipboard, List/Tree/Dual
+  navigation) against `state.widget_states`, then translates the resulting
+  `WidgetMutation` (`SetNumber`/`SetDropdown`/`SetValue`/`SetDualIncluded`/…) into
+  a `pending_changes` config write. These handlers are currently `App` methods
+  oriented around a plugin `PanelKey`+`buffer_id`; factor the pure core so
+  Settings can drive it without a plugin buffer.
+- **Hit-testing.** Derive click geometry from the reconciler's real `out.hits`
+  (byte-range + `widget_kind` + payload) instead of the approximate/`Default`
+  rects the stateless swap emits — this is what fixes the toggle-chip mismatch
+  and the map "add new" **hang**.
+- **Parity gap to close.** The widget `Number` needs an **edit mode** (Enter →
+  type-to-replace via `TextEdit` → Enter commit / Esc revert) to match
+  `NumberInputState`; the e2e suite asserts this directly
+  (`test_number_input_enter_editing_mode`, `…_escape_cancels_editing`,
+  `…_enter_selects_all_text`, `…_cursor_navigation`).
+
+**Increment order (each a compiling commit; branch stays red until the gate
+passes):** (1) persistent store + render threading [done — behavior-neutral, empty
+store]; (2) Toggle end-to-end through the runtime (real hits + `SetChecked`→config)
+— fixes the 4 toggle tests and proves the click path; (3) Number edit-mode + route
+Number input — fixes the 5 number tests; (4) Dropdown route (popup already exists)
+— fixes the 2 dropdown tests; (5) Text/JSON cursor+selection from the store — fixes
+cursor-visibility + selection-indicator; (6) Map/TextList/DualList add-remove +
+inherit buttons; (7) entry-dialog stack gets its own store. **Acceptance gate:** the
+25 currently-failing `settings` e2e tests go green *without* regressing the passing
+ones.
 
 ### 5.4 Phase 4 — Compositor / `Layer`: **reuse, don't build**
 

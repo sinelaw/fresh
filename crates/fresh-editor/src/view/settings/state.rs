@@ -203,6 +203,16 @@ pub struct SettingsState {
     /// Text edit is not in progress. See [`Self::start_editing`] /
     /// [`Self::revert_editing`].
     text_edit_snapshot: Option<TextEditSnapshot>,
+    /// Persistent widget instance-state store for the mounted-panel
+    /// migration. Keyed by control field name (JSON pointer). Each entry
+    /// carries the runtime-owned interaction state for that control —
+    /// TextEdit cursor + selection, Number edit buffer, Dropdown open
+    /// flag, DualList cursors. Input handlers evolve these entries by
+    /// routing keys through the widget runtime; render reads them as the
+    /// `prev` instance-state so cursor/selection/edit affordances persist
+    /// across frames. Empty until a control's input is routed through the
+    /// runtime (behavior is then identical to the old per-control State).
+    pub widget_states: std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
 }
 
 /// Pre-edit state of a plain `Text` setting, captured by `start_editing` and
@@ -354,6 +364,7 @@ impl SettingsState {
             categories_scroll: ScrollablePanel::new(),
             tree_cursor_section: None,
             text_edit_snapshot: None,
+            widget_states: std::collections::HashMap::new(),
         })
     }
 
@@ -380,6 +391,8 @@ impl SettingsState {
         self.reset_dialog_selection = 0;
         self.reset_dialog_hover = None;
         self.showing_help = false;
+        // Runtime-owned widget interaction state is per-session; start clean.
+        self.widget_states.clear();
     }
 
     /// Rebuild pages with current state
