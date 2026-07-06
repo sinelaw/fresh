@@ -169,7 +169,7 @@ padding if grouped, which we should verify in tests.
 content, return `(line_end_byte, clicked_col - content_width)` as byte + virtual column.
 Drag-selection inherits this. Double/triple-click should keep snapping to real text.
 
-### 4.6 Block selection (natural phase-2 beneficiary)
+### 4.6 Block selection
 
 With virtual columns in place, block selection can become true-rectangle:
 
@@ -212,29 +212,39 @@ With virtual columns in place, block selection can become true-rectangle:
 - **Search, go-to-definition, undo cursor restore:** anything that sets the cursor from
   a byte offset implicitly clears virtual column — fine, but should be uniform.
 
-## 6. Suggested phasing
+## 6. Implementation plan
 
-1. **Phase 0 — model + setting (1–2 days):** `virtual_column` on `Cursor`, config flag,
-   normalize/dedup/adjust_for_edit semantics, overflow-reporting variant of
-   `byte_offset_at_visual_column`. Pure plumbing, fully unit-testable.
-2. **Phase 1 — vertical movement + rendering + typing (core, ~1 week):** sticky column
-   no longer collapses on short lines; cursor renders past EOL; typing materializes
-   padding; Backspace/Delete/Enter semantics; scroll-into-view. This alone delivers the
-   headline feature.
-3. **Phase 2 — mouse + horizontal movement (2–3 days):** click/drag past EOL,
-   MoveRight into virtual space.
-4. **Phase 3 — block selection true-rectangles (3–5 days):** unclamped block columns,
-   rectangular copy/paste, block insert with per-line padding. Highest user value,
-   builds directly on phases 0–2.
-5. **Phase 4 — selections into virtual space for linear selections (optional):** VSCode
-   punted on parts of this too; can ship without it.
+The feature ships as **one effort**: a single branch delivering the complete behavior —
+movement, typing, mouse, rendering, and block selection all virtual-space aware, behind
+the setting. No intermediate releases with partial behavior; a half-implemented virtual
+space (e.g. movement without airtight typing/deletion/scroll semantics) is exactly the
+inconsistency trap that killed the VSCode PR.
 
-Rough total: **2–3 weeks** of focused work for phases 0–3, dominated by rendering
-(§4.4) and by making the edit-path coverage exhaustive (§4.3). The failure mode to avoid
-is the one that killed the VSCode PR: shipping movement without airtight
-typing/deletion/scroll behavior, then bleeding credibility on inconsistency bugs.
-Fresh's centralized event-based editing and existing `sticky_column` machinery make the
-scope meaningfully smaller than VSCode's.
+Within the branch, the work splits naturally into reviewable commits, each keeping the
+build green and tests passing:
+
+1. **Model + setting plumbing:** `virtual_column` on `Cursor`, the config
+   flag/enum threaded through `BufferSettings`, normalize/dedup/`adjust_for_edit`
+   semantics, and the overflow-reporting variant of `byte_offset_at_visual_column`.
+   Pure plumbing, fully unit-testable, no behavior change yet.
+2. **Movement:** vertical up/down and page movement stop collapsing the goal column on
+   short lines; MoveRight/MoveLeft traverse virtual space; every other movement
+   clears the virtual column.
+3. **Rendering:** cursor drawn past EOL, current-line/selection painting over the gap,
+   scroll-into-view honoring the virtual column.
+4. **Editing:** padding materialization on every insert entry point (typing, tab,
+   paste, block insert), Backspace/Delete/Enter semantics in virtual space, undo
+   grouping tests.
+5. **Mouse:** click/drag past EOL producing byte + virtual column.
+6. **Block selection:** unclamped block columns, rectangular copy/paste, block insert
+   with per-line padding.
+7. **Docs + settings UI + integration tests** covering the edge cases in §5.
+
+Commits 2–6 each gate their behavior on the setting, so `master` remains shippable at
+every point even though the feature only "counts" when all of them are in. Rough total:
+**2–3 weeks** of focused work, dominated by rendering (§4.4) and by making the edit-path
+coverage exhaustive (§4.3). Fresh's centralized event-based editing and existing
+`sticky_column` machinery make the scope meaningfully smaller than VSCode's.
 
 ## 7. Open questions
 
@@ -243,5 +253,5 @@ scope meaningfully smaller than VSCode's.
 2. Should virtual column survive session save/restore? (Lean yes — `sticky_column`
    already does.)
 3. Behavior under soft line wrap (cap at wrap column vs. disable)?
-4. Does Phase 3 change block-copy output for users with the feature *off*? (It must
-   not — padding only when enabled.)
+4. Does the block-selection work change block-copy output for users with the feature
+   *off*? (It must not — padding only when enabled.)
