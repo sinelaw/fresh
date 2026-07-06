@@ -257,6 +257,120 @@ impl Editor {
         }
     }
 
+    /// Native-frontend entry point, robust against hit-list drift: resolve
+    /// the clicked hit by IDENTITY — `widget_key` + `event_type`, preferring
+    /// exact `payload` equality — instead of by raw index. A raw index goes
+    /// stale the moment the plugin re-renders between the pushed frame and
+    /// the click; identity survives reordering by construction. `hit_index`
+    /// (the index the frontend rendered from) stays as the last-resort
+    /// tiebreaker for hits that carry no key.
+    ///
+    /// The recorded hit list is additionally a projection of the TUI's
+    /// *visible* rows — `collect_list` windows its hits to the cell
+    /// viewport's `[scroll, scroll+visible)` — while a native frontend
+    /// renders the whole list in its own scroll container. A click on a row
+    /// outside that window therefore matches NO recorded hit; for
+    /// `list`/`select` clicks the hit is then synthesized from the panel's
+    /// own spec (`synthesize_list_hit` rebuilds exactly the `HitArea` the
+    /// renderer would have emitted for that row — the item key comes from
+    /// the spec, never from frontend-supplied strings alone).
+    pub fn deliver_widget_hit_semantic(
+        &mut self,
+        plugin: &str,
+        panel_id: u64,
+        widget_key: &str,
+        event_type: &str,
+        payload: &serde_json::Value,
+        hit_index: Option<usize>,
+    ) {
+        let panel_key = crate::widgets::PanelKey::new(plugin, panel_id);
+        let hit = {
+            let Some(panel) = self.widget_registry.get(&panel_key) else {
+                return;
+            };
+            let identity = |strict: bool| {
+                panel
+                    .hits
+                    .iter()
+                    .find(|h| {
+                        h.event_type == event_type
+                            && h.widget_key == widget_key
+                            && (!strict || h.payload == *payload)
+                    })
+                    .cloned()
+            };
+            // Exact match first; then key+event only (payload drift, e.g. a
+            // toggle whose `checked` flipped — the CURRENT hit is the right
+            // one to deliver, exactly as a TUI click would use it). The
+            // loose tier requires a non-empty key so keyless hits can't
+            // cross-match. Then the raw-index tiebreaker, then the
+            // off-window list synthesis.
+            identity(true)
+                .or_else(|| {
+                    if widget_key.is_empty() {
+                        None
+                    } else {
+                        identity(false)
+                    }
+                })
+                .or_else(|| hit_index.and_then(|i| panel.hits.get(i).cloned()))
+                .or_else(|| Self::synthesize_list_hit(panel, event_type, payload))
+        };
+        if let Some(hit) = hit {
+            self.deliver_widget_hit(&panel_key, &hit);
+        }
+    }
+
+    /// Rebuild the `HitArea` that `collect_list` would have emitted for a
+    /// list row that is outside the TUI's scroll window (so no hit was
+    /// recorded), from the panel's own spec: the payload's `list_key` must
+    /// name a `List` in the spec and `index` must be in bounds; the item key
+    /// is read from the spec's `item_keys`. Returns `None` for anything
+    /// that isn't a valid in-bounds list `select`.
+    fn synthesize_list_hit(
+        panel: &crate::widgets::WidgetPanelState,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Option<crate::widgets::HitArea> {
+        if event_type != "select" {
+            return None;
+        }
+        let list_key = payload.get("list_key")?.as_str()?;
+        let index = payload.get("index")?.as_i64()?;
+        let spec = crate::widgets::find_widget_by_key(&panel.spec, list_key)?;
+        let fresh_core::api::WidgetSpec::List {
+            items,
+            item_specs,
+            item_keys,
+            ..
+        } = spec
+        else {
+            return None;
+        };
+        let total = if item_specs.is_empty() {
+            items.len()
+        } else {
+            item_specs.len()
+        };
+        if index < 0 || index as usize >= total {
+            return None;
+        }
+        let item_key = item_keys.get(index as usize).cloned().unwrap_or_default();
+        Some(crate::widgets::HitArea {
+            widget_key: item_key.clone(),
+            widget_kind: "list",
+            buffer_row: 0,
+            byte_start: 0,
+            byte_end: 0,
+            payload: serde_json::json!({
+                "index": index,
+                "key": item_key,
+                "list_key": list_key,
+            }),
+            event_type: "select",
+        })
+    }
+
     /// Deliver a `widget_event` hook to the plugin owning `panel_key` —
     /// and to that plugin only. Panel ids are plugin-local, so the event
     /// carries the bare id; no other plugin ever sees it.

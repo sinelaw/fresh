@@ -61,7 +61,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -695,8 +697,23 @@ fn apply_widget(editor: &mut Editor, v: &Value) {
         Some("panel") => {
             let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
             let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
-            if let Some(idx) = v.get("hitIndex").and_then(|i| i.as_u64()) {
-                editor.deliver_widget_hit_by_index(plugin, panel_id, idx as usize);
+            let hit_index = v
+                .get("hitIndex")
+                .and_then(|i| i.as_u64())
+                .map(|i| i as usize);
+            // Preferred shape: the hit's IDENTITY (widgetKey + eventType +
+            // payload) with the raw index as tiebreaker — robust against the
+            // hits list being regenerated (or windowed to the TUI viewport)
+            // between the pushed frame and the click. The bare-index shape
+            // stays for compat (curl, older clients).
+            if let Some(event_type) = v.get("eventType").and_then(|e| e.as_str()) {
+                let widget_key = v.get("widgetKey").and_then(|k| k.as_str()).unwrap_or("");
+                let payload = v.get("payload").cloned().unwrap_or_else(|| json!({}));
+                editor.deliver_widget_hit_semantic(
+                    plugin, panel_id, widget_key, event_type, &payload, hit_index,
+                );
+            } else if let Some(idx) = hit_index {
+                editor.deliver_widget_hit_by_index(plugin, panel_id, idx);
             }
         }
         _ => {}
@@ -1501,6 +1518,13 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     if shift && !matches!(code, KeyCode::Char(_)) {
         mods |= KeyModifiers::SHIFT;
     }
+    // Wave-animation dismissal parity with the TUI event loops (main.rs and
+    // the daemon server loop): ANY key press dismisses the interactive wave
+    // and is CONSUMED — it only stops the show, it doesn't also act on the
+    // editor. `KeyEvent::new` sets kind=Press, which the dismissal requires.
+    if editor.maybe_dismiss_wave_animation(&Event::Key(KeyEvent::new(code, mods))) {
+        return;
+    }
     if let Err(e) = editor.handle_key(code, mods) {
         eprintln!("handle_key error: {e}");
     }
@@ -1542,6 +1566,18 @@ fn apply_mouse(editor: &mut Editor, v: &Value) {
     }
     if v.get("shift").and_then(|b| b.as_bool()).unwrap_or(false) {
         mods |= KeyModifiers::SHIFT;
+    }
+    // Wave-animation dismissal parity with the TUI event loops: ANY mouse
+    // activity (move, click, wheel) dismisses the interactive wave and is
+    // CONSUMED. One representative event is enough — the whole batch below
+    // carries the same kind/cell.
+    if editor.maybe_dismiss_wave_animation(&Event::Mouse(MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: mods,
+    })) {
+        return;
     }
     // Explicit multi-click count from the browser (`event.detail`). The editor
     // detects double/triple clicks itself (`detect_multi_click`) by comparing

@@ -291,8 +291,21 @@
   .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;font-size:12px;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
-  /* floating / dock widget panel surfaces (native plugin UI) */
-  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;font-size:12px;padding:4px 6px}
+  /* floating / dock widget panel surfaces (native plugin UI). The surface is
+     a column flex box and the LIST inside it is the scroll container (flex:1;
+     min-height:0; overflow-y:auto) — TUI parity: wheeling over the panel
+     scrolls only the session/workspace list while the header chrome (title,
+     buttons, filter) stays put. `overflow:auto` on the surface itself is only
+     the fallback for list-less panels taller than their rect; when a list is
+     present the flex chain makes the content fit exactly, so the surface
+     never scrolls. */
+  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;font-size:12px;padding:4px 6px;
+    display:flex;flex-direction:column}
+  .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
+  .widget-surface .w-list{flex:1 1 auto;min-height:0;overflow-y:auto}
+  /* rows/cards keep their natural height — the LIST scrolls, its items never
+     squash to fit the flex-constrained track */
+  .widget-surface .w-list>*{flex:0 0 auto}
   .widget-surface.w-dock{border-right:1px solid var(--border)}
   .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
   .widget-surface .w-col{gap:3px}
@@ -1126,14 +1139,34 @@ function popupEl(p){
 function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
 
 // Route a widget interaction. `ctx.kind` is "toolbar" (prompt toolbar, routed by
-// key) or "panel" (floating/dock, routed by matching a recorded hit → its index).
+// key) or "panel" (floating/dock, routed by the hit's IDENTITY — widgetKey +
+// eventType + payload — with the recorded hit's index as a legacy tiebreaker).
+// Raw indices alone are fragile: the editor regenerates the hits list on every
+// panel re-render (a click can race a frame), and list hits are WINDOWED to
+// the TUI's visible rows — this natively-scrolled frontend renders the whole
+// list, so a row below the TUI fold has no recorded hit at all. Identity
+// delivery survives both (the bridge resolves by equality, and synthesizes
+// off-window list selects from the panel's own spec).
 function routeWidget(ctx, node, listIndex){
   if(ctx.kind==="toolbar"){ if(node.key) sendWidget({surface:"toolbar",key:node.key}); return; }
-  // panel: find the matching hit and send its index
-  let hit=null;
-  if(listIndex!=null){ hit=(ctx.hits||[]).find(h=>h.widgetKind==="list" && h.payload && h.payload.index===listIndex); }
-  else if(node.key){ hit=(ctx.hits||[]).find(h=>h.widgetKey===node.key); }
-  if(hit) sendWidget({surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId,hitIndex:hit.index});
+  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
+  if(listIndex!=null){
+    // List row/card click: match the recorded hit by row index AND list key
+    // (a panel can hold several lists), fall back to the spec's own itemKeys
+    // for rows outside the TUI scroll window.
+    const hit=(ctx.hits||[]).find(h=>h.widgetKind==="list" && h.payload && h.payload.index===listIndex
+      && (!node.key || h.payload.list_key===node.key));
+    const itemKey=(node.itemKeys&&node.itemKeys[listIndex]!=null)?node.itemKeys[listIndex]:(hit?hit.payload.key:"");
+    const msg={...base,widgetKey:itemKey||"",eventType:"select",
+      payload:{index:listIndex,key:itemKey||"",list_key:node.key||null}};
+    if(hit) msg.hitIndex=hit.index;
+    sendWidget(msg);
+    return;
+  }
+  if(node.key){
+    const hit=(ctx.hits||[]).find(h=>h.widgetKey===node.key);
+    if(hit) sendWidget({...base,widgetKey:node.key,eventType:hit.eventType,payload:hit.payload,hitIndex:hit.index});
+  }
 }
 
 function widgetEl(spec, ctx){
@@ -1939,7 +1972,26 @@ const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.tabbar,.stat
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
-document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
+// Non-drag motion over the buffer is forwarded as `moved` events (TUI parity:
+// the terminal receives motion, which dismisses the wave animation/screensaver
+// and drives hover). De-duped to at most one send per cell crossing via its
+// own lastMoveCell; chrome keeps its element-scoped hoverMove path instead
+// (onChrome bails here). The server pushes only on scene change, so idle
+// motion over an unchanged buffer produces no frames.
+let lastMoveCell=null;
+document.addEventListener("mousemove",e=>{
+  const c=cellAt(e);
+  if(dragging){
+    if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return;
+    lastCell=c;
+    sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey});
+    return;
+  }
+  if(onChrome(e)) return;
+  if(lastMoveCell&&c.col===lastMoveCell.col&&c.row===lastMoveCell.row) return;
+  lastMoveCell=c;
+  sendMouse({kind:"moved",col:c.col,row:c.row});
+});
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());
 // Desktop: any click that isn't on chrome returns focus to the hidden text
