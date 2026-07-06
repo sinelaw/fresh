@@ -111,7 +111,7 @@ fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
     h.wait_until(|h| {
         let scr = h.screen_to_string();
         scr.contains("Disconnected —")
-            && scr.contains("This workspace is unavailable")
+            && scr.contains("could not be loaded")
             && !scr.contains("[No Name]")
     })
     .unwrap();

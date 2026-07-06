@@ -1510,13 +1510,14 @@ impl Editor {
         let active_id = self.active_window;
         let window = self.windows.get(&active_id).expect("active window exists");
         let label = window.label.clone();
-        let detail =
-            crate::app::plugin_dispatch::remote_backend_info(&window.authority_spec, false)
-                .map(|r| {
-                    let glyph = if r.kind == "kubernetes" { "⎈" } else { "⇅" };
-                    format!("{glyph} {label} — {}", r.detail)
-                })
-                .unwrap_or_else(|| format!("⇅ {label}"));
+        let detail = window
+            .authority_spec
+            .remote_backend_info(false)
+            .map(|r| {
+                let glyph = if r.kind == "kubernetes" { "⎈" } else { "⇅" };
+                format!("{glyph} {label} — {}", r.detail)
+            })
+            .unwrap_or_else(|| format!("⇅ {label}"));
         let connecting = self
             .remote_attach_inflight
             .contains(&(u64::MAX - active_id.0));
@@ -1527,8 +1528,19 @@ impl Editor {
         } else {
             "Not connected".to_string()
         };
-        let hint = "This workspace is unavailable until its connection is established.";
-        let retry_hint = "Select it again in the dock (or use the status-bar indicator) to retry.";
+        // Soft, state-appropriate hints: while connecting the workspace may
+        // open at any moment; only a recorded failure suggests retrying.
+        let (hint, retry_hint) = if connecting || window.remote_reconnect_error.is_none() {
+            (
+                "The workspace will open as soon as the connection is established.",
+                "",
+            )
+        } else {
+            (
+                "The workspace could not be loaded without its connection.",
+                "Select it again in the dock (or use the status-bar indicator) to reconnect.",
+            )
+        };
 
         let (bg, fg, dim) = {
             let theme = self.theme.read().unwrap();

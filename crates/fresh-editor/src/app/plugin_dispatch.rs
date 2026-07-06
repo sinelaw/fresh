@@ -53,37 +53,6 @@ fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
     path
 }
 
-/// Reduce a session's persisted backend spec to the [`RemoteBackendInfo`]
-/// facet the dock renders (`None` for local sessions, and for plugin-managed
-/// backends whose facet the owning plugin supplies itself). The `kind`
-/// strings match the plugin API's `SessionBackend` values.
-pub(crate) fn remote_backend_info(
-    spec: &crate::services::authority::SessionAuthoritySpec,
-    connected: bool,
-) -> Option<fresh_core::api::RemoteBackendInfo> {
-    use crate::services::authority::{RemoteTransportSpec, SessionAuthoritySpec};
-    let SessionAuthoritySpec::RemoteAgent(agent) = spec else {
-        return None;
-    };
-    let (kind, detail) = match &agent.transport {
-        RemoteTransportSpec::Ssh { user, host, .. } => (
-            "ssh",
-            match user.as_deref().filter(|u| !u.is_empty()) {
-                Some(user) => format!("{user}@{host}"),
-                None => host.clone(),
-            },
-        ),
-        RemoteTransportSpec::KubectlExec { namespace, pod, .. } => {
-            ("kubernetes", format!("{namespace}/{pod}"))
-        }
-    };
-    Some(fresh_core::api::RemoteBackendInfo {
-        kind: kind.to_string(),
-        detail,
-        connected,
-    })
-}
-
 #[cfg(windows)]
 fn canonicalize_deepest_existing(path: &std::path::Path) -> std::path::PathBuf {
     if let Ok(c) = path.canonicalize() {
@@ -309,7 +278,7 @@ impl Editor {
                     shared_worktree: d.shared_worktree,
                     // Never connected (or its window would exist) — the dock
                     // badges it as its real backend, disconnected.
-                    remote: remote_backend_info(&d.authority_spec, false),
+                    remote: d.authority_spec.remote_backend_info(false),
                 }
             });
         let mut session_infos: Vec<fresh_core::api::WindowInfo> = self
@@ -341,10 +310,9 @@ impl Editor {
                     shared_worktree,
                     // A parked keepalive is what distinguishes a live remote
                     // window from a dormant one's disconnected shell.
-                    remote: remote_backend_info(
-                        &s.authority_spec,
-                        self.session_keepalives.contains_key(&s.id),
-                    ),
+                    remote: s
+                        .authority_spec
+                        .remote_backend_info(self.session_keepalives.contains_key(&s.id)),
                 }
             })
             .collect();

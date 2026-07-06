@@ -828,6 +828,37 @@ impl SessionAuthoritySpec {
     pub fn is_remote(&self) -> bool {
         !matches!(self, Self::Local)
     }
+
+    /// Reduce this backend spec to the [`fresh_core::api::RemoteBackendInfo`]
+    /// facet the dock and the dormant-shell page render (`None` for local
+    /// sessions, and for plugin-managed backends whose facet the owning
+    /// plugin supplies itself). The `kind` strings match the plugin API's
+    /// `SessionBackend` values.
+    pub fn remote_backend_info(
+        &self,
+        connected: bool,
+    ) -> Option<fresh_core::api::RemoteBackendInfo> {
+        let Self::RemoteAgent(agent) = self else {
+            return None;
+        };
+        let (kind, detail) = match &agent.transport {
+            RemoteTransportSpec::Ssh { user, host, .. } => (
+                "ssh",
+                match user.as_deref().filter(|u| !u.is_empty()) {
+                    Some(user) => format!("{user}@{host}"),
+                    None => host.clone(),
+                },
+            ),
+            RemoteTransportSpec::KubectlExec { namespace, pod, .. } => {
+                ("kubernetes", format!("{namespace}/{pod}"))
+            }
+        };
+        Some(fresh_core::api::RemoteBackendInfo {
+            kind: kind.to_string(),
+            detail,
+            connected,
+        })
+    }
 }
 
 /// Plugin payload for `editor.attachRemoteAgent(...)`. Names a transport

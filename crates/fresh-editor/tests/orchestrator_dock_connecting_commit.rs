@@ -95,7 +95,8 @@ fn dive_commits_switch_while_connect_is_still_pending() {
     h.assert_screen_not_contains("remote_notes.txt");
     h.wait_until(|h| {
         let scr = h.screen_to_string();
-        scr.contains("This workspace is unavailable") && !scr.contains("[No Name]")
+        scr.contains("will open as soon as the connection is established")
+            && !scr.contains("[No Name]")
     })
     .unwrap();
     // Nothing is editable before the connection exists: typing must be
