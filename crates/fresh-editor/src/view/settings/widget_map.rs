@@ -229,7 +229,14 @@ pub fn setting_control_to_widget_aligned(
             if let Some(title) = display_title {
                 children.push(header_row(&pad("Name", key_width), &title));
             }
-            children.push(list_of(field_key, rows, selected));
+            // An EMPTY List still pads one blank row (its virtual
+            // viewport is min 1 tall), which `control_height` doesn't
+            // count — the extra row pushes the add row below the
+            // control's clipped band and it never renders. Skip the
+            // List entirely when there are no entries.
+            if !rows.is_empty() {
+                children.push(list_of(field_key, rows, selected));
+            }
             if !s.no_add {
                 let add_focused = s.focus == FocusState::Focused && s.focused_entry.is_none();
                 children.push(add_new_row(add_focused, "  [Enter to add]"));
@@ -281,14 +288,14 @@ pub fn setting_control_to_widget_aligned(
                 .collect();
             let selected = list_selection(s.focus, s.focused_index);
             let add_focused = focused_ctl && s.focused_index.is_none();
-            WidgetSpec::Col {
-                children: vec![
-                    raw_row(format!("{}:", s.label)),
-                    list_of(field_key, rows, selected),
-                    add_new_row(add_focused, ""),
-                ],
-                key,
+            let mut children = vec![raw_row(format!("{}:", s.label))];
+            // Skip the empty List — its 1-row minimum viewport would
+            // push the add row out of the control band (see Map arm).
+            if !rows.is_empty() {
+                children.push(list_of(field_key, rows, selected));
             }
+            children.push(add_new_row(add_focused, ""));
+            WidgetSpec::Col { children, key }
         }
         // Multiline JSON editor: label, a `│`-bordered line box showing
         // the editor's text with selection highlight + block caret, an

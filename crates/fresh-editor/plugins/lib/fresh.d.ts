@@ -1048,6 +1048,21 @@ type WidgetSpec = {
 	checked: boolean;
 	label: string;
 	focused: boolean;
+	/**
+	* Neither checked nor unchecked: renders a neutral `[-]` chip
+	* for an unset value that inherits from a lower config layer.
+	*/
+	indeterminate?: boolean;
+	/**
+	* Form layout `label: [v]` (chip after the label; only the
+	* chip is clickable). Default chip-first `[v] label`.
+	*/
+	labelFirst?: boolean;
+	/**
+	* Pad the label to this display width in `labelFirst` layout
+	* so a column of controls aligns. `0` = no padding.
+	*/
+	labelWidth?: number;
 	key?: string | null;
 } | {
 	"kind": "number";
@@ -1082,7 +1097,7 @@ type WidgetSpec = {
 	*/
 	percent: boolean;
 	/**
-	* Optional label rendered before the stepper. Empty =
+	* Optional label rendered before the value cell. Empty =
 	* omitted.
 	*/
 	label?: string;
@@ -1091,6 +1106,21 @@ type WidgetSpec = {
 	* the host owns focus (same as `Toggle`).
 	*/
 	focused: boolean;
+	/**
+	* Pad the label to this display width so a column of
+	* controls aligns their value cells. `0` = no padding.
+	*/
+	labelWidth?: number;
+	/**
+	* In-place edit buffer: when set, the cell renders this text
+	* (with caret / selection) instead of the formatted value.
+	*/
+	editText?: string | null;
+	/** Byte offset of the edit caret in `editText` (`-1` none). */
+	editCursor?: number;
+	/** Selection byte range in `editText` (`-1` = none). */
+	editSelStart?: number;
+	editSelEnd?: number;
 	key?: string | null;
 } | {
 	"kind": "dropdown";
@@ -1105,7 +1135,7 @@ type WidgetSpec = {
 	*/
 	selectedIndex: number;
 	/**
-	* Optional label rendered before the cycler. Empty =
+	* Optional label rendered before the value button. Empty =
 	* omitted.
 	*/
 	label?: string;
@@ -1114,6 +1144,21 @@ type WidgetSpec = {
 	* the host owns focus.
 	*/
 	focused: boolean;
+	/**
+	* Pad the label to this display width so a column of
+	* controls aligns their value buttons. `0` = no padding.
+	*/
+	labelWidth?: number;
+	/**
+	* Whether the option list is expanded inline below the value
+	* button (`▲` arrow + one row per visible option).
+	*/
+	open?: boolean;
+	/**
+	* First visible option row when `open` and the list is
+	* taller than its window.
+	*/
+	scrollOffset?: number;
 	key?: string | null;
 } | {
 	"kind": "dualList";
@@ -1341,6 +1386,12 @@ type WidgetSpec = {
 	* more to scroll. `0` (default) falls back to `5`.
 	*/
 	completionsVisibleRows: number;
+	/**
+	* Paint the caret as a REVERSED block cell inside the row (in
+	* addition to the hardware-cursor position) — used by modal
+	* form surfaces where a hardware cursor isn't visible.
+	*/
+	blockCaret?: boolean;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";

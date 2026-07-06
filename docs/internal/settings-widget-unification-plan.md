@@ -13,42 +13,58 @@
 
 ## 0. Status (progress against this plan)
 
-- **Phase 1 (rich kinds) — DONE.** `Number`, `Dropdown` (with an `OverlayRow`
-  option popup), and `DualList` shipped as `WidgetSpec` kinds, each with
-  host-owned instance state, keyboard + mouse dispatch, a `Set*` mutation, TS
-  builders, and unit tests.
+- **Phase 1 (rich kinds) — DONE, upgraded to settings parity.** `Number`,
+  `Dropdown`, and `DualList` shipped as `WidgetSpec` kinds with host-owned
+  instance state, keyboard + mouse dispatch, `Set*` mutations, TS builders,
+  and unit tests. The kinds then grew the affordances the Settings dialog
+  actually needs (and plugins get for free): `Toggle` has `label_first`
+  (form layout `label: [v]`, chip-only hit), `label_width` alignment, and
+  `indeterminate` (`[-]` for inherited values, issue #2345); `Number`
+  renders a `label: [ 42 ]` value cell with an in-place **edit mode**
+  (`edit_text`/`edit_cursor`/`edit_sel_*`: live buffer, selection bg,
+  REVERSED block caret); `Dropdown` renders `label: [value ▼]` with an
+  **inline option list** when `open` (windowed to 8 rows, `scroll_offset`);
+  `Text` has `block_caret` (REVERSED caret cell for modal surfaces);
+  `OverlayOptions` gained `reversed`.
 - **Phase 4 (compositor) — reframed to REUSE.** No new subsystem: `overlay.rs` +
-  `FloatingWidgetState` + `OverlayRow` already provide the layer stack,
-  modal/dock/anchored panels, and on-top popups. The Dropdown popup ships on
-  `OverlayRow`. A small floating-panel *stack* for nested modals is the only
+  `FloatingWidgetState` already provide the layer stack, modal/dock/anchored
+  panels, and on-top popups. The Dropdown's option list renders inline (it
+  grows the control, like the historical Settings control) rather than as an
+  overlay. A small floating-panel *stack* for nested modals is the only
   net-new host piece, deferred until the entry-editor surfaces need it.
-- **Phase 3 (Settings → `WidgetSpec`) — view swap landed, but PROVEN
-  INSUFFICIENT; now building the mounted stateful panel.** The Settings dialog
-  renders **every** control through `widgets::render_spec` (Toggle, Number,
-  Dropdown, Text, TextList, DualList, Map, ObjectArray, the multiline JSON
-  editor, Complex). But that swap only replaced the *render* leg while Settings
-  kept its own input + hit-testing — and rendered **statelessly** (a fresh empty
-  instance-state map each frame). Render, hit-geometry, and input are
-  inseparable, so this split **regressed 25 settings e2e tests + 1 hang**
-  (toggle mouse-hit, number edit-mode, the language dropdown, selection
-  indicators, map/textlist "add new" buttons, per-field inherit buttons, cursor
-  visibility). The decided path forward (not a revert, not a per-regression
-  band-aid) is the **mounted stateful panel**: the widget runtime owns the
-  control's cursor / selection / edit / open state (a *persistent*
-  instance-state store, not `&HashMap::new()`), settings input routes through
-  `handle_widget_key` / `handle_widget_text_key`, and `WidgetMutation`s translate
-  back to config. See §5.3.1 for the concrete seams and increment order; the 25
-  failing tests are the acceptance gate.
-- **Phase 2 (shared control core) — STARTED.** `render_stepper` is shared by
-  `Number` and `Dropdown`; the settings render now calls `render_spec` instead
-  of the `view/controls` `render_*_aligned` for the migrated controls, so those
-  ratatui renderers (`render_toggle_aligned`, `render_number_input_aligned`,
+- **Phase 3 (Settings → `WidgetSpec`) — DONE; settings e2e suite GREEN.**
+  Every Settings control renders through `widgets::render_spec` (Toggle,
+  Number, Dropdown, Text, TextList, DualList, Map, ObjectArray, the multiline
+  JSON editor, Complex), with click geometry derived from the reconciler's
+  real hit areas (`hit_rect`: toggle chip, number value cell, dropdown
+  button + option rows). The first swap replaced only the render leg with
+  approximate visuals/geometry and regressed 25 settings e2e tests + 1 hang;
+  the fix was **faithful projection**: the mapping (`widget_map.rs`) projects
+  the full control state — edit buffers, carets, selections, dropdown-open,
+  focused-row hints, `[x]` delete buttons, the three-state TextList add row,
+  the bordered JSON box — into the spec each frame, and the upgraded widget
+  kinds render them. Root causes worth remembering: the ObjectArray rows
+  looked up `display_field` with its `/` prefix (every LSP server row showed
+  `(no action)`); an **empty `List` still pads one blank row** (its viewport
+  is min 1 tall), which `control_height` doesn't count — that off-by-one
+  pushed `[+] Add new` out of the control band and made the mouse-driven
+  add test hang; and `collect_dropdown` gated the spec's `open` on widget
+  focus, which a stateless surface never sets. All 25 + the hang are fixed:
+  the `settings` e2e filter passes 141/141 (4 ignored), `orchestrator` 78/78,
+  `widget` 7/7, lib 2967/2967. The settings input path still drives the
+  control-state model (`SettingControl`); routing input through
+  `handle_widget_key` and retiring the per-control `*State` structs is the
+  remaining (behavior-preserving) step — see §5.3.1.
+- **Phase 2 (shared control core) — STARTED.** The settings render calls
+  `render_spec`; the `view/controls` ratatui renderers
+  (`render_toggle_aligned`, `render_number_input_aligned`,
   `render_dropdown_aligned`, `render_text_list_partial`, `render_map_partial`,
-  `render_keybinding_list_partial`, `render_dual_list_partial`) are now dropped
-  from the settings path. The broader `view/controls` ↔ `widgets/render`
-  de-duplication is still open.
-- **Phase 5 (docs) — in progress.** `plugins.md` §7.1 lists the new kinds; this
-  doc tracks status.
+  `render_keybinding_list_partial`, `render_dual_list_partial`,
+  `render_json_control`) are out of the settings path. The `*State` structs
+  remain as the model; the broader `view/controls` ↔ `widgets/render`
+  de-duplication rides the input-routing step.
+- **Phase 5 (docs) — in progress.** `plugins.md` §7.1 lists the new kinds;
+  `widgets.ts` + `fresh.d.ts` carry the new options; this doc tracks status.
 
 ---
 
@@ -299,16 +315,19 @@ control's interaction into the runtime at a time. The mapped seams:
   (`test_number_input_enter_editing_mode`, `…_escape_cancels_editing`,
   `…_enter_selects_all_text`, `…_cursor_navigation`).
 
-**Increment order (each a compiling commit; branch stays red until the gate
-passes):** (1) persistent store + render threading [done — behavior-neutral, empty
+**Increment order (each a compiling commit):** (1) persistent store + render threading [done — behavior-neutral, empty
 store]; (2) Toggle end-to-end through the runtime (real hits + `SetChecked`→config)
 — fixes the 4 toggle tests and proves the click path; (3) Number edit-mode + route
 Number input — fixes the 5 number tests; (4) Dropdown route (popup already exists)
 — fixes the 2 dropdown tests; (5) Text/JSON cursor+selection from the store — fixes
 cursor-visibility + selection-indicator; (6) Map/TextList/DualList add-remove +
-inherit buttons; (7) entry-dialog stack gets its own store. **Acceptance gate:** the
-25 currently-failing `settings` e2e tests go green *without* regressing the passing
-ones.
+inherit buttons; (7) entry-dialog stack gets its own store. **Acceptance gate — PASSED:** the 25 failing
+`settings` e2e tests are green without regressing the passing ones (141/141,
+4 ignored); the render/hit legs are done via faithful state projection + real
+hit geometry, and steps (2)–(5) collapsed into the widget-kind parity work
+described in §0. The remaining increments are input routing through
+`handle_widget_key` (behavior-preserving; retires the `*State` structs) and
+the entry-dialog stack's own store (steps 6–7).
 
 ### 5.4 Phase 4 — Compositor / `Layer`: **reuse, don't build**
 

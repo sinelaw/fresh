@@ -1601,19 +1601,17 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
-    /// Numeric stepper, rendered as `label ◂ value ▸` where `◂`/`▸`
-    /// are clickable decrement / increment glyphs. Adjusted by the
-    /// mouse (click a glyph) or the keyboard (Left/Down decrement,
-    /// Right/Up increment) in `step` units, clamped to
-    /// `[min, max]` when set.
+    /// Numeric form field, rendered as `label: [ 42 ]`. Adjusted by
+    /// the keyboard (Left/Down decrement, Right/Up increment) in
+    /// `step` units, clamped to `[min, max]` when set; a click on the
+    /// value cell (or typing) begins in-place editing when the host
+    /// surface supports it (`edit_text` renders the live buffer with
+    /// caret + selection).
     ///
-    /// v1 is a stepper only — there is no in-place text entry of the
-    /// value (that arrives when the widget grows a focused edit mode
-    /// mirroring `Text`). Like `Text`/`List`, the *value* is
-    /// host-owned instance state after first render: the spec's
-    /// `value` is initial-only. Every adjustment fires
-    /// `widget_event { event_type: "change", payload: { value } }`;
-    /// plugins can also push a new value via
+    /// Like `Text`/`List`, the *value* is host-owned instance state
+    /// after first render: the spec's `value` is initial-only. Every
+    /// adjustment fires `widget_event { event_type: "change",
+    /// payload: { value } }`; plugins can also push a new value via
     /// `WidgetMutation::SetNumber`.
     Number {
         /// Initial value. Read at first render only; instance state
@@ -1670,18 +1668,17 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
-    /// Single-select dropdown, rendered inline as `label ◂ option ▸`.
-    /// The selected option cycles through `options` — click `◂`/`▸`
-    /// or press Left/Up (previous) / Right/Down (next), wrapping at
-    /// the ends.
+    /// Single-select dropdown, rendered as `label: [option ▼]`.
+    /// Enter/Space (or a click on the button) opens the option list
+    /// inline below the button; Up/Down move the live selection and
+    /// Enter/Space/Esc close it (a click on an option row also
+    /// selects + closes).
     ///
-    /// v1 is an inline cycler with no popup list (the popup form
-    /// arrives with the widget compositor). Like `List`, the
-    /// *selected index* is host-owned instance state after first
-    /// render; the spec's `selected_index` is a seed only. Every
-    /// change fires `widget_event { event_type: "change", payload:
-    /// { index, value } }`; plugins can also set it via
-    /// `WidgetMutation::SetDropdown`.
+    /// Like `List`, the *selected index* is host-owned instance
+    /// state after first render; the spec's `selected_index` is a
+    /// seed only. Every change fires `widget_event { event_type:
+    /// "change", payload: { index, value } }`; plugins can also set
+    /// it via `WidgetMutation::SetDropdown`.
     Dropdown {
         /// The selectable options, in display order.
         options: Vec<String>,

@@ -1287,26 +1287,30 @@ fn collect_dropdown(
     // selected index into the current option set and persist. A panel
     // that renders statelessly (no prior instance state — e.g. the
     // Settings dialog re-emitting its model each frame) falls back to
-    // the spec's `open`/`scroll_offset` so the host model drives the
-    // expansion directly.
-    let (cur, open) = match key {
+    // the spec's `open`/`scroll_offset`: the host model drives the
+    // expansion directly, so the spec's `open` is honored as-is (no
+    // focus gate — the surface's own focus model already decided).
+    let (cur, state_open) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
                 open,
-            }) => (*selected_index, *open),
-            _ => (spec_selected, spec_open),
+            }) => (*selected_index, Some(*open)),
+            _ => (spec_selected, None),
         },
-        _ => (spec_selected, spec_open),
+        _ => (spec_selected, None),
     };
     let cur = if options.is_empty() {
         0
     } else {
         cur.clamp(0, options.len() as i32 - 1)
     };
-    // The popup only stays open while the widget is focused — a blur
-    // (Tab away, click elsewhere) closes it.
-    let open = open && is_focused && !options.is_empty();
+    // Instance-state open only persists while the widget is focused —
+    // a blur (Tab away, click elsewhere) closes it.
+    let open = match state_open {
+        Some(o) => o && is_focused,
+        None => spec_open,
+    } && !options.is_empty();
     if let Some(k) = key {
         if !k.is_empty() {
             next_state.insert(
