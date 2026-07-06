@@ -298,6 +298,33 @@ const m2 = await page.evaluate(() => window.fresh.metrics);
 check('Ctrl+0 resets zoom and restores the measured base metrics', m2.zoom === 1 && m2.cw === m0.cw && m2.ch === m0.ch, JSON.stringify(m2));
 await page.waitForTimeout(400);   // let the reset resize round-trip settle
 
+console.log('\n[TUI-parity placement: dropdown flush under the menu bar, palette at the bottom]');
+// The dropdown panel is placed on the pipeline's full bordered box, whose top
+// edge is the row directly under the menu bar — no border-row gap.
+await page.locator('.menubar .menu', { hasText: 'File' }).first().click();
+await page.waitForTimeout(250);
+const mbBox = await page.locator('.menubar').boundingBox();
+const ddBox = await page.locator('.dropdown').first().boundingBox();
+check('dropdown panel sits flush under the menu bar (no row gap)',
+  !!ddBox && Math.abs(ddBox.y - (mbBox.y + mbBox.height)) <= 2, `gap=${ddBox && (ddBox.y - (mbBox.y + mbBox.height))}px`);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+// The palette is a bottom sheet on the editor's geometry: card bottom at the
+// cell grid's bottom edge, input bar UNDER the list (the terminal's order).
+await page.locator('body').click();
+await page.keyboard.press('Control+p');
+await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(200);
+const palBox = await page.locator('.palette').boundingBox();
+const gridBottom = await page.evaluate(() => window.fresh.scene.h * window.fresh.metrics.ch);
+check('palette hugs the bottom of the cell grid (TUI placement)',
+  !!palBox && Math.abs((palBox.y + palBox.height) - gridBottom) <= 2, `bottom=${palBox && (palBox.y + palBox.height)} grid=${gridBottom}`);
+check('palette input bar sits BELOW the suggestion list (terminal order)',
+  await page.evaluate(() => {
+    const bar = document.querySelector('.palette .pinput'), list = document.querySelector('.palette .plist');
+    return !!bar && !!list && bar.getBoundingClientRect().top >= list.getBoundingClientRect().bottom - 1;
+  }));
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');

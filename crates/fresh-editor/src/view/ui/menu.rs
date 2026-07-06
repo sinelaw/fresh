@@ -29,6 +29,14 @@ pub struct MenuLayout {
     pub submenu_areas: Vec<(usize, usize, Rect)>,
     /// The full menu bar area
     pub bar_area: Rect,
+    /// The open dropdown's full bordered box (item areas sit inside it, one
+    /// row/column in from every edge). Only populated when a menu is open.
+    /// Recorded so non-cell frontends can draw the same panel footprint the
+    /// TUI's border occupies — items alone would leave a one-row gap under
+    /// the menu bar.
+    pub dropdown_box: Option<Rect>,
+    /// Each expanded submenu level's full bordered box: (depth, area).
+    pub submenu_boxes: Vec<(usize, Rect)>,
 }
 
 /// Hit test result for menu interactions
@@ -52,6 +60,8 @@ impl MenuLayout {
             item_areas: Vec::new(),
             submenu_areas: Vec::new(),
             bar_area,
+            dropdown_box: None,
+            submenu_boxes: Vec::new(),
         }
     }
 
@@ -822,6 +832,16 @@ impl MenuRenderer {
             return dropdown_area;
         }
         let adjusted_x = dropdown_area.x;
+
+        // Record the bordered box itself (items are tracked per row below):
+        // hit-testing only needs the item rows, but frontends drawing the
+        // dropdown as a native panel need the full footprint the border
+        // occupies in the TUI.
+        if depth == 0 {
+            layout.dropdown_box = Some(dropdown_area);
+        } else {
+            layout.submenu_boxes.push((depth, dropdown_area));
+        }
 
         // Seed the dropdown box (border + fill) with its surface keys; each
         // item row overwrites its own cells below.

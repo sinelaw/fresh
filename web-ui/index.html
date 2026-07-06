@@ -939,21 +939,25 @@ function menuDropdownEls(reg){
 }
 
 // Solid rounded panels behind the top-level dropdown and each submenu level,
-// sized from the union of that level's item rects. (The pipeline no longer draws
-// the menu into the cells behind us — suppress_chrome_cells — so the panel needs
-// only back the items, with no cover-up margin.)
+// placed on the pipeline's full bordered box rects (`dropdown.rect` /
+// `submenuBoxes`) — the same footprint the TUI border occupies, so the panel
+// sits flush under the menu bar instead of leaving the border row as a gap.
+// Item-union fallback kept for scenes predating the recorded boxes.
 function dropdownPanels(reg){
   const panels=[];
-  const box=(rects)=>{
+  const union=(rects)=>{
     if(!rects.length) return null;
     const x0=Math.min(...rects.map(r=>r.x)), y0=Math.min(...rects.map(r=>r.y));
     const x1=Math.max(...rects.map(r=>r.x+r.w)), y1=Math.max(...rects.map(r=>r.y+r.h));
-    const p=div("dropdown"); place(p,{x:x0,y:y0,w:x1-x0,h:y1-y0}); return p;
+    return {x:x0,y:y0,w:x1-x0,h:y1-y0};
   };
-  const top=box(reg.dropdown.items.map(i=>i.rect)); if(top) panels.push(top);
+  const panel=(rect)=>{ if(!rect) return; const p=div("dropdown"); place(p,rect); panels.push(p); };
+  panel(reg.dropdown.rect || union(reg.dropdown.items.map(i=>i.rect)));
+  const boxByDepth={};
+  for(const b of (reg.dropdown.submenuBoxes||[])) boxByDepth[b.depth]=b.rect;
   const byDepth={};
   for(const su of (reg.dropdown.submenus||[])) (byDepth[su.depth]=byDepth[su.depth]||[]).push(su.rect);
-  for(const d of Object.keys(byDepth)){ const p=box(byDepth[d]); if(p) panels.push(p); }
+  for(const d of Object.keys(byDepth)) panel(boxByDepth[d] || union(byDepth[d]));
   return panels;
 }
 
@@ -1020,14 +1024,16 @@ function paletteEl(p){
     el.style.top=Math.max(4, px(outer.y,CH)-inputH)+"px";
     el.style.width=w+"px";
   } else {
-    // The plain command palette is a centered floating card (VSCode-style). Its
-    // pixel position is purely cosmetic — row clicks route through the editor's
-    // list cell rect and keys go through handle_key, both independent of where
-    // the card sits — so we place it where it reads best.
-    const w=Math.min(640, Math.round(window.innerWidth*0.62));
-    el.style.width=w+"px";
-    el.style.left=Math.round((window.innerWidth-w)/2)+"px";
-    el.style.top=Math.round(window.innerHeight*0.12)+"px";
+    // TUI parity: the plain palette is a bottom sheet on the editor's own
+    // geometry — the suggestion list sits where the pipeline's suggestions
+    // box is, with the input bar UNDER it on the prompt row, hugging the
+    // bottom of the cell grid exactly like the terminal. Row clicks still
+    // route through the editor's list cell rect; only the pixels are ours.
+    el.style.left=px(outer.x,CW)+"px";
+    el.style.width=px(outer.w,CW)+"px";
+    el.style.top="auto";
+    const gridBottom=px((scene&&scene.h)||(outer.y+outer.h+1),CH);
+    el.style.bottom=Math.max(0, window.innerHeight-gridBottom)+"px";
   }
 
   if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
@@ -1042,11 +1048,12 @@ function paletteEl(p){
   const cnt=document.createElement("span"); cnt.className="count";
   cnt.textContent=(p.total!=null)?((p.selected!=null?p.selected+1:0)+" / "+p.total):"";
   bar.appendChild(cnt);
-  el.appendChild(bar);
 
   const listBox=paletteListEl(p, list);
   if(hasPreview){
-    // body: results (left, list-rect width) | preview cells (right, framed)
+    // Overlay layout keeps the TUI's single-box order: header (input) on top,
+    // then the results | preview body.
+    el.appendChild(bar);
     const body=div("pbody");
     listBox.style.flex="0 0 "+px(list.w,CW)+"px";
     const h=px(p.previewRect.h,CH)+"px"; listBox.style.maxHeight=h;
@@ -1055,7 +1062,11 @@ function paletteEl(p){
     body.appendChild(listBox); body.appendChild(pv);
     el.appendChild(body);
   } else {
+    // Bottom sheet: list above, input UNDER it — the terminal's prompt order.
     el.appendChild(listBox);
+    bar.style.borderBottom="none";
+    bar.style.borderTop="1px solid var(--hairline)";
+    el.appendChild(bar);
   }
   return el;
 }

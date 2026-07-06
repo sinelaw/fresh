@@ -82,9 +82,23 @@ pub struct MenuEntry {
 /// hit-tests against.
 #[derive(Debug, Clone, Serialize)]
 pub struct DropdownView {
+    /// The dropdown's full bordered box from the pipeline's `MenuLayout` —
+    /// one row/column larger than the item union on every side, flush under
+    /// the menu bar (falls back to the item union if the layout predates the
+    /// recorded box).
     pub rect: Option<RectView>,
     pub items: Vec<ItemArea>,
     pub submenus: Vec<SubmenuArea>,
+    /// Full bordered box per expanded submenu depth, same footprint the TUI
+    /// border occupies.
+    #[serde(rename = "submenuBoxes")]
+    pub submenu_boxes: Vec<SubmenuBoxArea>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SubmenuBoxArea {
+    pub depth: usize,
+    pub rect: RectView,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,7 +218,10 @@ impl Editor {
             }
             let rects: Vec<Rect> = ml.item_areas.iter().map(|(_, r)| *r).collect();
             Some(DropdownView {
-                rect: union_rect(&rects).map(RectView::from),
+                rect: ml
+                    .dropdown_box
+                    .map(RectView::from)
+                    .or_else(|| union_rect(&rects).map(RectView::from)),
                 items: ml
                     .item_areas
                     .iter()
@@ -219,6 +236,14 @@ impl Editor {
                     .map(|(depth, index, r)| SubmenuArea {
                         depth: *depth,
                         index: *index,
+                        rect: RectView::from(*r),
+                    })
+                    .collect(),
+                submenu_boxes: ml
+                    .submenu_boxes
+                    .iter()
+                    .map(|(depth, r)| SubmenuBoxArea {
+                        depth: *depth,
                         rect: RectView::from(*r),
                     })
                     .collect(),
