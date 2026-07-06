@@ -59,6 +59,9 @@
   /* decorative backing panel sits BEHIND the rows and never eats clicks */
   .dropdown{position:absolute;z-index:70;pointer-events:none;background:#2b2b2b;
     border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  /* Submenu panels sit edge-to-edge with their parent; offset the drop shadow
+     to the right so it doesn't darken the parent panel across the seam. */
+  .dropdown.submenu{box-shadow:8px 14px 40px rgba(0,0,0,.45)}
   .mitem,.msep,.mlabel{position:absolute;z-index:81}
   .mitem{display:flex;align-items:center;gap:18px;padding:0 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .mitem.hi{background:var(--menuhi);color:#fff}
@@ -98,7 +101,9 @@
   .palette .ppreview{background:var(--bg);overflow:hidden}
   .palette .ppreview svg.cells{width:100%;height:100%}
   .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
+  .palette .pinput .pmsg{color:var(--muted);white-space:pre;flex:0 0 auto}
   .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+  .palette.input-only .pinput .q{flex:0 1 auto}
   .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
   .palette .pinput .status{color:var(--muted);font-size:11px}
   .palette .pinput .count{color:var(--muted);font-size:11px}
@@ -833,7 +838,7 @@ const REGION_FILL={
   // paletteEl (a results|preview body), matching the TUI's single box.
   palette(c,reg){ if(reg.palette) c.appendChild(paletteEl(reg.palette)); },
   // native plugin widget panels (floating / dock)
-  widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) c.appendChild(widgetSurfaceEl(s)); },
+  widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) for(const el of widgetSurfaceEls(s)) c.appendChild(el); },
   contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
   auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },
   keybindingEditor(c,reg){ if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) c.appendChild(el); },
@@ -964,13 +969,35 @@ function dropdownPanels(reg){
     const x1=Math.max(...rects.map(r=>r.x+r.w)), y1=Math.max(...rects.map(r=>r.y+r.h));
     return {x:x0,y:y0,w:x1-x0,h:y1-y0};
   };
-  const panel=(rect)=>{ if(!rect) return; const p=div("dropdown"); place(p,rect); panels.push(p); };
-  panel(reg.dropdown.rect || union(reg.dropdown.items.map(i=>i.rect)));
+  // Collect the backing boxes in depth order: top-level (depth 0), then each
+  // expanded submenu level.
+  const boxes=[];
+  const top=reg.dropdown.rect || union(reg.dropdown.items.map(i=>i.rect));
+  if(top) boxes.push({depth:0, rect:{...top}});
   const boxByDepth={};
   for(const b of (reg.dropdown.submenuBoxes||[])) boxByDepth[b.depth]=b.rect;
   const byDepth={};
   for(const su of (reg.dropdown.submenus||[])) (byDepth[su.depth]=byDepth[su.depth]||[]).push(su.rect);
-  for(const d of Object.keys(byDepth)) panel(boxByDepth[d] || union(byDepth[d]));
+  for(const d of Object.keys(byDepth).map(Number).sort((a,b)=>a-b)){
+    const rect=boxByDepth[d] || union(byDepth[d]);
+    if(rect) boxes.push({depth:d, rect:{...rect}});
+  }
+  // The TUI places each submenu one column INTO its parent so their border
+  // glyphs share a column (an invisible seam in cells). Web panels are solid
+  // rounded, shadowed boxes, so that 1-column overlap reads as two rectangles
+  // colliding. Nudge each submenu box's LEFT edge to start flush at its parent's
+  // right edge (drop the shared column) so the boxes sit edge-to-edge. Item hit
+  // rects (.mitem) are placed separately from these decorative boxes and are
+  // left exactly as the editor reports them.
+  let prevRight=null;
+  for(const b of boxes){
+    if(b.depth>=1 && prevRight!=null && b.rect.x<prevRight){
+      const shift=prevRight-b.rect.x;
+      b.rect.x=prevRight; b.rect.w=Math.max(0, b.rect.w-shift);
+    }
+    prevRight=b.rect.x + b.rect.w;
+    const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect); panels.push(p);
+  }
   return panels;
 }
 
@@ -1017,8 +1044,37 @@ function paletteListEl(p, list){
   return listBox;
 }
 
+// Input-only prompt (OpenFile / SaveFileAs): just the bottom prompt-row input
+// bar. The file browser body itself lives in the pane cells, so we draw NO
+// list — only the path box, full width, hugging the bottom of the cell grid
+// exactly where the TUI's prompt row replaces the status bar.
+function paletteInputOnlyEl(p){
+  const el=div("palette input-only");
+  el.style.left="0px";
+  el.style.width=px((scene&&scene.w)||0,CW)+"px";
+  el.style.top="auto";
+  const gridBottom=px((scene&&scene.h)||0,CH);
+  el.style.bottom=Math.max(0, window.innerHeight-gridBottom)+"px";
+  const bar=div("pinput");
+  bar.style.borderBottom="none";
+  bar.style.borderTop="1px solid var(--hairline)";
+  if(p.message){ const m=document.createElement("span"); m.className="pmsg"; m.textContent=p.message; bar.appendChild(m); }
+  const q=document.createElement("span"); q.className="q";
+  q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
+  bar.appendChild(q);
+  if(p.status){ const st=document.createElement("span"); st.className="status"; st.textContent=p.status; bar.appendChild(st); }
+  el.appendChild(bar);
+  return el;
+}
+
 function paletteEl(p){
   const list = p.listRect || p.outerRect;
+  // Input-only prompts (OpenFile / SaveFileAs) have NO native suggestion list —
+  // their file browser is drawn into the pane cells already. The editor still
+  // projects the prompt so its INPUT LINE can be surfaced; render JUST an input
+  // bar on the bottom prompt row (where the TUI draws it in place of the status
+  // bar), full grid width, and no (empty) suggestion list.
+  if(!list) return paletteInputOnlyEl(p);
   // When the overlay has a preview pane, the card spans BOTH columns and lays
   // out exactly like the TUI's single box: a full-width header (title/toolbar/
   // input) on top, then a body split into results | preview below. Otherwise
@@ -1497,14 +1553,23 @@ function contextMenuEl(cm){
 }
 
 // A floating / dock plugin widget panel, rendered natively at its cell rect.
-function widgetSurfaceEl(s){
+// Returns [scrim?, panel]: a `floatingModal` is a blocking dialog, so it gets a
+// dimming `.modal-scrim` behind it (same pattern as the trust / settings /
+// keybinding modals) that swallows mousedown so clicks can't reach the dock or
+// buffer underneath. A `dock` is a persistent side panel and gets NO scrim.
+function widgetSurfaceEls(s){
+  const out=[];
+  if(s.kind==="floatingModal"){
+    const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
+  }
   const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
   const ctx={ kind:"panel", plugin:s.plugin, panelId:s.panelId, hits:s.hits, instances:s.instances, focusKey:s.focusKey };
   el.appendChild(widgetEl(s.spec, ctx));
   // A left dock's rightmost column is an editor resize border (dock_resizing);
   // give it an explicit grip since the .widget-surface is in onChrome.
   if(s.kind==="dock") el.appendChild(borderDragHandle(s.rect.x + s.rect.w - 1, s.rect.y, s.rect.h));
-  return el;
+  out.push(el);
+  return out;
 }
 
 // ---- native workspace-trust dialog --------------------------------------

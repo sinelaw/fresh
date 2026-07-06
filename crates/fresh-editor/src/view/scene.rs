@@ -434,7 +434,21 @@ impl Editor {
         let sugg_area = chrome.suggestions_area;
         let prompt_results = chrome.prompt_results_area;
         let p = self.active_window().prompt.as_ref()?;
-        if p.suggestions.is_empty() && !p.overlay {
+        // A picker list (non-empty suggestions) or a floating overlay always
+        // projects. But a plain non-overlay prompt whose body is drawn into the
+        // pane cells rather than into `suggestions` — the file browser
+        // (`OpenFile`/`SaveFileAs`, whose `file_browser_layout` lives in the
+        // window and is rendered to cells) — still needs its INPUT LINE surfaced
+        // to non-cell frontends: the TUI draws that line on the bottom prompt row
+        // in place of the status bar, so without it the web has no path box to
+        // type into. Such prompts have no native suggestion list; the frontend
+        // renders just the input bar (null `list_rect`/`outer_rect` below).
+        use crate::view::prompt::PromptType;
+        let has_cell_browser = matches!(
+            p.prompt_type,
+            PromptType::OpenFile | PromptType::OpenFileWithEncoding { .. } | PromptType::SaveFileAs
+        );
+        if p.suggestions.is_empty() && !p.overlay && !has_cell_browser {
             return None;
         }
         let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((

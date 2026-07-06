@@ -423,6 +423,73 @@ await page.waitForTimeout(800);
 const mf1 = await page.evaluate(() => window.fresh.frames);
 check('idle mousemove over an unchanged buffer pushes (almost) no frames', mf1 - mf0 <= 3, `frames ${mf0}->${mf1}`);
 
+console.log('\n[Open File prompt: input line surfaced at the bottom (cell browser stays in the pane)]');
+// Action::Open starts an OpenFile prompt whose file browser is drawn into the
+// PANE cells; the prompt's input line must still project so the web has a path
+// box to type into (the TUI draws it on the bottom prompt row).
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+await page.request.post(URL + '/action', { data: { action: 'open' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+await page.keyboard.type('src/');
+await page.waitForFunction(() => (window.fresh.scene.regions.palette || {}).query === 'src/', { timeout: 5000 }).catch(() => {});
+const op = (await scene(page)).regions.palette;
+check('Open File projects a palette (scene.regions.palette non-null)', !!op && op.promptType === 'openfile', JSON.stringify(op && { q: op.query, t: op.promptType }));
+check('Open File input bar shows the typed path', !!op && op.query === 'src/', op && op.query);
+check('Open File has NO native suggestion list (browser is in the pane cells)', !!op && op.listRect == null && op.outerRect == null, JSON.stringify(op && { l: op.listRect, o: op.outerRect }));
+check('Open File renders a native input-only bar', (await page.locator('.palette.input-only .pinput').count()) >= 1);
+check('Open File does NOT render a suggestion list', (await page.locator('.palette .plist').count()) === 0);
+const opBox = await page.locator('.palette').boundingBox();
+const opGridBottom = await page.evaluate(() => window.fresh.scene.h * window.fresh.metrics.ch);
+check('Open File input bar hugs the bottom of the cell grid (TUI prompt row)', !!opBox && Math.abs((opBox.y + opBox.height) - opGridBottom) <= 3, `bottom=${opBox && (opBox.y + opBox.height)} grid=${opGridBottom}`);
+await page.screenshot({ path: `${SHOTS}/33-openfile-prompt.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+check('Escape closed the Open File prompt', !(await scene(page)).regions.palette);
+// Regression: the normal command palette (Ctrl+P) still renders its list.
+await page.locator('body').click();
+await page.keyboard.press('Control+p');
+await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+check('command palette (Ctrl+P) still renders its suggestion list (no regression)', (await page.locator('.palette .plist .prow').count()) >= 1);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
+console.log('\n[New Workspace dialog is modal: a scrim dims + blocks the dock behind it]');
+if (!((await scene(page)).regions.widgets || []).some(w => w.kind === 'dock')) {
+  await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+  await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'dock'), { timeout: 8000 }).catch(() => {});
+}
+await page.waitForTimeout(200);
+check('dock alone (no modal) has zero modal-scrims', (await page.locator('.modal-scrim').count()) === 0);
+await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New' }).first().click();
+await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(200);
+check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
+check('exactly one modal-scrim behind the floatingModal', (await page.locator('.modal-scrim').count()) === 1);
+const dockSel = async () => { const d = ((await scene(page)).regions.widgets || []).find(w => w.kind === 'dock'); return d && d.instances && d.instances.sessions ? d.instances.sessions.selectedIndex : null; };
+const sel0 = await dockSel();
+const cardBox = await page.locator('.widget-surface.w-dock .w-list-card').first().boundingBox();
+if (cardBox) await page.mouse.click(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+await page.waitForTimeout(300);
+const sel1 = await dockSel();
+check('a click over the dock is eaten by the scrim (dock selection unchanged, modal still open)',
+  sel1 === sel0 && ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'), `sel ${sel0}->${sel1}`);
+await page.screenshot({ path: `${SHOTS}/34-new-workspace-modal.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(250);
+check('Escape closed the New Workspace dialog', !((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
+check('scrim removed once the modal closed', (await page.locator('.modal-scrim').count()) === 0);
+
+console.log('\n[menu submenu panel sits edge-to-edge with its parent (no overlap seam)]');
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+await page.locator('.menubar .menu', { hasText: 'View' }).first().click();
+await page.waitForTimeout(300);
+await page.locator('.mitem', { hasText: 'Keybinding Style' }).first().hover();
+await page.waitForTimeout(400);
+const ddPanels = await page.locator('.dropdown').evaluateAll(els => els.map(e => { const r = e.getBoundingClientRect(); return { x: r.x, right: r.right, submenu: e.classList.contains('submenu') }; }));
+const parentPanel = ddPanels.find(p => !p.submenu), subPanel = ddPanels.find(p => p.submenu);
+check('View ▸ Keybinding Style expanded a submenu backing panel', !!subPanel && !!parentPanel, JSON.stringify(ddPanels));
+check('submenu panel left edge >= parent panel right edge (no overlap)',
+  !!subPanel && !!parentPanel && subPanel.x >= parentPanel.right - 0.5, JSON.stringify({ subLeft: subPanel && subPanel.x, parentRight: parentPanel && parentPanel.right }));
+await page.screenshot({ path: `${SHOTS}/35-submenu-edge.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
