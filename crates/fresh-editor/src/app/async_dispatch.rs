@@ -1256,9 +1256,11 @@ impl Editor {
                 // background failure must not steal focus.
                 w.remote_reconnect_error = Some(reason.clone());
                 // For a dormant session's shell, ALSO surface the reason on
-                // the status line, as the window-less path always did.
+                // the status line, as the window-less path always did —
+                // on the SHELL's own status line (messages are per-window;
+                // the user may be looking at another workspace by now).
                 if self.dormant_remote.contains_key(&window_id) {
-                    self.set_status_message(format!("Connection failed: {reason}"));
+                    w.set_status_message(format!("Connection failed: {reason}"));
                 }
             } else if self.dormant_remote.contains_key(&window_id) {
                 // A dive-triggered connect of a dormant session failed. The

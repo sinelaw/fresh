@@ -940,9 +940,13 @@ impl Editor {
                 // (`promote_dormant_remote`); a failure records the reason on
                 // it (Disconnected + Retry).
                 if self.dormant_remote.contains_key(&id) {
-                    self.bring_dormant_remote_online(id);
                     self.ensure_dormant_shell(id);
                     self.set_active_window(id);
+                    // Start (or join) the backend connect AFTER the switch:
+                    // status messages are per-window, so its "Connecting
+                    // to …" lands on the now-active shell rather than on
+                    // the workspace we just left.
+                    self.bring_dormant_remote_online(id);
                 } else {
                     self.set_active_window(id);
                 }
@@ -951,9 +955,11 @@ impl Editor {
                 // See `SetActiveWindow`: the dive commits into the session's
                 // shell while its backend connects.
                 if self.dormant_remote.contains_key(&id) {
-                    self.bring_dormant_remote_online(id);
                     self.ensure_dormant_shell(id);
                     self.set_active_window_animated(id, &from_edge);
+                    // See `SetActiveWindow`: connect starts after the
+                    // switch so its status lands on the shell.
+                    self.bring_dormant_remote_online(id);
                 } else {
                     self.set_active_window_animated(id, &from_edge);
                 }
