@@ -1532,17 +1532,24 @@ fn render_control(
                     (dst < area.height).then(|| Rect::new(area.x, area.y + dst, area.width, 1))
                 })
             };
-            // Row 0 is the label header; entries start at row 1.
+            // Row 0 is the `label:` header. When the control has a
+            // `display_field`, `widget_map` inserts a `Name │ <title>` column
+            // header at row 1 (see the Map arm there), so entries start at
+            // row 2; without it they start at row 1. The hit geometry must
+            // track that offset or clicks land one row above every entry and
+            // the "add new" row — the mouse-driven add test then spins
+            // forever hunting a button it can never hit.
+            let first_entry_row = if state.display_field.is_some() { 2 } else { 1 };
             let entry_rows = state
                 .entries
                 .iter()
                 .enumerate()
-                .filter_map(|(i, _)| row_rect(1 + i as u16).map(|r| (i, r)))
+                .filter_map(|(i, _)| row_rect(first_entry_row + i as u16).map(|r| (i, r)))
                 .collect();
             let add_row_area = if state.no_add {
                 None
             } else {
-                row_rect(1 + state.entries.len() as u16)
+                row_rect(first_entry_row + state.entries.len() as u16)
             };
             ControlLayoutInfo::Map {
                 entry_rows,
