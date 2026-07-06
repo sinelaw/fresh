@@ -1709,6 +1709,13 @@ impl Editor {
             // Active window's last failed-reconnect error (drives a core
             // FailedAttach indicator for a dormant remote workspace).
             let remote_reconnect_error = self.active_window().remote_reconnect_error.clone();
+            // The active window is a remote session whose window-derived
+            // connect (dive / retry; see `start_remote_reconnect`'s request-id
+            // scheme) is still in flight — its shell shows `Connecting`.
+            let remote_connecting = self
+                .remote_attach_inflight
+                .contains(&(u64::MAX - self.active_window_id().0))
+                && self.active_window().authority_spec.is_remote();
 
             // Get session name for display (only in session mode)
             let session_name = self.session_name().map(|s| s.to_string());
@@ -1774,6 +1781,7 @@ impl Editor {
                         read_only: is_read_only,
                         remote_state_override: self.remote_indicator_override.as_ref(),
                         remote_reconnect_error: remote_reconnect_error.as_deref(),
+                        remote_connecting,
                         is_synthetic_placeholder,
                         // Filled in by `render_status` from the user's
                         // status_bar config; the value here is just a

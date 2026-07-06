@@ -25,16 +25,29 @@ static PATH_INIT: Once = Once::new();
 /// deterministic "unreachable host" with no network involved. `Once` keeps
 /// the process-global env mutation from racing across tests in a binary.
 pub fn ensure_fake_ssh_on_path() {
-    PATH_INIT.call_once(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-ssh");
-        assert!(
-            dir.join("ssh").exists(),
-            "fake ssh shim missing at {}",
-            dir.display()
-        );
-        let old = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{old}", dir.display()));
-    });
+    PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh"));
+}
+
+static HANG_PATH_INIT: Once = Once::new();
+
+/// Like [`ensure_fake_ssh_on_path`], but the shim **hangs** instead of
+/// failing (`tests/fixtures/fake-ssh-hang`): a host that accepts the TCP
+/// connection and never completes the SSH handshake, so the connect stays
+/// in-flight for the whole test — the "shut-down host that drops packets"
+/// shape, which never produces a prompt failure.
+pub fn ensure_hanging_fake_ssh_on_path() {
+    HANG_PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh-hang"));
+}
+
+fn prepend_shim_dir(rel: &str) {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
+    assert!(
+        dir.join("ssh").exists(),
+        "fake ssh shim missing at {}",
+        dir.display()
+    );
+    let old = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var("PATH", format!("{}:{old}", dir.display()));
 }
 
 /// Isolate ALL editor persistence into `base`: `$XDG_DATA_HOME/fresh` is

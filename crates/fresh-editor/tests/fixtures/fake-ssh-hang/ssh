@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fake `ssh` for tests: models a connect that HANGS — a host that accepts the
+# TCP connection but never completes the SSH handshake (or silently drops
+# packets). It drains stdin (so the parent's agent-bootstrap write doesn't
+# block) and then sleeps far past any test horizon without ever printing the
+# agent-ready line or exiting, exactly like `ssh` against a dead-but-routed
+# endpoint. The parent kills it via kill-on-drop when the connect future is
+# dropped.
+cat >/dev/null 2>&1 &
+sleep 600

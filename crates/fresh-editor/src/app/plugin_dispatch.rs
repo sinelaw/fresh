@@ -930,30 +930,30 @@ impl Editor {
                 );
             }
             PluginCommand::SetActiveWindow { id } => {
-                // Diving into a dormant remote session connects its backend and
-                // promotes it to a real window (born with that authority) rather
-                // than activating a placeholder — see `bring_dormant_remote_online`.
+                // Diving into a dormant remote session starts its backend
+                // connect AND commits the switch immediately: the dive lands
+                // in the session's empty shell (status: Connecting…) rather
+                // than leaving the editor on the previous workspace while the
+                // dock already selected this one — a dead host can keep the
+                // connect in flight for minutes (issue #2570). A success
+                // promotes the shell to the fully-restored window
+                // (`promote_dormant_remote`); a failure records the reason on
+                // it (Disconnected + Retry).
                 if self.dormant_remote.contains_key(&id) {
                     self.bring_dormant_remote_online(id);
-                    // A previous failed connect left this session with a
-                    // disconnected shell window — land the dive in it (empty
-                    // editor, error indicator) while the retry connects,
-                    // instead of staying on the previous workspace.
-                    if self.windows.contains_key(&id) {
-                        self.set_active_window(id);
-                    }
+                    self.ensure_dormant_shell(id);
+                    self.set_active_window(id);
                 } else {
                     self.set_active_window(id);
                 }
             }
             PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
+                // See `SetActiveWindow`: the dive commits into the session's
+                // shell while its backend connects.
                 if self.dormant_remote.contains_key(&id) {
                     self.bring_dormant_remote_online(id);
-                    // See `SetActiveWindow`: a failed earlier connect left a
-                    // disconnected shell — the dive lands there.
-                    if self.windows.contains_key(&id) {
-                        self.set_active_window_animated(id, &from_edge);
-                    }
+                    self.ensure_dormant_shell(id);
+                    self.set_active_window_animated(id, &from_edge);
                 } else {
                     self.set_active_window_animated(id, &from_edge);
                 }

@@ -1245,12 +1245,21 @@ impl Editor {
         if let Some(window_id) = reconnect_window {
             let reason = error.lines().next().unwrap_or(&error).to_string();
             if let Some(w) = self.windows.get_mut(&window_id) {
-                // An already-live remote window whose reconnect failed: record
-                // the reason on the window. The status-bar indicator renders a
-                // short "Disconnected" from this (the full error went to the
-                // `tracing::warn!` above, which lights the warning indicator);
-                // the reason itself is surfaced in the remote-indicator popup.
-                w.remote_reconnect_error = Some(reason);
+                // An already-live remote window whose reconnect failed — or a
+                // dormant session's shell the dive committed into while this
+                // connect ran: record the reason on the window. The status-bar
+                // indicator renders a short "Disconnected" from this (the full
+                // error went to the `tracing::warn!` above, which lights the
+                // warning indicator); the reason itself is surfaced in the
+                // remote-indicator popup. No activation here — the user may
+                // have switched away while the connect was in flight, and a
+                // background failure must not steal focus.
+                w.remote_reconnect_error = Some(reason.clone());
+                // For a dormant session's shell, ALSO surface the reason on
+                // the status line, as the window-less path always did.
+                if self.dormant_remote.contains_key(&window_id) {
+                    self.set_status_message(format!("Connection failed: {reason}"));
+                }
             } else if self.dormant_remote.contains_key(&window_id) {
                 // A dive-triggered connect of a dormant session failed. The
                 // user asked for that workspace, so commit the switch: build

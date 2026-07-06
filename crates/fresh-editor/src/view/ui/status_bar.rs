@@ -274,6 +274,12 @@ pub struct StatusBarContext<'a> {
     /// override, but scoped to the active window so a failed SSH/kube reconnect
     /// can't bleed onto another window's indicator.
     pub remote_reconnect_error: Option<&'a str>,
+    /// True when the active window is a dormant remote session's shell whose
+    /// backend connect is currently in flight — the dive committed the switch
+    /// while the SSH/kube handshake is still pending. Renders the `{remote}`
+    /// indicator as `Connecting` instead of the placeholder authority's
+    /// misleading "Local".
+    pub remote_connecting: bool,
     /// True when the active buffer is the synthesized placeholder kept
     /// alive by the close path with `auto_create_empty_buffer_on_last_buffer_close`
     /// disabled. Buffer-specific elements (filename, cursor, line ending,
@@ -1196,6 +1202,13 @@ impl StatusBarRenderer {
                 // derived states synthesize one from `remote_connection`.
                 let (text, state) = if let Some(over) = ctx.remote_state_override {
                     (over.label(), over.state())
+                } else if ctx.remote_connecting {
+                    // The active window is a dormant remote session's shell
+                    // whose backend connect is in flight (dive-committed
+                    // switch / retry). Without this the shell — which runs
+                    // on a local placeholder authority — would claim
+                    // "Local" while the status message says Connecting.
+                    ("Connecting…".to_string(), RemoteIndicatorState::Connecting)
                 } else if ctx.remote_reconnect_error.is_some() {
                     // A reconnect of the active window's remote workspace failed.
                     // Keep the indicator short — just "Disconnected" — rather

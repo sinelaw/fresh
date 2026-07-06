@@ -1046,22 +1046,25 @@ impl crate::app::Editor {
         self.set_status_message(format!("Connected: {}", descriptor.label));
     }
 
-    /// A dormant remote session's dive-triggered connect **failed**: commit
-    /// the switch anyway, into an **empty disconnected shell** for that
-    /// workspace, instead of silently staying on the previous window (which
-    /// left the dock claiming a workspace the editor never entered —
-    /// issue #2570).
+    /// Ensure a dormant remote session has its **empty shell** `Window`, so a
+    /// dive can commit the switch immediately — before (and regardless of
+    /// whether) its backend connect resolves (issue #2570: the dock must
+    /// never select a workspace the editor didn't actually enter, and a dead
+    /// host can keep the connect in flight for minutes).
     ///
     /// The shell is a real `Window` on a local placeholder authority with
     /// nothing restored into it: its persisted workspace can only be restored
     /// through the connected backend, so it stays on disk, authoritative
     /// (`save_workspace_for` skips descriptor-backed ids). The descriptor is
-    /// deliberately **kept** in `dormant_remote`, so a later dive retries the
+    /// deliberately **kept** in `dormant_remote`, so diving again retries the
     /// connect and a success still lands in `promote_dormant_remote` — which
-    /// replaces this shell with the fully-restored window. The recorded
-    /// `reason` drives the status bar's disconnected indicator (and its
-    /// Retry popup) while the shell is active.
-    pub(crate) fn activate_failed_dormant_placeholder(&mut self, id: WindowId, reason: String) {
+    /// replaces this shell with the fully-restored window. While the shell is
+    /// active, the status bar presents the in-flight connect as `Connecting`
+    /// and a recorded failure as `Disconnected` (with the Retry popup).
+    pub(crate) fn ensure_dormant_shell(&mut self, id: WindowId) {
+        if self.windows.contains_key(&id) {
+            return;
+        }
         let Some(descriptor) = self.dormant_remote.get(&id) else {
             return;
         };
@@ -1086,11 +1089,26 @@ impl crate::app::Editor {
         window.terminal_height = self.terminal_height;
         window.plugin_state = descriptor.plugin_state.clone();
         // Keep the backend identity so the status bar / dock present the
-        // session as its real (disconnected) backend and a retry knows what
-        // to reconnect to — never downgraded to local.
+        // session as its real (not-yet-connected) backend and a retry knows
+        // what to reconnect to — never downgraded to local.
         window.authority_spec = descriptor.authority_spec.clone();
-        window.remote_reconnect_error = Some(reason);
         self.windows.insert(id, window);
+    }
+
+    /// A dormant remote session's dive-triggered connect **failed** while the
+    /// session has no window yet: commit the switch into its empty shell and
+    /// record the reason (drives the `Disconnected` indicator + Retry popup).
+    /// With dives committing the switch up front this is a fallback — it only
+    /// fires when a connect was started without the shell (or the shell was
+    /// closed while the connect was in flight).
+    pub(crate) fn activate_failed_dormant_placeholder(&mut self, id: WindowId, reason: String) {
+        if !self.dormant_remote.contains_key(&id) {
+            return;
+        }
+        self.ensure_dormant_shell(id);
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.remote_reconnect_error = Some(reason);
+        }
         // The normal switch path seeds the empty layout and fires
         // `active_window_changed`, so the dock keeps this session selected
         // as the (now genuinely) active one. Its reconnect re-trigger is a
