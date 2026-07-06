@@ -3265,6 +3265,82 @@ mod tests {
         }
     }
 
+    /// Helper for the PageUp/PageDown goal-column tests: build a state with
+    /// `content`, place the cursor at `position`, run `action` with a
+    /// 3-row viewport, and return the resulting cursor position and sticky
+    /// column.
+    fn page_move(content: &str, position: usize, action: Action) -> (usize, Option<usize>) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: content.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        let old_position = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position,
+                new_position: position,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: None,
+                new_sticky_column: None,
+            },
+        );
+
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            action,
+            4,
+            false,
+            false,
+            true,
+            80,
+            3,
+        )
+        .unwrap();
+        for event in &events {
+            state.apply(&mut cursors, event);
+        }
+        (cursors.primary().position, cursors.primary().sticky_column)
+    }
+
+    /// PageDown resolves the goal column *visually* (wide-char aware), so it
+    /// never lands inside a multi-byte character. From the end of "你a"
+    /// (visual column 3), two lines down it must land after the first 好 of
+    /// 你好好def (byte offset 6 in the line) — the old byte-column goal (4)
+    /// landed mid-好.
+    #[test]
+    fn test_page_down_uses_visual_goal_column() {
+        // Line starts: 0, 5, 18, 31.
+        let content = "你a\n你好好def\n你好好def\n你好好def";
+        let (pos, sticky) = page_move(content, 4, Action::MovePageDown);
+        assert_eq!(pos, 18 + 6, "goal column 3 lands after the first 好");
+        assert_eq!(sticky, Some(3), "sticky column is the visual column");
+    }
+
+    /// Same as `test_page_down_uses_visual_goal_column` for PageUp.
+    #[test]
+    fn test_page_up_uses_visual_goal_column() {
+        // Line starts: 0, 13, 26.
+        let content = "你好好def\n你好好def\n你a";
+        let (pos, sticky) = page_move(content, 26 + 4, Action::MovePageUp);
+        assert_eq!(pos, 6, "goal column 3 lands after the first 好");
+        assert_eq!(sticky, Some(3), "sticky column is the visual column");
+    }
+
     #[test]
     fn test_move_line_up_without_trailing_newline() {
         let mut state = EditorState::new(

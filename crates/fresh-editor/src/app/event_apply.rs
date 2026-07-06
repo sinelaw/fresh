@@ -405,6 +405,14 @@ impl Editor {
         // Apply adjustments to cursor positions
         // First check for explicit MoveCursor events (e.g., from indent operations)
         // These take precedence over implicit cursor updates from Insert/Delete
+        //
+        // Sticky (goal) columns ride along: an explicit MoveCursor carries the
+        // authoritative new goal column, and a cursor that edited must
+        // re-derive its goal from the new position (`None`). Cursors that had
+        // no events keep their goal. Without this, the goal column set before
+        // a bulk edit (e.g. by a mouse click) survives the edit and sends the
+        // next vertical move to a stale column.
+        let mut sticky_updates: Vec<(CursorId, Option<usize>)> = Vec::new();
         for (cursor_id, ref mut pos, ref mut anchor) in &mut new_cursors {
             let mut found_move_cursor = false;
             // Save original position before any modifications - needed for shift calculation
@@ -424,10 +432,13 @@ impl Editor {
                     cursor_id: event_cursor,
                     new_position,
                     new_anchor,
+                    new_sticky_column,
                     ..
                 } = event
                 {
                     if event_cursor == cursor_id {
+                        sticky_updates.retain(|(id, _)| id != cursor_id);
+                        sticky_updates.push((*cursor_id, *new_sticky_column));
                         // Only adjust for shifts if the Insert was at the cursor's original position
                         // (like auto-close). For other operations (like indent where Insert is at
                         // line start), the MoveCursor already accounts for the shift.
@@ -459,6 +470,9 @@ impl Editor {
                             let adjusted_pos = (*position as isize + shift).max(0) as usize;
                             *pos = adjusted_pos.saturating_add(text.len());
                             *anchor = None;
+                            if !found_edit {
+                                sticky_updates.push((*cursor_id, None));
+                            }
                             found_edit = true;
                         }
                         Event::Delete {
@@ -471,6 +485,9 @@ impl Editor {
                             let shift = calc_shift(range.start);
                             *pos = (range.start as isize + shift).max(0) as usize;
                             *anchor = None;
+                            if !found_edit {
+                                sticky_updates.push((*cursor_id, None));
+                            }
                             found_edit = true;
                         }
                         _ => {}
@@ -501,6 +518,11 @@ impl Editor {
                 if let Some(cursor) = cursors.get_mut(*cursor_id) {
                     cursor.position = *position;
                     cursor.anchor = *anchor;
+                }
+            }
+            for (cursor_id, sticky) in &sticky_updates {
+                if let Some(cursor) = cursors.get_mut(*cursor_id) {
+                    cursor.sticky_column = *sticky;
                 }
             }
         }

@@ -540,6 +540,10 @@ impl EditorState {
         if let Some(cursor) = cursors.get_mut(cursor_id) {
             cursor.position = position + text.len();
             cursor.clear_selection();
+            // Editing moves the cursor horizontally, so the goal column for
+            // vertical navigation must re-derive from the new position. A
+            // stale goal would send the next Up/Down to the pre-edit column.
+            cursor.sticky_column = None;
         }
 
         // Update primary cursor line number if this was the primary cursor
@@ -616,6 +620,8 @@ impl EditorState {
         if let Some(cursor) = cursors.get_mut(cursor_id) {
             cursor.position = range.start;
             cursor.clear_selection();
+            // See apply_insert: edits invalidate the vertical-navigation goal.
+            cursor.sticky_column = None;
         }
 
         // Update primary cursor line number if this was the primary cursor
@@ -1831,6 +1837,53 @@ mod tests {
 
         assert_eq!(state.buffer.to_string().unwrap(), "hello");
         assert_eq!(cursors.primary().position, 5);
+    }
+
+    /// Inserting or deleting moves the cursor horizontally, so it must drop
+    /// the vertical-navigation goal column — a stale goal would send the
+    /// next Up/Down to the pre-edit column.
+    #[test]
+    fn test_edits_reset_goal_column() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        let cursor_id = cursors.primary_id();
+
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "hello".to_string(),
+                cursor_id,
+            },
+        );
+
+        // Simulate a vertical move that pinned a goal column.
+        cursors.primary_mut().sticky_column = Some(42);
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 5,
+                text: "!".to_string(),
+                cursor_id,
+            },
+        );
+        assert_eq!(cursors.primary().sticky_column, None, "insert resets goal");
+
+        cursors.primary_mut().sticky_column = Some(42);
+        state.apply(
+            &mut cursors,
+            &Event::Delete {
+                range: 5..6,
+                deleted_text: "!".to_string(),
+                cursor_id,
+            },
+        );
+        assert_eq!(cursors.primary().sticky_column, None, "delete resets goal");
     }
 
     #[test]

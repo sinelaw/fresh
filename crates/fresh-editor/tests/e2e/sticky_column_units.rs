@@ -1,56 +1,15 @@
 //! Reproducers for goal-column (sticky column) unit bugs.
 //!
 //! `Cursor::sticky_column` is defined as a *visual* column (wide-char
-//! aware), and vertical movement resolves it with
-//! `byte_offset_at_visual_column`. Several producers used to store byte
-//! columns (PageUp/PageDown, mouse click/drag) or even a byte *position*
-//! (bracket expansion) in it, sending later vertical moves to the wrong
-//! column — or, for PageUp/PageDown over wide chars, landing the cursor in
-//! the middle of a multi-byte character.
+//! aware). Mouse click and drag used to store the *byte* column of the
+//! clicked position, and bracket expansion stored a byte *position*,
+//! sending later vertical moves to the wrong column. (The PageUp/PageDown
+//! variant of the same unit bug is covered by unit tests in
+//! `input/actions.rs`, since page motion normally routes through viewport
+//! scrolling rather than the goal-column code path.)
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-
-const WIDE_LINE: &str = "你好好def";
-
-/// PageDown must resolve the goal column visually: from the end of "你a"
-/// (visual column 3) it lands after the first 好 (a char boundary), not at
-/// raw byte offset 4 (inside 好).
-#[test]
-fn test_page_down_keeps_visual_column_over_wide_chars() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    let content = format!("你a\n{}", vec![WIDE_LINE; 40].join("\n"));
-    harness.load_buffer_from_text(&content).unwrap();
-
-    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
-    harness
-        .send_key(KeyCode::PageDown, KeyModifiers::NONE)
-        .unwrap();
-    harness.type_text("X").unwrap();
-
-    // Goal column 3 falls inside the first 好 (columns 2..4); it must snap
-    // to the char boundary after it. A byte-column goal inserted X inside
-    // the character, corrupting the line.
-    harness.assert_screen_contains("你好X好def");
-}
-
-/// Same as above for PageUp.
-#[test]
-fn test_page_up_keeps_visual_column_over_wide_chars() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
-    let content = format!("{}\n你a", vec![WIDE_LINE; 40].join("\n"));
-    harness.load_buffer_from_text(&content).unwrap();
-
-    harness
-        .send_key(KeyCode::End, KeyModifiers::CONTROL)
-        .unwrap();
-    harness
-        .send_key(KeyCode::PageUp, KeyModifiers::NONE)
-        .unwrap();
-    harness.type_text("X").unwrap();
-
-    harness.assert_screen_contains("你好X好def");
-}
 
 /// A mouse click after wide chars must set a *visual* goal column, so a
 /// following ArrowDown lands at the same on-screen column.
@@ -61,12 +20,12 @@ fn test_click_then_down_keeps_visual_column() {
         .load_buffer_from_text("你好你好xyz\nabcdefghijkl")
         .unwrap();
 
+    // 你好你好 spans 8 screen cells; "xyz" starts right after it. Clicking
+    // on 'x' puts the cursor at byte 12, visual column 8.
     let (x0, y0) = harness
-        .find_text_on_screen("你好你好")
-        .expect("wide line visible");
-    // 你好你好 spans 8 screen cells; clicking right after it puts the
-    // cursor at byte 12, visual column 8.
-    harness.mouse_click(x0 + 8, y0).unwrap();
+        .find_text_on_screen("xyz")
+        .expect("first line visible");
+    harness.mouse_click(x0, y0).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.type_text("X").unwrap();
 
@@ -84,9 +43,10 @@ fn test_drag_then_down_keeps_visual_column() {
         .unwrap();
 
     let (x0, y0) = harness
-        .find_text_on_screen("你好你好")
-        .expect("wide line visible");
-    harness.mouse_drag(x0, y0, x0 + 8, y0).unwrap();
+        .find_text_on_screen("xyz")
+        .expect("first line visible");
+    // Drag from the line start (8 cells left of "xyz") up to 'x'.
+    harness.mouse_drag(x0 - 8, y0, x0, y0).unwrap();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.type_text("X").unwrap();
 
@@ -98,7 +58,12 @@ fn test_drag_then_down_keeps_visual_column() {
 /// far-right column instead of staying near the indentation.
 #[test]
 fn test_bracket_expansion_leaves_no_bogus_goal_column() {
-    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    // Bracket expansion needs auto_indent + auto_close, which the harness
+    // disables by default.
+    let mut config = fresh::config::Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = true;
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
     // The long first line inflates byte positions so the old bug (goal
     // column = byte position) is far from any real column.
     harness
