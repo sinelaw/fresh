@@ -2067,6 +2067,16 @@ pub enum WidgetSpec {
         /// only visible caret. Defaults to `false`.
         #[serde(default)]
         block_caret: bool,
+        /// Selection byte range within `value` (`start`, `end`), shown
+        /// with the selection background while the widget is focused.
+        /// `-1` for either end = no selection. Seed-only, like
+        /// `cursor_byte`: once host-owned instance state exists, the
+        /// editor's own selection wins. Mirrors `Number`'s
+        /// `edit_sel_start`/`edit_sel_end`.
+        #[serde(default = "default_neg_one")]
+        sel_start: i32,
+        #[serde(default = "default_neg_one")]
+        sel_end: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

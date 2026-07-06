@@ -71,7 +71,12 @@
   (`TextListState.new_item_text`, `MapState.new_key_text`) that are domain
   fields rather than editing engines. Full `*State` retirement (runtime
   instance-state as the model, `widget_event` → `pending_changes`) rides the
-  entry-dialog-panel milestone (§5.3.1 steps 6–7).
+  entry-dialog-panel milestone (§5.3.1 steps 6–7). Selection is unified
+  too: the `Text` spec carries a seed selection (`sel_start`/`sel_end`,
+  mirroring `Number`), the mapping projects the editor's live selection,
+  and Shift+Left/Right, Ctrl+A, Ctrl+C/V work in every settings text
+  field — main panel and entry dialog — through the same `TextEdit`
+  engine and the same key arms the JSON editor always had.
 - **Phase 5 (expose + docs + delete dead path) — largely DONE.** `plugins.md`
   §7.1 lists the new kinds; `widgets.ts` + `fresh.d.ts` carry the new options
   (labelFirst/labelWidth/indeterminate, number edit fields, dropdown

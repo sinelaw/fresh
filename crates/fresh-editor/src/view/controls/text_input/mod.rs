@@ -188,6 +188,31 @@ impl TextInputState {
         self.editor.move_end();
     }
 
+    /// Extend the selection one position left (Shift+Left)
+    pub fn move_left_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_left_selecting();
+    }
+
+    /// Extend the selection one position right (Shift+Right)
+    pub fn move_right_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_right_selecting();
+    }
+
+    /// Select the whole value (Ctrl+A). The selection is live editor
+    /// state — the next insert replaces it — so the replace-on-type
+    /// affordance is superseded and cleared.
+    pub fn select_all(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.select_all();
+    }
+
+    /// The currently selected text, if any (Ctrl+C).
+    pub fn selected_text(&self) -> Option<String> {
+        self.editor.selected_text()
+    }
+
     /// Clear the input
     pub fn clear(&mut self) {
         if self.is_enabled() {

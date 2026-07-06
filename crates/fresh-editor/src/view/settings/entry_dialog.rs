@@ -1453,8 +1453,13 @@ impl EntryDialogState {
             return;
         }
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_left_selecting();
+            match &mut item.control {
+                SettingControl::Json(state) => state.editor.move_left_selecting(),
+                SettingControl::Text(state) => state.move_left_selecting(),
+                // Controls without a selection model keep the historical
+                // "Shift is ignored" behavior: a plain move.
+                SettingControl::TextList(state) => state.move_left(),
+                _ => {}
             }
         }
     }
@@ -1486,8 +1491,13 @@ impl EntryDialogState {
             return;
         }
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.editor.move_right_selecting();
+            match &mut item.control {
+                SettingControl::Json(state) => state.editor.move_right_selecting(),
+                SettingControl::Text(state) => state.move_right_selecting(),
+                // Controls without a selection model keep the historical
+                // "Shift is ignored" behavior: a plain move.
+                SettingControl::TextList(state) => state.move_right(),
+                _ => {}
             }
         }
     }
@@ -1725,21 +1735,24 @@ impl EntryDialogState {
             return;
         }
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Json(state) = &mut item.control {
-                state.select_all();
+            match &mut item.control {
+                SettingControl::Json(state) => state.select_all(),
+                SettingControl::Text(state) => state.select_all(),
+                _ => {}
             }
-            // Note: Text and TextList don't have select_all implemented
         }
     }
 
-    /// Get selected text from current JSON control
+    /// Get selected text from the current text-editing control
     pub fn selected_text(&self) -> Option<String> {
         if !self.editing_text {
             return None;
         }
         if let Some(item) = self.current_item() {
-            if let SettingControl::Json(state) = &item.control {
-                return state.selected_text();
+            match &item.control {
+                SettingControl::Json(state) => return state.selected_text(),
+                SettingControl::Text(state) => return state.selected_text(),
+                _ => {}
             }
         }
         None

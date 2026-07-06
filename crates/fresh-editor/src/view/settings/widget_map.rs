@@ -124,33 +124,48 @@ pub fn setting_control_to_widget_aligned(
             scroll_offset: s.scroll_offset as u32,
             key,
         },
-        SettingControl::Text(s) => WidgetSpec::Text {
-            value: s.value(),
-            // While editing, carry the caret (the editor's byte
-            // offset) and mark the field focused so the renderer
-            // paints the block caret (`block_caret`) where typing
-            // lands.
-            cursor_byte: if s.editing {
-                s.cursor_byte() as i32
+        SettingControl::Text(s) => {
+            // While editing, project the editor's live selection so
+            // Shift+arrows / Ctrl+A render with the selection bg —
+            // the same engine + presentation every text surface uses.
+            let sel = if s.editing {
+                s.editor
+                    .selection_flat_range()
+                    .map(|(a, b)| (a as i32, b as i32))
+                    .unwrap_or((-1, -1))
             } else {
-                -1
-            },
-            focused: s.editing,
-            label: s.label.clone(),
-            placeholder: if s.placeholder.is_empty() {
-                None
-            } else {
-                Some(s.placeholder.clone())
-            },
-            rows: 1,
-            field_width: 0,
-            max_visible_chars: 0,
-            full_width: true,
-            completions: Vec::new(),
-            completions_visible_rows: 0,
-            block_caret: true,
-            key,
-        },
+                (-1, -1)
+            };
+            WidgetSpec::Text {
+                value: s.value(),
+                // While editing, carry the caret (the editor's byte
+                // offset) and mark the field focused so the renderer
+                // paints the block caret (`block_caret`) where typing
+                // lands.
+                cursor_byte: if s.editing {
+                    s.cursor_byte() as i32
+                } else {
+                    -1
+                },
+                focused: s.editing,
+                label: s.label.clone(),
+                placeholder: if s.placeholder.is_empty() {
+                    None
+                } else {
+                    Some(s.placeholder.clone())
+                },
+                rows: 1,
+                field_width: 0,
+                max_visible_chars: 0,
+                full_width: true,
+                completions: Vec::new(),
+                completions_visible_rows: 0,
+                block_caret: true,
+                sel_start: sel.0,
+                sel_end: sel.1,
+                key,
+            }
+        }
         SettingControl::DualList(s) => WidgetSpec::DualList {
             options: s
                 .all_options

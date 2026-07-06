@@ -708,6 +708,8 @@ fn render_collected(
             completions: _,
             completions_visible_rows,
             block_caret,
+            sel_start,
+            sel_end,
             key,
         } => render_widget_text(
             value,
@@ -721,6 +723,7 @@ fn render_collected(
             *full_width,
             *completions_visible_rows,
             *block_caret,
+            (*sel_start, *sel_end),
             key.as_deref(),
             prev,
             next_state,
@@ -2206,6 +2209,7 @@ fn render_widget_text(
     full_width: bool,
     completions_visible_rows: u32,
     block_caret: bool,
+    spec_sel: (i32, i32),
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -2295,9 +2299,20 @@ fn render_widget_text(
         effective_text_field_width(full_width, multiline, label, panel_width, field_width);
     // Selection overlay is only meaningful for the focused
     // widget — passing `None` otherwise keeps the no-selection
-    // rendering paths unchanged.
+    // rendering paths unchanged. The editor's own selection wins;
+    // a spec-seeded render (stateless surfaces like Settings, which
+    // re-emit their model each frame) falls back to the spec's
+    // `sel_start`/`sel_end` byte range, clamped into the value.
     let selection_for_render = if is_focused {
-        effective_editor.selection_flat_range()
+        effective_editor.selection_flat_range().or({
+            let (a, b) = spec_sel;
+            if a >= 0 && b > a {
+                let len = effective_value.len();
+                Some(((a as usize).min(len), (b as usize).min(len)))
+            } else {
+                None
+            }
+        })
     } else {
         None
     };
@@ -5788,6 +5803,8 @@ mod tests {
                     key: None,
                 },
                 WidgetSpec::Text {
+                    sel_start: -1,
+                    sel_end: -1,
                     block_caret: false,
                     value: "".into(),
                     cursor_byte: -1,
@@ -7240,6 +7257,8 @@ mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Text {
+            sel_start: -1,
+            sel_end: -1,
             block_caret: false,
             value: value.into(),
             cursor_byte,
@@ -7327,6 +7346,8 @@ mod tests {
         // cursor on line 0 of the value lands on row 1 of the
         // buffer.
         let spec = WidgetSpec::Text {
+            sel_start: -1,
+            sel_end: -1,
             block_caret: false,
             value: "hi".into(),
             cursor_byte: 1,
@@ -7456,6 +7477,8 @@ mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Text {
+            sel_start: -1,
+            sel_end: -1,
             block_caret: false,
             value: value.into(),
             cursor_byte,

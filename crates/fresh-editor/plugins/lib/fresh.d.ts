@@ -1392,6 +1392,13 @@ type WidgetSpec = {
 	* form surfaces where a hardware cursor isn't visible.
 	*/
 	blockCaret?: boolean;
+	/**
+	* Selection byte range within `value` (`start`, `end`), shown
+	* with the selection background while focused. `-1` for either
+	* end = no selection. Seed-only, like `cursorByte`.
+	*/
+	selStart?: number;
+	selEnd?: number;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";

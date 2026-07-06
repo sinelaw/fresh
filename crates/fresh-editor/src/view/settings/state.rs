@@ -2444,6 +2444,44 @@ impl SettingsState {
         }
     }
 
+    /// Run `f` against the focused plain `Text` control, if that's what
+    /// is being edited. Backs the selection / clipboard key arms.
+    fn with_editing_text<R>(
+        &mut self,
+        f: impl FnOnce(&mut crate::view::controls::TextInputState) -> R,
+    ) -> Option<R> {
+        if !self.is_editing_plain_text() {
+            return None;
+        }
+        match self.current_item_mut().map(|item| &mut item.control) {
+            Some(SettingControl::Text(state)) => Some(f(state)),
+            _ => None,
+        }
+    }
+
+    /// Extend the selection left in the focused plain Text control
+    /// (Shift+Left).
+    pub fn text_move_left_selecting(&mut self) {
+        self.with_editing_text(|state| state.move_left_selecting());
+    }
+
+    /// Extend the selection right in the focused plain Text control
+    /// (Shift+Right).
+    pub fn text_move_right_selecting(&mut self) {
+        self.with_editing_text(|state| state.move_right_selecting());
+    }
+
+    /// Select the focused plain Text control's whole value (Ctrl+A).
+    pub fn text_select_all(&mut self) {
+        self.with_editing_text(|state| state.select_all());
+    }
+
+    /// The focused plain Text control's selected text (Ctrl+C).
+    pub fn text_selected_text(&mut self) -> Option<String> {
+        self.with_editing_text(|state| state.selected_text())
+            .flatten()
+    }
+
     /// Move cursor left in the current editable control
     pub fn text_move_left(&mut self) {
         if let Some(item) = self.current_item_mut() {

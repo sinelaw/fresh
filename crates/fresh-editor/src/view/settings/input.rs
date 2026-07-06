@@ -220,14 +220,17 @@ impl SettingsState {
                 dialog.cursor_end();
             }
             KeyCode::Left => {
-                if is_editing_json && event.modifiers.contains(KeyModifiers::SHIFT) {
+                // Shift extends the selection — for the JSON editor and
+                // for plain Text fields alike (both ride `TextEdit`; the
+                // dialog method no-ops for other controls).
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
                     dialog.cursor_left_selecting();
                 } else {
                     dialog.cursor_left();
                 }
             }
             KeyCode::Right => {
-                if is_editing_json && event.modifiers.contains(KeyModifiers::SHIFT) {
+                if event.modifiers.contains(KeyModifiers::SHIFT) {
                     dialog.cursor_right_selecting();
                 } else {
                     dialog.cursor_right();
@@ -1096,6 +1099,28 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Char(c) => {
+                // Selection / clipboard chords on a plain Text field —
+                // the same TextEdit-backed behavior as the JSON editor
+                // and the entry dialog.
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'a' | 'A' => {
+                            self.text_select_all();
+                            return InputResult::Consumed;
+                        }
+                        'c' | 'C' => {
+                            if let Some(text) = self.text_selected_text() {
+                                ctx.defer(DeferredAction::CopyToClipboard(text));
+                            }
+                            return InputResult::Consumed;
+                        }
+                        'v' | 'V' => {
+                            ctx.defer(DeferredAction::PasteToSettings);
+                            return InputResult::Consumed;
+                        }
+                        _ => {}
+                    }
+                }
                 self.text_insert(c);
                 InputResult::Consumed
             }
@@ -1108,11 +1133,19 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Left => {
-                self.text_move_left();
+                if event.modifiers.contains(KeyModifiers::SHIFT) && self.is_editing_plain_text() {
+                    self.text_move_left_selecting();
+                } else {
+                    self.text_move_left();
+                }
                 InputResult::Consumed
             }
             KeyCode::Right => {
-                self.text_move_right();
+                if event.modifiers.contains(KeyModifiers::SHIFT) && self.is_editing_plain_text() {
+                    self.text_move_right_selecting();
+                } else {
+                    self.text_move_right();
+                }
                 InputResult::Consumed
             }
             KeyCode::Up => {
