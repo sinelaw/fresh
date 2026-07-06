@@ -348,9 +348,13 @@ placement.
 ### 7.1 Widget catalogue (IMPLEMENTED)
 
 Spec kinds in the core API: `Row`, `Col` (flex containers), `Spacer`,
-`Divider`, `HintBar`, `Toggle`, `Button` (intent Normal/Primary/Danger), `Text`
-(unified single-line vs multi-line by row count), `Number` (stepper, integer or
-float-as-percent), `Dropdown` (inline cycler with an `OverlayRow` option popup),
+`Divider`, `HintBar`, `Toggle` (chip-first `[v] label`, or the form layout
+`label: [v]` via `labelFirst` — with `labelWidth` column alignment and an
+`indeterminate` neutral `[-]` chip), `Button` (intent Normal/Primary/Danger),
+`Text` (unified single-line vs multi-line by row count; `blockCaret` paints a
+REVERSED caret cell for modal surfaces), `Number` (form value cell
+`label: [ 42 ]`, integer or float-as-percent, with an in-place edit mode),
+`Dropdown` (`label: [value ▼]` button with an inline option list when open),
 `DualList` (two-column ordered-subset picker), `List` (virtual-scrolled,
 host-owned scroll/selection), `Tree` (disclosure + optional per-row
 checkboxes), and `Raw` (pre-rendered text-property escape hatch). The `Number`,
