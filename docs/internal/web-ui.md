@@ -125,7 +125,7 @@ Work that is well-defined inside the current architecture. Effort: S (hours), M 
 - Input batching: coalesce same-tick keystrokes into one `/key` batch → one render. (M)
 
 **Testing & tooling**
-- `web-ui/test/package.json` declaring `playwright` (the documented test command currently fails from a clean checkout with `ERR_MODULE_NOT_FOUND`) plus a one-command runner that builds the bridge, starts it, runs `drive.mjs`, and tears down. (S)
+- ~~`web-ui/test/package.json` declaring `playwright` (the documented test command currently fails from a clean checkout with `ERR_MODULE_NOT_FOUND`) plus a one-command runner that builds the bridge, starts it, runs `drive.mjs`, and tears down.~~ **Done:** `web-ui/test/package.json` pins `playwright`, and `web-ui/test/run.sh` builds the bridge, installs deps, starts/polls the server, runs the suite, and tears down (CI: `.github/workflows/web-ui.yml`).
 - CI job running the Playwright suite + `scene_parity` on PRs touching `web-ui/` or the view/webui crates. (M — see [testing.md](testing.md) for where it slots in)
 - Screenshot-based visual regression on the captured surfaces (the suite already writes deterministic screenshots; a pixel-diff gate is the missing 10%). (M)
 - Cross-browser matrix: the suite is Chromium-only; `color-mix` and per-glyph SVG need at least a Firefox and WebKit smoke pass. (S/M)

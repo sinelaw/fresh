@@ -1,0 +1,9 @@
+{
+  "name": "fresh-web-ui-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless Playwright suite for the Fresh web UI (see run.sh for the one-command runner)",
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

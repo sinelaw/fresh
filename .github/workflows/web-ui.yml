@@ -1,0 +1,74 @@
+name: Web UI
+
+on:
+  pull_request:
+    paths:
+      - 'web-ui/**'
+      - 'crates/fresh-editor/src/webui/**'
+      - 'crates/fresh-editor/src/view/scene.rs'
+      - 'crates/fresh-editor/tests/scene_parity.rs'
+      - 'crates/fresh-editor/examples/webui_server.rs'
+      - '.github/workflows/web-ui.yml'
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'web-ui/**'
+      - 'crates/fresh-editor/src/webui/**'
+      - 'crates/fresh-editor/src/view/scene.rs'
+      - 'crates/fresh-editor/tests/scene_parity.rs'
+      - 'crates/fresh-editor/examples/webui_server.rs'
+      - '.github/workflows/web-ui.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+# ensure that the workflow is only triggered once per PR, subsequent pushes to the PR will cancel
+# and restart the workflow. See https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  scene-parity:
+    name: scene parity (web/TUI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Run scene parity test
+        run: cargo test -p fresh-editor --test scene_parity
+
+  playwright:
+    name: playwright suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Read pinned Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('./web-ui/test/package.json').devDependencies.playwright")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+      # run.sh builds the bridge, npm-installs web-ui/test, runs
+      # `npx playwright install chromium --with-deps` if the cache is cold,
+      # starts webui_server, runs drive.mjs, and tears the server down.
+      - name: Run web UI headless suite
+        run: web-ui/test/run.sh
