@@ -422,8 +422,6 @@ pub enum TextListHit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn test_text_list_add_item() {

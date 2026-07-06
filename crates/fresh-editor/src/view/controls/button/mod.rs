@@ -143,8 +143,6 @@ impl ButtonLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn test_button_disabled() {

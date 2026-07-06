@@ -452,8 +452,6 @@ impl NumberInputLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn test_number_input_increment() {

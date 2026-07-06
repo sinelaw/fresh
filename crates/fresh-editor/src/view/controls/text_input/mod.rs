@@ -333,8 +333,6 @@ impl TextInputLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn test_arm_replace_on_type_replaces_value_on_first_char() {

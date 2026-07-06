@@ -139,8 +139,6 @@ impl ToggleLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn test_toggle_state_toggle() {
