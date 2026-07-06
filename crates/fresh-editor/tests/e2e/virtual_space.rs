@@ -438,6 +438,48 @@ fn test_click_below_last_line_places_virtual_cursor() {
     harness.assert_buffer_content("ab");
 }
 
+/// ArrowDown at the bottom of the buffer floats the cursor onto virtual
+/// lines below the end, one per press, keeping the goal column; ArrowUp
+/// steps back through them. Typing materializes the lines.
+#[test]
+fn test_arrow_down_extends_below_eof() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("ab").expect("line visible");
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 2, y0 + 1));
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 2, y0 + 2));
+
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 2, y0 + 1));
+
+    // Nothing was inserted by the movement; typing materializes one line.
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("ab\n  X");
+}
+
+/// With virtual space off, ArrowDown at the bottom stays put.
+#[test]
+fn test_arrow_down_at_eof_noop_when_off() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Off);
+    harness.load_buffer_from_text("ab").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("ab").expect("line visible");
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 2, y0));
+}
+
 /// Clicking below the last line at a column *within* the last line's width
 /// must still land on the virtual line — not mid-way into the last line.
 #[test]

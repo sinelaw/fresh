@@ -253,6 +253,34 @@ impl crate::app::window::Window {
             _ => return None, // Not a visual line action
         };
 
+        // Vertical virtual space: a cursor floating on the virtual lines
+        // below the buffer end must be handled by the logical handlers in
+        // input::actions (they step the virtual-line count); the visual-line
+        // walk here would snap it back onto real rows. Fall through when any
+        // cursor is in that state.
+        if matches!(visual_action, VisualAction::UpDown { .. }) {
+            let active_split = self.effective_active_split();
+            let active_buffer = self.active_buffer();
+            if let Some(state) = self.buffers.get(&active_buffer) {
+                if state.buffer_settings.virtual_space.cursor_beyond_eol() {
+                    let has_virtual_line_cursor = self
+                        .buffers
+                        .splits()
+                        .map(|(_, vs)| vs)
+                        .expect("active window must have a populated split layout")
+                        .get(&active_split)
+                        .is_some_and(|vs| {
+                            vs.cursors.iter().any(|(_, c)| {
+                                c.position == state.buffer.len() && c.virtual_lines_below > 0
+                            })
+                        });
+                    if has_virtual_line_cursor {
+                        return None;
+                    }
+                }
+            }
+        }
+
         // First, collect cursor data we need (to avoid borrow conflicts).
         // Use the *effective* active split + buffer so that cursor motion in
         // a focused buffer-group panel reads the panel's own cursors and

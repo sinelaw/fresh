@@ -1643,7 +1643,25 @@ fn handle_vertical_up(
     estimated_line_length: usize,
     extend_selection: bool,
 ) {
+    let vs_mode = state.buffer_settings.virtual_space;
     for (cursor_id, cursor) in cursors.iter() {
+        // On a virtual line below the buffer end, Up steps back through the
+        // virtual lines before any real line movement.
+        let vlines = cursor_virtual_lines(vs_mode, &state.buffer, cursor);
+        if vlines > 0 && !extend_selection {
+            state.pending_virtual_lines.push((cursor_id, vlines - 1));
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: cursor.position,
+                old_anchor: cursor.anchor,
+                new_anchor: None,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: cursor.sticky_column,
+            });
+            continue;
+        }
+
         let from_pos = if !extend_selection && cursor.deselect_on_move {
             cursor
                 .selection_range()
@@ -1693,6 +1711,7 @@ fn handle_vertical_down(
     estimated_line_length: usize,
     extend_selection: bool,
 ) {
+    let vs_mode = state.buffer_settings.virtual_space;
     for (cursor_id, cursor) in cursors.iter() {
         let from_pos = if !extend_selection && cursor.deselect_on_move {
             cursor
@@ -1728,6 +1747,22 @@ fn handle_vertical_down(
                 new_position: new_pos,
                 old_anchor: cursor.anchor,
                 new_anchor,
+                old_sticky_column: cursor.sticky_column,
+                new_sticky_column: Some(goal_visual_column),
+            });
+        } else if !extend_selection && cursor.anchor.is_none() && vs_mode.cursor_beyond_eol() {
+            // No line below: float onto (or one deeper into) the virtual
+            // lines below the buffer end, keeping the goal column. The byte
+            // position parks at the buffer end; the virtual line count is
+            // installed when the event applies (see pending_virtual_lines).
+            let vlines = cursor_virtual_lines(vs_mode, &state.buffer, cursor);
+            state.pending_virtual_lines.push((cursor_id, vlines + 1));
+            events.push(Event::MoveCursor {
+                cursor_id,
+                old_position: cursor.position,
+                new_position: state.buffer.len(),
+                old_anchor: cursor.anchor,
+                new_anchor: None,
                 old_sticky_column: cursor.sticky_column,
                 new_sticky_column: Some(goal_visual_column),
             });
@@ -2487,6 +2522,10 @@ pub fn action_to_events(
     }
 
     let mut events = Vec::new();
+
+    // Entries queued by a previous action whose events never applied must
+    // not leak into this action's cursor moves.
+    state.pending_virtual_lines.clear();
 
     // Convert block selection to multi-cursor before processing editing actions
     // This allows normal multi-cursor logic to handle typing, deletion, etc.

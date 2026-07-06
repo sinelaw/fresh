@@ -194,6 +194,14 @@ pub struct EditorState {
     /// Can be set to false for virtual buffers like diagnostics panels
     pub show_cursors: bool,
 
+    /// Virtual-space line counts to install on cursors when their next
+    /// MoveCursor event applies (vertical virtual space). Movement handlers
+    /// produce events but events don't carry `virtual_lines_below`, and a
+    /// direct write from the handler would be cleared when the event applies
+    /// later — so the handler queues the value here and `apply_move_cursor`
+    /// consumes it. Entries are one-shot.
+    pub pending_virtual_lines: Vec<(crate::model::event::CursorId, usize)>,
+
     /// Set once a plugin explicitly controls this buffer's cursor
     /// visibility via `setBufferShowCursors`. When true, the widget
     /// runtime stops overriding the cursor (`apply_widget_focus_cursor`
@@ -344,6 +352,7 @@ impl EditorState {
             mode: "insert".to_string(),
             text_properties: TextPropertyManager::new(),
             show_cursors: true,
+            pending_virtual_lines: Vec::new(),
             cursor_visibility_locked: false,
             editing_disabled: false,
             scrollable: true,
@@ -889,6 +898,16 @@ impl EditorState {
             cursor.position = new_position;
             cursor.anchor = new_anchor;
             cursor.sticky_column = new_sticky_column;
+            // Install a queued virtual-line count (vertical movement into /
+            // along the virtual lines below the buffer end).
+            if let Some(idx) = self
+                .pending_virtual_lines
+                .iter()
+                .position(|(id, _)| *id == cursor_id)
+            {
+                let (_, vlines) = self.pending_virtual_lines.swap_remove(idx);
+                cursor.virtual_lines_below = vlines;
+            }
         }
 
         // Update primary cursor line number if this is the primary cursor.
