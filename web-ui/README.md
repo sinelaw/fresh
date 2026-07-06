@@ -24,6 +24,11 @@ the core; each frontend only renders it.
 - **Input is real** — key/mouse/wheel are POSTed and run through the real
   `Editor::handle_key` / `handle_mouse` (and shared hit→action dispatch for
   settings/widgets/keybindings); the page re-renders from the editor's new state.
+  IME/dead-key text lands in a hidden input and is forwarded on commit; mouse
+  downs carry the browser's click count for the editor's double/triple-click
+  path. OS clipboard works both ways: DOM `paste` → `POST /paste` → the
+  editor's bracketed-paste path, and editor copies surface in the scene
+  (`clipboard: {seq, text}`) for `navigator.clipboard`.
 
 ## Architecture (taps the real render pipeline)
 

@@ -1466,11 +1466,18 @@ let mShowMods = true;                    // show the Termux-style modifier row
 let mMods = { ctrl:false, alt:false, shift:false };
 function mBottom(){ return M_BASE + (isMobile() && mShowMods ? M_MODS_H : 0); }
 
-// Native soft-keyboard control. The page can't toggle the OS keyboard directly,
-// but focusing a hidden input summons it and blurring dismisses it. Keystrokes
-// still flow through the global keydown handler (which preventDefaults), so the
-// input never accumulates text — it's purely the focus target that raises the
-// keyboard. The header ⌨ button toggles focus.
+// Hidden text-input sink — the universal text path on mobile AND desktop.
+// The page can't toggle the OS keyboard directly, but focusing a hidden input
+// summons it (mobile) and gives IMEs a real editable element to compose into
+// (desktop CJK input, dead-key accents — whose keydowns arrive as
+// "Process"/"Dead" and would otherwise be lost). Plain printable keys,
+// shortcuts and named keys still flow through the global keydown handler
+// first (which preventDefaults, so the browser never inserts them here);
+// only text the keydown path can't express arrives via beforeinput /
+// compositionend. The input therefore never accumulates text. On mobile the
+// header ⌨ button toggles focus; on desktop it is kept focused permanently
+// (no other chrome is focusable). It stays visually hidden but NOT
+// display:none — that would break IME composition.
 let mKbInput=null, mKbWanted=false, kdHandledAt=0;
 function ensureKbInput(){
   if(mKbInput) return mKbInput;
@@ -1482,8 +1489,12 @@ function ensureKbInput(){
   // Android fallback: many soft keyboards report key="Unidentified" on keydown
   // and only deliver the real text via beforeinput. iOS/desktop fire a usable
   // keydown (which cancels its default, normally suppressing this) — so if a
-  // keydown was just handled, skip here to avoid double-inserting.
+  // keydown was just handled, skip here to avoid double-inserting. Desktop
+  // never sets kdHandledAt: preventDefault on keydown already suppresses the
+  // matching beforeinput, and arming the 120 ms window there could swallow an
+  // IME commit landing right after fast ASCII typing.
   i.addEventListener("beforeinput",ev=>{
+    if(ev.isComposing) return;             // IME owns the input until compositionend
     if(Date.now()-kdHandledAt < 120) return;
     const t=ev.inputType||""; let handled=true;
     if(t==="insertText" && ev.data){ for(const ch of ev.data) mobileSendKey({key:ch}); }
@@ -1494,9 +1505,26 @@ function ensureKbInput(){
     if(handled) ev.preventDefault();
     i.value="";
   });
-  i.addEventListener("input",()=>{ i.value=""; });   // never keep typed text
+  // Committed IME composition (CJK candidate commit, dead-key accents): the
+  // uncommitted preedit lives in this hidden input (inline preedit rendering
+  // at the caret is a scene-level design item — see web-ui.md §3.6); on
+  // commit, forward the composed text to the editor and clear the sink.
+  i.addEventListener("compositionend",ev=>{
+    i.value="";
+    if(ev.data) for(const ch of ev.data) mobileSendKey({key:ch});
+  });
+  // Never keep typed text — but don't clear mid-composition, which would
+  // cancel the IME's preedit state.
+  i.addEventListener("input",ev=>{ if(!ev.isComposing) i.value=""; });
   document.body.appendChild(i); mKbInput=i; return i;
 }
+// Desktop: keep the sink focused whenever no other focusable chrome needs
+// focus (there is none today — chrome is divs). focus({preventScroll}) so it
+// can never scroll the page. Mobile keeps its explicit ⌨ toggle instead —
+// auto-focusing there would summon the soft keyboard uninvited.
+function focusSink(){ if(!isMobile()) ensureKbInput().focus({preventScroll:true}); }
+window.addEventListener("focus",focusSink);
+mqMobile.addEventListener("change",focusSink);
 function kbVisible(){ return mKbWanted; }
 // Toggle driven by an explicit intent flag (not activeElement) so a tap that
 // transiently blurs the input can't flip the toggle into re-showing it.
@@ -1614,9 +1642,27 @@ function renderMobileChrome(reg){
 // Apply a scene from any endpoint, re-rendering only when it actually changed
 // so the idle poll loop doesn't churn the DOM (or restart the caret blink).
 let sceneStr=null;
-function applyScene(s){ const str=JSON.stringify(s); if(str===sceneStr) return; sceneStr=str; scene=s; render(); }
+function applyScene(s){ const str=JSON.stringify(s); if(str===sceneStr) return; sceneStr=str; scene=s; syncClipboard(s.clipboard); render(); }
+// Outbound OS clipboard: the editor copies server-side (its internal
+// clipboard; the TUI's OSC 52/arboard push can't reach the browser), so the
+// bridge exposes {seq, text} that bumps whenever the copied text changed.
+// Writing happens inside the async response to the very Ctrl+C / menu click
+// that ran the copy — still within that gesture's transient-activation
+// window, which is what navigator.clipboard.writeText requires. Absence or
+// rejection (no permission) is silent: the editor-internal clipboard still
+// works. The text is never logged.
+let clipSeq=null;
+function syncClipboard(c){
+  if(!c) return;
+  if(clipSeq===null){ clipSeq=c.seq; return; }   // boot: don't replay an old copy
+  if(c.seq===clipSeq) return;
+  clipSeq=c.seq;
+  if(c.text && navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(c.text).catch(()=>{});
+}
 async function refresh(){ try{ applyScene(await (await fetch("/state")).json()); }catch(e){ showErr("load failed: "+e); } }
 async function sendKey(d){ try{ applyScene(await (await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)})).json()); }catch(e){ showErr("key failed: "+e); } }
+async function sendPaste(text){ try{ applyScene(await (await fetch("/paste",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text})})).json()); }catch(e){ showErr("paste failed: "+e); } }
 async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW));
   // On mobile, leave room for the fixed bottom stack so no code hides behind it
   // (the header reuses the two hidden top chrome rows, so it needs no reserve).
@@ -1640,16 +1686,38 @@ async function poll(){
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
+  // IME composition in progress: the keys belong to the IME (key is usually
+  // "Process"); the committed text arrives via the hidden input's
+  // compositionend. Forwarding here would double-deliver on browsers that
+  // report the raw key during composition.
+  if(e.isComposing) return;
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
   // shortcuts reach the editor) and the named navigation/edit keys.
   const single=e.key.length===1;
-  if(single||NAMED.has(e.key)){ e.preventDefault();
+  if(single||NAMED.has(e.key)){
+    // Ctrl/Cmd+V: don't forward and don't preventDefault — the browser will
+    // fire a DOM 'paste' event carrying the OS clipboard, and that event is
+    // the web UI's one paste path (see the document 'paste' listener).
+    // Forwarding the bare key as well would ALSO run the editor's internal
+    // paste (double paste). This mirrors the terminal frontend, where paste
+    // arrives as a bracketed-paste event, never as a Ctrl+V keystroke.
+    if(single&&(e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==="v") return;
+    e.preventDefault();
     const d={key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
     // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
     // native-keyboard letter sends Ctrl+<letter>. Record the time so the
     // beforeinput fallback (Android) knows this key was already handled.
     if(isMobile()){ kdHandledAt=Date.now(); mobileSendKey(d); } else sendKey(d);
   }
+});
+// Inbound OS clipboard: the DOM paste event (Ctrl+V / Shift+Insert / browser
+// menu) carries the system clipboard, which the server can't read. One POST
+// /paste delivers the whole text through the editor's real bracketed-paste
+// path — never per-char /key loops.
+document.addEventListener("paste",e=>{
+  e.preventDefault();
+  const text=e.clipboardData&&e.clipboardData.getData("text/plain");
+  if(text) sendPaste(text);
 });
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
@@ -1673,10 +1741,16 @@ let dragging=false, lastCell=null;
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
 const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
-document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
+// `count` carries the browser's click count (event.detail); the bridge primes
+// the editor's own double/triple-click detection with it (see apply_mouse).
+document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mousemove",e=>{ if(!dragging) return; const c=cellAt(e); if(lastCell&&c.col===lastCell.col&&c.row===lastCell.row) return; lastCell=c; sendMouse({kind:"drag",button:"left",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());
+// Desktop: any click that isn't on chrome returns focus to the hidden text
+// sink so the next IME composition has somewhere to land (chrome divs aren't
+// focusable, but a bare mousedown moves focus to <body>).
+document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 // Settings panes and plugin dock/widget panels emit their full content into the
 // DOM, so they scroll natively — forwarding their wheel to the editor would only
 // trigger a re-render that resets scrollTop. Let the browser handle those; route
@@ -1689,6 +1763,7 @@ let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(r
 mqMobile.addEventListener("change", resize);
 
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize };
+focusSink();         // desktop: arm the hidden text sink (IME/dead-key path)
 resize().then(poll); // size to the window, render, then start the frame poll loop
 </script>
 </body>

@@ -19,6 +19,7 @@
 //!   - `GET /favicon.ico` → 204
 //!   - `GET /state`   → `{ w, h, grid, regions }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
+//!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
 //!   - `POST /resize` → `{cols, rows}` → `Editor::resize`, returns `/state`
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -43,6 +44,63 @@ use crate::model::filesystem::{FileSystem, StdFileSystem};
 /// Default terminal size the bridge boots / resets to (cols, rows). One source
 /// so `run()` and the `/reset` route can't drift apart.
 const DEFAULT_SIZE: (u16, u16) = (140, 44);
+
+/// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
+/// larger is truncated at a char boundary — a copy that big is better served
+/// by a future dedicated fetch than by riding along on every scene response.
+const CLIPBOARD_TEXT_CAP: usize = 1 << 20; // 1 MiB
+
+/// Outbound OS-clipboard mirror (docs/internal/web-ui.md §3.5).
+///
+/// The editor's copy actions run server-side and land in its internal
+/// clipboard (plus OSC 52/arboard for the TUI, which can't reach the
+/// browser's clipboard). The bridge exposes that text in the scene as
+/// `"clipboard": {"seq": N, "text": "..."}` where `seq` increments whenever
+/// the copied text changed since the last scene build; the frontend writes
+/// the text to `navigator.clipboard` when it sees a new `seq` (inside the
+/// user-activation window of the very keypress/click that did the copy).
+///
+/// State lives here in the bridge — a hash of the last-seen text — so no new
+/// core-editor state is needed; the core only gained the read-only
+/// `Editor::clipboard_text()` accessor.
+struct ClipboardSync {
+    seq: u64,
+    last_hash: u64,
+}
+
+impl ClipboardSync {
+    /// Seed from the editor's current clipboard so the first scene after boot
+    /// doesn't replay pre-existing content into the browser's clipboard.
+    fn new(editor: &Editor) -> Self {
+        Self {
+            seq: 0,
+            last_hash: Self::hash(editor.clipboard_text()),
+        }
+    }
+
+    fn hash(text: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
+    }
+
+    /// Attach the clipboard object to a scene, bumping `seq` if the editor's
+    /// clipboard text changed. The text is never logged.
+    fn attach(&mut self, editor: &Editor, scene: &mut Value) {
+        let text = editor.clipboard_text();
+        let h = Self::hash(text);
+        if h != self.last_hash {
+            self.last_hash = h;
+            self.seq += 1;
+        }
+        let mut end = text.len().min(CLIPBOARD_TEXT_CAP);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        scene["clipboard"] = json!({ "seq": self.seq, "text": &text[..end] });
+    }
+}
 
 /// Construct a fresh editor exactly as the web bridge does: real plugin runtime
 /// enabled, init.ts loaded, chrome drawn as a semantic model (not cells). Shared
@@ -143,6 +201,7 @@ pub fn render_tui_cells(editor: &mut Editor, cols: u16, rows: u16) -> String {
 pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let (mut cols, mut rows) = DEFAULT_SIZE;
     let mut editor = build_editor(cols, rows, files)?;
+    let mut clip = ClipboardSync::new(&editor);
 
     let listener = TcpListener::bind(addr)?;
     eprintln!("fresh web bridge on http://{addr}  (real render pipeline, no mocks)");
@@ -160,6 +219,7 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
             &mut cols,
             &mut rows,
             files,
+            &mut clip,
         ) {
             eprintln!("conn error: {e}");
         }
@@ -167,6 +227,7 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_conn(
     stream: &mut TcpStream,
     editor: &mut Editor,
@@ -174,6 +235,7 @@ fn handle_conn(
     cols: &mut u16,
     rows: &mut u16,
     files: &[PathBuf],
+    clip: &mut ClipboardSync,
 ) -> Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
@@ -212,19 +274,36 @@ fn handle_conn(
         }
         ("GET", "/favicon.ico") => respond(stream, "204 No Content", "image/x-icon", b""),
         ("GET", "/state") => {
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/key") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             apply_key(editor, &v);
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
+        }
+        ("POST", "/paste") => {
+            // Inbound OS clipboard (docs/internal/web-ui.md §3.5/§4). The
+            // frontend's document `paste` listener posts the clipboard text
+            // here in ONE request — long pastes never loop through per-char
+            // /key posts. Delivery reuses the exact path a terminal bracketed
+            // paste takes (`Ev::Paste` in app/lifecycle.rs): a focused
+            // floating panel / dock text field first, then the buffer /
+            // prompt / terminal paste in `paste_text`.
+            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                if !editor.paste_bracketed_into_focused_panel(text) {
+                    editor.paste_text(text.to_string());
+                }
+            }
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/mouse") => {
             let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
             apply_mouse(editor, &v);
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/action") => {
@@ -241,7 +320,7 @@ fn handle_conn(
                     }
                 }
             }
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/widget") => {
@@ -267,7 +346,7 @@ fn handle_conn(
                 }
                 _ => {}
             }
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/settings") => {
@@ -284,13 +363,13 @@ fn handle_conn(
             // path — the dialog is its own stacked state, not a main-panel item.
             if kind == "entryItem" {
                 editor.entry_dialog_select_item(a);
-                let s = tick_scene(editor, *cols, *rows).to_string();
+                let s = tick_scene(editor, *cols, *rows, clip).to_string();
                 return respond(stream, "200 OK", "application/json", s.as_bytes());
             }
             if kind == "entryButton" {
                 let btn = v.get("button").and_then(|x| x.as_str()).unwrap_or("cancel");
                 editor.entry_dialog_activate_button(btn);
-                let s = tick_scene(editor, *cols, *rows).to_string();
+                let s = tick_scene(editor, *cols, *rows, clip).to_string();
                 return respond(stream, "200 OK", "application/json", s.as_bytes());
             }
             let hit = match kind {
@@ -326,7 +405,7 @@ fn handle_conn(
             if let Some(hit) = hit {
                 editor.dispatch_settings_hit(hit, 0, dbl);
             }
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/kbedit") => {
@@ -336,7 +415,7 @@ fn handle_conn(
             if let Some(a) = v.get("a").and_then(|x| x.as_u64()) {
                 editor.kbedit_select_display_row(a as usize);
             }
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         ("POST", "/resize") => {
@@ -348,7 +427,7 @@ fn handle_conn(
                 *rows = (r as u16).clamp(8, 200);
             }
             editor.resize(*cols, *rows);
-            let s = tick_scene(editor, *cols, *rows).to_string();
+            let s = tick_scene(editor, *cols, *rows, clip).to_string();
             respond(stream, "200 OK", "application/json", s.as_bytes())
         }
         // Parity-harness routes: apply one scenario step, and reset to a fresh
@@ -459,13 +538,19 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
 /// timers, step animations) exactly as the TUI event loop does, then build the
 /// scene. This is what lets the browser frontend get fresh frames by polling
 /// rather than only in response to its own input.
-fn tick_scene(editor: &mut Editor, cols: u16, rows: u16) -> Value {
+///
+/// Also attaches the outbound-clipboard mirror (`ClipboardSync`) — this is the
+/// browser-facing scene builder; the parity harness (`/step`, `/reset`,
+/// `scene_value`) uses `scene_json` directly and carries no clipboard.
+fn tick_scene(editor: &mut Editor, cols: u16, rows: u16, clip: &mut ClipboardSync) -> Value {
     // Needs-render bool is moot (we render unconditionally below); don't swallow
     // a real tick error.
     if let Err(e) = crate::app::editor_tick(editor, || Ok(())) {
         eprintln!("[webui] editor_tick error: {e}");
     }
-    scene_json(editor, cols, rows)
+    let mut scene = scene_json(editor, cols, rows);
+    clip.attach(editor, &mut scene);
+    scene
 }
 
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
@@ -726,6 +811,24 @@ fn apply_mouse(editor: &mut Editor, v: &Value) {
     }
     if v.get("shift").and_then(|b| b.as_bool()).unwrap_or(false) {
         mods |= KeyModifiers::SHIFT;
+    }
+    // Explicit multi-click count from the browser (`event.detail`). The editor
+    // detects double/triple clicks itself (`detect_multi_click`) by comparing
+    // wall-clock spacing and the exact cell of consecutive Downs — reliable in
+    // a terminal, but jitter-sensitive across the HTTP hop and stricter than
+    // the browser's own few-pixel slop (two clicks the browser counts as a
+    // double can straddle a cell boundary). When the browser already counted,
+    // prime the editor's OWN click-tracking state so its detection resolves
+    // the same count deterministically: `detect_multi_click` sees a
+    // just-now previous click at this cell and bumps `click_count` to the
+    // browser's count (2 = double, ≥3 = triple; the editor's word/line
+    // selection then runs through its normal, unmodified path).
+    let count = v.get("count").and_then(|x| x.as_u64()).unwrap_or(1);
+    if count >= 2 && matches!(kind, MouseEventKind::Down(MouseButton::Left)) {
+        let w = editor.active_window_mut();
+        w.previous_click_time = Some(std::time::Instant::now());
+        w.previous_click_position = Some((col, row));
+        w.click_count = (count - 1).min(2) as u8;
     }
     for _ in 0..n {
         let ev = MouseEvent {

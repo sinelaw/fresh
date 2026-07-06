@@ -1368,6 +1368,19 @@ impl Editor {
         self.clipboard.get_internal().to_string()
     }
 
+    /// Read-only view of the editor's internal clipboard text.
+    ///
+    /// Every copy path (`copy_selection`, cut, copy-with-theme's plain
+    /// fallback, copy-path, …) funnels through `Clipboard::copy` /
+    /// `copy_html`, which record the plain text here. Frontends that mirror
+    /// copies out to a host clipboard the core can't reach directly use this
+    /// to learn *what* was copied — the web bridge exposes it in the scene so
+    /// the browser can write `navigator.clipboard` (the web analogue of the
+    /// TUI's OSC 52 push). TUI-neutral: no state, no side effects.
+    pub fn clipboard_text(&self) -> &str {
+        self.clipboard.get_internal()
+    }
+
     /// Copy a buffer's file path to the clipboard.
     ///
     /// When `relative` is true the path is made relative to the workspace root;
