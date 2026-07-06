@@ -74,6 +74,7 @@
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
         "show_tilde": true,
+        "nerd_font_icons": false,
         "use_terminal_bg": false,
         "set_window_title": true,
         "terminal_auto_title": true,
@@ -544,6 +545,12 @@
           "description": "Show tilde (~) markers on lines after the end of the file.\nThese vim-style markers indicate lines that are not part of the file content.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "nerd_font_icons": {
+          "description": "Use Nerd Font icons for decorative UI glyphs (e.g. the settings\ncategory icons). Nerd Font glyphs live in the Unicode private-use\narea and only render correctly when the terminal uses a patched\n\"Nerd Font\"; on any other font they show up as `?` or empty boxes.\nWhen disabled, portable ASCII symbols are used instead.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "use_terminal_bg": {

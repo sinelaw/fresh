@@ -501,20 +501,45 @@ fn render_categories_horizontal(
     }
 }
 
-/// Get an icon for a settings category name (Nerd Font icons)
-fn category_icon(name: &str) -> &'static str {
-    match name.to_lowercase().as_str() {
-        "general" => "\u{f013} ",       //
-        "editor" => "\u{f044} ",        //
-        "clipboard" => "\u{f328} ",     //
-        "file browser" => "\u{f07b} ",  //
-        "file explorer" => "\u{f07c} ", //
-        "packages" => "\u{f487} ",      //
-        "plugins" => "\u{f1e6} ",       //
-        "terminal" => "\u{f120} ",      //
-        "warnings" => "\u{f071} ",      //
-        "keybindings" => "\u{f11c} ",   //
-        _ => "\u{f111} ",               //  (dot circle as fallback)
+/// Get an icon for a settings category name.
+///
+/// Two sets are available. The Nerd Font set uses private-use-area
+/// codepoints that require a patched "Nerd Font" in the terminal — on
+/// any other font they render as `?` or empty boxes (issue #2032). The
+/// default set sticks to plain ASCII so it renders everywhere; it's
+/// used unless `editor.nerd_font_icons` is enabled.
+fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
+    let name = name.to_lowercase();
+    if nerd_fonts {
+        return match name.as_str() {
+            "general" => "\u{f013} ",       //
+            "editor" => "\u{f044} ",        //
+            "clipboard" => "\u{f328} ",     //
+            "file browser" => "\u{f07b} ",  //
+            "file explorer" => "\u{f07c} ", //
+            "packages" => "\u{f487} ",      //
+            "plugins" => "\u{f1e6} ",       //
+            "terminal" => "\u{f120} ",      //
+            "warnings" => "\u{f071} ",      //
+            "keybindings" => "\u{f11c} ",   //
+            _ => "\u{f111} ",               //  (dot circle as fallback)
+        };
+    }
+    if name.starts_with("plugin: ") {
+        return "+ ";
+    }
+    match name.as_str() {
+        "general" => "* ",
+        "editor" => "~ ",
+        "clipboard" => "= ",
+        "file browser" => "/ ",
+        "file explorer" => "/ ",
+        "packages" => "@ ",
+        "plugins" => "+ ",
+        "terminal" => "$ ",
+        "warnings" => "! ",
+        "keybindings" => "^ ",
+        _ => "- ",
     }
 }
 
@@ -563,6 +588,7 @@ fn render_categories(
         label: String,
         icon: Option<&'static str>,
     }
+    let nerd_fonts = state.nerd_font_icons_enabled();
     let row_data: Vec<RowData> = rows
         .iter()
         .map(|row| match *row {
@@ -593,7 +619,7 @@ fn render_categories(
                     cat_idx: Some(idx),
                     section_idx: None,
                     label: page.name.clone(),
-                    icon: Some(category_icon(&page.name)),
+                    icon: Some(category_icon(&page.name, nerd_fonts)),
                 }
             }
             TreeRow::Section {

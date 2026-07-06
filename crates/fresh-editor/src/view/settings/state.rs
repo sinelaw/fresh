@@ -369,6 +369,20 @@ impl SettingsState {
         self.focus.current().unwrap_or_default()
     }
 
+    /// Whether Nerd Font icons are enabled (`editor.nerd_font_icons`).
+    ///
+    /// Checks the unsaved pending value first so toggling the setting
+    /// inside the Settings dialog previews immediately, then falls back
+    /// to the value the dialog was opened with.
+    pub fn nerd_font_icons_enabled(&self) -> bool {
+        const PATH: &str = "/editor/nerd_font_icons";
+        self.pending_changes
+            .get(PATH)
+            .or_else(|| self.original_config.pointer(PATH))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
     /// Show the settings panel
     pub fn show(&mut self) {
         self.visible = true;
