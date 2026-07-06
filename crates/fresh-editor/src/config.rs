@@ -332,6 +332,47 @@ impl JsonSchema for LineEndingOption {
     }
 }
 
+/// Where the cursor may move beyond the end of a line (virtual space).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VirtualSpaceMode {
+    /// Cursor is always clamped to line content (traditional behavior)
+    #[default]
+    Off,
+    /// Only block (rectangular) selections extend past line ends
+    Block,
+    /// Cursor movement, clicks, and block selections may go past line ends
+    On,
+}
+
+impl VirtualSpaceMode {
+    /// Whether a regular cursor may sit past the end of a line
+    /// (movement, mouse clicks, rendering, typing materialization).
+    pub fn cursor_beyond_eol(self) -> bool {
+        self == Self::On
+    }
+
+    /// Whether block selections extend past line ends (true rectangles).
+    pub fn block_beyond_eol(self) -> bool {
+        matches!(self, Self::Block | Self::On)
+    }
+}
+
+impl JsonSchema for VirtualSpaceMode {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("VirtualSpaceMode")
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Where the cursor may move beyond the end of a line",
+            "type": "string",
+            "enum": ["off", "block", "on"],
+            "default": "off"
+        })
+    }
+}
+
 impl PartialEq<KeybindingMapName> for str {
     fn eq(&self, other: &KeybindingMapName) -> bool {
         self == other.0
@@ -1324,6 +1365,17 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Editing"))]
     pub auto_surround: bool,
 
+    /// Allow the cursor to move beyond the end of a line (virtual space).
+    /// "off": cursor is clamped to line content. "block": only block
+    /// (rectangular) selections extend past line ends, producing true
+    /// rectangles. "on": arrow keys, clicks, and block selections may all
+    /// place the cursor past the end of a line; typing there fills the gap
+    /// with spaces.
+    /// Default: "off"
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Editing"))]
+    pub virtual_space: VirtualSpaceMode,
+
     /// Minimum lines to keep visible above/below cursor when scrolling
     #[serde(default = "default_scroll_offset")]
     #[schemars(extend("x-section" = "Editing"))]
@@ -1752,6 +1804,7 @@ impl Default for EditorConfig {
             auto_indent: true,
             auto_close: true,
             auto_surround: true,
+            virtual_space: VirtualSpaceMode::default(),
             animations: true,
             cursor_jump_animation: true,
             line_numbers: true,
@@ -2663,6 +2716,9 @@ pub struct BufferConfig {
     /// Whether to surround selected text with matching pairs
     pub auto_surround: bool,
 
+    /// Where the cursor may move beyond the end of a line
+    pub virtual_space: VirtualSpaceMode,
+
     /// Whether line wrapping is enabled for this buffer
     pub line_wrap: bool,
 
@@ -2709,6 +2765,7 @@ impl BufferConfig {
             auto_indent: editor.auto_indent,
             auto_close: editor.auto_close,
             auto_surround: editor.auto_surround,
+            virtual_space: editor.virtual_space,
             line_wrap: editor.line_wrap,
             wrap_column: editor.wrap_column,
             whitespace,

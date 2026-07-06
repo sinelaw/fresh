@@ -94,6 +94,7 @@ impl Editor {
         state.buffer_settings.tab_size = self.config.editor.tab_size;
         state.buffer_settings.auto_close = self.config.editor.auto_close;
         state.buffer_settings.auto_surround = self.config.editor.auto_surround;
+        state.buffer_settings.virtual_space = self.config.editor.virtual_space;
 
         // Apply line_numbers default from config
         state

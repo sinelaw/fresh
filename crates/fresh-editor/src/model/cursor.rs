@@ -337,14 +337,25 @@ impl Cursors {
 
     /// Normalize cursors: merge overlapping selections, remove duplicates
     pub fn normalize(&mut self) {
+        self.normalize_with_key(|_| 0);
+    }
+
+    /// Like [`normalize`](Self::normalize), but two cursors at the same byte
+    /// position only merge when `virtual_cols` also agrees. With virtual
+    /// space enabled, several cursors can share a line's content-end byte
+    /// while sitting at different on-screen columns — they are distinct
+    /// cursors and must not be deduplicated.
+    pub fn normalize_with_key(&mut self, virtual_cols: impl Fn(&Cursor) -> usize) {
         // Collect all cursors sorted by position
         let mut cursor_list: Vec<(CursorId, Cursor)> =
             self.cursors.iter().map(|(id, c)| (*id, *c)).collect();
 
-        cursor_list.sort_by_key(|(_, c)| c.selection_start());
+        cursor_list.sort_by_key(|(_, c)| (c.selection_start(), virtual_cols(c)));
 
         // Remove exact duplicates
-        cursor_list.dedup_by(|(_, a), (_, b)| a.position == b.position && a.anchor == b.anchor);
+        cursor_list.dedup_by(|(_, a), (_, b)| {
+            a.position == b.position && a.anchor == b.anchor && virtual_cols(a) == virtual_cols(b)
+        });
 
         // Rebuild cursors map
         self.cursors.clear();

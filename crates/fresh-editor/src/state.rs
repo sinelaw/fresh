@@ -111,6 +111,10 @@ pub struct BufferSettings {
     /// Set based on global + language config.
     pub auto_surround: bool,
 
+    /// Where the cursor may move beyond the end of a line (virtual space).
+    /// Set from the global config.
+    pub virtual_space: crate::config::VirtualSpaceMode,
+
     /// Extra characters (beyond alphanumeric + `_`) considered part of
     /// identifiers for this language. Used by completion providers.
     pub word_characters: String,
@@ -124,6 +128,7 @@ impl Default for BufferSettings {
             tab_size: 4,
             auto_close: true,
             auto_surround: true,
+            virtual_space: crate::config::VirtualSpaceMode::default(),
             word_characters: String::new(),
         }
     }
@@ -675,7 +680,7 @@ impl EditorState {
                 cursor_id,
                 position,
                 anchor,
-            } => Self::apply_add_cursor(cursors, *cursor_id, *position, *anchor),
+            } => self.apply_add_cursor(cursors, *cursor_id, *position, *anchor),
 
             Event::RemoveCursor { cursor_id, .. } => {
                 cursors.remove(*cursor_id);
@@ -888,6 +893,7 @@ impl EditorState {
     /// preserved (rather than freshly allocated) so undo/redo stays
     /// deterministic.
     fn apply_add_cursor(
+        &self,
         cursors: &mut Cursors,
         cursor_id: crate::model::event::CursorId,
         position: usize,
@@ -898,7 +904,10 @@ impl EditorState {
             None => Cursor::new(position),
         };
         cursors.insert_with_id(cursor_id, cursor);
-        cursors.normalize();
+        let mode = self.buffer_settings.virtual_space;
+        cursors.normalize_with_key(|c| {
+            crate::model::virtual_space::cursor_virtual_columns(mode, &self.buffer, c)
+        });
     }
 
     /// Materialize an `AddOverlay` event into a tracked [`Overlay`].

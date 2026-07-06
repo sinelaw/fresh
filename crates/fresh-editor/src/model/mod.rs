@@ -19,3 +19,4 @@ pub mod marker;
 pub mod marker_tree;
 pub mod piece_tree;
 pub mod piece_tree_diff;
+pub mod virtual_space;

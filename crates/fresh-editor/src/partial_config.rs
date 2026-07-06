@@ -151,6 +151,7 @@ pub struct PartialEditorConfig {
     pub auto_indent: Option<bool>,
     pub auto_close: Option<bool>,
     pub auto_surround: Option<bool>,
+    pub virtual_space: Option<crate::config::VirtualSpaceMode>,
     pub animations: Option<bool>,
     pub cursor_jump_animation: Option<bool>,
     pub line_numbers: Option<bool>,
@@ -237,6 +238,7 @@ impl Merge for PartialEditorConfig {
         self.auto_indent.merge_from(&other.auto_indent);
         self.auto_close.merge_from(&other.auto_close);
         self.auto_surround.merge_from(&other.auto_surround);
+        self.virtual_space.merge_from(&other.virtual_space);
         self.animations.merge_from(&other.animations);
         self.cursor_jump_animation
             .merge_from(&other.cursor_jump_animation);
@@ -584,6 +586,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             auto_indent: Some(cfg.auto_indent),
             auto_close: Some(cfg.auto_close),
             auto_surround: Some(cfg.auto_surround),
+            virtual_space: Some(cfg.virtual_space),
             animations: Some(cfg.animations),
             cursor_jump_animation: Some(cfg.cursor_jump_animation),
             line_numbers: Some(cfg.line_numbers),
@@ -680,6 +683,7 @@ impl PartialEditorConfig {
             auto_indent: self.auto_indent.unwrap_or(defaults.auto_indent),
             auto_close: self.auto_close.unwrap_or(defaults.auto_close),
             auto_surround: self.auto_surround.unwrap_or(defaults.auto_surround),
+            virtual_space: self.virtual_space.unwrap_or(defaults.virtual_space),
             animations: self.animations.unwrap_or(defaults.animations),
             cursor_jump_animation: self
                 .cursor_jump_animation

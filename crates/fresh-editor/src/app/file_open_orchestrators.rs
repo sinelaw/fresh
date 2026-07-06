@@ -1113,6 +1113,7 @@ impl crate::app::window::Window {
             crate::config::WhitespaceVisibility::from_editor_config(&self.resources.config.editor);
         state.buffer_settings.auto_close = self.resources.config.editor.auto_close;
         state.buffer_settings.auto_surround = self.resources.config.editor.auto_surround;
+        state.buffer_settings.virtual_space = self.resources.config.editor.virtual_space;
         if let Some(lang_config) = self.resources.config.languages.get(&state.language) {
             whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
             state.buffer_settings.use_tabs = lang_config

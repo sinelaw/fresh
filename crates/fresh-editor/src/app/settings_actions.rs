@@ -287,6 +287,7 @@ impl Editor {
                 state.buffer_settings.use_tabs = resolved.use_tabs;
                 state.buffer_settings.auto_close = resolved.auto_close;
                 state.buffer_settings.auto_surround = resolved.auto_surround;
+                state.buffer_settings.virtual_space = resolved.virtual_space;
                 state.buffer_settings.whitespace = resolved.whitespace;
                 state.buffer_settings.word_characters = resolved.word_characters;
             }
