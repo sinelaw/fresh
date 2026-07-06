@@ -28,7 +28,7 @@
     /* Readable text/fill for anything painted ON the accent colour. Recomputed
        per theme in applyTheme() so e.g. high-contrast's white accent gets dark
        text instead of the white-on-white it used to render. */
-    --on-accent:#fff}
+    --on-accent:#fff;--on-sel:#fff}
   /* Theme-derived design tokens: elevated surfaces and soft hairlines mixed from
      the live --bg/--fg, so chrome reads as depth on ANY theme instead of piping
      the terminal palette's hard borders (e.g. high-contrast's cyan) into the UI.
@@ -479,6 +479,50 @@
   .mitem.hi{background:var(--sel)}
 
   /* ======================================================================
+     Theme-faithful floating chrome (light & dark). The base rules above were
+     authored for a dark palette: hardcoded #2b2b2b/#252526 panels, #5a5a5a
+     borders, and white text on the highlight pill. Re-point them at the live
+     theme surfaces and the luminance-picked --on-sel so a LIGHT theme reads
+     correctly instead of dark panels with invisible/white-on-light text.
+     One block, later in source order, so it wins without touching the base.
+     ====================================================================== */
+  /* Floating panel fills → theme surfaces (menu = menuBg to match the bar;
+     popups/modals = popupBg; header/overlay bands = elevated surfaces). */
+  .dropdown{background:var(--bg3)}
+  .popup{background:var(--bg2)}
+  .popup .popup-title{background:var(--surface-2)}
+  .trustdialog,.auxmodal,.kbedit,.settings-modal,
+  .widget-surface.w-floatingModal{background:var(--bg2)}
+  .settings-modal .set-overlay,.kbedit .kb-overlay{background:var(--surface-2)}
+  .kbedit .kb-row.kb-head{background:var(--surface)}
+  /* Inner-control borders (buttons, fields, steppers, pills, dropdowns, the
+     key chip) → the hairline language instead of a fixed grey. */
+  .trustdialog .td-btn,.w-button,.palette .prow .pkey,
+  .settings-modal .set-step,.settings-modal .set-pill,.settings-modal .set-field,
+  .settings-modal .set-dd,.settings-modal .set-dual-btn,.settings-modal .btn,
+  .settings-modal .set-overlay,.kbedit .kb-btn,.kbedit .kb-overlay{
+    border-color:var(--hairline-strong)}
+  /* Primary text on the menuHi / --sel highlight pill → readable in any theme. */
+  .menu.open,.mitem.hi,.mitem.hi .lab,
+  .palette .prow.sel,.palette .prow.sel .pkey,
+  .fileexplorer .fx-row.sel,.fileexplorer .fx-row.sel .fx-chev,
+  .popup .popup-row.sel,.ctxmenu .ctxitem.sel,.trustdialog .td-opt.sel,
+  .w-list-row.sel,.settings-modal .set-cat.sel,.settings-modal .set-dual-row.sel,
+  .settings-modal .set-sresult.sel,.kbedit .kb-row.sel,.kbedit .kb-field.focus,
+  .kbedit .kb-chip.on,.auxmodal .am-line.sel{color:var(--on-sel)}
+  /* Secondary text on selected rows → a muted shade of the on-sel colour
+     (the old #dfe8ff light-blue vanished on a light highlight). */
+  .mitem.hi .accel,.palette .prow.sel .pdesc,.popup .popup-row.sel .pdetail,
+  .trustdialog .td-opt.sel .td-odesc,.kbedit .kb-field.focus .kb-field-l{
+    color:color-mix(in srgb,var(--on-sel) 62%,transparent)}
+  .palette .prow.sel .pkey{border-color:color-mix(in srgb,var(--on-sel) 45%,transparent)}
+  /* Text on accent-filled controls the base still leaves white but the earlier
+     polish block didn't cover. */
+  .kbedit .kb-ac-row.sel{color:var(--on-accent)}
+  /* Tab close-button hover → theme hover, not a fixed dark grey. */
+  .tab .x:hover{background:var(--hover);color:var(--fg)}
+
+  /* ======================================================================
      Mobile / portrait touch shell. Gated entirely by body.mobile (set in JS
      from a max-width media query), so the desktop layout is untouched. The
      editor keeps its cell grid — JS just reports fewer rows so the pane ends
@@ -724,6 +768,11 @@ function applyTheme(t){
     const L=.2126*lin((n>>16)&255)+.7152*lin((n>>8)&255)+.0722*lin(n&255);
     return L>.45?"#10131a":"#ffffff"; };
   set("--on-accent", onColor(t.accent));
+  // Readable text colour for anything painted on the menu-highlight / --sel
+  // pill (selected rows, open menu, highlighted menu item). menuHi is light in
+  // a light theme, so white-on-highlight would be unreadable — pick by
+  // luminance exactly like --on-accent.
+  set("--on-sel", onColor(t.menuHi));
 }
 
 // Selectors for natively-scrolled chrome whose scrollTop must survive a
