@@ -371,8 +371,8 @@ fn test_cursor_within_buffer_bounds() {
             new_position: 12, // Middle of line 2
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         },
     );
 
@@ -952,8 +952,8 @@ mod event_inverse_tests {
             new_position: 20,
             old_anchor: None,
             new_anchor: Some(15),
-            old_sticky_column: 5,
-            new_sticky_column: 10,
+            old_sticky_column: Some(5),
+            new_sticky_column: Some(10),
         };
 
         let inverse = event.inverse().expect("MoveCursor should have inverse");
@@ -973,8 +973,8 @@ mod event_inverse_tests {
                 assert_eq!(new_position, 10); // Swapped
                 assert_eq!(old_anchor, Some(15)); // Swapped
                 assert_eq!(new_anchor, None); // Swapped
-                assert_eq!(old_sticky_column, 10); // Swapped
-                assert_eq!(new_sticky_column, 5); // Swapped
+                assert_eq!(old_sticky_column, Some(10)); // Swapped
+                assert_eq!(new_sticky_column, Some(5)); // Swapped
             }
             _ => panic!("MoveCursor inverse should be MoveCursor"),
         }
@@ -1224,8 +1224,8 @@ mod event_inverse_tests {
             new_position: 20,
             old_anchor: None,
             new_anchor: Some(15),
-            old_sticky_column: 5,
-            new_sticky_column: 10,
+            old_sticky_column: Some(5),
+            new_sticky_column: Some(10),
         };
 
         let inverse = original.inverse().expect("Should have inverse");
@@ -1247,8 +1247,8 @@ mod event_inverse_tests {
                 assert_eq!(new_position, 20);
                 assert_eq!(old_anchor, None);
                 assert_eq!(new_anchor, Some(15));
-                assert_eq!(old_sticky_column, 5);
-                assert_eq!(new_sticky_column, 10);
+                assert_eq!(old_sticky_column, Some(5));
+                assert_eq!(new_sticky_column, Some(10));
             }
             _ => panic!("Double inverse should be MoveCursor"),
         }

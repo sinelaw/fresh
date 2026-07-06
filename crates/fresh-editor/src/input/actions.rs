@@ -291,7 +291,7 @@ fn add_move_cursor_event(
     new_position: usize,
     old_anchor: Option<usize>,
     new_anchor: Option<usize>,
-    old_sticky_column: usize,
+    old_sticky_column: Option<usize>,
 ) {
     events.push(Event::MoveCursor {
         cursor_id,
@@ -300,7 +300,7 @@ fn add_move_cursor_event(
         old_anchor,
         new_anchor,
         old_sticky_column,
-        new_sticky_column: 0,
+        new_sticky_column: None,
     });
 }
 
@@ -433,7 +433,7 @@ fn block_select_action(
             old_anchor: cursor.anchor,
             new_anchor: Some(byte_anchor),
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: new_2d.column,
+            new_sticky_column: Some(new_2d.column),
         });
 
         // Note: We need to set block selection mode after the event is processed
@@ -742,8 +742,8 @@ fn handle_skip_over_with_dedent(
             new_position: line_start + indent_byte_len + 1,
             old_anchor: None,
             new_anchor: None,
-            old_sticky_column: 0,
-            new_sticky_column: 0,
+            old_sticky_column: None,
+            new_sticky_column: None,
         });
         return true;
     }
@@ -758,8 +758,8 @@ fn handle_skip_over(events: &mut Vec<Event>, cursor_id: CursorId, insert_positio
         new_position: insert_position + 1,
         old_anchor: None,
         new_anchor: None,
-        old_sticky_column: 0,
-        new_sticky_column: 0,
+        old_sticky_column: None,
+        new_sticky_column: None,
     });
 }
 
@@ -829,8 +829,8 @@ fn handle_auto_close(
         new_position: insert_position + 1,
         old_anchor: None,
         new_anchor: None,
-        old_sticky_column: 0,
-        new_sticky_column: 0,
+        old_sticky_column: None,
+        new_sticky_column: None,
     });
 }
 
@@ -957,8 +957,8 @@ fn insert_char_events(
                         new_position: sel_end + 2,
                         old_anchor: None,
                         new_anchor: None,
-                        old_sticky_column: 0,
-                        new_sticky_column: 0,
+                        old_sticky_column: None,
+                        new_sticky_column: None,
                     });
                     continue;
                 }
@@ -1249,7 +1249,7 @@ fn handle_insert_newline(
                     old_anchor: None, // No selection after bracket expansion
                     new_anchor: None,
                     old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: cursor_line_end, // Reset sticky column
+                    new_sticky_column: Some(cursor_line_end),
                 });
             }
         }
@@ -1513,11 +1513,7 @@ fn handle_vertical_up(
 
         let (current_visual_column, _) =
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
-        let goal_visual_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_visual_column
-        };
+        let goal_visual_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
         let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
         if let Some((prev_line_start, prev_line_content)) = iter.prev() {
@@ -1539,7 +1535,7 @@ fn handle_vertical_up(
                 old_anchor: cursor.anchor,
                 new_anchor,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: goal_visual_column,
+                new_sticky_column: Some(goal_visual_column),
             });
         }
     }
@@ -1567,11 +1563,7 @@ fn handle_vertical_down(
 
         let (current_visual_column, _) =
             calculate_visual_column(&mut state.buffer, from_pos, estimated_line_length);
-        let goal_visual_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_visual_column
-        };
+        let goal_visual_column = cursor.sticky_column.unwrap_or(current_visual_column);
 
         let mut iter = state.buffer.line_iterator(from_pos, estimated_line_length);
         iter.next_line(); // consume current line
@@ -1595,7 +1587,7 @@ fn handle_vertical_down(
                 old_anchor: cursor.anchor,
                 new_anchor,
                 old_sticky_column: cursor.sticky_column,
-                new_sticky_column: goal_visual_column,
+                new_sticky_column: Some(goal_visual_column),
             });
         }
     }
@@ -1620,11 +1612,7 @@ fn handle_page_up(
         let current_line_start = iter.current_position();
         let current_column = cursor.position - current_line_start;
 
-        let goal_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_column
-        };
+        let goal_column = cursor.sticky_column.unwrap_or(current_column);
 
         let mut new_pos = cursor.position;
         for _ in 0..lines_to_move {
@@ -1651,7 +1639,7 @@ fn handle_page_up(
             old_anchor: cursor.anchor,
             new_anchor,
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column,
+            new_sticky_column: Some(goal_column),
         });
     }
 }
@@ -1675,11 +1663,7 @@ fn handle_page_down(
         let current_line_start = iter.current_position();
         let current_column = cursor.position - current_line_start;
 
-        let goal_column = if cursor.sticky_column > 0 {
-            cursor.sticky_column
-        } else {
-            current_column
-        };
+        let goal_column = cursor.sticky_column.unwrap_or(current_column);
 
         iter.next_line(); // consume current line
 
@@ -1708,7 +1692,7 @@ fn handle_page_down(
             old_anchor: cursor.anchor,
             new_anchor,
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: goal_column,
+            new_sticky_column: Some(goal_column),
         });
     }
 }
@@ -2169,7 +2153,7 @@ fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut V
             old_anchor: cursor.anchor,
             new_anchor: None,
             old_sticky_column: cursor.sticky_column,
-            new_sticky_column: 0,
+            new_sticky_column: None,
         });
     }
 }
@@ -2284,7 +2268,7 @@ fn handle_duplicate_line(
             line_end + line_ending.len()
         };
         let cursor = cursors.get(cursor_id);
-        let old_sticky = cursor.map(|c| c.sticky_column).unwrap_or(0);
+        let old_sticky = cursor.and_then(|c| c.sticky_column);
         events.push(Event::MoveCursor {
             cursor_id,
             old_position: line_end + insert_len,
@@ -2292,7 +2276,7 @@ fn handle_duplicate_line(
             old_anchor: None,
             new_anchor: None,
             old_sticky_column: old_sticky,
-            new_sticky_column: 0,
+            new_sticky_column: None,
         });
     }
 }
@@ -3168,8 +3152,8 @@ mod tests {
                 new_position: 6,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3227,8 +3211,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3308,8 +3292,8 @@ mod tests {
                 new_position: 2, // "B"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3361,8 +3345,8 @@ mod tests {
                 new_position: 0, // "A"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3414,8 +3398,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3464,8 +3448,8 @@ mod tests {
                 new_position: 2, // "B"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3514,8 +3498,8 @@ mod tests {
                 new_position: 2, // "B"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3585,8 +3569,8 @@ mod tests {
                 new_position: target_start,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3653,8 +3637,8 @@ mod tests {
                 new_position: selection_end,
                 old_anchor: None,
                 new_anchor: Some(selection_start),
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3807,8 +3791,8 @@ mod tests {
                 new_position: 3,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3840,7 +3824,8 @@ mod tests {
                 "Cursor should move to end of shorter line"
             );
             assert_eq!(
-                *new_sticky_column, 3,
+                *new_sticky_column,
+                Some(3),
                 "Sticky column should preserve original column"
             );
         } else {
@@ -3871,7 +3856,11 @@ mod tests {
         } = &events[0]
         {
             assert_eq!(*new_position, 13, "Cursor should move back to column 3");
-            assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
+            assert_eq!(
+                *new_sticky_column,
+                Some(3),
+                "Sticky column should be preserved"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -3906,8 +3895,8 @@ mod tests {
                 new_position: 13,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -3939,7 +3928,8 @@ mod tests {
                 "Cursor should move to end of shorter line"
             );
             assert_eq!(
-                *new_sticky_column, 3,
+                *new_sticky_column,
+                Some(3),
                 "Sticky column should preserve original column"
             );
         } else {
@@ -3970,7 +3960,11 @@ mod tests {
         } = &events[0]
         {
             assert_eq!(*new_position, 3, "Cursor should move back to column 3");
-            assert_eq!(*new_sticky_column, 3, "Sticky column should be preserved");
+            assert_eq!(
+                *new_sticky_column,
+                Some(3),
+                "Sticky column should be preserved"
+            );
         } else {
             panic!("Expected MoveCursor event");
         }
@@ -4005,8 +3999,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4061,8 +4055,8 @@ mod tests {
                 new_position: 6,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4120,8 +4114,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4191,8 +4185,8 @@ mod tests {
                 new_position: 5,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4343,8 +4337,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4479,8 +4473,8 @@ mod tests {
                 new_position: target_line_start,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4557,8 +4551,8 @@ mod tests {
                 new_position: 13,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -4956,8 +4950,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5023,8 +5017,8 @@ mod tests {
                 new_position: 7, // end of "bar"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5036,8 +5030,8 @@ mod tests {
                 new_position: 3, // end of "foo"
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5093,8 +5087,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5258,8 +5252,8 @@ mod tests {
                 new_position: 0,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5400,8 +5394,8 @@ mod tests {
                 new_position: 1,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5459,8 +5453,8 @@ mod tests {
                 new_position: 1,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5514,8 +5508,8 @@ mod tests {
                 new_position: 1,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5569,8 +5563,8 @@ mod tests {
                 new_position: 1,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5625,8 +5619,8 @@ mod tests {
                 new_position: 1,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 
@@ -5681,8 +5675,8 @@ mod tests {
                 new_position: 2,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 

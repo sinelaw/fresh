@@ -413,20 +413,49 @@ fn render_categories_horizontal(
     }
 }
 
-/// Get an icon for a settings category name (Nerd Font icons)
-fn category_icon(name: &str) -> &'static str {
-    match name.to_lowercase().as_str() {
-        "general" => "\u{f013} ",       //
-        "editor" => "\u{f044} ",        //
-        "clipboard" => "\u{f328} ",     //
-        "file browser" => "\u{f07b} ",  //
-        "file explorer" => "\u{f07c} ", //
-        "packages" => "\u{f487} ",      //
-        "plugins" => "\u{f1e6} ",       //
-        "terminal" => "\u{f120} ",      //
-        "warnings" => "\u{f071} ",      //
-        "keybindings" => "\u{f11c} ",   //
-        _ => "\u{f111} ",               //  (dot circle as fallback)
+/// Get an icon for a settings category name.
+///
+/// Two sets are available. The Nerd Font set uses private-use-area
+/// codepoints that require a patched "Nerd Font" in the terminal — PUA
+/// glyphs have no system-font fallback, so on any other font they
+/// render as `?` or empty boxes (issue #2032). The default set uses
+/// standard BMP codepoints (default text presentation, width 1) from
+/// the same compatibility class as the `▶`/`✓`/`●` glyphs the UI
+/// already relies on, so terminal font fallback can always supply
+/// them. The Nerd Font set is used only when `editor.nerd_font_icons`
+/// is enabled.
+fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
+    let name = name.to_lowercase();
+    if nerd_fonts {
+        return match name.as_str() {
+            "general" => "\u{f013} ",       //
+            "editor" => "\u{f044} ",        //
+            "clipboard" => "\u{f328} ",     //
+            "file browser" => "\u{f07b} ",  //
+            "file explorer" => "\u{f07c} ", //
+            "packages" => "\u{f487} ",      //
+            "plugins" => "\u{f1e6} ",       //
+            "terminal" => "\u{f120} ",      //
+            "warnings" => "\u{f071} ",      //
+            "keybindings" => "\u{f11c} ",   //
+            _ => "\u{f111} ",               //  (dot circle as fallback)
+        };
+    }
+    if name.starts_with("plugin: ") {
+        return "\u{271a} "; // ✚ heavy plus (add-on)
+    }
+    match name.as_str() {
+        "general" => "\u{2699} ",       // ⚙ gear
+        "editor" => "\u{270e} ",        // ✎ pencil
+        "clipboard" => "\u{2702} ",     // ✂ scissors (cut/copy)
+        "file browser" => "\u{25a4} ",  // ▤ square with lines (document)
+        "file explorer" => "\u{25a6} ", // ▦ square with grid (tree)
+        "packages" => "\u{25c6} ",      // ◆ diamond
+        "plugins" => "\u{271a} ",       // ✚ heavy plus (add-on)
+        "terminal" => "\u{00bb} ",      // » prompt chevron
+        "warnings" => "\u{26a0} ",      // ⚠ warning sign
+        "keybindings" => "\u{2328} ",   // ⌨ keyboard
+        _ => "\u{2022} ",               // • bullet as fallback
     }
 }
 
@@ -475,6 +504,7 @@ fn render_categories(
         label: String,
         icon: Option<&'static str>,
     }
+    let nerd_fonts = state.nerd_font_icons_enabled();
     let row_data: Vec<RowData> = rows
         .iter()
         .map(|row| match *row {
@@ -505,7 +535,7 @@ fn render_categories(
                     cat_idx: Some(idx),
                     section_idx: None,
                     label: page.name.clone(),
-                    icon: Some(category_icon(&page.name)),
+                    icon: Some(category_icon(&page.name, nerd_fonts)),
                 }
             }
             TreeRow::Section {
@@ -2259,7 +2289,7 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
 
     // Show result count and scroll position inline after cursor
     let result_count = state.search_results.len();
-    let count_text = if state.search_query.is_empty() {
+    let count_text = if state.search_query().is_empty() {
         String::new()
     } else if result_count == 0 {
         " (no results)".to_string()
@@ -2290,10 +2320,25 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         .fg(theme.menu_active_fg)
         .add_modifier(Modifier::BOLD);
 
+    // Render the query as a block cursor sitting on the character at
+    // the caret (or a trailing space when the cursor is at the end),
+    // so it reflects Left/Right/Home/End movement.
+    let query = state.search_query();
+    let cursor = state.search_cursor().min(query.len());
+    let before = &query[..cursor];
+    let (under, after) = {
+        let rest = &query[cursor..];
+        match rest.chars().next() {
+            Some(c) => (c.to_string(), &rest[c.len_utf8()..]),
+            None => (" ".to_string(), ""),
+        }
+    };
+
     let spans = vec![
         Span::styled("> ", search_style),
-        Span::styled(&state.search_query, search_style),
-        Span::styled(" ", cursor_style), // Cursor
+        Span::styled(before, search_style),
+        Span::styled(under, cursor_style), // Cursor
+        Span::styled(after, search_style),
         Span::styled(count_text, count_style),
         Span::styled(scroll_indicator, indicator_style),
     ];

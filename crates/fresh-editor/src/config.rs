@@ -502,6 +502,7 @@ pub enum EnvKind {
 /// One environment detector: which marker files/dirs identify it, how risky
 /// activation is, how to activate it, and what to call it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(extend("x-display-field" = "/name"))]
 pub struct EnvDetector {
     /// Short label shown in the status pill (e.g. ".venv", "direnv", "mise").
     pub name: String,
@@ -1154,6 +1155,17 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tilde: bool,
 
+    /// Use Nerd Font icons for decorative UI glyphs (e.g. the settings
+    /// category icons). Nerd Font glyphs live in the Unicode private-use
+    /// area and only render correctly when the terminal uses a patched
+    /// "Nerd Font"; on any other font they show up as `?` or empty boxes.
+    /// When disabled, standard Unicode symbols (covered by normal
+    /// terminal font fallback) are used instead.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub nerd_font_icons: bool,
+
     /// Use the terminal's default background color instead of the theme's editor background.
     /// When enabled, the editor background inherits from the terminal emulator,
     /// allowing transparency or custom terminal backgrounds to show through.
@@ -1803,6 +1815,7 @@ impl Default for EditorConfig {
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
             show_tilde: true,
+            nerd_font_icons: false,
             use_terminal_bg: false,
             set_window_title: true,
             terminal_auto_title: true,

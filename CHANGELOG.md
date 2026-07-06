@@ -8,27 +8,22 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Slang shader language support** — syntax highlighting and [slangd](https://github.com/shader-slang/slang) LSP integration, including **Go to Definition** into builtin modules (opened read-only via `slangd --print-builtin-module`) and graceful handling of slangd's non-spec LSP responses (#2536, #2539, requested by @batoripX in #2517).
-* **NetBSD**: Fresh now builds on NetBSD — the rquickjs bindgen feature is enabled so the plugin runtime compiles (#2534, by @ci4ic4).
+* **Slang shader support** - syntax highlighting and [slangd](https://github.com/shader-slang/slang) LSP integration, with **Go to Definition** into read-only builtin modules (#2536, #2539, requested by @batoripX in #2517).
+* **NetBSD builds** - Fresh now compiles on NetBSD (#2534, by @ci4ic4).
 
 ### Bug Fixes
 
-* **Markdown compose**: fixed table corruption under rapid edits ("edit storms") — table borders are now per-line decorations, and plugin coordinates are remapped through an edit epoch so markers no longer drift (#2479, #2484).
-* **Orchestrator**: clicking a dock row focuses the activated window (#2521).
-* The startup **wave animation** is now dismissable in daemon mode (#2530, reported by @muesli).
-* **Build**: `cargo install` / `cargo build` no longer emits spurious `failed to parse serde attribute` warnings from ts-rs for `#[serde(transparent)]` and `#[serde(serialize_with = …)]` attributes it intentionally ignores (#2519, reported by @puphubv).
-* **Large files**: the load/limit behavior is now driven by a single **10 MB** threshold setting instead of several overlapping ones (#2540).
-* **Remote workspaces (SSH)** — a cluster of remote and large-file fixes (#2525):
-  * The **file explorer** now appears immediately when toggled on a slow or remote workspace, instead of staying blank until the tree loads (#2522).
-  * Fixed a boot hang and made large-file streaming reads time out on idle rather than total duration.
-  * Eliminated per-keystroke cursor lag when editing very long lines (#2529).
-* **Indentation guides**:
-  * continue unbroken through soft-wrapped continuation rows (#2538);
-  * respect a per-buffer override and the buffer kind rather than layout (#2523);
-  * stay visible when opening a file at a commit from **Git Log**.
-* **Settings**:
-  * language-entry field edits keep their committed value (including **Tab Size**), and `Esc` now cancels an in-progress edit while `Enter`/`Tab` commit it (#2537);
-  * committing a text field with `Tab` persists the typed value on Save, matching `Enter` — previously the row showed as modified but Save wrote an empty value (#2515).
+* **Cursor column** is preserved on vertical moves that used to drift it - indented soft-wrapped lines, off-screen up/down over short lines (#2565), and blank lines with indentation guides (#2564).
+* **LSP args** - an empty `args` list now overrides a built-in server's defaults, so you can use one that takes no arguments (e.g. markdown-oxide for marksman) (#2549, reported by @alex-ball).
+* **Settings icons** now render on all terminals by default - standard Unicode symbols replace the Nerd Font glyphs that showed as `?`; opt back in with `editor.nerd_font_icons` (#2032).
+* **Markdown tables** no longer corrupt under rapid edits (#2479, #2484).
+* **Orchestrator** - clicking a dock row focuses the activated window (#2521).
+* **Wave animation** is now dismissable in daemon mode (#2530, reported by @muesli).
+* **Build** - no more spurious `failed to parse serde attribute` warnings on `cargo install` / `cargo build` (#2519, reported by @puphubv).
+* **Large files** - modestly-sized files (e.g. a ~2 MB file, or jumping into slangd's builtin module) no longer wrongly enter large-file mode, where the gutter/status showed byte offsets instead of line numbers and LSP was disabled; the threshold is now a single **10 MB** setting instead of several overlapping ones (#2540).
+* **Remote workspaces (SSH)** (#2525) - file explorer appears immediately when toggled (#2522), a boot hang is fixed with idle-based read timeouts, and per-keystroke lag on very long lines is gone (#2529).
+* **Indentation guides** continue through soft-wrapped rows (#2538), respect per-buffer overrides and buffer kind (#2523), and stay visible when opening a file at a commit from **Git Log**.
+* **Settings fields** - language-entry edits (incl. **Tab Size**) keep their committed value, with `Esc` to cancel and `Enter`/`Tab` to commit (#2537, #2515); the search filter gains full cursor editing and ignores `Ctrl`/`Alt` chords; the **Env** list labels rows by name instead of `(no action)`.
 
 ### Internals
 

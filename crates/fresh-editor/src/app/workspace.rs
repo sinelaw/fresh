@@ -1299,7 +1299,9 @@ impl crate::app::window::Window {
                     buf_state.cursors.primary_mut().position = cursor_pos;
                     buf_state.cursors.primary_mut().anchor =
                         file_state.cursor.anchor.map(|a| a.min(max_pos));
-                    buf_state.cursors.primary_mut().sticky_column = file_state.cursor.sticky_column;
+                    buf_state.cursors.primary_mut().sticky_column =
+                        (file_state.cursor.sticky_column != 0)
+                            .then_some(file_state.cursor.sticky_column);
 
                     buf_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
                     buf_state.viewport.top_view_line_offset =
@@ -1688,7 +1690,7 @@ impl crate::app::window::Window {
             cursor: SerializedCursor {
                 position: primary_cursor.position,
                 anchor: primary_cursor.anchor,
-                sticky_column: primary_cursor.sticky_column,
+                sticky_column: primary_cursor.sticky_column.unwrap_or(0),
             },
             additional_cursors: view_state
                 .cursors
@@ -1697,7 +1699,7 @@ impl crate::app::window::Window {
                 .map(|(_, cursor)| SerializedCursor {
                     position: cursor.position,
                     anchor: cursor.anchor,
-                    sticky_column: cursor.sticky_column,
+                    sticky_column: cursor.sticky_column.unwrap_or(0),
                 })
                 .collect(),
             scroll: SerializedScroll {
@@ -2725,7 +2727,7 @@ fn serialize_split_view_state(
                 cursor: SerializedCursor {
                     position: primary_cursor.position,
                     anchor: primary_cursor.anchor,
-                    sticky_column: primary_cursor.sticky_column,
+                    sticky_column: primary_cursor.sticky_column.unwrap_or(0),
                 },
                 additional_cursors: buf_state
                     .cursors
@@ -2734,7 +2736,7 @@ fn serialize_split_view_state(
                     .map(|(_, cursor)| SerializedCursor {
                         position: cursor.position,
                         anchor: cursor.anchor,
-                        sticky_column: cursor.sticky_column,
+                        sticky_column: cursor.sticky_column.unwrap_or(0),
                     })
                     .collect(),
                 scroll: SerializedScroll {

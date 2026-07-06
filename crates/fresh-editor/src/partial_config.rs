@@ -214,6 +214,7 @@ pub struct PartialEditorConfig {
     pub show_vertical_scrollbar: Option<bool>,
     pub show_horizontal_scrollbar: Option<bool>,
     pub show_tilde: Option<bool>,
+    pub nerd_font_icons: Option<bool>,
     pub use_terminal_bg: Option<bool>,
     pub set_window_title: Option<bool>,
     pub terminal_auto_title: Option<bool>,
@@ -333,6 +334,7 @@ impl Merge for PartialEditorConfig {
         self.show_horizontal_scrollbar
             .merge_from(&other.show_horizontal_scrollbar);
         self.show_tilde.merge_from(&other.show_tilde);
+        self.nerd_font_icons.merge_from(&other.nerd_font_icons);
         self.use_terminal_bg.merge_from(&other.use_terminal_bg);
         self.set_window_title.merge_from(&other.set_window_title);
         self.terminal_auto_title
@@ -651,6 +653,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
             show_tilde: Some(cfg.show_tilde),
+            nerd_font_icons: Some(cfg.nerd_font_icons),
             use_terminal_bg: Some(cfg.use_terminal_bg),
             set_window_title: Some(cfg.set_window_title),
             terminal_auto_title: Some(cfg.terminal_auto_title),
@@ -822,6 +825,7 @@ impl PartialEditorConfig {
                 .show_horizontal_scrollbar
                 .unwrap_or(defaults.show_horizontal_scrollbar),
             show_tilde: self.show_tilde.unwrap_or(defaults.show_tilde),
+            nerd_font_icons: self.nerd_font_icons.unwrap_or(defaults.nerd_font_icons),
             use_terminal_bg: self.use_terminal_bg.unwrap_or(defaults.use_terminal_bg),
             set_window_title: self.set_window_title.unwrap_or(defaults.set_window_title),
             terminal_auto_title: self

@@ -856,7 +856,7 @@ impl EditorState {
         cursor_id: crate::model::event::CursorId,
         new_position: usize,
         new_anchor: Option<usize>,
-        new_sticky_column: usize,
+        new_sticky_column: Option<usize>,
     ) {
         if let Some(cursor) = cursors.get_mut(cursor_id) {
             cursor.position = new_position;
@@ -1943,8 +1943,8 @@ mod tests {
                 new_position: 2,
                 old_anchor: None,
                 new_anchor: None,
-                old_sticky_column: 0,
-                new_sticky_column: 0,
+                old_sticky_column: None,
+                new_sticky_column: None,
             },
         );
 

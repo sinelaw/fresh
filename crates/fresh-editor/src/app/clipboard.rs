@@ -1428,7 +1428,7 @@ impl Editor {
                 old_anchor: primary.anchor,
                 new_anchor: Some(range.start),
                 old_sticky_column: primary.sticky_column,
-                new_sticky_column: 0,
+                new_sticky_column: None,
             };
             self.active_event_log_mut().append(event.clone());
             self.apply_event_to_active_buffer(&event);
@@ -1471,7 +1471,7 @@ impl Editor {
                     old_anchor: primary.anchor,
                     new_anchor: Some(word_start),
                     old_sticky_column: primary.sticky_column,
-                    new_sticky_column: 0,
+                    new_sticky_column: None,
                 };
 
                 // Log and apply the event
@@ -1584,7 +1584,7 @@ impl Editor {
                 old_anchor: cur.anchor,
                 new_anchor: None,
                 old_sticky_column: cur.sticky_column,
-                new_sticky_column: 0,
+                new_sticky_column: None,
             });
         }
 

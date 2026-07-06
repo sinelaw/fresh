@@ -887,15 +887,20 @@ fn test_file_open_prompt_grapheme_movement() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test grapheme cluster movement in settings search box
+/// Test grapheme cluster movement in settings search box.
 ///
-/// Note: The settings search box is a simple filter field that doesn't support
-/// cursor movement (Left/Right arrows) - it only supports typing at the end
-/// and backspace. This is a limitation of the simple filter design, not a bug.
+/// The settings filter now supports full cursor movement (Left/Right/Home/End,
+/// mid-string insert/delete) with grapheme-cluster granularity, matching the
+/// Command Palette. That behavior is unit-tested at the state level in
+/// `view::settings::input::tests::test_search_arrow_keys_edit_within_query`.
 ///
-/// This test is marked ignore since cursor movement isn't supported in this field.
+/// This end-to-end variant stays ignored because it asserts on the *hardware*
+/// terminal cursor via `screen_cursor_position()`, but the settings dialog —
+/// like all of its controls — paints a styled block cursor into the frame
+/// rather than moving the hardware cursor, so `screen_cursor_position()` can't
+/// observe the caret here.
 #[test]
-#[ignore = "Settings search is a simple filter without cursor movement support"]
+#[ignore = "settings dialog paints a styled block cursor, not the hardware cursor screen_cursor_position() reads"]
 fn test_settings_search_grapheme_movement() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     harness.render().unwrap();

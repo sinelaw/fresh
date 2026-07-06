@@ -2510,7 +2510,7 @@ impl Window {
             cursor: SerializedCursor {
                 position: primary_cursor.position,
                 anchor: primary_cursor.anchor,
-                sticky_column: primary_cursor.sticky_column,
+                sticky_column: primary_cursor.sticky_column.unwrap_or(0),
             },
             additional_cursors: buf_state
                 .cursors
@@ -2519,7 +2519,7 @@ impl Window {
                 .map(|(_, cursor)| SerializedCursor {
                     position: cursor.position,
                     anchor: cursor.anchor,
-                    sticky_column: cursor.sticky_column,
+                    sticky_column: cursor.sticky_column.unwrap_or(0),
                 })
                 .collect(),
             scroll: SerializedScroll {

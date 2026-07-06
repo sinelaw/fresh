@@ -1,5 +1,5 @@
-fresh-editor (0.4.2-1) unstable; urgency=medium
+fresh-editor (0.4.3-1) unstable; urgency=medium
 
-  * Release 0.4.2. See upstream CHANGELOG.md for details.
+  * Release 0.4.3. See upstream CHANGELOG.md for details.
 
- -- Noam Lewis <i9uqoqj7k@mozmail.com>  Sat, 27 Jun 2026 19:30:45 +0000
+ -- Noam Lewis <i9uqoqj7k@mozmail.com>  Mon, 06 Jul 2026 06:13:35 +0000
