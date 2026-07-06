@@ -523,6 +523,11 @@ export function text(
      * `cursorByte`. */
     selStart?: number;
     selEnd?: number;
+    /** Form label-column width. When `> 0` (and `label` is set) the
+     * single-line field pads the label to this column and separates it
+     * from the value with `: `, so a column of controls aligns their
+     * value cells. `0` (default) keeps the compact `label [value]`. */
+    labelWidth?: number;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -541,6 +546,7 @@ export function text(
     blockCaret: options.blockCaret ?? false,
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
+    labelWidth: options.labelWidth ?? 0,
     key: options.key,
   };
 }

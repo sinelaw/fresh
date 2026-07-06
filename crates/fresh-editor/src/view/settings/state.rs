@@ -821,11 +821,13 @@ impl SettingsState {
     /// `from_above`: true = start at first entry, false = start at add-new field
     fn init_map_focus(&mut self, from_above: bool) {
         if let Some(item) = self.current_item_mut() {
-            if let SettingControl::Map(ref mut map_state) = item.control {
-                map_state.init_focus(from_above);
+            match &mut item.control {
+                SettingControl::Map(ref mut map_state) => map_state.init_focus(from_above),
+                SettingControl::ObjectArray(ref mut arr) => arr.init_nav_focus(from_above),
+                _ => {}
             }
         }
-        // Update sub_focus to match the map's focus position
+        // Update sub_focus to match the map/array's focus position
         self.update_map_sub_focus();
     }
 
@@ -864,16 +866,14 @@ impl SettingsState {
     /// Update sub_focus based on the current Map control's focus position.
     /// Maps focus_regions use: id=0 for label, id=1+i for entry i, id=1+len for add-new
     fn update_map_sub_focus(&mut self) {
-        self.sub_focus = self.current_item().and_then(|item| {
-            if let SettingControl::Map(ref map_state) = item.control {
-                // Map focus_regions: id=0 (label), id=1+i (entry), id=1+len (add-new)
-                Some(match map_state.focused_entry {
-                    Some(i) => 1 + i,
-                    None => 1 + map_state.entries.len(), // add-new field
-                })
-            } else {
-                None
-            }
+        self.sub_focus = self.current_item().and_then(|item| match &item.control {
+            // Map focus_regions: id=0 (label), id=1+i (entry), id=1+len (add-new)
+            SettingControl::Map(ref map_state) => Some(match map_state.focused_entry {
+                Some(i) => 1 + i,
+                None => 1 + map_state.entries.len(), // add-new field
+            }),
+            SettingControl::ObjectArray(ref arr) => Some(arr.sub_focus_row()),
+            _ => None,
         });
     }
 
@@ -889,12 +889,13 @@ impl SettingsState {
                     .current_item_mut()
                     .and_then(|item| match &mut item.control {
                         SettingControl::Map(map_state) => Some(map_state.focus_prev()),
+                        SettingControl::ObjectArray(arr) => Some(arr.nav_prev()),
                         _ => None,
                     })
                     .unwrap_or(false);
 
                 if handled {
-                    // Update sub_focus for Map navigation
+                    // Update sub_focus for Map/ObjectArray navigation
                     self.update_map_sub_focus();
                 } else if self.selected_item > 0 {
                     self.update_control_focus(false); // Unfocus old item
@@ -926,12 +927,13 @@ impl SettingsState {
                     .current_item_mut()
                     .and_then(|item| match &mut item.control {
                         SettingControl::Map(map_state) => Some(map_state.focus_next()),
+                        SettingControl::ObjectArray(arr) => Some(arr.nav_next()),
                         _ => None,
                     })
                     .unwrap_or(false);
 
                 if handled {
-                    // Update sub_focus for Map navigation
+                    // Update sub_focus for Map/ObjectArray navigation
                     self.update_map_sub_focus();
                 } else {
                     let can_move = self

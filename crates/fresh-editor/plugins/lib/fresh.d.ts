@@ -1399,6 +1399,15 @@ type WidgetSpec = {
 	*/
 	selStart?: number;
 	selEnd?: number;
+	/**
+	* Form label-column width. When `> 0` (and `label` is set) the
+	* single-line field pads the label to this column and separates it
+	* from the value with `: `, so a column of `text`, `toggle`,
+	* `number`, and `dropdown` controls aligns their value cells. `0`
+	* (default) keeps the compact `label [value]` form. Clamped to keep
+	* the cell on-screen on narrow surfaces.
+	*/
+	labelWidth?: number;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";

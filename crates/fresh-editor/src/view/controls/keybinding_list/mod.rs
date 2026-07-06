@@ -126,6 +126,64 @@ impl KeybindingListState {
         }
     }
 
+    /// Boundary-aware down navigation for the Settings page, mirroring
+    /// `MapState::focus_next`: move to the next sub-row and return
+    /// `true`, or return `false` at the bottom edge (the add-new row)
+    /// so the caller advances to the next setting. Layout is entries
+    /// `[0..len]` then the trailing add-new sentinel (`None`).
+    /// (The plain [`Self::focus_next`] wraps; this one stops.)
+    pub fn nav_next(&mut self) -> bool {
+        match self.focused_index {
+            Some(idx) if idx + 1 < self.bindings.len() => {
+                self.focused_index = Some(idx + 1);
+                true
+            }
+            Some(_) => {
+                // Last entry → add-new sentinel.
+                self.focused_index = None;
+                true
+            }
+            None => false, // On add-new → leave the control.
+        }
+    }
+
+    /// Boundary-aware up navigation; companion to [`Self::nav_next`].
+    pub fn nav_prev(&mut self) -> bool {
+        match self.focused_index {
+            Some(0) => false, // First entry → leave the control.
+            Some(idx) => {
+                self.focused_index = Some(idx - 1);
+                true
+            }
+            None if !self.bindings.is_empty() => {
+                // Add-new → last entry.
+                self.focused_index = Some(self.bindings.len() - 1);
+                true
+            }
+            None => false, // Empty list on add-new → leave.
+        }
+    }
+
+    /// Seed focus when navigation enters the control: the first entry
+    /// when arriving from above, the add-new sentinel (or last entry
+    /// when empty) when arriving from below. Mirrors `MapState`.
+    pub fn init_nav_focus(&mut self, from_above: bool) {
+        self.focused_index = if from_above && !self.bindings.is_empty() {
+            Some(0)
+        } else {
+            None
+        };
+    }
+
+    /// Sub-row index for scroll-into-view: `1 + entry` for a focused
+    /// entry (0 is the label), or the add-new row after the entries.
+    pub fn sub_focus_row(&self) -> usize {
+        match self.focused_index {
+            Some(i) => 1 + i,
+            None => 1 + self.bindings.len(),
+        }
+    }
+
     /// Remove the focused binding
     pub fn remove_focused(&mut self) {
         if let Some(idx) = self.focused_index {
@@ -327,6 +385,41 @@ mod tests {
         assert_eq!(state.label, "Keybindings");
         assert!(state.bindings.is_empty());
         assert!(state.focused_index.is_none());
+    }
+
+    #[test]
+    fn nav_next_prev_stop_at_boundaries() {
+        // Settings-page navigation: entries [0,1] then add-new (None).
+        let mut s = KeybindingListState::new("Detectors");
+        s.add_binding(serde_json::json!({"name": ".venv"}));
+        s.add_binding(serde_json::json!({"name": "direnv"}));
+
+        // Enter from above → first entry.
+        s.init_nav_focus(true);
+        assert_eq!(s.focused_index, Some(0));
+        // Down through entries → add-new → leave.
+        assert!(s.nav_next());
+        assert_eq!(s.focused_index, Some(1));
+        assert!(s.nav_next());
+        assert_eq!(s.focused_index, None); // add-new sentinel
+        assert!(!s.nav_next()); // at add-new → leave the control
+        assert_eq!(s.focused_index, None);
+
+        // Enter from below → add-new.
+        s.init_nav_focus(false);
+        assert_eq!(s.focused_index, None);
+        // Up from add-new → last entry → first → leave.
+        assert!(s.nav_prev());
+        assert_eq!(s.focused_index, Some(1));
+        assert!(s.nav_prev());
+        assert_eq!(s.focused_index, Some(0));
+        assert!(!s.nav_prev()); // at first → leave the control
+
+        // sub_focus_row: 0 is the label, entries are 1+i, add-new last.
+        s.focused_index = Some(1);
+        assert_eq!(s.sub_focus_row(), 2);
+        s.focused_index = None;
+        assert_eq!(s.sub_focus_row(), 1 + s.bindings.len());
     }
 
     #[test]

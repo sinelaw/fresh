@@ -2077,6 +2077,16 @@ pub enum WidgetSpec {
         sel_start: i32,
         #[serde(default = "default_neg_one")]
         sel_end: i32,
+        /// Form label-column width. When `> 0` (and `label` is set) the
+        /// single-line field pads the label to this column and separates
+        /// it from the value with `: `, so a column of `Text`, `Toggle`,
+        /// `Number`, and `Dropdown` controls aligns their value cells
+        /// (the Settings entry dialog sets it to the page's max label
+        /// width). `0` (default) keeps the compact `label [value]` form
+        /// plugins get by default. Clamped to keep the cell on-screen on
+        /// narrow surfaces.
+        #[serde(default)]
+        label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

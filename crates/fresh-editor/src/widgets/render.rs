@@ -560,6 +560,7 @@ fn render_collected(
             *label_width,
             key.as_deref(),
             focus_key,
+            panel_width,
         ),
         WidgetSpec::Number {
             value,
@@ -710,6 +711,7 @@ fn render_collected(
             block_caret,
             sel_start,
             sel_end,
+            label_width,
             key,
         } => render_widget_text(
             value,
@@ -724,6 +726,7 @@ fn render_collected(
             *completions_visible_rows,
             *block_caret,
             (*sel_start, *sel_end),
+            *label_width,
             key.as_deref(),
             prev,
             next_state,
@@ -1170,6 +1173,7 @@ fn collect_toggle(
     label_width: u32,
     key: Option<&str>,
     focus_key: &str,
+    panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
     // Host-managed focus overrides the spec's `focused`
@@ -1187,7 +1191,14 @@ fn collect_toggle(
     // long-standing contract); the default chip-first layout keeps the
     // whole row clickable, which is what plugin panels expect.
     let (mut entry, chip_range) = if label_first {
-        render_toggle_form(checked, indeterminate, label, is_focused, label_width)
+        render_toggle_form(
+            checked,
+            indeterminate,
+            label,
+            is_focused,
+            label_width,
+            panel_width,
+        )
     } else {
         let entry = render_toggle(checked, label, is_focused);
         let end = entry.text.len();
@@ -2196,6 +2207,7 @@ fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_widget_text(
     value: &str,
     cursor_byte: i32,
@@ -2209,6 +2221,7 @@ fn render_widget_text(
     completions_visible_rows: u32,
     block_caret: bool,
     spec_sel: (i32, i32),
+    label_width: u32,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -2294,8 +2307,37 @@ fn render_widget_text(
     } else {
         -1
     };
-    let effective_field_width =
-        effective_text_field_width(full_width, multiline, label, panel_width, field_width);
+    // Form-column alignment: when `label_width > 0`, pad the label to
+    // the column and terminate it with `:` so the value cell's `[` lines
+    // up with the sibling Toggle/Number/Dropdown cells (which render
+    // `{label}: [..]`). `render_text_input` appends the ` ` + `[`, so the
+    // composed label carries only up to the colon. `label_width == 0`
+    // keeps the compact `{label} [..]` plugins get by default. This is
+    // computed before the field width so the value cell is sized against
+    // the *padded* label overhead (else the wider label overflows the
+    // control's right edge). Only meaningful for single-line fields.
+    let composed_label;
+    let effective_label: &str = if label_width > 0 && !label.is_empty() && !multiline {
+        let lw = form_label_width(
+            label_width,
+            focus_gutter_prefix(is_focused).len(),
+            // Reserve the bracketed cell + a couple cells of value so the
+            // field opening stays on-screen on a narrow surface.
+            "[  ]".len(),
+            panel_width,
+        );
+        composed_label = format!("{}:", fit_label(label, lw));
+        &composed_label
+    } else {
+        label
+    };
+    let effective_field_width = effective_text_field_width(
+        full_width,
+        multiline,
+        effective_label,
+        panel_width,
+        field_width,
+    );
     // Selection overlay is only meaningful for the focused
     // widget — passing `None` otherwise keeps the no-selection
     // rendering paths unchanged. The editor's own selection wins;
@@ -2370,7 +2412,7 @@ fn render_widget_text(
             effective_cursor,
             selection_for_render,
             is_focused,
-            label,
+            effective_label,
             placeholder,
             max_visible_chars,
             effective_field_width,
@@ -3591,6 +3633,58 @@ fn pad_label(label: &str, width: usize) -> String {
     }
 }
 
+/// The effective label-column width for a form control (`label: [v]`),
+/// clamped so the value cell always stays on-screen. `label_width` is
+/// the page-wide alignment column; on a narrow surface it can exceed
+/// what's left after the marker + `: ` + value cell, which pushes the
+/// cell past the right edge where the painter clips it (the toggle chip
+/// "disappearing" on a narrow terminal). Reserve room for the cell and
+/// never pad wider than that. `0` panel width (auto-fit / tests) keeps
+/// the requested `label_width` unchanged.
+fn form_label_width(
+    label_width: u32,
+    marker_cols: usize,
+    cell_cols: usize,
+    panel_width: u32,
+) -> usize {
+    let requested = label_width as usize;
+    if panel_width == 0 {
+        return requested;
+    }
+    let reserved = marker_cols + ": ".len() + cell_cols;
+    let budget = (panel_width as usize).saturating_sub(reserved);
+    requested.min(budget)
+}
+
+/// Fit `label` into `width` columns: truncate with a trailing `…` when
+/// it's too long, otherwise right-pad. Keeps a form control's value cell
+/// aligned *and* on-screen even when the label itself overflows the
+/// clamped column.
+fn fit_label(label: &str, width: usize) -> String {
+    use crate::primitives::display_width::str_width;
+    if width == 0 {
+        return String::new();
+    }
+    if str_width(label) <= width {
+        return pad_label(label, width);
+    }
+    // Truncate to width-1 columns, then append '…'.
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in label.chars() {
+        let cw = str_width(&ch.to_string());
+        if used + cw > width.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out.push('…');
+    used += 1;
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
+    out
+}
+
 /// Render a form-layout `Toggle`: `{marker}{label}: [v]` with the
 /// chip after the (optionally padded) label. Returns the entry plus
 /// the byte range of the `[v]` chip for the click hit area.
@@ -3602,6 +3696,7 @@ pub fn render_toggle_form(
     label: &str,
     focused: bool,
     label_width: u32,
+    panel_width: u32,
 ) -> (TextPropertyEntry, (usize, usize)) {
     let glyph = if indeterminate {
         "[-]"
@@ -3611,9 +3706,28 @@ pub fn render_toggle_form(
         "[ ]"
     };
     let marker = focus_gutter_prefix(focused);
+    // `label_width == 0` means no column alignment: render the label in
+    // full (compact). Only pad/truncate to a column when a width is
+    // requested; then clamp so the chip stays on-screen on a narrow
+    // panel.
+    let label_cell = if label_width == 0 {
+        label.to_string()
+    } else {
+        let lw = form_label_width(
+            label_width,
+            crate::primitives::display_width::str_width(marker),
+            glyph.len(),
+            panel_width,
+        );
+        if lw == 0 {
+            label.to_string()
+        } else {
+            fit_label(label, lw)
+        }
+    };
     let mut text = String::new();
     text.push_str(marker);
-    text.push_str(&pad_label(label, label_width as usize));
+    text.push_str(&label_cell);
     text.push_str(": ");
     let chip_start = text.len();
     text.push_str(glyph);
@@ -5278,6 +5392,119 @@ mod tests {
     }
 
     #[test]
+    fn form_toggle_chip_stays_visible_on_narrow_panel() {
+        // A page-wide label_width larger than the narrow panel must not
+        // push the `[v]` chip past the right edge: the label is clamped
+        // (and truncated if needed) so the chip always fits. Regression:
+        // Editor toggles' chips vanished off-screen on a narrow terminal.
+        let panel = 34u32; // narrow content width
+        let (entry, chip) = render_toggle_form(
+            true,
+            false,
+            "Highlight Matching Brackets",
+            false,
+            40, // requested label column wider than the panel
+            panel,
+        );
+        let w = crate::primitives::display_width::str_width(&entry.text);
+        assert!(
+            w <= panel as usize,
+            "row must fit the panel ({w} > {panel}): {:?}",
+            entry.text
+        );
+        // The chip byte range is inside the text and reads `[v]`.
+        assert_eq!(&entry.text[chip.0..chip.1], "[v]");
+    }
+
+    #[test]
+    fn form_label_width_zero_panel_keeps_request() {
+        // Auto-fit / tests (panel_width == 0) leave the requested width.
+        assert_eq!(form_label_width(20, 2, 3, 0), 20);
+    }
+
+    #[test]
+    fn fit_label_truncates_with_ellipsis() {
+        // Too long → truncated to width with a trailing `…`.
+        let out = fit_label("VeryLongLanguageName", 8);
+        assert_eq!(crate::primitives::display_width::str_width(&out), 8);
+        assert!(out.ends_with('…'), "expected ellipsis: {out:?}");
+        // Fits → right-padded to width.
+        assert_eq!(fit_label("Go", 5), "Go   ");
+    }
+
+    #[test]
+    fn text_field_label_width_aligns_value_cell() {
+        // A `label_width`-set single-line Text pads the label to the
+        // column and terminates it with `: ` so its `[` aligns with the
+        // sibling toggles' chips. Regression: the entry-dialog Grammar
+        // field opened `Grammar [value]` instead of the aligned column.
+        let spec = WidgetSpec::Text {
+            value: "PowerShell".into(),
+            cursor_byte: -1,
+            focused: false,
+            label: "Grammar".into(),
+            placeholder: None,
+            rows: 1,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 18,
+            key: None,
+        };
+        let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
+        let text = entries[0].text.trim_end_matches('\n');
+        use crate::primitives::display_width::str_width;
+        // The label is padded to the 18-col column, then `: [` opens the
+        // value cell — so everything up to `[` is exactly the marker +
+        // 18 + ": ".
+        let bracket = text.find('[').expect("value cell bracket");
+        let prefix = &text[..bracket];
+        assert!(
+            prefix.starts_with("Grammar") && prefix.trim_end().ends_with(':'),
+            "padded label then colon: {prefix:?}"
+        );
+        assert_eq!(
+            str_width(prefix),
+            str_width(focus_gutter_prefix(false)) + 18 + ": ".len(),
+            "value cell opens at the aligned column: {text:?}"
+        );
+    }
+
+    #[test]
+    fn text_field_no_label_width_is_compact() {
+        // label_width == 0 keeps the plugin-default compact form.
+        let spec = WidgetSpec::Text {
+            value: "x".into(),
+            cursor_byte: -1,
+            focused: false,
+            label: "Name".into(),
+            placeholder: None,
+            rows: 1,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            key: None,
+        };
+        let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
+        let text = entries[0].text.trim_end_matches('\n');
+        assert!(
+            text.contains("Name [") && !text.contains("Name :"),
+            "compact form keeps `label [value]`: {text:?}"
+        );
+    }
+
+    #[test]
     fn hint_bar_renders_entries_with_key_overlays() {
         let entries = vec![
             HintEntry {
@@ -5805,6 +6032,7 @@ mod tests {
                     sel_start: -1,
                     sel_end: -1,
                     block_caret: false,
+                    label_width: 0,
                     value: "".into(),
                     cursor_byte: -1,
                     focused: false,
@@ -7259,6 +7487,7 @@ mod tests {
             sel_start: -1,
             sel_end: -1,
             block_caret: false,
+            label_width: 0,
             value: value.into(),
             cursor_byte,
             focused,
@@ -7348,6 +7577,7 @@ mod tests {
             sel_start: -1,
             sel_end: -1,
             block_caret: false,
+            label_width: 0,
             value: "hi".into(),
             cursor_byte: 1,
             focused: true,
@@ -7479,6 +7709,7 @@ mod tests {
             sel_start: -1,
             sel_end: -1,
             block_caret: false,
+            label_width: 0,
             value: value.into(),
             cursor_byte,
             focused,

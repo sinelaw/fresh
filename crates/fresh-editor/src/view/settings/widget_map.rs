@@ -59,6 +59,11 @@ const ACTION_FG: &str = "syntax.function";
 const REMOVE_FG: &str = "diagnostic.error_fg";
 /// `[+] Add new` rows (historical `add_button` = `diagnostic_info_fg`).
 const ADD_FG: &str = "diagnostic.info_fg";
+/// Row-selection background — the same key the `List` widget paints on
+/// its focused row (`mark_list_row_selected`). Used to highlight the
+/// `[+] Add new` sentinel when it is the focused sub-row, so the add row
+/// reads as selected just like the list entries above it.
+const ROW_SELECTION_BG: &str = "ui.popup_selection_bg";
 
 /// Map one Settings control to a `WidgetSpec` node, keyed by the
 /// setting's stable identifier (its JSON-pointer path) so the widget
@@ -175,6 +180,10 @@ pub fn setting_control_to_widget_aligned(
                 block_caret: true,
                 sel_start: sel.0,
                 sel_end: sel.1,
+                // Align the value cell with the sibling toggles/numbers
+                // in the same form column (issue: Text `[` started right
+                // after the label instead of at the shared column).
+                label_width: lw,
                 key,
             }
         }
@@ -527,13 +536,24 @@ fn text_list_item_row(item: &str, row_focused: bool, editing: bool, cursor: usiz
     raw_entry_row(entry)
 }
 
-/// An `  [+] Add new` row, with an optional dim hint when focused.
+/// An `  [+] Add new` row, with an optional dim hint when focused. When
+/// focused the whole row gets the list's selection background (extended
+/// to the line end) so the sentinel highlights exactly like a selected
+/// list entry.
 fn add_new_row(focused: bool, hint: &str) -> WidgetSpec {
     let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ADD_FG))];
     if focused && !hint.is_empty() {
         segs.push(seg(hint, Some(DIM_HINT)));
     }
-    raw_entry_row(segments_row(segs))
+    let mut entry = segments_row(segs);
+    if focused {
+        entry.style = Some(OverlayOptions {
+            bg: Some(OverlayColorSpec::theme_key(ROW_SELECTION_BG)),
+            extend_to_line_end: true,
+            ..Default::default()
+        });
+    }
+    raw_entry_row(entry)
 }
 
 /// One bordered JSON-editor line: `  │{padded line}│` with an optional
