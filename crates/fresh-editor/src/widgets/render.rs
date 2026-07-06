@@ -1208,7 +1208,6 @@ fn collect_toggle(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn collect_number(
     spec_value: f64,
     min: Option<f64>,
@@ -3587,7 +3586,7 @@ fn pad_label(label: &str, width: usize) -> String {
         label.to_string()
     } else {
         let mut out = label.to_string();
-        out.extend(std::iter::repeat(' ').take(width - w));
+        out.extend(std::iter::repeat_n(' ', width - w));
         out
     }
 }
@@ -3889,7 +3888,7 @@ fn cell(s: &str, width: usize) -> String {
         chars[..width].iter().collect()
     } else {
         let mut out: String = chars.iter().collect();
-        out.extend(std::iter::repeat(' ').take(width - chars.len()));
+        out.extend(std::iter::repeat_n(' ', width - chars.len()));
         out
     }
 }

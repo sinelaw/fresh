@@ -476,12 +476,12 @@ fn json_line_row(
 ) -> WidgetSpec {
     let mut text = String::from("  ");
     let border_a = text.len();
-    text.push_str("│");
+    text.push('│');
     let content_start = text.len();
     let padded = pad(line, inner_width);
     text.push_str(&padded);
     let border_b = text.len();
-    text.push_str("│");
+    text.push('│');
     let mut entry = TextPropertyEntry::text(&text);
     for (s, e) in [(border_a, content_start), (border_b, border_b + "│".len())] {
         entry.inline_overlays.push(InlineOverlay {
@@ -606,7 +606,7 @@ fn pad(s: &str, width: usize) -> String {
         s.to_string()
     } else {
         let mut out = s.to_string();
-        out.extend(std::iter::repeat(' ').take(width - n));
+        out.extend(std::iter::repeat_n(' ', width - n));
         out
     }
 }

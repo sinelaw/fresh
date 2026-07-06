@@ -193,13 +193,13 @@ impl TextEdit {
 
     fn move_left_internal(&mut self) {
         if self.cursor_col > 0 {
-            // Move to previous char boundary
+            // Move to the previous grapheme-cluster boundary, so a
+            // single Left crosses a multi-codepoint cluster (Thai
+            // combining marks, emoji ZWJ sequences) instead of landing
+            // between its codepoints — matching the buffer's movement.
             let line = &self.lines[self.cursor_row];
-            let mut new_col = self.cursor_col - 1;
-            while new_col > 0 && !line.is_char_boundary(new_col) {
-                new_col -= 1;
-            }
-            self.cursor_col = new_col;
+            self.cursor_col =
+                crate::primitives::grapheme::prev_grapheme_boundary(line, self.cursor_col);
         } else if self.cursor_row > 0 && self.multiline {
             self.cursor_row -= 1;
             self.cursor_col = self.lines[self.cursor_row].len();
@@ -219,13 +219,11 @@ impl TextEdit {
             .map(|l| l.len())
             .unwrap_or(0);
         if self.cursor_col < line_len {
-            // Move to next char boundary
+            // Move to the next grapheme-cluster boundary (see
+            // `move_left_internal`).
             let line = &self.lines[self.cursor_row];
-            let mut new_col = self.cursor_col + 1;
-            while new_col < line.len() && !line.is_char_boundary(new_col) {
-                new_col += 1;
-            }
-            self.cursor_col = new_col;
+            self.cursor_col =
+                crate::primitives::grapheme::next_grapheme_boundary(line, self.cursor_col);
         } else if self.cursor_row + 1 < self.lines.len() && self.multiline {
             self.cursor_row += 1;
             self.cursor_col = 0;

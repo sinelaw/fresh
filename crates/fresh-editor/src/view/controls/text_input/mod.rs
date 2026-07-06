@@ -60,6 +60,13 @@ impl TextInputState {
         self.editor.value()
     }
 
+    /// The current text value as a borrowed slice. The editor is
+    /// single-line, so the value is exactly its one line — no join,
+    /// no allocation. For callers that return `&str`.
+    pub fn value_str(&self) -> &str {
+        self.editor.current_line()
+    }
+
     /// The cursor position as a byte offset into the value.
     pub fn cursor_byte(&self) -> usize {
         self.editor.flat_cursor_byte()

@@ -1415,13 +1415,13 @@ impl SettingsState {
 
     /// The current search filter text.
     pub fn search_query(&self) -> &str {
-        &self.search_input.value
+        self.search_input.value_str()
     }
 
     /// The search caret position, as a byte offset into
     /// [`SettingsState::search_query`] (always on a grapheme boundary).
     pub fn search_cursor(&self) -> usize {
-        self.search_input.cursor
+        self.search_input.cursor_byte()
     }
 
     /// Start search mode
@@ -1451,7 +1451,7 @@ impl SettingsState {
     /// Recompute results after the query text changed and reset the
     /// results selection/scroll to the top.
     fn refresh_search_results(&mut self) {
-        self.search_results = search_settings(&self.pages, &self.search_input.value);
+        self.search_results = search_settings(&self.pages, &self.search_input.value());
         self.selected_search_result = 0;
         self.search_scroll_offset = 0;
     }
