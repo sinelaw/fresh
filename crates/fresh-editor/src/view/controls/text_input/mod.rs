@@ -223,9 +223,15 @@ impl TextInputState {
     /// Set the value directly (cursor moves to the end)
     pub fn set_value(&mut self, value: impl Into<String>) {
         if self.is_enabled() {
-            self.editor = TextEdit::single_line_with_text(&value.into());
-            self.editor.move_end();
+            self.force_value(value);
         }
+    }
+
+    /// Set the value regardless of the enabled state — for model
+    /// updates (config loads, reset/inherit) rather than user input.
+    pub fn force_value(&mut self, value: impl Into<String>) {
+        self.editor = TextEdit::single_line_with_text(&value.into());
+        self.editor.move_end();
     }
 }
 

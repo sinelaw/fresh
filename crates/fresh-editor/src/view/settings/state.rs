@@ -3208,7 +3208,11 @@ pub(crate) fn update_control_from_value(control: &mut SettingControl, value: &se
         }
         SettingControl::Text(state) => {
             if let Some(s) = value.as_str() {
-                state.set_value(s);
+                // Model update, not user input: apply unconditionally
+                // (`set_value` is gated on the control being enabled,
+                // but a reset/inherit must land even on a control whose
+                // focus state is Disabled).
+                state.force_value(s);
             }
         }
         SettingControl::TextList(state) => {
