@@ -45,6 +45,7 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
     // over selections in monotonic byte order.
     ranges.sort_by_key(|r| r.start);
 
+    let block_virtual = state.buffer_settings.virtual_space.block_beyond_eol();
     let mut block_rects: Vec<(usize, usize, usize, usize)> = cursors
         .iter()
         .filter_map(|(_, cursor)| {
@@ -52,7 +53,14 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
                 if let Some(anchor) = cursor.block_anchor {
                     let cur_line = state.buffer.get_line_number(cursor.position);
                     let cur_line_start = state.buffer.line_start_offset(cur_line).unwrap_or(0);
-                    let cur_col = cursor.position.saturating_sub(cur_line_start);
+                    let mut cur_col = cursor.position.saturating_sub(cur_line_start);
+                    // With virtual space, the block column (carried by the
+                    // sticky column) may extend past the clipped byte column.
+                    if block_virtual {
+                        if let Some(sticky) = cursor.sticky_column {
+                            cur_col = cur_col.max(sticky);
+                        }
+                    }
 
                     Some((
                         anchor.line.min(cur_line),

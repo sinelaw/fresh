@@ -268,6 +268,133 @@ fn test_click_past_eol_snaps_when_off() {
     harness.assert_buffer_content("abX\nxyz");
 }
 
+/// With virtual_space = "block", a block selection extends past short lines
+/// and block copy yields a true (space-padded) rectangle.
+#[test]
+fn test_block_copy_is_rectangular_past_short_line() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Block);
+    harness.load_buffer_from_text("aaaa\nbb\ncccc").unwrap();
+
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    let clipboard = harness.editor_mut().clipboard_content_for_test();
+    assert_eq!(
+        clipboard, "a\n \nc",
+        "rectangle column 3 is padded on the short middle line"
+    );
+}
+
+/// Without virtual space, the same copy stays ragged (no padding).
+#[test]
+fn test_block_copy_stays_ragged_when_off() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Off);
+    harness.load_buffer_from_text("aaaa\nbb\ncccc").unwrap();
+
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    let clipboard = harness.editor_mut().clipboard_content_for_test();
+    // Without virtual space, the block column collapses to the short middle
+    // line's width as the selection passes through it (pre-existing
+    // behavior), so the copy comes out empty rather than rectangular.
+    assert_eq!(clipboard, "\n\n", "columns collapse without virtual space");
+}
+
+/// Typing with a block selection whose left edge is past a short line pads
+/// the short line to the block column, so the typed character lands in a
+/// straight column — the marquee block-editing workflow.
+#[test]
+fn test_block_insert_pads_short_lines() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Block);
+    harness.load_buffer_from_text("aaaa\nbb\ncccc").unwrap();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("aaaaX\nbb  X\nccccX");
+}
+
+/// The block rectangle paints its full extent on screen, including the part
+/// floating past a short line's end.
+#[test]
+fn test_block_rectangle_renders_past_short_line() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Block);
+    harness.load_buffer_from_text("aaaa\nbb\ncccc").unwrap();
+
+    let (x0, y0) = harness
+        .find_text_on_screen("aaaa")
+        .expect("first line visible");
+
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    for _ in 0..2 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::ALT | KeyModifiers::SHIFT)
+        .unwrap();
+    harness.render().unwrap();
+
+    let selected_bg = harness
+        .get_cell_style(x0 + 3, y0)
+        .expect("selected cell on first line")
+        .bg;
+    let virtual_bg = harness
+        .get_cell_style(x0 + 3, y0 + 1)
+        .expect("virtual rect cell on short line")
+        .bg;
+    let outside_bg = harness
+        .get_cell_style(x0 + 6, y0 + 1)
+        .expect("cell outside the rect")
+        .bg;
+    assert_eq!(
+        virtual_bg, selected_bg,
+        "rect cell past 'bb' paints with the selection background"
+    );
+    assert_ne!(
+        virtual_bg, outside_bg,
+        "cells right of the rect stay unselected"
+    );
+}
+
 /// Vertical movement through a short line and back onto a long one restores
 /// the original column (the goal column survives the virtual segment).
 #[test]

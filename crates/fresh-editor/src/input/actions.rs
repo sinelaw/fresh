@@ -398,8 +398,23 @@ fn block_select_action(
         }
     };
 
+    let vs_mode = state.buffer_settings.virtual_space;
+    let block_virtual = vs_mode.block_beyond_eol();
     for (cursor_id, cursor) in cursors.iter() {
-        let current_2d = byte_to_2d(&state.buffer, cursor.position);
+        let mut current_2d = byte_to_2d(&state.buffer, cursor.position);
+        if block_virtual {
+            if cursor.selection_mode == SelectionMode::Block {
+                // In block mode the sticky column carries the block column,
+                // which may exceed the (clipped) byte-derived column.
+                if let Some(sticky) = cursor.sticky_column {
+                    current_2d.column = current_2d.column.max(sticky);
+                }
+            } else {
+                // Entering block mode from a virtual-space cursor keeps the
+                // cursor's on-screen column (padding is 1 byte per column).
+                current_2d.column += cursor_virtual_columns(vs_mode, &state.buffer, cursor);
+            }
+        }
 
         // If not in block mode, start block selection
         let block_anchor = if cursor.selection_mode != SelectionMode::Block {
@@ -422,9 +437,16 @@ fn block_select_action(
                 } else {
                     line_content.len()
                 };
+                // With virtual space for block selections, the rectangle may
+                // grow past the line end (true rectangles).
+                let column = if block_virtual {
+                    current_2d.column + 1
+                } else {
+                    (current_2d.column + 1).min(line_len)
+                };
                 Position2D {
                     line: current_2d.line,
-                    column: (current_2d.column + 1).min(line_len),
+                    column,
                 }
             }
             BlockDirection::Up => {
@@ -476,7 +498,12 @@ fn block_select_action(
     let buffer_ref = &state.buffer;
     cursors.map(|cursor| {
         if cursor.selection_mode != SelectionMode::Block || cursor.block_anchor.is_none() {
-            let current_2d = byte_to_2d(buffer_ref, cursor.position);
+            let mut current_2d = byte_to_2d(buffer_ref, cursor.position);
+            // Anchor the rectangle at the cursor's on-screen (possibly
+            // virtual) column, matching the entry handling above.
+            if block_virtual {
+                current_2d.column += cursor_virtual_columns(vs_mode, buffer_ref, cursor);
+            }
             cursor.start_block_selection(current_2d.line, current_2d.column);
         }
     });
@@ -499,15 +526,23 @@ pub fn clear_block_selection_if_active(cursors: &mut Cursors) {
 fn convert_block_selection_to_cursors(
     state: &mut EditorState,
     cursors: &mut Cursors,
-) -> Vec<Event> {
+) -> (Vec<Event>, Vec<(CursorId, usize)>) {
     let mut events = Vec::new();
 
     // Check if any cursor has a block selection
+    let block_virtual = state.buffer_settings.virtual_space.block_beyond_eol();
     let block_info: Option<(CursorId, Position2D, Position2D)> =
         cursors.iter().find_map(|(cursor_id, cursor)| {
             if cursor.has_block_selection() {
                 let block_anchor = cursor.block_anchor?;
-                let cursor_2d = byte_to_2d(&state.buffer, cursor.position);
+                let mut cursor_2d = byte_to_2d(&state.buffer, cursor.position);
+                // The block column (sticky) may extend past the clipped byte
+                // column when virtual space is enabled for block selections.
+                if block_virtual {
+                    if let Some(sticky) = cursor.sticky_column {
+                        cursor_2d.column = cursor_2d.column.max(sticky);
+                    }
+                }
                 Some((cursor_id, block_anchor, cursor_2d))
             } else {
                 None
@@ -515,7 +550,7 @@ fn convert_block_selection_to_cursors(
         });
 
     let Some((primary_cursor_id, block_anchor, cursor_2d)) = block_info else {
-        return events;
+        return (events, Vec::new());
     };
 
     // Calculate block rectangle bounds
@@ -524,8 +559,12 @@ fn convert_block_selection_to_cursors(
     let min_col = block_anchor.column.min(cursor_2d.column);
     let max_col = block_anchor.column.max(cursor_2d.column);
 
-    // Calculate cursor positions for each line
+    // Calculate cursor positions for each line. With virtual space, a line
+    // shorter than the rectangle's left edge gets a collapsed cursor at its
+    // content end plus a pending pad (spaces to the rectangle's edge) that a
+    // following character insertion materializes.
     let mut cursor_positions: Vec<(usize, usize)> = Vec::new(); // (position, anchor)
+    let mut paddings: Vec<(usize, usize)> = Vec::new(); // (line_idx, spaces)
 
     for line in min_line..=max_line {
         let line_start = state.buffer.line_start_offset(line).unwrap_or(0);
@@ -537,6 +576,13 @@ fn convert_block_selection_to_cursors(
         } else {
             line_content.len()
         };
+
+        if block_virtual && min_col > line_len {
+            let line_end = line_start + line_len;
+            paddings.push((cursor_positions.len(), min_col - line_len));
+            cursor_positions.push((line_end, line_end));
+            continue;
+        }
 
         // Clamp columns to actual line length
         let actual_min_col = min_col.min(line_len);
@@ -561,11 +607,14 @@ fn convert_block_selection_to_cursors(
         }
     }
 
-    // Add new cursors for remaining lines
+    // Add new cursors for remaining lines, remembering each line's cursor id
+    // so the pending pads can be attributed to their line's cursor.
+    let mut line_cursor_ids: Vec<CursorId> = vec![primary_cursor_id];
     for (next_cursor_id, (position, anchor)) in
-        (cursors.count()..).zip(cursor_positions.into_iter().skip(1))
+        (cursors.count()..).zip(cursor_positions.iter().copied().skip(1))
     {
         let cursor_id = CursorId(next_cursor_id);
+        line_cursor_ids.push(cursor_id);
         events.push(Event::AddCursor {
             cursor_id,
             position,
@@ -577,7 +626,12 @@ fn convert_block_selection_to_cursors(
         });
     }
 
-    events
+    let pads = paddings
+        .into_iter()
+        .map(|(line_idx, spaces)| (line_cursor_ids[line_idx], spaces))
+        .collect();
+
+    (events, pads)
 }
 
 /// Get the matching close character for auto-pairing.
@@ -961,6 +1015,7 @@ fn insert_char_events(
     auto_indent: bool,
     auto_close: bool,
     auto_surround: bool,
+    block_pads: &[(CursorId, usize)],
 ) {
     let is_closing_delimiter = matches!(ch, '}' | ')' | ']');
     let auto_close_char = get_auto_close_char(ch, auto_close, &state.language);
@@ -970,11 +1025,19 @@ fn insert_char_events(
         // Virtual space: materialize the gap between the line's content end
         // and the cursor, then the typed character — as one Insert so a
         // single undo removes both. Auto-close/skip-over don't apply out in
-        // virtual space; the cursor is past every existing delimiter.
-        if data.virtual_cols > 0 && data.selection.is_none() {
+        // virtual space; the cursor is past every existing delimiter. The
+        // pad may come from the cursor itself or from a block-selection
+        // rectangle whose left edge is past this line's end.
+        let block_pad = block_pads
+            .iter()
+            .find(|(id, _)| *id == data.cursor_id)
+            .map(|(_, pad)| *pad)
+            .unwrap_or(0);
+        let pad = data.virtual_cols.max(block_pad);
+        if pad > 0 && data.selection.is_none() {
             events.push(Event::Insert {
                 position: data.insert_position,
-                text: format!("{}{}", " ".repeat(data.virtual_cols), ch),
+                text: format!("{}{}", " ".repeat(pad), ch),
                 cursor_id: data.cursor_id,
             });
             continue;
@@ -2390,12 +2453,14 @@ pub fn action_to_events(
 
     // Convert block selection to multi-cursor before processing editing actions
     // This allows normal multi-cursor logic to handle typing, deletion, etc.
+    let mut block_pads: Vec<(CursorId, usize)> = Vec::new();
     if action.is_editing() {
-        let cursor_events = convert_block_selection_to_cursors(state, cursors);
+        let (cursor_events, pads) = convert_block_selection_to_cursors(state, cursors);
         for event in &cursor_events {
             state.apply(cursors, event);
         }
         events.extend(cursor_events);
+        block_pads = pads;
     }
 
     match action {
@@ -2410,6 +2475,7 @@ pub fn action_to_events(
                 auto_indent,
                 auto_close,
                 auto_surround,
+                &block_pads,
             );
         }
 

@@ -222,6 +222,11 @@ impl Editor {
         let estimated_line_length = 120;
 
         // Collect block selection info from all cursors
+        let block_virtual = self
+            .active_state()
+            .buffer_settings
+            .virtual_space
+            .block_beyond_eol();
         let block_infos: Vec<_> = self
             .active_cursors()
             .iter()
@@ -232,18 +237,26 @@ impl Editor {
                 let block_anchor = cursor.block_anchor?;
                 let anchor_byte = cursor.anchor?; // byte offset of anchor
                 let cursor_byte = cursor.position;
-                Some((block_anchor, anchor_byte, cursor_byte))
+                // In block mode the sticky column carries the (possibly
+                // virtual) block column.
+                let sticky = cursor.sticky_column;
+                Some((block_anchor, anchor_byte, cursor_byte, sticky))
             })
             .collect();
 
         let mut result = String::new();
 
-        for (block_anchor, anchor_byte, cursor_byte) in block_infos {
+        for (block_anchor, anchor_byte, cursor_byte, sticky) in block_infos {
             // Get current cursor position as 2D
-            let cursor_2d = {
+            let mut cursor_2d = {
                 let state = self.active_state();
                 byte_to_2d(&state.buffer, cursor_byte)
             };
+            if block_virtual {
+                if let Some(sticky) = sticky {
+                    cursor_2d.column = cursor_2d.column.max(sticky);
+                }
+            }
 
             // Calculate column bounds (min and max columns for the rectangle)
             let min_col = block_anchor.column.min(cursor_2d.column);
@@ -276,11 +289,21 @@ impl Editor {
                     let chars: Vec<char> = content_without_newline.chars().collect();
 
                     // Extract characters from min_col to max_col (exclusive)
-                    let extracted: String = chars
+                    let mut extracted: String = chars
                         .iter()
                         .skip(min_col)
                         .take(max_col.saturating_sub(min_col))
                         .collect();
+
+                    // Virtual space: block copies are true rectangles — pad
+                    // short lines out to the rectangle's width.
+                    if block_virtual {
+                        let want = max_col.saturating_sub(min_col);
+                        let have = extracted.chars().count();
+                        if have < want {
+                            extracted.extend(std::iter::repeat_n(' ', want - have));
+                        }
+                    }
 
                     lines_text.push(extracted);
 

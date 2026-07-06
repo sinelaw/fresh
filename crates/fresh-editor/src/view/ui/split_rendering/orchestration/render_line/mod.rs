@@ -798,6 +798,59 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         );
         let mut rendered_cols = cells.rendered_cols;
 
+        // Virtual-space block selections are true rectangles: paint the part
+        // of any block rect that extends past this row's content with the
+        // selection background, so the on-screen rectangle matches what a
+        // block copy/insert will act on. Skips wrapped continuation rows —
+        // block columns are line-relative.
+        if state.buffer_settings.virtual_space.block_beyond_eol()
+            && !selection.block_rects.is_empty()
+            && !matches!(
+                line_start_type,
+                LineStart::AfterBreak | LineStart::AfterInjectedNewline
+            )
+        {
+            let row_len = line_content.trim_end_matches(['\r', '\n']).len();
+            let overlap = selection
+                .block_rects
+                .iter()
+                .filter(|(start_line, _, end_line, end_col)| {
+                    *start_line <= gutter_num && gutter_num <= *end_line && *end_col >= row_len
+                })
+                .map(|(_, start_col, _, end_col)| ((*start_col).max(row_len), *end_col))
+                .fold(None::<(usize, usize)>, |acc, (s, e)| match acc {
+                    Some((as_, ae)) => Some((as_.min(s), ae.max(e))),
+                    None => Some((s, e)),
+                });
+            if let Some((sel_start, sel_end)) = overlap {
+                let content_cols = render_area.width.saturating_sub(gutter_width as u16) as usize;
+                let gap = (sel_start - row_len).min(content_cols.saturating_sub(rendered_cols));
+                if gap > 0 {
+                    push_span_with_map(
+                        &mut line_spans,
+                        &mut line_view_map,
+                        " ".repeat(gap),
+                        Style::default(),
+                        None,
+                    );
+                    rendered_cols += gap;
+                }
+                // Match the per-cell sweep: block columns are inclusive.
+                let sel_len =
+                    (sel_end + 1 - sel_start).min(content_cols.saturating_sub(rendered_cols));
+                if sel_len > 0 {
+                    push_span_with_map(
+                        &mut line_spans,
+                        &mut line_view_map,
+                        " ".repeat(sel_len),
+                        Style::default().bg(theme.selection_bg),
+                        None,
+                    );
+                    rendered_cols += sel_len;
+                }
+            }
+        }
+
         if !line_has_newline {
             // The end-of-line cursor can only be placed on rows whose final
             // screen y is already known: empty rows, unwrapped rows, or rows
