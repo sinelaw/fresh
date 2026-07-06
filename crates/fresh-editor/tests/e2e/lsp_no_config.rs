@@ -84,10 +84,17 @@ fn test_toggle_lsp_disabled_for_unconfigured_language() -> anyhow::Result<()> {
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
     harness.wait_for_prompt()?;
 
-    // Type a single-term query to match only "Toggle LSP for Current Buffer".
-    // Using a single term (no spaces) avoids multi-term description matching
-    // which could match enabled commands (sorted before disabled ones).
-    harness.type_text("ToggleLspBuffer")?;
+    // Type the full command name (spaces removed, so it stays one term
+    // matched against names/descriptions as a whole). Enabled commands
+    // sort before disabled ones regardless of match quality, so the query
+    // must not fuzzy-match ANY enabled command's name or description —
+    // looser queries picked wrong commands: "ToggleLspBuffer" selected
+    // "Toggle Virtual Space (Current Buffer)" (toggle-virtuaL-SPace-
+    // buffer), and "Toggle LSP for Current Buffer" selected "Markdown:
+    // Toggle Compose/Preview" via its description. This query matches
+    // only the intended command across all built-in and bundled-plugin
+    // commands.
+    harness.type_text("togglelspforcurrentbuffer")?;
     harness.render()?;
 
     // Try to execute the command - it should be disabled
